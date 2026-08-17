@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "decision-graph-assistant"
+version = "0.1.0"
+description = "Track a project's decisions as a graph: what is settled, what it rests on, and what would reopen it."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["typer>=0.9", "rich>=13"]
+
+[project.scripts]
+dg = "dgraph.cli:main"
+
+[tool.setuptools]
+packages = ["dgraph"]
+
+[tool.setuptools.package-data]
+dgraph = ["static/*.html"]

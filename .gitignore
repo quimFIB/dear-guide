@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.dgraph-pending.json
+*.egg-info/
+build/
+dist/
+.venv/
