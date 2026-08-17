@@ -101,3 +101,39 @@ date, source, falsifier and decision edge · `OPEN`/`BLOCKED` vertices carry no
 answer · no `DECIDED` vertex resting on an unsettled premise · nothing
 `BLOCKED` on something already settled · no orphans · acyclic · the rendered
 markdown matches the store.
+
+## Future work
+
+**This would make more sense as a coding-agent plugin — for Claude Code, or
+opencode — than as a CLI a human remembers to run.**
+
+The tool was built because an agent working across many sessions kept losing
+the thread: decisions restated in four places, three of them stale, and a
+reversal that quietly invalidated the conclusions built on top of it. The
+graph fixes the storage. It does not fix the habit, and the habit is the hard
+part — an agent has to *choose* to record a decision, and a human reviewing a
+diff rarely notices one that went unrecorded.
+
+As a plugin the loop closes:
+
+- **Read on session start.** The frontier is the first thing an agent should
+  know. Today that depends on a `CLAUDE.md` rule saying "read this first",
+  which is a convention, not a mechanism.
+- **Write when a decision is actually made.** Agents settle things mid-task,
+  in prose, and move on. A tool call at that moment costs nothing; a
+  reconstruction afterwards costs a session.
+- **Refuse on the reversals.** Reopening should be the moment the agent is
+  told which conclusions downstream just became provisional — that is the one
+  computation people reliably get wrong, and it is worth interrupting for.
+- **Check as a hook.** `dg check` on pre-commit, rather than hoping.
+
+The pieces are already the right shape for it: `dgraph.check.run` is a single
+entry point, staging separates composing a decision from committing it, and
+`dgraph/server.py` is a thin adapter over the same modules the CLI uses — a
+plugin would be a third adapter, not a rewrite.
+
+Open questions if it is built: whether the store stays per-repo (probably —
+decisions are about a codebase) or gains a cross-project view; whether an
+agent should be allowed to `apply` unattended or only ever stage for a human
+to confirm; and whether the falsifier can be checked rather than merely
+recorded, since a falsifier nobody revisits is just a comment.
