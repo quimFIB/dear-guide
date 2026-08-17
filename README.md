@@ -79,6 +79,20 @@ edges for dependencies awaiting a decision. Click a vertex to inspect it, or to
 fill in a decision; staged ops collect in a tray and apply together. It shares
 the CLI's apply path, so there is one implementation of it.
 
+## Checking it in CI
+
+`dg check` exits nonzero on any error. For pytest, one file is enough — the
+tool supplies the tests, so a project never restates the invariants and there
+is no list to keep in sync:
+
+```python
+# tests/test_decision_graph.py
+from dgraph.testing import *  # noqa: F401,F403
+```
+
+That yields one test per rule, plus one for advisory warnings. A check added to
+the tool shows up in every project automatically.
+
 ## What `dg check` enforces
 
 Well-formed unique IDs · legal statuses · no dangling edge or `BLOCKED:`

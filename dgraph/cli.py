@@ -12,8 +12,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
+from dgraph import check as _check
 from dgraph import pending, project, render
-from dgraph.model import Graph, Violation
+from dgraph.model import Graph
 
 app = typer.Typer(
     add_completion=False,
@@ -182,24 +183,17 @@ def areas() -> None:
 @app.command()
 def check() -> None:
     """Run every invariant, plus the markdown staleness check."""
-    g = _g()
-    problems = g.validate()
-    view = project.find().view
-    if not view.exists() or view.read_text(encoding="utf-8") != render.render(g):
-        problems.append(Violation(
-            "stale_view",
-            "decision-graph.md does not match decisions.json — run `dg render`",
-        ))
+    proj = project.find()
+    problems = _check.run(proj)
     for p in problems:
         con.print(f"[{'red' if p.blocking else 'yellow'}]"
                   f"{'✗' if p.blocking else '!'}[/] {p}")
     if any(p.blocking for p in problems):
         raise typer.Exit(1)
-    if problems:
-        con.print(f"[yellow]{len(problems)} warning(s)[/]")
-        return
+    g = Graph.load(proj.store)
+    tail = f", {len(problems)} warning(s)" if problems else ""
     con.print(f"[green]✓[/] {len(g.vertices)} vertices, {len(g.edges)} edges, "
-              f"all invariants hold")
+              f"all invariants hold{tail}")
 
 
 # ---- editing -------------------------------------------------------------
