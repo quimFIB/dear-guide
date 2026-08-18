@@ -61,12 +61,23 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
         problems.append(Violation(
             "stale_view", f"{proj.view.name} is missing — run `dg render`"
         ))
-    elif proj.view.read_text(encoding="utf-8") != render.render(g):
-        problems.append(Violation(
-            "stale_view",
-            f"{proj.view.name} does not match {proj.store.name}. It is "
-            f"generated — run `dg render` rather than editing it.",
-        ))
+    else:
+        try:
+            current = proj.view.read_text(encoding="utf-8")
+        except OSError as exc:
+            # The store's load is guarded above; the view's read must be too,
+            # or an unreadable view crashes every caller that promised not to
+            # crash — `dg brief` and the session hook chief among them.
+            current = None
+            problems.append(Violation(
+                "stale_view", f"{proj.view.name} could not be read: {exc}"
+            ))
+        if current is not None and current != render.render(g):
+            problems.append(Violation(
+                "stale_view",
+                f"{proj.view.name} does not match {proj.store.name}. It is "
+                f"generated — run `dg render` rather than editing it.",
+            ))
 
     unknown = sorted({p.check for p in problems} - set(CHECKS))
     if unknown:

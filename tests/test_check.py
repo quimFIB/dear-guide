@@ -66,6 +66,19 @@ def test_a_validator_crash_degrades_to_a_violation(store, g, monkeypatch):
     assert hits[0].blocking and "validate()" in str(hits[0])
 
 
+def test_an_unreadable_view_is_reported_not_fatal(store, g):
+    """Found by the re-audit: the store's load was guarded, the view's read was
+    not — an unreadable view crashed `check.run`, taking `dg check`, `dg brief`
+    and the session hook down with it; only the gate's catch-all held."""
+    write(g)
+    (store / "decision-graph.md").unlink()
+    (store / "decision-graph.md").mkdir()
+    hits = run()
+    assert any(v.check == "stale_view" and "could not be read" in str(v)
+               for v in hits)
+    assert all(v.check in CHECKS for v in hits)
+
+
 def test_graph_violations_surface(store, g):
     write(g)
     bad = Graph.load()
