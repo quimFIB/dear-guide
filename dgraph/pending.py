@@ -14,7 +14,7 @@ from datetime import date as _date
 from pathlib import Path
 
 from dgraph import project
-from dgraph.model import Edge, Graph, Vertex
+from dgraph.model import UNSETTLED, Edge, Graph, Vertex
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "set_status"}
 
@@ -64,12 +64,29 @@ def clear(path: Path | None = None) -> None:
 # ---- propagation ---------------------------------------------------------
 
 
+def _settles(op: dict) -> str | None:
+    """The vertex this op settles, if any — the trigger for unblocking."""
+    if op["op"] == "close":
+        return op["vertex"]
+    if op["op"] == "set_status" and op["status"].split(":")[0] not in UNSETTLED:
+        return op["vertex"]
+    return None
+
+
 def expand(g: Graph, op: dict) -> list[dict]:
     """Derive the ops a change implies.
 
-    Reopening a vertex puts every decided descendant on a premise under review,
-    so each becomes PROVISIONAL. Computing that by hand across the graph is the
-    mistake the validator exists to catch, so the tool does it.
+    Status propagates in both directions, and neither is safe to leave to the
+    person typing the command:
+
+    - Reopening a vertex puts every decided descendant on a premise under
+      review, so each becomes PROVISIONAL.
+    - Settling a vertex releases everything `BLOCKED:` on it. Without this the
+      block goes stale, `apply` refuses the whole batch, and the remedy — one
+      `set_status` per blocked vertex — is left to be worked out by hand.
+
+    Computing either by hand across the graph is the mistake the validator
+    exists to catch, so the tool does it.
     """
     out = [op]
     if op["op"] == "reopen":
@@ -78,6 +95,15 @@ def expand(g: Graph, op: dict) -> list[dict]:
                 out.append({
                     "op": "set_status", "vertex": d, "status": "PROVISIONAL",
                     "derived_from": op["vertex"],
+                })
+
+    settled = _settles(op)
+    if settled is not None:
+        for vid, v in sorted(g.vertices.items()):
+            if v.base_status == "BLOCKED" and v.blocker == settled:
+                out.append({
+                    "op": "set_status", "vertex": vid, "status": "OPEN",
+                    "derived_from": settled,
                 })
     return out
 

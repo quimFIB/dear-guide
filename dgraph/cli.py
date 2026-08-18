@@ -8,6 +8,7 @@ from datetime import date as _date
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
@@ -56,6 +57,17 @@ def _style(status: str) -> str:
     return STATUS_STYLE.get(status.split(":")[0], "white")
 
 
+def _x(text: object) -> str:
+    """Escape text that is data, not markup.
+
+    Titles, answers and violation strings all routinely contain square
+    brackets, and rich reads `[no_orphans]` or `[draft]` as a style tag and
+    silently drops it. Anything coming from the store or from a Violation goes
+    through here; the literal `[green]`-style tags in f-strings do not.
+    """
+    return escape(str(text) if text is not None else "")
+
+
 def _tag(v) -> str:
     return f"[{_style(v.status)}]{v.status}[/]"
 
@@ -73,7 +85,8 @@ def show() -> None:
     for vid in g.frontier():
         v = g.vertices[vid]
         blockers = [p for p in g.depends(vid) if not g.vertices[p].settled]
-        t.add_row(vid, v.title, _tag(v), ", ".join(blockers) or "—", v.area)
+        t.add_row(vid, _x(v.title), _tag(v), ", ".join(blockers) or "—",
+                  _x(v.area))
     con.print(t)
     counts: dict[str, int] = {}
     for v in g.vertices.values():
@@ -91,7 +104,8 @@ def tree(root: str = typer.Argument(None, help="Vertex to root at")) -> None:
 
     def add(parent: Tree, vid: str) -> None:
         v = g.vertices[vid]
-        label = f"[bold]{vid}[/] {v.title} [{_style(v.status)}]{v.status}[/]"
+        label = (f"[bold]{vid}[/] {_x(v.title)} "
+                 f"[{_style(v.status)}]{v.status}[/]")
         if vid in seen:
             parent.add(label + " [dim](above)[/]")
             return
@@ -119,27 +133,28 @@ def node(vid: str) -> None:
     v = g.vertices[vid]
     e = g.active_edge(vid)
     lines = [
-        f"[bold]{v.title}[/]", "",
+        f"[bold]{_x(v.title)}[/]", "",
         f"status      {_tag(v)}",
-        f"area        {v.area}",
+        f"area        {_x(v.area)}",
         f"depends on  {', '.join(g.depends(vid)) or '—'}",
     ]
     if e and e.decided:
         lines += [
             f"opens       {', '.join(e.to) or 'TERMINAL'}",
-            f"falsifier   {e.falsifier or '—'}",
-            f"source      {e.source}   ({e.date})",
-            "", "[bold]Answer[/]", e.answer or "",
+            f"falsifier   {_x(e.falsifier) or '—'}",
+            f"source      {_x(e.source)}   ({e.date})",
+            "", "[bold]Answer[/]", _x(e.answer),
         ]
     else:
         lines += [f"opens       {', '.join(g.children(vid)) or '—'}"]
         if v.note:
-            lines += ["", "[bold]Note[/]", v.note]
+            lines += ["", "[bold]Note[/]", _x(v.note)]
     hist = g.history(vid)
     if hist:
         lines += ["", "[bold]Superseded[/]"]
         lines += [
-            f"  “{h.summary}” → {h.replaced_by or '(undecided)'}\n    {h.why}"
+            f"  “{_x(h.summary)}” → {_x(h.replaced_by) or '(undecided)'}"
+            f"\n    {_x(h.why)}"
             for h in hist
         ]
     con.print(Panel("\n".join(lines), title=vid, border_style=_style(v.status)))
@@ -155,11 +170,12 @@ def path(a: str, b: str) -> None:
         raise typer.Exit(1)
     for i, vid in enumerate(p):
         v = g.vertices[vid]
-        con.print(f"[bold]{vid}[/] {v.title} [{_style(v.status)}]{v.status}[/]")
+        con.print(f"[bold]{vid}[/] {_x(v.title)} "
+                  f"[{_style(v.status)}]{v.status}[/]")
         if i < len(p) - 1:
             e = g.active_edge(vid)
             first = (e.answer or "").strip().split("\n")[0] if e else ""
-            con.print(f"  [dim]│ {first}[/]")
+            con.print(f"  [dim]│ {_x(first)}[/]")
             con.print("  [dim]▼[/]")
 
 
@@ -175,8 +191,8 @@ def areas() -> None:
     t.add_column("Total", justify="right")
     for a in g.areas:
         vs = [v for v in g.vertices.values() if v.area == a]
-        t.add_row(a, *[str(sum(1 for v in vs if v.base_status == s))
-                       for s in statuses], str(len(vs)))
+        t.add_row(_x(a), *[str(sum(1 for v in vs if v.base_status == s))
+                           for s in statuses], str(len(vs)))
     con.print(t)
 
 
@@ -187,7 +203,7 @@ def check() -> None:
     problems = _check.run(proj)
     for p in problems:
         con.print(f"[{'red' if p.blocking else 'yellow'}]"
-                  f"{'✗' if p.blocking else '!'}[/] {p}")
+                  f"{'✗' if p.blocking else '!'}[/] {_x(p)}")
     if any(p.blocking for p in problems):
         raise typer.Exit(1)
     g = Graph.load(proj.store)
@@ -197,6 +213,29 @@ def check() -> None:
 
 
 # ---- editing -------------------------------------------------------------
+
+
+def _stage_close(g: Graph, op: dict) -> None:
+    """Stage a close plus everything it implies, and say what was released.
+
+    The release is derived, not typed, so the one place that reports it is here:
+    a caller that stages a close without going through this would leave the
+    blocked vertices looking untouched.
+    """
+    unknown = [x for x in op.get("to", []) if x not in g.vertices]
+    if unknown:
+        con.print(f"[red]unknown target(s): {', '.join(unknown)}[/]")
+        raise typer.Exit(1)
+    ops = pending.expand(g, op)
+    for o in ops:
+        pending.stage(o)
+    released = [o["vertex"] for o in ops if o["op"] == "set_status"]
+    if released:
+        con.print(f"[cyan]{len(released)}[/] vertex(es) were "
+                  f"BLOCKED:{op['vertex']} and are released to OPEN: "
+                  f"{', '.join(released)}")
+    con.print(f"[green]staged[/] {len(ops)} op(s) — review with `dg pending`, "
+              f"then `dg apply`")
 
 
 @app.command()
@@ -218,7 +257,8 @@ def decide(
         con.print(f"[red]{vid} is already DECIDED — `dg reopen` it first[/]")
         raise typer.Exit(1)
 
-    con.print(Panel(f"[bold]{v.title}[/]\n\ndepends on {', '.join(g.depends(vid)) or '—'}",
+    con.print(Panel(f"[bold]{_x(v.title)}[/]\n\n"
+                    f"depends on {', '.join(g.depends(vid)) or '—'}",
                     title=vid, border_style=_style(v.status)))
     answer = answer or typer.prompt("Answer (what was decided, and on what evidence)")
     source = source or typer.prompt("Source (a report/ path, a script, or 'discussion')")
@@ -234,11 +274,6 @@ def decide(
         falsifier = falsifier or typer.prompt(
             "Falsifier (what evidence would reopen this? 'ANALYTIC — …' if none)"
         )
-    unknown = [x for x in opens_l if x not in g.vertices]
-    if unknown:
-        con.print(f"[red]unknown target(s): {', '.join(unknown)}[/]")
-        raise typer.Exit(1)
-
     op = {
         "op": "close", "vertex": vid, "answer": answer, "source": source,
         "falsifier": falsifier, "to": opens_l,
@@ -246,9 +281,7 @@ def decide(
     }
     if summary:
         op["summary"] = summary
-    pending.stage(op)
-    con.print(f"[green]staged[/] close {vid} — review with `dg pending`, "
-              f"then `dg apply`")
+    _stage_close(g, op)
 
 
 @app.command()
@@ -275,7 +308,7 @@ def reopen(
 
     affected = [o["vertex"] for o in ops if o["op"] == "set_status"]
     con.print(Panel(
-        f"[bold]{g.vertices[vid].title}[/]\n\n"
+        f"[bold]{_x(g.vertices[vid].title)}[/]\n\n"
         f"Its answer becomes superseded; its dependencies stay.\n\n"
         f"[cyan]{len(affected)}[/] decided descendant(s) rest on it and become "
         f"PROVISIONAL:\n  {', '.join(affected) or 'none'}",
@@ -298,8 +331,10 @@ def add(
 ) -> None:
     """Stage a new decision vertex."""
     g = _g()
+
     if area not in g.areas:
-        con.print(f"[red]unknown area. one of: {', '.join(g.areas)}[/]")
+        con.print(f"[red]unknown area. one of: "
+                  f"{', '.join(_x(a) for a in g.areas)}[/]")
         raise typer.Exit(1)
     pending.stage({"op": "add_vertex", "id": vid, "title": title,
                    "area": area, "status": status})
@@ -320,11 +355,11 @@ def pending_cmd() -> None:
         t.add_column(c)
     for i, o in enumerate(ops):
         detail = {
-            "close": lambda o: (o.get("answer") or "")[:70],
-            "reopen": lambda o: o.get("why", ""),
+            "close": lambda o: _x((o.get("answer") or "")[:70]),
+            "reopen": lambda o: _x(o.get("why", "")),
             "set_status": lambda o: f"→ {o['status']}"
             + (f"  [dim](from {o['derived_from']})[/]" if o.get("derived_from") else ""),
-            "add_vertex": lambda o: o.get("title", ""),
+            "add_vertex": lambda o: _x(o.get("title", "")),
             "add_edge": lambda o: "→ " + ", ".join(o.get("to", [])),
         }[o["op"]](o)
         t.add_row(str(i), o["op"], o.get("vertex") or o.get("from") or o.get("id"), detail)
@@ -357,7 +392,7 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
     try:
         out = pending.apply_all(g, ops)
     except pending.ApplyError as exc:
-        con.print(f"[red]✗ aborted, nothing written[/]\n{exc}")
+        con.print(f"[red]✗ aborted, nothing written[/]\n{_x(exc)}")
         raise typer.Exit(1)
     if dry_run:
         con.print(f"[green]✓[/] {len(ops)} op(s) would apply cleanly")
@@ -407,7 +442,7 @@ def import_md(
     g = import_markdown(pathlib.Path(path))
     problems = g.validate()
     for v in problems:
-        con.print(f"[yellow]![/] {v}")
+        con.print(f"[yellow]![/] {_x(v)}")
     g.save(proj.store)
     render.write(g, proj.view)
     con.print(f"[green]✓[/] imported {len(g.vertices)} vertices, "

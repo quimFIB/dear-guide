@@ -167,6 +167,56 @@ def test_unpropagated_reopen_is_rejected(g):
         pending.apply_all(g, [{"op": "reopen", "vertex": "D01", "why": "x"}])
 
 
+def test_settling_a_vertex_releases_what_was_blocked_on_it(g):
+    """The mirror of reopen propagation: D06 is BLOCKED:D05, so closing D05
+    must stage D06 -> OPEN rather than leaving a stale block for apply to
+    reject."""
+    ops = pending.expand(g, {"op": "close", "vertex": "D05", "answer": "a",
+                             "source": "s", "falsifier": "f", "to": []})
+    assert [(o["vertex"], o["status"]) for o in ops if o["op"] == "set_status"] \
+        == [("D06", "OPEN")]
+    assert all(o.get("derived_from") == "D05"
+               for o in ops if o["op"] == "set_status")
+
+
+def test_expanded_close_applies_without_manual_help(g):
+    """Before the fix this batch needed a hand-written set_status to survive."""
+    ops = pending.expand(g, {"op": "close", "vertex": "D05", "answer": "a",
+                             "source": "s", "falsifier": "f", "to": [],
+                             "date": "2026-02-01"})
+    out = pending.apply_all(g, ops)
+    assert out.vertices["D05"].status == "DECIDED"
+    assert out.vertices["D06"].status == "OPEN"
+    assert out.validate() == []
+
+
+def test_unexpanded_close_still_fails_the_stale_block(g):
+    """The invariant is what makes the propagation load-bearing; keep it sharp."""
+    with pytest.raises(pending.ApplyError, match="stale_block"):
+        pending.apply_all(g, [{"op": "close", "vertex": "D05", "answer": "a",
+                               "source": "s", "falsifier": "f", "to": []}])
+
+
+def test_set_status_to_a_settled_status_also_releases(g):
+    ops = pending.expand(g, {"op": "set_status", "vertex": "D05",
+                             "status": "PROVISIONAL"})
+    assert [o["vertex"] for o in ops if o["op"] == "set_status"][1:] == ["D06"]
+
+
+def test_set_status_to_an_unsettled_status_releases_nothing(g):
+    for status in ("OPEN", "REOPENED", "BLOCKED:D01"):
+        ops = pending.expand(g, {"op": "set_status", "vertex": "D05",
+                                 "status": status})
+        assert ops == [{"op": "set_status", "vertex": "D05", "status": status}]
+
+
+def test_release_only_fires_for_the_vertex_named_in_the_block(g):
+    """D06 is BLOCKED:D05; settling anything else must not touch it."""
+    ops = pending.expand(g, {"op": "close", "vertex": "D02", "answer": "a",
+                             "source": "s", "falsifier": "f", "to": []})
+    assert not [o for o in ops if o["op"] == "set_status"]
+
+
 # ---- apply ---------------------------------------------------------------
 
 

@@ -58,15 +58,41 @@ def test_errors_filters_out_warnings(store, g):
     assert "no_orphans" not in {v.check for v in errors()}
 
 
-@pytest.mark.parametrize("name", CHECKS)
-def test_every_declared_check_is_reachable(name):
-    """CHECKS is what pytest parametrises over; a name nobody emits is dead."""
+def _emitting_source() -> str:
+    """Tool source with the CHECKS declaration itself cut out.
+
+    The declaration is a run of string literals naming every check, so leaving
+    it in makes "is this name emitted anywhere?" true by construction — which
+    is why the first version of the guard below could not fail for any input.
+    """
     import inspect
 
     from dgraph import check as check_mod
     from dgraph import model
-    src = inspect.getsource(model) + inspect.getsource(check_mod)
-    assert f'"{name}"' in src, f"{name} is declared but never emitted"
+    src = inspect.getsource(check_mod)
+    start = src.index("CHECKS: tuple")
+    end = src.index("\n)\n", start) + len("\n)\n")
+    return inspect.getsource(model) + src[:start] + src[end:]
+
+
+def test_the_reachability_guard_can_actually_fail():
+    """Guard the guard: the declaration must really be gone from the haystack.
+
+    Without this, `test_every_declared_check_is_reachable` silently degrades
+    back into a tautology the moment the excision stops matching.
+    """
+    src = _emitting_source()
+    assert "CHECKS: tuple" not in src
+    assert '"stale_view"' in src          # emitted in check.run
+    assert '"totally_dead_check"' not in src
+
+
+@pytest.mark.parametrize("name", CHECKS)
+def test_every_declared_check_is_reachable(name):
+    """CHECKS is what pytest parametrises over; a name nobody emits is dead."""
+    assert f'"{name}"' in _emitting_source(), (
+        f"{name} is declared in CHECKS but never emitted"
+    )
 
 
 def test_no_check_is_emitted_without_being_declared(store, g):
