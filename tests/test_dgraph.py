@@ -128,6 +128,34 @@ def test_write_targets_the_project(g, store):
     assert (store / "decision-graph.md").exists()
 
 
+def test_org_prose_is_converted_in_the_view(g, store):
+    """The store keeps what was typed; the view converts. See dgraph/orgmd.py."""
+    g.active_edge("D01").answer = (
+        "Per [[file:report/x.md][the sweep]].\n\n| opt | ppl |\n|-----+-----|\n| 32k | 8.1 |"
+    )
+    out = render(g)
+    assert "[the sweep](report/x.md)" in out
+    assert "|-----|-----|" in out
+    assert "[[file:" not in out
+
+
+def test_sections_carry_an_anchor_so_dg_links_resolve(g, store):
+    out = render(g)
+    for vid in g.vertices:
+        assert f'<a id="{vid.lower()}"></a>' in out
+    g.active_edge("D02").answer = "Rests on [[dg:D01][D01]]."
+    assert "[D01](#d01)" in render(g)
+
+
+def test_render_stays_stable_with_org_prose(g, store):
+    """`stale_view` compares the file to a fresh render on every check, so the
+    conversion must be deterministic and idempotent."""
+    g.active_edge("D01").answer = "A [[dg:D02][link]] and =code= and a\n| t |\n|---+|\n| 1 |"
+    once = render(g)
+    assert render(Graph.load()) == render(Graph.load())
+    assert render(g) == once
+
+
 # ---- staging -------------------------------------------------------------
 
 

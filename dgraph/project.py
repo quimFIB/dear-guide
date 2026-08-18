@@ -20,6 +20,7 @@ from pathlib import Path
 STORE_NAME = "decisions.json"
 VIEW_NAME = "decision-graph.md"
 PENDING_NAME = ".dgraph-pending.json"
+EDIT_NAME = ".dgraph-edit.org"
 
 _override: Path | None = None
 
@@ -39,6 +40,12 @@ class Project:
     @property
     def pending(self) -> Path:
         return self.root / PENDING_NAME
+
+    @property
+    def edit(self) -> Path:
+        """The editor buffer. A stable name, not a tempfile, so emacs can key
+        `auto-mode-alist` off it the way it does for COMMIT_EDITMSG."""
+        return self.root / EDIT_NAME
 
     @property
     def exists(self) -> bool:

@@ -41,6 +41,8 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 | `decisions.json` | the store — source of truth |
 | `decision-graph.md` | generated view; **never hand-edit** |
 | `.dgraph-pending.json` | staging area; gitignore it |
+| `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG`; gitignore it |
+| `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
 
 ## Install
 
@@ -62,11 +64,14 @@ dg node D06                              # one decision in full
 dg path D01 D09                          # the chain of evidence between two
 dg tree                                  # the DAG
 dg decide D37                            # compose a decision -> staged
+dg decide D37 --edit                     # ...in emacs, with context to hand
 dg reopen D06                            # stage a reopen + its propagation
 dg pending                               # review
 dg apply                                 # validate, then write both files
 dg check                                 # every invariant
 dg serve                                 # web app on 127.0.0.1:8765
+dg edit 0                                # revise a staged op
+dg export                                # the graph as JSON
 ```
 
 Decisions are **staged** first and only reach the store on `apply`, which
@@ -78,6 +83,84 @@ validates a copy and aborts without writing if the result would be invalid.
 edges for dependencies awaiting a decision. Click a vertex to inspect it, or to
 fill in a decision; staged ops collect in a tray and apply together. It shares
 the CLI's apply path, so there is one implementation of it.
+
+Unstaged work is per-decision and survives navigation: type half an answer,
+go read the premise it depends on, come back, and it is still there. The same
+holds while an editor is open — the graph stays browsable, and the result is
+reported against the decision it was about, not whichever one is on screen when
+the editor exits. Drafts are in memory only, so a reload clears them.
+
+### Composing in emacs from the browser
+
+Clicking **Compose in emacs** in the panel opens the same org buffer described
+below — the browser writes it, waits, and stages what emacs sends back. Anything
+already typed into the form carries over, so switching editors mid-thought costs
+nothing. `demo/` is a self-contained walkthrough:
+
+```sh
+./demo/demo.sh          # a throwaway graph on http://127.0.0.1:8765
+```
+
+Two things are worth knowing about this path:
+
+- `$EDITOR` is **ignored** here; `$DG_GUI_EDITOR` (default `emacs`) is used
+  instead. `$EDITOR` names a terminal editor by convention and the server has no
+  terminal to lend it, so honouring it would hang the request. With no display
+  the button is not offered at all.
+- Mutating routes require a token that `dg serve` mints per run and embeds in the
+  page. Any page in your browser can POST to a localhost server — it just cannot
+  read the response — which was tolerable while the API only moved data around
+  and is not once a route can start a process.
+
+## Composing in emacs
+
+A one-line prompt is a poor place to write an answer that is supposed to carry
+its evidence, and it shows you nothing of what you are deciding *on top of*.
+`--edit` works like `git commit`: `dg` writes an org buffer, opens your editor,
+waits, and stages what comes back.
+
+```sh
+dg decide D37 --edit     # also: dg reopen --edit, dg add --edit, dg edit N
+export DG_EDIT=1         # make the editor the default; --no-edit overrides
+```
+
+The buffer has two halves. `* Input` is what you fill in — answer, source,
+falsifier, and checkboxes for what this decision opens. `* Context` is reference
+material: the edge that led here, each premise with its own answer and
+falsifier, the ancestor chain. **Only `* Input` is ever read back**, so nothing
+you do to the context can change what gets staged.
+
+In emacs you also get:
+
+| key | |
+|---|---|
+| `C-c C-c` | stage it and return to the shell |
+| `C-c C-k` | abort — nothing is staged |
+| `C-c C-o` | follow a `dg:` link to that decision (plain `org-open-at-point`) |
+| `C-c C-p` · `C-c C-a` | jump to a premise · list every premise it rests on |
+
+The elisp ships with the package and is loaded by `dg` itself, so there is
+nothing to install. It is strictly read-only — it can look up decisions, never
+change them; staging happens in the CLI after emacs exits.
+
+Any other editor works too: set `$DG_EDITOR` (or `$VISUAL`/`$EDITOR`) and you get
+the same buffer as plain text, with the baked-in context but no navigation.
+
+There is one buffer per project, so only one compose session can be open at a
+time — the same property `COMMIT_EDITMSG` has. The web app refuses a second one
+rather than overwriting a buffer you are typing in.
+
+### Prose in answers
+
+Answers are stored exactly as you type them, and emacs users get the whole of
+org — tables, `dg:` and `file:` links, verbatim markers, source blocks. The
+generated views convert what they can: org links become markdown links, org
+table rules become markdown rules, `=verbatim=` becomes backticks.
+
+One thing does not convert. `*single asterisks*` mean bold in org and italic in
+markdown — the same syntax with two meanings — so no renderer can tell them
+apart, and the views show italic either way. Write `**bold**` if you care how it
+looks outside emacs.
 
 ## Checking it in CI
 

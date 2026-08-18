@@ -1,0 +1,84 @@
+{
+  "_comment": [
+    "Shared corpus for the two renderers that read stored prose.",
+    "`org` is what the store holds; `markdown` is what dgraph.orgmd.to_markdown",
+    "must emit for decision-graph.md; `html` is what app.html's md() must emit",
+    "for the web panel. One list, two consumers, nothing hand-synced.",
+    "tests/test_orgmd.py drives the Python half; the same file drives the JS",
+    "half through node, so a rule added here has to be honoured in both."
+  ],
+  "cases": [
+    {
+      "name": "dg link becomes an anchor",
+      "org": "Rests on [[dg:D04][D04 — Downstream]].",
+      "markdown": "Rests on [D04 — Downstream](#d04).",
+      "html": "<p>Rests on <a href=\"#\" data-dg=\"D04\">D04 — Downstream</a>.</p>"
+    },
+    {
+      "name": "file link keeps its path",
+      "org": "See [[file:report/x.md][the sweep]].",
+      "markdown": "See [the sweep](report/x.md).",
+      "html": "<p>See <a href=\"report/x.md\" target=\"_blank\" rel=\"noopener\">the sweep</a>.</p>"
+    },
+    {
+      "name": "http link",
+      "org": "Docs at [[https://x.dev][docs]].",
+      "markdown": "Docs at [docs](https://x.dev).",
+      "html": "<p>Docs at <a href=\"https://x.dev\" target=\"_blank\" rel=\"noopener\">docs</a>.</p>"
+    },
+    {
+      "name": "bare dg link falls back to the id",
+      "org": "Bare [[dg:D07]].",
+      "markdown": "Bare [D07](#d07).",
+      "html": "<p>Bare <a href=\"#\" data-dg=\"D07\">D07</a>.</p>"
+    },
+    {
+      "name": "verbatim keeps an inner equals",
+      "org": "Set =vocab_size=32000= now.",
+      "markdown": "Set `vocab_size=32000` now.",
+      "html": "<p>Set <code>vocab_size=32000</code> now.</p>"
+    },
+    {
+      "name": "tilde code",
+      "org": "Use ~tokenizer.json~ here.",
+      "markdown": "Use `tokenizer.json` here.",
+      "html": "<p>Use <code>tokenizer.json</code> here.</p>"
+    },
+    {
+      "name": "markdown in the store is untouched by conversion",
+      "org": "Keep **bold** and `code` and lr=0.001 and report/x.md.",
+      "markdown": "Keep **bold** and `code` and lr=0.001 and report/x.md.",
+      "html": "<p>Keep <b>bold</b> and <code>code</code> and lr=0.001 and report/x.md.</p>"
+    },
+    {
+      "name": "org table rule becomes a markdown rule",
+      "org": "| a | b |\n|---+---|\n| 1 | 2 |",
+      "markdown": "| a | b |\n|---|---|\n| 1 | 2 |",
+      "html": "<table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></table>"
+    },
+    {
+      "name": "hard wraps unwrap, blank lines stay paragraphs",
+      "org": "Line one\nline two.\n\nSecond para.",
+      "markdown": "Line one\nline two.\n\nSecond para.",
+      "html": "<p>Line one line two.</p><p>Second para.</p>"
+    },
+    {
+      "name": "angle brackets are escaped before any markup",
+      "org": "Compare <a> & <b>.",
+      "markdown": "Compare <a> & <b>.",
+      "html": "<p>Compare &lt;a&gt; &amp; &lt;b&gt;.</p>"
+    }
+  ],
+  "markdown_is_a_no_op": [
+    "**bold** and *italic* and `code`",
+    "A [markdown link](https://x.dev) and a [ref link][1]",
+    "Paths like report/x.md, and/or, a/b/c",
+    "Assignments lr=0.001, vocab=32000, x=y=z",
+    "GFM ~~strikethrough~~ and ==highlight==",
+    "| a | b |\n|---|---|\n| 1 | 2 |",
+    "| a | b |\n|:---|---:|\n| 1 | 2 |",
+    "- a list\n- of items\n\n1. and numbers",
+    "> a blockquote\n\n    an indented block",
+    "Trailing tildes a ~ b and equals a = b"
+  ]
+}

@@ -1,7 +1,13 @@
 __pycache__/
 *.pyc
+*.elc
 .dgraph-pending.json
+.dgraph-edit.org
 *.egg-info/
 build/
 dist/
 .venv/
+
+# the demo renders into a work directory, but `dg render` inside demo/ would
+# drop these here
+demo/decision-graph.md

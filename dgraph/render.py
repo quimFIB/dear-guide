@@ -2,13 +2,19 @@
 
 The markdown is a generated view. Never hand-edit it: run `dg render` (or any
 command that applies decisions) and the file is rebuilt from the store.
+
+Stored prose may be org (composed with `dg decide --edit`) or markdown, so every
+prose field goes through `orgmd.to_markdown` on the way out. Each section also
+carries an explicit anchor, which is what makes an org `[[dg:D04]]` link resolve
+here: GitHub's own heading slugs depend on the decision's title, and titles
+change.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from dgraph import project
+from dgraph import orgmd, project
 from dgraph.model import Edge, Graph
 
 NONE = "—"
@@ -65,25 +71,29 @@ def _section(g: Graph, vid: str) -> str:
     deps = ", ".join(g.depends(vid)) or NONE
     status = f"{v.status} · {e.date}" if e is not None and e.decided and e.date else v.status
 
-    out = [f"### {v.id} — {v.title}"]
+    out = [f"{orgmd.anchor(v.id)}", f"### {v.id} — {v.title}"]
     out.append(f"- **Status:** {status}")
     out.append(f"- **Depends on:** {deps}")
-    out.append(f"- **Falsifier:** {(e.falsifier if e else None) or NONE}")
+    out.append(
+        f"- **Falsifier:** {orgmd.to_markdown(e.falsifier if e else None) or NONE}"
+    )
     out.append("")
 
     if e is not None and e.decided:
         targets = "TERMINAL" if not e.to else ", ".join(e.to)
         out.append(f"**Resolves to → {targets}**")
-        out.append(e.answer.strip())
-        out.append(f"*Source:* {e.source}")
+        out.append(orgmd.to_markdown(e.answer).strip())
+        out.append(f"*Source:* {orgmd.to_markdown(e.source)}")
     elif v.note:
-        out.append(v.note.strip())
+        out.append(orgmd.to_markdown(v.note).strip())
 
     hist = g.history(vid)
     if hist:
         out.append("")
         out.append("*Superseded here:* " + " · ".join(
-            f"\u201c{h.summary}\u201d \u2192 {h.replaced_by or '*(undecided)*'}" for h in hist
+            f"\u201c{orgmd.to_markdown(h.summary)}\u201d \u2192 "
+            f"{orgmd.to_markdown(h.replaced_by) or '*(undecided)*'}"
+            for h in hist
         ))
     return "\n".join(out) + "\n"
 
@@ -96,8 +106,9 @@ def _superseded(g: Graph) -> str:
     inactive: list[Edge] = [e for e in g.edges if not e.active]
     for e in sorted(inactive, key=lambda e: (e.src, e.date or "")):
         rows.append(
-            f"| {e.src} | {e.summary} | {e.replaced_by or '*(undecided)*'} "
-            f"| {e.why} |"
+            f"| {e.src} | {orgmd.to_markdown(e.summary)} "
+            f"| {orgmd.to_markdown(e.replaced_by) or '*(undecided)*'} "
+            f"| {orgmd.to_markdown(e.why)} |"
         )
     return "## Superseded edges\n\n" + SUPERSEDED_INTRO + "\n\n" + "\n".join(rows) + "\n"
 

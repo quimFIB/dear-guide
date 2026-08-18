@@ -1,0 +1,35 @@
+{
+  "areas": ["Data", "Model", "Training"],
+  "vertices": [
+    {"id": "D01", "title": "Which corpus do we train on?", "area": "Data",
+     "status": "DECIDED"},
+    {"id": "D02", "title": "Tokenizer and vocabulary size", "area": "Data",
+     "status": "DECIDED"},
+    {"id": "D03", "title": "Deduplication threshold", "area": "Data",
+     "status": "DECIDED"},
+    {"id": "D04", "title": "Parameter count for the first real run", "area": "Model",
+     "status": "OPEN",
+     "note": "The sweep is in report/size-sweep.md but nobody has written down\nwhat it means. This is the decision the demo makes."},
+    {"id": "D05", "title": "Learning-rate schedule", "area": "Training",
+     "status": "BLOCKED:D04"},
+    {"id": "D06", "title": "Eval harness", "area": "Training",
+     "status": "DECIDED"}
+  ],
+  "edges": [
+    {"from": "D01", "to": ["D02", "D03"], "active": true,
+     "answer": "The 1.2 TB web crawl, filtered to English. Two smaller curated\nsets were measured and lost on every downstream task we care about.",
+     "falsifier": "a curated set beats it on held-out perplexity at equal token count",
+     "source": "report/corpus-bakeoff.md", "date": "2026-02-03"},
+    {"from": "D02", "to": ["D04"], "active": true,
+     "answer": "*32k BPE*, trained on a 2% sample of the corpus.\n\nThe sweep, from [[file:report/tokenizer-sweep.md][the sweep]]:\n\n| vocab | fertility | eval loss |\n|-------+-----------+-----------|\n|   16k |      1.42 |     2.911 |\n|   32k |      1.19 |     2.874 |\n|   64k |      1.11 |     2.879 |\n\n64k buys almost nothing for double the embedding table, so =32k= it is.\nThis constrains [[dg:D04][D04]]: the embedding table is 32k x d_model.",
+     "falsifier": "fertility on non-English text turns out to matter downstream",
+     "source": "report/tokenizer-sweep.md", "date": "2026-02-14"},
+    {"from": "D03", "to": [], "active": true,
+     "answer": "MinHash at Jaccard 0.8, document level. Anything stricter started\ndeleting legitimate near-duplicates like license headers.",
+     "source": "scripts/dedup.py", "date": "2026-02-16"},
+    {"from": "D04", "to": ["D05"], "active": true},
+    {"from": "D06", "to": [], "active": true,
+     "answer": "lm-eval-harness, pinned to a commit, run on every checkpoint.",
+     "source": "discussion", "date": "2026-02-20"}
+  ]
+}

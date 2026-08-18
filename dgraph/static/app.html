@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Replaced per run by dgraph/server.py. A cross-origin page cannot read it,
+     which is what keeps another tab from driving this API. -->
+<meta name="dg-token" content="__DG_TOKEN__">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Decision graph</title>
 <style>
@@ -24,6 +27,16 @@
   button.primary{background:var(--accent);color:#04121f;border:0;border-radius:6px;
     padding:5px 12px;font-weight:650;cursor:pointer}
   button.primary:disabled{opacity:.4;cursor:default}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent);
+    border-radius:6px;padding:5px 12px;font-weight:600;cursor:pointer}
+  button.ghost:disabled{opacity:.45;cursor:default}
+  .note{font-size:12px;margin-top:8px;white-space:pre-wrap}
+  .note.wait{color:var(--prov)}
+  .note.ok{color:var(--ok)}
+  .note.bad{color:var(--bad)}
+  .keys{color:var(--dim);font-size:11px;margin-top:6px}
+  kbd{background:#0d1117;border:1px solid var(--line);border-radius:3px;
+    padding:0 4px;font-size:10.5px;font-family:ui-monospace,monospace}
   main{flex:1;display:flex;min-height:0}
   #canvas{flex:1;overflow:hidden;position:relative}
   svg{width:100%;height:100%;display:block;cursor:grab}
@@ -91,13 +104,36 @@ const AREA_COLOR = {};
 const PALETTE = ["#1f6feb","#8957e5","#238636","#9e6a03","#1f7a8c","#bd561d"];
 const STATUS_COLOR = {DECIDED:"var(--ok)",OPEN:"var(--bad)",BLOCKED:"var(--warn)",
                       PROVISIONAL:"var(--prov)",REOPENED:"var(--reop)"};
-let G=null, PEND=[], sel=null;
+let G=null, PEND=[], sel=null, ED=null;
+/* Transient, per-decision, never persisted: the panel is rebuilt from scratch on
+   every navigation, so anything the user has not committed yet has to live out
+   here or it dies with the old DOM.
+
+     DRAFTS   what is typed into a form but not staged
+     NOTES    the last thing said about a decision, so a result that arrives
+              after the user has navigated away is filed under the decision it
+              is about rather than whichever one happens to be on screen
+     EDITING  the decision an editor is currently open for, if any
+
+   Deliberately in memory only. A draft that outlived a reload would be a draft
+   the user has forgotten writing, and there is one buffer per project, so a
+   restored EDITING could not refer to a live editor anyway. */
+const DRAFTS={}, NOTES={};
+let EDITING=null;
+const TOKEN = document.querySelector('meta[name=dg-token]').content;
 const filter = {status:new Set(), frontier:false};
 
 const base = s => s.split(":")[0];
 const $ = s => document.querySelector(s);
 
 async function api(path, opts){
+  opts = opts || {};
+  if(opts.method && opts.method !== "GET"){
+    /* The server demands this on every mutating route. Sending it as a custom
+       header is half the point: it forces a preflight that a cross-origin page
+       cannot get past. */
+    opts.headers = Object.assign({"X-DG-Token":TOKEN}, opts.headers||{});
+  }
   const r = await fetch(path, opts);
   const j = await r.json().catch(()=>({error:"bad response"}));
   if(!r.ok) throw new Error(j.error || r.statusText);
@@ -108,6 +144,7 @@ async function boot(){
   G = await api("/api/graph");
   G.areas.forEach((a,i)=>AREA_COLOR[a]=PALETTE[i%PALETTE.length]);
   PEND = await api("/api/pending");
+  ED = ED || await api("/api/editor").catch(()=>({available:false}));
   chips(); legend(); layout(); draw(); tray();
 }
 
@@ -216,19 +253,60 @@ function draw(){
   $("#svg").setAttribute("viewBox",view.join(" "));
   vp.querySelectorAll(".node").forEach(n=>n.onclick=()=>select(n.dataset.id));
 }
+/* --- prose rendering: shared with dgraph/orgmd.py --- */
+/* Stored prose comes in whichever dialect it was composed in: org (from
+   `dg decide --edit`) or markdown (from the textarea below, md_import.py, or a
+   future agent plugin). Render both.
+
+   Single-marker emphasis is ambiguous between the two - org `*x*` means bold,
+   markdown `*x*` means italic - so it renders as italic either way. Same
+   documented limitation as dgraph/orgmd.py; see that module for why no
+   heuristic can fix it. tests/fixtures/org_cases.json pins these rules against
+   the Python converter, so the two cannot drift. */
 const esc=s=>(s||"").replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
-/* Answers are markdown. Render the inline subset and unwrap the hard line
-   breaks the source carries, keeping blank lines as paragraph breaks. */
-function md(s){
-  return esc(s||"")
-    .split(/\n\s*\n/)
-    .map(par => par.replace(/\n/g," ").trim()
-      .replace(/`([^`]+)`/g,'<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
-      .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<i>$2</i>'))
-    .filter(Boolean)
-    .map(p=>`<p>${p}</p>`).join("");
+const isRule=l=>/^\s*\|[-+|\s]*\|\s*$/.test(l);
+function mdInline(s){
+  return s
+    /* org links: [[target]] or [[target][label]]. dg: targets select the node
+       in place; everything else opens out. Markdown has no [[ ]], so a markdown
+       link or reference link is never touched here. */
+    .replace(/\[\[([^\[\]]+?)\](?:\[([^\[\]]*?)\])?\]/g, (m,t,l)=>{
+      t=t.trim(); l=(l||"").trim();
+      if(t.startsWith("dg:")){ const v=t.slice(3).trim();
+        return `<a href="#" data-dg="${v}">${l||v}</a>`; }
+      if(t.startsWith("file:")) t=t.slice(5).trim();
+      return `<a href="${t}" target="_blank" rel="noopener">${l||t}</a>`;
+    })
+    /* org =verbatim= / ~code~, honouring org's own emphasis boundaries so
+       lr=0.001 survives. A doubled marker is markdown (~~strike~~), not org. */
+    .replace(/(^|[-\u2014\s('"{])([=~])([^\s](?:[^\n]*?[^\s])?)\2(?=[-\u2014\s.,:!?;'")}\[]|$)/g,
+      (m,pre,mk,body)=> (body.startsWith(mk)||body.endsWith(mk))
+        ? m : `${pre}<code>${body}</code>`)
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<i>$2</i>');
 }
+function mdTable(lines){
+  let head=lines.some(isRule), rows=[];
+  for(const ln of lines){
+    if(isRule(ln)){ head=false; continue; }
+    const tag=head?"th":"td";
+    const cells=ln.trim().replace(/^\||\|$/g,"").split("|")
+      .map(c=>`<${tag}>${mdInline(c.trim())}</${tag}>`);
+    rows.push("<tr>"+cells.join("")+"</tr>");
+  }
+  return "<table>"+rows.join("")+"</table>";
+}
+function md(s){
+  return esc(s||"").split(/\n\s*\n/).map(par=>{
+    const lines=par.split("\n").filter(l=>l.trim());
+    if(!lines.length) return "";
+    /* a block of pipe rows is a table in both dialects */
+    if(lines.every(l=>l.trim().startsWith("|"))) return mdTable(lines);
+    return "<p>"+mdInline(par.replace(/\n/g," ").trim())+"</p>";
+  }).filter(Boolean).join("");
+}
+/* --- end prose rendering --- */
 
 /* ---- pan & zoom ---- */
 let view=[0,0,1600,1000];
@@ -252,7 +330,53 @@ function fit(){ view=[-30,-30,G.extent.w+60,G.extent.h+60]; }
 })();
 
 /* ---- side panel ---- */
-function select(id){ sel=id; draw(); panel(); }
+function select(id){ captureDraft(); sel=id; draw(); panel(); }
+
+/* Keyed by element id, so this works for both the decide and the reopen form
+   without either having to declare its fields. */
+function captureDraft(){
+  if(!sel || !$("#side")) return;
+  const d={};
+  let any=false;
+  $("#side").querySelectorAll("input[id],textarea[id],select[id]").forEach(el=>{
+    const val = el.multiple ? [...el.selectedOptions].map(o=>o.value) : el.value;
+    d[el.id]=val;
+    if(el.multiple ? val.length : val.trim()) any=true;
+  });
+  /* An empty form is not a draft. Storing it would make the "opens" list
+     remember a deselection the user never made. */
+  if(any) DRAFTS[sel]=d; else delete DRAFTS[sel];
+}
+
+function restoreDraft(){
+  const d=DRAFTS[sel]; if(!d) return;
+  Object.entries(d).forEach(([id,val])=>{
+    const el=document.getElementById(id); if(!el) return;
+    if(el.multiple) [...el.options].forEach(o=>o.selected=val.includes(o.value));
+    else el.value=val;
+  });
+}
+
+/* The editor button exists only when the server says a windowed editor can
+   actually be launched. A button whose failure mode is a hung request is worse
+   than no button at all. */
+const editBtn = () => {
+  if(!(ED && ED.available)) return "";
+  const name = ED.emacs ? "emacs" : "editor";
+  /* While an editor holds the project's one buffer, the button says so rather
+     than letting the click come back as a bare 409. */
+  if(EDITING) return EDITING.vertex===sel
+    ? `<button class="ghost" id="doEdit" disabled>waiting for ${name}…</button>`
+    : `<button class="ghost" id="doEdit" disabled
+         title="an editor is open for ${EDITING.vertex}">Compose in ${name}</button>`;
+  return `<button class="ghost" id="doEdit">Compose in ${name}</button>`;
+};
+const editKeys = () => !(ED && ED.available) ? ""
+  : ED.emacs
+    ? `<div class="keys">emacs opens with this decision's context ·
+       <kbd>C-c C-c</kbd> stage · <kbd>C-c C-k</kbd> cancel ·
+       <kbd>C-c C-o</kbd> follow a <code>dg:</code> link</div>`
+    : `<div class="keys">${esc(ED.editor)} opens on the buffer; save and exit to stage.</div>`;
 function panel(){
   const v=G.vertices.find(x=>x.id===sel), d=G.derived[sel];
   const e=G.edges.find(x=>x.from===sel&&x.active);
@@ -282,8 +406,11 @@ function panel(){
       <textarea id="why" placeholder="what new evidence challenges it"></textarea>
       <label>Short label for the superseded answer</label>
       <input id="sumry" placeholder="e.g. 40–80M parameters">
-      <p style="margin:10px 0"><button class="primary" id="doReopen">Stage reopen</button></p>
-      <div class="err" id="err"></div>`;
+      <p style="margin:10px 0;display:flex;gap:8px;align-items:center">
+        <button class="primary" id="doReopen">Stage reopen</button>
+        ${editBtn()}</p>
+      ${editKeys()}
+      <div class="note" id="note"></div>`;
   } else {
     const opts=G.vertices.filter(x=>x.id!==sel)
       .map(x=>`<option value="${x.id}">${x.id} — ${esc(x.title)}</option>`).join("");
@@ -295,41 +422,130 @@ function panel(){
       <input id="fals" placeholder="… or ANALYTIC — why no measurement can overturn it">
       <label>Opens which decisions? (ctrl-click; none = terminal)</label>
       <select id="opens" multiple>${opts}</select>
-      <p style="margin:10px 0"><button class="primary" id="doClose">Stage decision</button></p>
-      <div class="err" id="err"></div>`;
+      <p style="margin:10px 0;display:flex;gap:8px;align-items:center">
+        <button class="primary" id="doClose">Stage decision</button>
+        ${editBtn()}</p>
+      ${editKeys()}
+      <div class="note" id="note"></div>`;
   }
   $("#side").innerHTML=h;
+  /* dg: links inside stored prose select that decision, the same jump C-c C-o
+     makes in emacs. */
+  $("#side").querySelectorAll("a[data-dg]").forEach(a=>a.onclick=ev=>{
+    ev.preventDefault();
+    if(G.vertices.some(v=>v.id===a.dataset.dg)) select(a.dataset.dg);
+  });
   const already=new Set(d.children);
   $("#opens")&&[...$("#opens").options].forEach(o=>o.selected=already.has(o.value));
+  restoreDraft();                       /* after the defaults, so it wins */
+  const n=NOTES[sel];
+  if(n) say(n.msg, n.cls);
   $("#doClose")&&($("#doClose").onclick=stageClose);
   $("#doReopen")&&($("#doReopen").onclick=stageReopen);
+  $("#doEdit")&&($("#doEdit").onclick=()=>composeIn($("#doReopen")?"reopen":"close"));
+  if(EDITING && EDITING.vertex===sel){
+    /* One compose path at a time for a given decision: the editor already holds
+       a copy of this form. */
+    const b=$("#doClose")||$("#doReopen"); if(b) b.disabled=true;
+  }
+  /* Every keystroke updates the draft, so it survives a panel rebuild from any
+     path, not just an explicit navigation. */
+  $("#side").addEventListener("input", captureDraft);
+  $("#side").addEventListener("change", captureDraft);
+}
+
+/* Every message the panel shows goes through here, so the editor's progress and
+   a validation error cannot end up in two different places.
+
+   `vid` is the decision the message is *about*, which is not always the one on
+   screen: an editor session can outlive the user's attention, and a result that
+   landed on whichever panel happened to be open was the bug that made a
+   successful stage look like nothing at all. Remembered per decision, and
+   painted only when that decision is showing. */
+function say(msg, cls, vid){
+  vid = vid || sel;
+  if(msg) NOTES[vid]={msg, cls}; else delete NOTES[vid];
+  if(vid!==sel) return;
+  const n=$("#note"); if(!n) return;
+  n.className = "note" + (cls ? " "+cls : ""); n.textContent = msg;
 }
 
 async function post(op){
+  const vid=op.vertex;      /* pinned: the user may navigate before this returns */
   try{
     await api("/api/pending",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify(op)});
     PEND=await api("/api/pending"); tray();
-  }catch(err){ $("#err").textContent=err.message; }
+    delete DRAFTS[vid];     /* it is staged; it is no longer unconfirmed work */
+    say(`Staged ${op.op} for ${vid}.`, "ok", vid);
+    if(vid===sel) panel();
+  }catch(err){ say(err.message, "bad", vid); }
 }
 function stageClose(){
   const a=$("#answer").value.trim(), s=$("#source").value.trim(),
         f=$("#fals").value.trim(),
         to=[...$("#opens").selectedOptions].map(o=>o.value);
-  if(!a||!s){ $("#err").textContent="Answer and source are required."; return; }
-  if(to.length&&!f){ $("#err").textContent="A non-terminal decision needs a falsifier."; return; }
+  if(!a||!s){ say("Answer and source are required.", "bad"); return; }
+  if(to.length&&!f){ say("A non-terminal decision needs a falsifier.", "bad"); return; }
   post({op:"close",vertex:sel,answer:a,source:s,falsifier:f||null,to,
         date:new Date().toISOString().slice(0,10)});
 }
 function stageReopen(){
   const w=$("#why").value.trim();
-  if(!w){ $("#err").textContent="Say what challenges it."; return; }
+  if(!w){ say("Say what challenges it.", "bad"); return; }
   post({op:"reopen",vertex:sel,why:w,summary:$("#sumry").value.trim()||null});
+}
+
+/* ---- composing in an editor ----------------------------------------------
+   The request blocks for the whole editing session, exactly as `dg decide
+   --edit` does in a terminal. Whatever is already typed into the form is sent
+   as a seed, so switching to emacs mid-thought never costs work. */
+async function composeIn(kind){
+  /* Pin the decision for the whole session. It can last minutes, and the user is
+     free to go read the rest of the graph while it does — that is the point of
+     having the graph on screen. Everything below refers to `vid`, never to
+     whatever `sel` has become by the time the editor exits. */
+  const vid = sel;
+  const seed = kind==="close"
+    ? {answer:$("#answer").value, source:$("#source").value,
+       falsifier:$("#fals").value,
+       to:[...$("#opens").selectedOptions].map(o=>o.value)}
+    : {why:$("#why").value, summary:$("#sumry").value};
+  captureDraft();                 /* keep it: the editor may come back empty */
+  EDITING={vertex:vid, kind};
+  panel(); tray();                /* repaint: "waiting", and Apply held back */
+  say(ED.emacs
+      ? "emacs is open. Compose there, then C-c C-c to stage or C-c C-k to cancel."
+      : "The editor is open. Save and exit to stage, or leave it empty to cancel.",
+      "wait", vid);
+  try{
+    const r=await api("/api/compose",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({op:kind, vertex:vid, seed})});
+    PEND = r.pending || PEND; tray();
+    if(r.aborted) say("Cancelled in the editor — nothing staged. "
+                      + "What you typed here is still here.", "", vid);
+    else{
+      delete DRAFTS[vid];         /* staged; the form should come back empty */
+      say(`Staged ${r.staged.length} op(s) from the editor.`, "ok", vid);
+    }
+  }catch(err){ say(err.message, "bad", vid); }
+  finally{
+    EDITING=null;
+    tray();
+    /* Repaint whatever is on screen now: this decision to show the result, or
+       another one to re-enable its editor button. */
+    if(sel) panel();
+  }
 }
 
 /* ---- pending tray ---- */
 function tray(){
-  $("#applyBtn").disabled = PEND.length===0;
+  /* Applying while an editor is open would move the graph out from under a
+     compose that was validated against the old one. Cheaper to refuse than to
+     explain the error afterwards. */
+  $("#applyBtn").disabled = PEND.length===0 || EDITING!==null;
+  $("#applyBtn").title = EDITING ? `an editor is open for ${EDITING.vertex}` : "";
   $("#applyBtn").textContent = PEND.length ? `Apply ${PEND.length}` : "Apply";
   if(!PEND.length){ $("#tray").innerHTML=`<span class="muted">Nothing staged.</span>`; return; }
   $("#tray").innerHTML=`<table><tr><th>#</th><th>op</th><th>vertex</th><th>detail</th><th></th></tr>`+
@@ -342,13 +558,20 @@ function tray(){
         <td>${det}</td><td><button class="x" data-i="${i}">✕</button></td></tr>`;
     }).join("")+`</table>`;
   $("#tray").querySelectorAll(".x").forEach(b=>b.onclick=async()=>{
-    await fetch("/api/pending/"+b.dataset.i,{method:"DELETE"});
+    const gone=PEND[b.dataset.i];
+    await api("/api/pending/"+b.dataset.i,{method:"DELETE"});
     PEND=await api("/api/pending"); tray();
+    /* "Staged 2 op(s)" is no longer true of a decision whose op was just
+       dropped. */
+    if(gone && gone.vertex) say("", "", gone.vertex);
+    if(gone && gone.vertex===sel) panel();
   });
 }
 $("#applyBtn").onclick=async()=>{
   try{
     await api("/api/apply",{method:"POST"});
+    /* Every note describes a staging area that no longer exists. */
+    Object.keys(NOTES).forEach(k=>delete NOTES[k]);
     sel=null; await boot(); fit(); draw();
     $("#side").innerHTML=`<p class="muted">Applied. decisions.json and decision-graph.md updated.</p>`;
   }catch(err){ $("#tray").innerHTML=`<div class="err">${esc(err.message)}</div>`+$("#tray").innerHTML; }

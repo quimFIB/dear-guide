@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import pathlib
 import sys
 from datetime import date as _date
@@ -14,7 +16,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from dgraph import check as _check
-from dgraph import pending, project, render
+from dgraph import editor, pending, project, render
 from dgraph.model import Graph
 
 app = typer.Typer(
@@ -215,12 +217,43 @@ def check() -> None:
 # ---- editing -------------------------------------------------------------
 
 
+def _wants_editor(edit: bool | None) -> bool:
+    """`--edit` wins; otherwise `$DG_EDIT` decides.
+
+    `--no-edit` sets `edit` to False and must beat the environment, which is why
+    this takes a tri-state rather than a bool.
+    """
+    if edit is not None:
+        return edit
+    return os.environ.get("DG_EDIT", "").strip() not in ("", "0", "false", "no")
+
+
+def _compose(g: Graph, kind: str, **kw) -> list[dict]:
+    """Run the editor, turning its refusals into clean CLI exits."""
+    proj = project.find()
+    con.print(f"[dim]buffer: {proj.edit}[/]")
+    if not editor.is_emacs(editor.resolve_editor()):
+        premise = None
+        if kw.get("vertex"):
+            premise = next(iter(g.depends(kw["vertex"])), None)
+        hint = f"run `dg node {premise}` for context on a premise" if premise \
+            else "run `dg node <id>` for context"
+        con.print(f"[dim]note: in-buffer navigation needs emacs — {hint}[/]")
+    try:
+        return editor.compose(g, kind, **kw)
+    except editor.EditorAbort as exc:
+        con.print(f"[yellow]aborted[/] {_x(exc)}")
+        raise typer.Exit(1) from None
+    except editor.EditorError as exc:
+        con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
+
+
 def _stage_close(g: Graph, op: dict) -> None:
     """Stage a close plus everything it implies, and say what was released.
 
-    The release is derived, not typed, so the one place that reports it is here:
-    a caller that stages a close without going through this would leave the
-    blocked vertices looking untouched.
+    Shared by the prompt path and `--edit` so the propagation reporting cannot
+    differ between them.
     """
     unknown = [x for x in op.get("to", []) if x not in g.vertices]
     if unknown:
@@ -246,6 +279,9 @@ def decide(
     falsifier: str = typer.Option(None, "--falsifier", "-f"),
     opens: str = typer.Option(None, "--opens", "-o", help="comma-separated ids"),
     summary: str = typer.Option(None, "--summary"),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="Compose in $EDITOR (default: emacs). "
+                                   "Set $DG_EDIT=1 to make this the default."),
 ) -> None:
     """Stage a decision. Prompts for anything not given as a flag."""
     g = _g()
@@ -256,6 +292,16 @@ def decide(
     if v.base_status == "DECIDED":
         con.print(f"[red]{vid} is already DECIDED — `dg reopen` it first[/]")
         raise typer.Exit(1)
+
+    if _wants_editor(edit):
+        seed = {k: val for k, val in (
+            ("answer", answer), ("source", source), ("falsifier", falsifier),
+            ("summary", summary),
+            ("to", [x.strip() for x in opens.split(",") if x.strip()] if opens else None),
+        ) if val}
+        ops = _compose(g, "close", vertex=vid, seed=seed)
+        _stage_close(g, ops[0])
+        return
 
     con.print(Panel(f"[bold]{_x(v.title)}[/]\n\n"
                     f"depends on {', '.join(g.depends(vid)) or '—'}",
@@ -289,6 +335,8 @@ def reopen(
     vid: str,
     why: str = typer.Option(None, "--why", "-w", help="what challenges it"),
     summary: str = typer.Option(None, "--summary"),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
     """Stage a reopen, showing what it drags into PROVISIONAL."""
     g = _g()
@@ -300,10 +348,14 @@ def reopen(
         con.print(f"[red]{vid} has no decision to reopen[/]")
         raise typer.Exit(1)
 
-    why = why or typer.prompt("Why is this being reopened?")
-    op = {"op": "reopen", "vertex": vid, "why": why}
-    if summary:
-        op["summary"] = summary
+    if _wants_editor(edit):
+        seed = {k: v for k, v in (("why", why), ("summary", summary)) if v}
+        op = _compose(g, "reopen", vertex=vid, seed=seed)[0]
+    else:
+        why = why or typer.prompt("Why is this being reopened?")
+        op = {"op": "reopen", "vertex": vid, "why": why}
+        if summary:
+            op["summary"] = summary
     ops = pending.expand(g, op)
 
     affected = [o["vertex"] for o in ops if o["op"] == "set_status"]
@@ -323,15 +375,36 @@ def reopen(
 
 @app.command()
 def add(
-    vid: str = typer.Option(..., "--id"),
-    title: str = typer.Option(..., "--title", "-t"),
-    area: str = typer.Option(..., "--area"),
+    vid: str = typer.Option(None, "--id"),
+    title: str = typer.Option(None, "--title", "-t"),
+    area: str = typer.Option(None, "--area"),
     after: str = typer.Option(None, "--after", help="parent that opens this"),
     status: str = typer.Option("OPEN", "--status"),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
     """Stage a new decision vertex."""
     g = _g()
 
+    if _wants_editor(edit):
+        seed = {k: v for k, v in (
+            ("id", vid), ("title", title), ("area", area), ("status", status),
+            ("after", [x.strip() for x in after.split(",") if x.strip()] if after else None),
+        ) if v}
+        ops = _compose(g, "add_vertex", seed=seed)
+        for o in ops:
+            pending.stage(o)
+        con.print(f"[green]staged[/] {len(ops)} op(s) — add {ops[0]['id']}")
+        return
+
+    # Required only without --edit; typer cannot express that, so it is checked
+    # here. Exit 2 keeps the shape of typer's own missing-option failure.
+    missing = [flag for flag, val in (("--id", vid), ("--title", title),
+                                      ("--area", area)) if not val]
+    if missing:
+        con.print(f"[red]missing option(s): {', '.join(missing)}[/]\n"
+                  f"[dim]give them as flags, or use `dg add --edit`[/]")
+        raise typer.Exit(2)
     if area not in g.areas:
         con.print(f"[red]unknown area. one of: "
                   f"{', '.join(_x(a) for a in g.areas)}[/]")
@@ -365,6 +438,59 @@ def pending_cmd() -> None:
         t.add_row(str(i), o["op"], o.get("vertex") or o.get("from") or o.get("id"), detail)
     con.print(t)
     con.print("[dim]`dg apply` to write, `dg drop N` to unstage[/]")
+
+
+@app.command(name="edit")
+def edit_cmd(i: int) -> None:
+    """Revise a staged op in the editor, in place.
+
+    Replaces rather than re-stages: re-staging would move the op to the end of
+    the batch, and any derived `set_status` would then apply before the change it
+    was derived from.
+    """
+    ops = pending.load()
+    if not 0 <= i < len(ops):
+        con.print(f"[red]no staged op {i}[/]")
+        raise typer.Exit(1)
+    g = _g()
+    op = ops[i]
+    kind = op.get("op")
+    if kind not in editor.RENDERERS:
+        con.print(f"[red]op {i} is {kind} — derived, not composed[/]\n"
+                  f"[dim]`dg drop {i}` to remove it[/]")
+        raise typer.Exit(1)
+    # Deliberately not re-expanded: the derived ops are already staged, and
+    # propagation depends only on which vertex is settled — never on the answer
+    # text or the target list — so revising either cannot invalidate them.
+    new = _compose(g, kind, vertex=op.get("vertex"), index=i, op=op)
+    pending.replace(i, new[0])
+    con.print(f"[green]updated[/] op {i} — review with `dg pending`")
+
+
+@app.command()
+def export(
+    vid: str = typer.Argument(None, help="Scope to one decision"),
+) -> None:
+    """Dump the graph as JSON. Read-only; what `dgraph.el` reads for navigation."""
+    from dgraph.server import graph_payload
+    g = _g()
+    payload = graph_payload(g)
+    if vid:
+        if vid not in g.vertices:
+            con.print(f"[red]unknown vertex {vid}[/]")
+            raise typer.Exit(1)
+        payload = {
+            "areas": payload["areas"],
+            "vertices": [v for v in payload["vertices"] if v["id"] == vid],
+            "edges": [e for e in payload["edges"]
+                      if e["from"] == vid or vid in e.get("to", [])],
+            "derived": {vid: payload["derived"][vid]},
+            "frontier": payload["frontier"],
+            "ancestors": sorted(g.ancestors(vid)),
+        }
+    # plain print, never con.print: rich soft-wraps at $COLUMNS and would corrupt
+    # the JSON for whatever is parsing it.
+    print(json.dumps(payload, ensure_ascii=False))
 
 
 @app.command()

@@ -17,4 +17,4 @@ dg = "dgraph.cli:main"
 packages = ["dgraph"]
 
 [tool.setuptools.package-data]
-dgraph = ["static/*.html"]
+dgraph = ["static/*.html", "elisp/*.el"]

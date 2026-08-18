@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
-from dataclasses import replace
+from dataclasses import replace as _dc_replace
 from datetime import date as _date
 from pathlib import Path
 
@@ -53,6 +53,21 @@ def drop(i: int, path: Path | None = None) -> list[dict]:
     if not 0 <= i < len(ops):
         raise IndexError(f"no staged op {i}")
     ops.pop(i)
+    save(ops, path)
+    return ops
+
+
+def replace(i: int, op: dict, path: Path | None = None) -> list[dict]:
+    """Swap one staged op for a revised version, in place.
+
+    `dg edit N` composes a replacement rather than dropping and re-staging,
+    because re-staging would move the op to the end of the batch and any derived
+    `set_status` ops would then apply before the thing they were derived from.
+    """
+    ops = load(path)
+    if not 0 <= i < len(ops):
+        raise IndexError(f"no staged op {i}")
+    ops[i] = op
     save(ops, path)
     return ops
 
@@ -130,7 +145,7 @@ def _apply_one(g: Graph, op: dict) -> None:
         raise ApplyError(f"unknown vertex {vid!r}")
 
     if kind == "set_status":
-        g.vertices[vid] = replace(g.vertices[vid], status=op["status"])
+        g.vertices[vid] = _dc_replace(g.vertices[vid], status=op["status"])
         return
 
     if kind == "add_edge":
@@ -165,7 +180,7 @@ def _apply_one(g: Graph, op: dict) -> None:
             for old in g.history(vid):
                 if old.replaced_by is None:
                     old.replaced_by = summary
-        g.vertices[vid] = replace(g.vertices[vid], status="DECIDED", note=None)
+        g.vertices[vid] = _dc_replace(g.vertices[vid], status="DECIDED", note=None)
         return
 
     if kind == "reopen":
@@ -181,7 +196,7 @@ def _apply_one(g: Graph, op: dict) -> None:
             replaced_by=None, why=op["why"],
         ))
         e.answer = e.falsifier = e.source = e.date = None
-        g.vertices[vid] = replace(
+        g.vertices[vid] = _dc_replace(
             g.vertices[vid], status="REOPENED", note=op.get("note") or op["why"]
         )
         return
