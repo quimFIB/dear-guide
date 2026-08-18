@@ -23,7 +23,7 @@ use ones you declared here.
 
 ```sh
 cd my-project
-dg init --areas "Data,Modelling,Infra"
+dg init --areas "Infra,Backend,Product"
 ```
 
 Two files appear: `decisions.json` (the store — source of truth) and
@@ -41,11 +41,12 @@ Add the staging files to `.gitignore` now:
 A vertex is a **decision the project must make** — a question, not a task.
 
 ```sh
-dg add --id D01 --title "Which corpus do we train on?" --area Data
-dg add --id D02 --title "Tokenizer: BPE or unigram?" --area Modelling --after D01
+dg add --id D01 --title "Where does the app run?" --area Infra
+dg add --id D02 --title "Which database?" --area Backend --after D01
 ```
 
-`--after D01` says D02 depends on D01. Dependency is the graph structure, never
+`--after D01` says D02 depends on D01 — you cannot sensibly pick a database
+before you know where the thing runs. Dependency is the graph structure, never
 a stored field, so this is the only place it is written down.
 
 ## 3. Staging: nothing is written until you say so
@@ -77,9 +78,9 @@ fine for a human and a hung command for a script.
 
 ```sh
 dg decide D01 \
-  --answer "CommonCrawl 2024-26 plus the internal corpus." \
-  --source "report/corpus-sweep.md" \
-  --falsifier "held-out perplexity worsens when the corpus grows" \
+  --answer "A managed platform. Nobody here wants to be on call for servers." \
+  --source "notes/hosting-options.md" \
+  --falsifier "the monthly bill passes what a small VM cluster would cost" \
   --opens D02
 dg apply
 ```
@@ -89,8 +90,8 @@ Three fields carry the weight:
 - **`--source`** — where the evidence lives: a path, a script, or `discussion`.
 - **`--falsifier`** — what evidence would overturn this, written *before* that
   evidence arrives. Required whenever the decision opens something. If nothing
-  could overturn it, say so explicitly: `"ANALYTIC — follows from the corpus
-  choice"`.
+  could overturn it, say so explicitly: `"ANALYTIC — follows from the
+  platform choice"`.
 - **`--opens`** — the decisions this one now makes answerable. Leave it off for
   a terminal decision.
 
@@ -103,7 +104,7 @@ afterwards it is rationalisation; written first it is a commitment.
 dg                  # the frontier: everything still open or blocked
 dg brief            # ...plus provisional work, staging, validity
 dg node D01         # one decision in full, with its superseded history
-dg path D01 D09     # the chain of evidence between two decisions
+dg path D01 D04     # the chain of evidence between two decisions
 dg tree             # the DAG
 dg areas            # counts by area and status
 ```
@@ -111,19 +112,21 @@ dg areas            # counts by area and status
 `dg node D01` after the decision above:
 
 ```
-╭─────────────────── D01 ────────────────────╮
-│ Which corpus do we train on?               │
-│                                            │
-│ status      DECIDED                        │
-│ area        Data                           │
-│ depends on  —                              │
-│ opens       D02                            │
-│ falsifier   held-out perplexity worsens …  │
-│ source      report/corpus-sweep.md  (…)    │
-│                                            │
-│ Answer                                     │
-│ CommonCrawl 2024-26 plus the internal …    │
-╰────────────────────────────────────────────╯
+╭──────────────────────── D01 ─────────────────────────╮
+│ Where does the app run?                              │
+│                                                      │
+│ status      DECIDED                                  │
+│ area        Infra                                    │
+│ depends on  —                                        │
+│ opens       D02                                      │
+│ falsifier   the monthly bill passes what a small VM  │
+│ cluster would cost                                   │
+│ source      notes/hosting-options.md   (2026-04-02)  │
+│                                                      │
+│ Answer                                               │
+│ A managed platform. Nobody here wants to be on call  │
+│ for servers.                                         │
+╰──────────────────────────────────────────────────────╯
 ```
 
 ## 6. Reverse one
@@ -132,18 +135,19 @@ This is what the graph is really for. Reversals are kept forever, never
 deleted.
 
 ```sh
-dg reopen D01 --why "the 3B run contradicts it" --yes
+dg reopen D01 --why "a customer contract requires our own hardware" --yes
 ```
 
 ```
-╭──────────────── reopen D01 ─────────────────╮
-│ Its answer becomes superseded; its          │
-│ dependencies stay.                          │
-│                                             │
-│ 1 decided descendant(s) rest on it and      │
-│ become PROVISIONAL:                         │
-│   D02                                       │
-╰─────────────────────────────────────────────╯
+╭───────────────────── reopen D01 ──────────────────────╮
+│ Where does the app run?                               │
+│                                                       │
+│ Its answer becomes superseded; its dependencies stay. │
+│                                                       │
+│ 1 decided descendant(s) rest on it and become         │
+│ PROVISIONAL:                                          │
+│   D02                                                 │
+╰───────────────────────────────────────────────────────╯
 ```
 
 **That list is the point of the command.** Every decided descendant of a

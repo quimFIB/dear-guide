@@ -64,16 +64,19 @@ Open a session in a project with a `decisions.json` and the brief arrives before
 you type anything:
 
 ```
-DECISION GRAPH  /home/you/my-project  2 decisions: PROVISIONAL 1, REOPENED 1
+DECISION GRAPH  /home/you/orders-app  4 decisions: OPEN 1, PROVISIONAL 2, REOPENED 1
 Record what gets settled with `dg` -- see the decisions skill.
 
-FRONTIER (1) -- not settled
-  D01  REOPENED  Which corpus do we train on?  [Data]
+FRONTIER (2) -- not settled
+  D01  REOPENED  Where does the app run?  [Infra]
        decidable now
-       note: the 3B run contradicts it
+       note: a customer contract requires data on our own hardware
+  D04  OPEN      How do nightly reports get scheduled?  [Product]
+       decidable now
 
-RESTING ON A PREMISE UNDER REVIEW (1) -- PROVISIONAL, so not in the frontier
-  D02  Tokenizer: BPE or unigram?  [Modelling]  rests on D01
+RESTING ON A PREMISE UNDER REVIEW (2) -- PROVISIONAL, so not in the frontier
+  D02  Which database?  [Backend]  rests on D01
+  D03  How do background jobs run?  [Backend]  rests on D01
 
 STAGED BUT NOT APPLIED: 0
 CHECK: clean
@@ -131,11 +134,11 @@ Ask the agent to record a decision and it will reach for the skill, then run
 something like:
 
 ```sh
-dg decide D37 \
-  --answer "32k BPE, from the sweep in report/tokenizer-sweep.md" \
-  --source "report/tokenizer-sweep.md" \
-  --falsifier "held-out perplexity gets worse when the corpus grows" \
-  --opens "D40,D41"
+dg decide D12 \
+  --answer "Rate-limit at the edge: 100 requests a minute per API key." \
+  --source "notes/load-test.md" \
+  --falsifier "a legitimate customer trips the limit in normal use" \
+  --opens "D14,D15"
 dg apply
 ```
 
