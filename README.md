@@ -43,6 +43,8 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 | `.dgraph-pending.json` | staging area; gitignore it |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG`; gitignore it |
 | `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
+| `skills/decisions/` | the recording discipline, as a skill an agent loads on demand |
+| `hooks/`, `.claude-plugin/` | the Claude Code plugin |
 
 ## Install
 
@@ -188,38 +190,70 @@ answer · no `DECIDED` vertex resting on an unsettled premise · nothing
 premises are settled again · no orphans · acyclic · the rendered markdown
 matches the store.
 
-## Future work
+## Driving it from a coding agent
 
-**This would make more sense as a coding-agent plugin — for Claude Code, or
-opencode — than as a CLI a human remembers to run.**
+A CLI only records what somebody remembers to run, and the thing that forgets is
+an agent working across many sessions. The tool ships as a **Claude Code
+plugin**, which turns three of the four habits into mechanisms:
 
-The tool was built because an agent working across many sessions kept losing
-the thread: decisions restated in four places, three of them stale, and a
-reversal that quietly invalidated the conclusions built on top of it. The
-graph fixes the storage. It does not fix the habit, and the habit is the hard
-part — an agent has to *choose* to record a decision, and a human reviewing a
-diff rarely notices one that went unrecorded.
+| | how |
+|---|---|
+| **read the frontier first** | the brief is injected at the start of every session, and again after a compaction — no rule in an instructions file, no "read this first" |
+| **know the discipline** | the `decisions` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
+| **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it. Work staged and never applied asks the human instead — `.dgraph-pending.json` is gitignored, so committing over it loses the record silently |
 
-As a plugin the loop closes:
+What stays a habit is **recording a decision at the moment it is made**. Nothing
+a host can observe reveals that something was settled — it is a property of the
+reasoning, not of a tool call — and the two obvious implementations both fail. A
+turn-end prompt asking "did anything get decided?" is wrong on almost every turn
+and teaches the model to say no; a nag on every commit that does not touch
+`decisions.json` is wrong on most commits, and the habituation would cost the two
+mechanisms that do work. So the brief arrives with ids and titles, the skill is
+one hop away, and the compaction boundary asks once, at the moment prose is
+actually about to be lost.
 
-- **Read on session start.** The frontier is the first thing an agent should
-  know. Today that depends on a `CLAUDE.md` rule saying "read this first",
-  which is a convention, not a mechanism.
-- **Write when a decision is actually made.** Agents settle things mid-task,
-  in prose, and move on. A tool call at that moment costs nothing; a
-  reconstruction afterwards costs a session.
-- **Refuse on the reversals.** Reopening should be the moment the agent is
-  told which conclusions downstream just became provisional — that is the one
-  computation people reliably get wrong, and it is worth interrupting for.
-- **Check as a hook.** `dg check` on pre-commit, rather than hoping.
+### Install
 
-The pieces are already the right shape for it: `dgraph.check.run` is a single
-entry point, staging separates composing a decision from committing it, and
-`dgraph/server.py` is a thin adapter over the same modules the CLI uses — a
-plugin would be a third adapter, not a rewrite.
+```sh
+pip install -e ~/workspace/random/decision-graph-assistant   # the CLI
+/plugin marketplace add ~/workspace/random/decision-graph-assistant
+/plugin install decision-graph
+```
 
-Open questions if it is built: whether the store stays per-repo (probably —
-decisions are about a codebase) or gains a cross-project view; whether an
-agent should be allowed to `apply` unattended or only ever stage for a human
-to confirm; and whether the falsifier can be checked rather than merely
-recorded, since a falsifier nobody revisits is just a comment.
+Two steps rather than one because a plugin marketplace does not install Python
+packages; `dg --version` exists so the adapter can tell when the two halves have
+drifted apart.
+
+Nothing happens in a directory with no `decisions.json`: no output, no error, no
+cost. `DG_HOOK_OFF=1` switches both mechanisms off.
+
+### The policy is not in the hook
+
+The interesting parts are in `dg`, not in the adapter:
+
+- `dg brief` — what is worth knowing right now: the frontier with what each item
+  waits on and what deciding it releases, anything `PROVISIONAL`, the staging
+  area, the validity check. `--json` for adapters.
+- `dg gate --command "<cmd>"` — is this shell command about to record a
+  contradiction? Out comes `allow`, `ask` or `deny` with a reason.
+
+So `hooks/brief.py` and `hooks/precommit.py` are a few dozen lines of
+translation with no policy of their own, and a test asserts they name no `dg`
+subcommand but those two. The discipline itself is `skills/decisions/SKILL.md`,
+loaded on demand rather than carried in every context, with a test that its
+command table only names commands that exist.
+
+## Still open
+
+- **Whether an agent should `apply` unattended.** It does, today: `apply`
+  validates a copy before writing anything, the store is append-only, and the
+  result is a git-tracked diff reviewed like any other — whereas an op staged
+  into a gitignored file and then committed over is unrecoverable. Staging for a
+  human to confirm would also mean the commit gate stopped to ask on nearly every
+  commit, which is how a gate stops being read.
+- **Whether the store stays per-repo.** Probably: decisions are about a codebase.
+  A cross-project view would need a different addressing scheme.
+- **Whether the falsifier can be checked rather than merely recorded.** A
+  falsifier nobody revisits is a comment. Nothing here reads them back.
+- **Whether the unrecorded-decision nag is worth trying behind a flag**, and
+  whether `decision-graph.md` should eventually be org rather than markdown.

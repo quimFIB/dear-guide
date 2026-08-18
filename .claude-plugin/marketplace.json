@@ -1,0 +1,14 @@
+{
+  "name": "decision-graph",
+  "description": "The decision-graph assistant, as a Claude Code plugin.",
+  "owner": {
+    "name": "Quim Casals"
+  },
+  "plugins": [
+    {
+      "name": "decision-graph",
+      "description": "Read, record and reverse a project's decisions through the `dg` CLI.",
+      "source": "./"
+    }
+  ]
+}
