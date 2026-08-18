@@ -165,7 +165,7 @@ def test_decide_edit_reports_a_half_filled_buffer(run, store, g, stub_editor):
 
 
 def test_dg_edit_env_makes_the_editor_the_default(run, store, g, stub_editor,
-                                                  monkeypatch):
+                                                  monkeypatch, tty):
     write(g)
     stub_editor(lambda t: _fill(t, answer="a", source="s", falsifier="f"))
     monkeypatch.setenv("DG_EDIT", "1")
@@ -182,7 +182,8 @@ def test_no_edit_beats_the_env_var(run, store, g, monkeypatch):
     assert "buffer:" not in res.output          # never opened an editor
 
 
-def test_reopen_edit_still_shows_the_propagation_panel(run, store, g, stub_editor):
+def test_reopen_edit_still_shows_the_propagation_panel(run, store, g, stub_editor,
+                                                       tty):
     """The panel is the point of `reopen`; composing in an editor must not skip it."""
     write(g)
     stub_editor(lambda t: _fill(t, why="the sweep was mis-seeded"))
@@ -303,3 +304,231 @@ def test_elisp_does_not_use_a_bare_readonly_overlay():
 def test_packaging_ships_the_elisp():
     pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     assert "elisp/*.el" in pyproject
+
+
+# ---- driving `dg` with no terminal ---------------------------------------
+#
+# Everything below exists because the caller is an agent: no tty, no way to
+# answer a prompt, and no way to see an editor. A command that hangs or fails
+# with `Aborted.` is unusable from there, and the failure looks identical to a
+# bug in the tool.
+
+
+def test_dg_edit_env_is_ignored_without_a_tty(run, store, g, monkeypatch):
+    """`$DG_EDIT=1` in the user's shell must not launch an editor for an agent.
+
+    The editor blocks with nothing to draw on and nobody to type; the call would
+    hang until it timed out. `--edit` still works, so the human keeps their
+    setting — it just stops leaking into a pipe.
+    """
+    write(g)
+    monkeypatch.setenv("DG_EDIT", "1")
+    monkeypatch.setattr(editor, "launch", lambda *a, **k: pytest.fail(
+        "an editor was launched with no terminal"))
+    res = run("decide", "D05", "-a", "a", "-s", "s", "-f", "f")
+    assert res.exit_code == 0
+    assert pending.load(store / ".dgraph-pending.json")[0]["answer"] == "a"
+
+
+def test_decide_without_a_tty_names_the_missing_flags(run, store, g):
+    write(g)
+    res = run("decide", "D05", "-a", "an answer")
+    assert res.exit_code == 2
+    assert "--source/-s" in res.output
+    assert not pending.load(store / ".dgraph-pending.json")
+
+
+def test_an_optional_prompt_falls_back_to_its_default(run, store, g):
+    """`--opens` is genuinely optional, so its absence is not an error."""
+    write(g)
+    res = run("decide", "D05", "-a", "a", "-s", "s", "-f", "f")
+    assert res.exit_code == 0
+    op = pending.load(store / ".dgraph-pending.json")[0]
+    assert op["to"] == []
+
+
+def test_reopen_without_yes_and_without_a_tty_says_so(run, store, g):
+    write(g)
+    res = run("reopen", "D01", "-w", "the sweep was mis-seeded")
+    assert res.exit_code == 2
+    assert "--yes" in res.output
+    assert not pending.load(store / ".dgraph-pending.json")
+
+
+def test_reopen_without_yes_still_reports_the_propagation(run, store, g):
+    """Refusing to stage is not a reason to withhold the one computation that
+    is hard to do by hand."""
+    write(g)
+    out = run("reopen", "D01", "-w", "x").output
+    assert "PROVISIONAL" in out and "D02, D03, D04" in out
+
+
+def test_reopen_yes_stages_without_confirming(run, store, g):
+    write(g)
+    res = run("reopen", "D01", "--yes", "-w", "the sweep was mis-seeded")
+    assert res.exit_code == 0
+    ops = pending.load(store / ".dgraph-pending.json")
+    assert ops[0]["op"] == "reopen"
+    assert {o["vertex"] for o in ops[1:]} == {"D02", "D03", "D04"}
+
+
+def test_reopen_yes_still_prints_the_propagation(run, store, g):
+    write(g)
+    out = run("reopen", "D01", "--yes", "-w", "x").output
+    assert "PROVISIONAL" in out and "D02, D03, D04" in out
+
+
+# ---- errors arriving at the command that caused them --------------------
+
+
+def test_decide_refuses_a_vertex_that_already_has_an_answer(run, store, g):
+    """`apply` would refuse this too, but only after it was staged — leaving a
+    staging area holding an op that can never be applied."""
+    write(g)
+    res = run("decide", "D01", "-a", "a", "-s", "s", "-f", "f")
+    assert res.exit_code == 1
+    assert "reopen" in res.output
+    assert not pending.load(store / ".dgraph-pending.json")
+
+
+def test_decide_refuses_a_provisional_vertex(run, store, g):
+    """PROVISIONAL keeps the answer it was given, so this is the same case —
+    and the one an agent hits after a reopen."""
+    write(g)
+    bad = Graph.load(store / "decisions.json")
+    bad.vertices["D02"] = replace(bad.vertices["D02"], status="PROVISIONAL")
+    bad.save(store / "decisions.json")
+    res = run("decide", "D02", "-a", "a", "-s", "s", "-f", "f")
+    assert res.exit_code == 1
+    assert "PROVISIONAL" in res.output
+
+
+def test_add_rejects_an_unknown_parent(run, store, g):
+    write(g)
+    res = run("add", "--id", "D07", "-t", "New", "--area", "Alpha",
+              "--after", "D99")
+    assert res.exit_code == 1
+    assert "D99" in res.output
+    assert not pending.load(store / ".dgraph-pending.json")
+
+
+def test_add_rejects_an_illegal_status(run, store, g):
+    write(g)
+    res = run("add", "--id", "D07", "-t", "New", "--area", "Alpha",
+              "--status", "BLOCKED:D99")
+    assert res.exit_code == 1
+    assert not pending.load(store / ".dgraph-pending.json")
+
+
+def test_add_note_reaches_the_store(run, store, g):
+    """`note` is where "what is undecided and why" lives, and the flag path had
+    no way to write it."""
+    write(g)
+    assert run("add", "--id", "D07", "-t", "New", "--area", "Alpha",
+               "-n", "the sweep is unread").exit_code == 0
+    assert run("apply").exit_code == 0
+    assert Graph.load(store / "decisions.json").vertices["D07"].note == \
+        "the sweep is unread"
+
+
+def test_drop_reports_an_unstaged_index(run, store, g):
+    """`dg edit N` already handled this; `dg drop N` tracebacked."""
+    write(g)
+    res = run("drop", "99")
+    assert res.exit_code == 1
+    assert "no staged op 99" in res.output
+
+
+# ---- what an adapter needs to interrogate -------------------------------
+
+
+def test_check_exits_2_without_a_store(tmp_path):
+    """2, not 1. "No graph here" and "this graph is broken" are different
+    answers, and an adapter keys on the difference."""
+    empty = tmp_path / "nothing-here"
+    empty.mkdir()
+    res = runner.invoke(app, ["--project", str(empty), "check"])
+    assert res.exit_code == 2
+    assert "decisions.json" in res.output
+
+
+def test_version_matches_the_installed_package():
+    """Without this an old `dg` is indistinguishable, to an adapter, from a
+    project that has no graph."""
+    from importlib.metadata import version
+    res = runner.invoke(app, ["--version"])
+    assert res.exit_code == 0
+    assert res.output.strip() == version("decision-graph-assistant")
+
+
+# ---- `dg confirm`: the way out of PROVISIONAL ---------------------------
+
+
+def _make_provisional(store, vid="D02"):
+    g = Graph.load(store / "decisions.json")
+    g.vertices[vid] = replace(g.vertices[vid], status="PROVISIONAL")
+    g.save(store / "decisions.json")
+    write(g, store / "decision-graph.md")
+    return g
+
+
+def test_confirm_only_applies_to_provisional(run, store, g):
+    write(g)
+    res = run("confirm", "D01")
+    assert res.exit_code == 1
+    assert "not PROVISIONAL" in res.output
+
+
+def test_confirm_refuses_while_a_premise_is_unsettled(run, store, g):
+    """Until the premise is settled again, PROVISIONAL is the accurate status."""
+    write(g)
+    gg = Graph.load(store / "decisions.json")
+    gg.vertices["D01"] = replace(gg.vertices["D01"], status="REOPENED")
+    gg.vertices["D02"] = replace(gg.vertices["D02"], status="PROVISIONAL")
+    gg.save(store / "decisions.json")
+    res = run("confirm", "D02")
+    assert res.exit_code == 1
+    assert "D01" in res.output
+    assert not pending.load(store / ".dgraph-pending.json")
+
+
+def test_confirm_returns_it_to_decided(run, store, g):
+    write(g)
+    _make_provisional(store)
+    assert run("confirm", "D02").exit_code == 0
+    assert run("apply").exit_code == 0
+    assert Graph.load(store / "decisions.json").vertices["D02"].status == "DECIDED"
+
+
+def test_confirm_releases_what_was_blocked_on_it(run, store, g):
+    """The release comes from `pending.expand`, so it cannot differ between the
+    commands that settle a vertex."""
+    write(g)
+    gg = Graph.load(store / "decisions.json")
+    gg.vertices["D05"] = replace(gg.vertices["D05"], status="PROVISIONAL")
+    gg.save(store / "decisions.json")
+    res = run("confirm", "D05")
+    assert res.exit_code == 0
+    assert "D06" in res.output
+    ops = pending.load(store / ".dgraph-pending.json")
+    assert {(o["vertex"], o["status"]) for o in ops} == {
+        ("D05", "DECIDED"), ("D06", "OPEN")}
+
+
+def test_reopen_then_confirm_round_trips(run, store, g):
+    """The whole point: a reversal that turns out not to change the conclusion
+    must not have to be recorded as a second reversal."""
+    write(g)
+    assert run("reopen", "D01", "--yes", "-w", "the corpus changed").exit_code == 0
+    assert run("apply").exit_code == 0
+    assert Graph.load(store / "decisions.json").vertices["D02"].status == "PROVISIONAL"
+
+    assert run("decide", "D01", "-a", "same answer", "-s", "discussion",
+               "-f", "the corpus changes again", "-o", "D02,D03").exit_code == 0
+    assert run("apply").exit_code == 0
+    assert run("confirm", "D02").exit_code == 0
+    assert run("apply").exit_code == 0
+
+    after = Graph.load(store / "decisions.json")
+    assert after.vertices["D02"].status == "DECIDED"
+    assert len(after.history("D02")) == len(g.history("D02"))

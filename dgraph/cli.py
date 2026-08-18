@@ -15,9 +15,10 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
+from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import editor, pending, project, render
-from dgraph.model import Graph
+from dgraph.model import SIMPLE_STATUSES, Graph
 
 app = typer.Typer(
     add_completion=False,
@@ -27,12 +28,34 @@ app = typer.Typer(
 con = Console()
 
 
+def _version(show: bool) -> None:
+    """`dg --version`, so an adapter can tell it is talking to an old `dg`.
+
+    The plugin and the package install separately — a marketplace entry and a
+    `pip install` — so skew is not hypothetical. Without a version surface an
+    adapter's only symptom is a subcommand that does not exist yet, which looks
+    exactly like a project with no graph.
+    """
+    if not show:
+        return
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        con.print(version("decision-graph-assistant"))
+    except PackageNotFoundError:  # running from a checkout, not installed
+        con.print("unknown")
+    raise typer.Exit()
+
+
 @app.callback()
 def _root(
     project_dir: str = typer.Option(
         None, "--project", "-C", metavar="PATH",
         help="Project directory. Defaults to $DG_PROJECT, else the nearest "
              "ancestor holding decisions.json, else the cwd.",
+    ),
+    version: bool = typer.Option(
+        False, "--version", callback=_version, is_eager=True,
+        help="Print the installed version and exit.",
     ),
 ) -> None:
     project.use(project_dir)
@@ -70,6 +93,24 @@ def _x(text: object) -> str:
     return escape(str(text) if text is not None else "")
 
 
+def _interactive() -> bool:
+    """Whether there is a person on the other end. The seam tests replace.
+
+    Everything that would block on a human — a prompt, a confirmation, an
+    editor — asks this first, so that the one condition is decided in one place
+    and a test can say "pretend there is a terminal" without owning stdin.
+    """
+    return sys.stdin.isatty()
+
+
+def _status_legal(g: Graph, status: str) -> bool:
+    """The legality rule from `Graph.validate`, applied before staging."""
+    base, _, blocker = status.partition(":")
+    if base == "BLOCKED":
+        return bool(blocker) and blocker in g.vertices
+    return base in SIMPLE_STATUSES and not blocker
+
+
 def _tag(v) -> str:
     return f"[{_style(v.status)}]{v.status}[/]"
 
@@ -79,22 +120,33 @@ def _tag(v) -> str:
 
 @app.command()
 def show() -> None:
-    """The frontier: everything still open or blocked."""
+    """The frontier: everything still open or blocked, and anything provisional."""
     g = _g()
     t = Table(title="Frontier", header_style="bold")
-    for c in ("ID", "Decision", "Status", "Waiting on", "Area"):
+    for c in ("ID", "Decision", "Status", "Waiting on", "Unblocks", "Area"):
         t.add_column(c)
-    for vid in g.frontier():
-        v = g.vertices[vid]
-        blockers = [p for p in g.depends(vid) if not g.vertices[p].settled]
-        t.add_row(vid, _x(v.title), _tag(v), ", ".join(blockers) or "—",
-                  _x(v.area))
+    for r in _brief.rows(g):
+        t.add_row(r.id, _x(r.title), _tag(g.vertices[r.id]),
+                  ", ".join(r.waiting_on) or "—",
+                  ", ".join(r.unblocks) or "—", _x(r.area))
     con.print(t)
-    counts: dict[str, int] = {}
-    for v in g.vertices.values():
-        counts[v.base_status] = counts.get(v.base_status, 0) + 1
+
+    # A PROVISIONAL vertex is settled, so it is not in the frontier — but its
+    # answer rests on a premise under review, which is the thing most worth
+    # knowing before building on it. It was missing from this view entirely.
+    att = _brief.attention(g)
+    if att:
+        p = Table(title="Resting on a premise under review", header_style="bold")
+        for c in ("ID", "Decision", "Because", "Area"):
+            p.add_column(c)
+        for a in att:
+            why = (", ".join(a["because"]) if a["because"]
+                   else f"premises settled again — `dg confirm {a['id']}`")
+            p.add_row(a["id"], _x(a["title"]), _x(why), _x(a["area"]))
+        con.print(p)
+
     con.print("  ".join(
-        f"[{_style(k)}]{k} {n}[/]" for k, n in sorted(counts.items())
+        f"[{_style(k)}]{k} {n}[/]" for k, n in sorted(_brief.counts(g).items())
     ))
 
 
@@ -199,9 +251,66 @@ def areas() -> None:
 
 
 @app.command()
+def brief(
+    as_json: bool = typer.Option(False, "--json",
+                                 help="The same information as data."),
+    limit: int = typer.Option(_brief.LIMIT, "--limit",
+                              help="Frontier entries before summarising."),
+) -> None:
+    """What an agent needs to know about the graph right now.
+
+    The payload a coding-agent host injects at the start of a session: the
+    frontier with what each item waits on and releases, anything PROVISIONAL,
+    the staging area, and the validity check. See `dgraph/brief.py` for why this
+    is not `dg show`.
+    """
+    proj = project.find()
+    if as_json:
+        # plain print, never con.print — the `dg export` rule. Rich soft-wraps at
+        # $COLUMNS and would corrupt the JSON for whatever is parsing it.
+        print(json.dumps(_brief.data(proj), indent=2, ensure_ascii=False))
+        return
+    if not proj.exists:
+        con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
+                  f"[dim]run `dg init` there, or pass --project PATH[/]")
+        raise typer.Exit(2)
+    # Plain print for the same reason: this is read through a pipe, and a
+    # soft-wrapped brief is a brief with the ids moved to the wrong lines.
+    print(_brief.text(proj, limit=limit))
+
+
+@app.command()
+def gate(
+    command: str = typer.Option(..., "--command", metavar="CMD",
+                                help="The shell command a host is about to run."),
+    as_json: bool = typer.Option(False, "--json", help="Machine form."),
+) -> None:
+    """Judge a shell command before a host runs it: allow, ask, or deny.
+
+    The commit gate, host-neutral. Both agent adapters call this and translate
+    the answer, so the rule lives here rather than twice in two languages. Always
+    exits 0 — the verdict is the output, and an adapter must be able to tell a
+    refusal from a crash.
+    """
+    from dgraph import gate as _gate
+    v = _gate.verdict(command)
+    if as_json:
+        print(json.dumps(v, ensure_ascii=False))
+        return
+    print(v["verdict"] if not v["reason"] else f"{v['verdict']}: {v['reason']}")
+
+
+@app.command()
 def check() -> None:
     """Run every invariant, plus the markdown staleness check."""
     proj = project.find()
+    if not proj.exists:
+        # 2, not 1, matching `_g()`. "This project has no graph" is a different
+        # thing from "this graph is broken", and an adapter keying on the exit
+        # code has to be able to tell them apart.
+        con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
+                  f"[dim]run `dg init` there, or pass --project PATH[/]")
+        raise typer.Exit(2)
     problems = _check.run(proj)
     for p in problems:
         con.print(f"[{'red' if p.blocking else 'yellow'}]"
@@ -218,14 +327,42 @@ def check() -> None:
 
 
 def _wants_editor(edit: bool | None) -> bool:
-    """`--edit` wins; otherwise `$DG_EDIT` decides.
+    """`--edit` wins; otherwise `$DG_EDIT` decides, and only at a terminal.
 
     `--no-edit` sets `edit` to False and must beat the environment, which is why
     this takes a tri-state rather than a bool.
+
+    The terminal condition is for callers who are not people. An agent running
+    `dg decide D04 -a … -s …` inherits whatever `$DG_EDIT` the user exported —
+    the README tells them to — and would launch a blocking editor with nothing
+    to draw on and nobody to type, hanging until something times out. An
+    explicit `--edit` still works anywhere, so nothing a human asks for is
+    refused.
     """
     if edit is not None:
         return edit
+    if not _interactive():
+        return False
     return os.environ.get("DG_EDIT", "").strip() not in ("", "0", "false", "no")
+
+
+def _ask(prompt: str, flag: str, default: str | None = None) -> str:
+    """Prompt for a value, unless there is nobody to prompt.
+
+    With no terminal, click's own failure is a bare `Aborted.` — true, and
+    useless to an agent, which needs to know which flag would have made the
+    command work. A value with a default is optional, so it falls back silently.
+    """
+    if _interactive():
+        if default is None:
+            return typer.prompt(prompt)
+        return typer.prompt(prompt, default=default, show_default=False)
+    if default is not None:
+        return default
+    con.print(f"[red]missing {flag}[/]\n"
+              f"[dim]{_x(prompt)}[/]\n"
+              f"[dim]not a terminal, so it cannot be prompted for[/]")
+    raise typer.Exit(2)
 
 
 def _compose(g: Graph, kind: str, **kw) -> list[dict]:
@@ -289,8 +426,16 @@ def decide(
         con.print(f"[red]unknown vertex {vid}[/]")
         raise typer.Exit(1)
     v = g.vertices[vid]
-    if v.base_status == "DECIDED":
-        con.print(f"[red]{vid} is already DECIDED — `dg reopen` it first[/]")
+    e = g.active_edge(vid)
+    if e is not None and e.decided:
+        # Caught here rather than at `apply`, which would refuse the same thing
+        # (pending._apply_one) after the op was already staged, leaving the
+        # staging area holding something that can never be applied. PROVISIONAL
+        # reaches this branch too: it keeps the answer it was given.
+        fix = ("`dg confirm` it if it still holds, or `dg reopen` it"
+               if v.base_status == "PROVISIONAL" else "`dg reopen` it first")
+        con.print(f"[red]{vid} already has an answer, and is {v.status} — "
+                  f"{fix}[/]")
         raise typer.Exit(1)
 
     if _wants_editor(edit):
@@ -306,20 +451,22 @@ def decide(
     con.print(Panel(f"[bold]{_x(v.title)}[/]\n\n"
                     f"depends on {', '.join(g.depends(vid)) or '—'}",
                     title=vid, border_style=_style(v.status)))
-    answer = answer or typer.prompt("Answer (what was decided, and on what evidence)")
-    source = source or typer.prompt("Source (a report/ path, a script, or 'discussion')")
+    answer = answer or _ask(
+        "Answer (what was decided, and on what evidence)", "--answer/-a")
+    source = source or _ask(
+        "Source (a report/ path, a script, or 'discussion')", "--source/-s")
     existing = g.children(vid)
     opens_l = (
         [x.strip() for x in opens.split(",") if x.strip()] if opens
-        else [x.strip() for x in typer.prompt(
+        else [x.strip() for x in _ask(
             f"Opens which decisions? comma-separated, blank for terminal "
             f"(already linked: {', '.join(existing) or 'none'})",
-            default="", show_default=False).split(",") if x.strip()]
+            "--opens/-o", default="").split(",") if x.strip()]
     )
     if opens_l or existing:
-        falsifier = falsifier or typer.prompt(
-            "Falsifier (what evidence would reopen this? 'ANALYTIC — …' if none)"
-        )
+        falsifier = falsifier or _ask(
+            "Falsifier (what evidence would reopen this? 'ANALYTIC — …' if none)",
+            "--falsifier/-f")
     op = {
         "op": "close", "vertex": vid, "answer": answer, "source": source,
         "falsifier": falsifier, "to": opens_l,
@@ -331,10 +478,53 @@ def decide(
 
 
 @app.command()
+def confirm(vid: str) -> None:
+    """Re-affirm a PROVISIONAL decision: its premise moved, its answer holds.
+
+    Without this, PROVISIONAL is a state with no exit. `set_status` is a derived
+    op — `pending.expand` produces it and nothing else stages one — so the only
+    route back to DECIDED was another `reopen` plus `decide`, which files a
+    reversal that never happened. Reversals are the most valuable thing the graph
+    holds and inventing one to escape a status would be a lie in the record.
+
+    What it records is a real act: somebody re-read this decision under the new
+    premise and found it still stands.
+    """
+    g = _g()
+    if vid not in g.vertices:
+        con.print(f"[red]unknown vertex {vid}[/]")
+        raise typer.Exit(1)
+    v = g.vertices[vid]
+    if v.base_status != "PROVISIONAL":
+        con.print(f"[red]{vid} is {v.status}, not PROVISIONAL — "
+                  f"there is nothing to re-affirm[/]")
+        raise typer.Exit(1)
+    unsettled = g.provisional_because(vid)
+    if unsettled:
+        con.print(f"[red]{vid} still rests on {', '.join(unsettled)}[/]\n"
+                  f"[dim]settle the premise first — until then PROVISIONAL is "
+                  f"the accurate status[/]")
+        raise typer.Exit(1)
+
+    ops = pending.expand(g, {"op": "set_status", "vertex": vid,
+                             "status": "DECIDED"})
+    for o in ops:
+        pending.stage(o)
+    released = [o["vertex"] for o in ops[1:]]
+    if released:
+        con.print(f"[cyan]{len(released)}[/] vertex(es) were BLOCKED:{vid} and "
+                  f"are released to OPEN: {', '.join(released)}")
+    con.print(f"[green]staged[/] {len(ops)} op(s) — {vid} back to DECIDED, "
+              f"review with `dg pending`, then `dg apply`")
+
+
+@app.command()
 def reopen(
     vid: str,
     why: str = typer.Option(None, "--why", "-w", help="what challenges it"),
     summary: str = typer.Option(None, "--summary"),
+    yes: bool = typer.Option(False, "--yes", "-y",
+                             help="Stage without confirming the propagation."),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
@@ -352,7 +542,7 @@ def reopen(
         seed = {k: v for k, v in (("why", why), ("summary", summary)) if v}
         op = _compose(g, "reopen", vertex=vid, seed=seed)[0]
     else:
-        why = why or typer.prompt("Why is this being reopened?")
+        why = why or _ask("Why is this being reopened?", "--why/-w")
         op = {"op": "reopen", "vertex": vid, "why": why}
         if summary:
             op["summary"] = summary
@@ -366,8 +556,16 @@ def reopen(
         f"PROVISIONAL:\n  {', '.join(affected) or 'none'}",
         title=f"reopen {vid}", border_style="magenta",
     ))
-    if not typer.confirm("Stage this?", default=True):
-        raise typer.Exit()
+    if not yes:
+        if not _interactive():
+            # The panel above has already been printed, so the propagation is
+            # reported either way — what is missing is somebody to accept it.
+            con.print("[red]missing --yes[/]\n"
+                      "[dim]not a terminal, so the propagation above cannot be "
+                      "confirmed interactively[/]")
+            raise typer.Exit(2)
+        if not typer.confirm("Stage this?", default=True):
+            raise typer.Exit()
     for o in ops:
         pending.stage(o)
     con.print(f"[green]staged[/] {len(ops)} op(s)")
@@ -380,6 +578,8 @@ def add(
     area: str = typer.Option(None, "--area"),
     after: str = typer.Option(None, "--after", help="parent that opens this"),
     status: str = typer.Option("OPEN", "--status"),
+    note: str = typer.Option(None, "--note", "-n",
+                             help="what is undecided, and why"),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
@@ -389,6 +589,7 @@ def add(
     if _wants_editor(edit):
         seed = {k: v for k, v in (
             ("id", vid), ("title", title), ("area", area), ("status", status),
+            ("note", note),
             ("after", [x.strip() for x in after.split(",") if x.strip()] if after else None),
         ) if v}
         ops = _compose(g, "add_vertex", seed=seed)
@@ -409,10 +610,26 @@ def add(
         con.print(f"[red]unknown area. one of: "
                   f"{', '.join(_x(a) for a in g.areas)}[/]")
         raise typer.Exit(1)
-    pending.stage({"op": "add_vertex", "id": vid, "title": title,
-                   "area": area, "status": status})
-    if after:
-        pending.stage({"op": "add_edge", "from": after, "to": [vid]})
+    # `decide` validates its targets before staging; this does too, so that a
+    # typo is reported by the command that contains it rather than by `apply`
+    # two commands later.
+    parents = [x.strip() for x in after.split(",") if x.strip()] if after else []
+    unknown = [x for x in parents if x not in g.vertices]
+    if unknown:
+        con.print(f"[red]unknown parent(s): {', '.join(unknown)}[/]")
+        raise typer.Exit(1)
+    if not _status_legal(g, status):
+        con.print(f"[red]illegal status {_x(status)}[/]\n"
+                  f"[dim]one of {', '.join(sorted(SIMPLE_STATUSES))}, "
+                  f"or BLOCKED:<existing id>[/]")
+        raise typer.Exit(1)
+    op = {"op": "add_vertex", "id": vid, "title": title,
+          "area": area, "status": status}
+    if note:
+        op["note"] = note
+    pending.stage(op)
+    for parent in parents:
+        pending.stage({"op": "add_edge", "from": parent, "to": [vid]})
     con.print(f"[green]staged[/] add {vid}")
 
 
@@ -496,7 +713,11 @@ def export(
 @app.command()
 def drop(i: int) -> None:
     """Unstage one op."""
-    pending.drop(i)
+    try:
+        pending.drop(i)
+    except IndexError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
     con.print(f"[green]dropped[/] op {i}")
 
 

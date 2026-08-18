@@ -103,3 +103,28 @@ def test_no_check_is_emitted_without_being_declared(store, g):
     bad.active_edge("D01").falsifier = None
     bad.save()
     assert {v.check for v in run()} <= set(CHECKS)
+
+
+def test_provisional_with_settled_premises_is_reported(store, g):
+    """PROVISIONAL means "rests on a premise under review". Once the premise is
+    settled again the status is no longer true, and nothing else notices: it
+    counts as settled, so `propagation` is satisfied. A warning, not an error —
+    it is unfinished work, not a broken graph."""
+    from dataclasses import replace
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    g.save()
+    write(Graph.load())
+    hits = [v for v in run() if v.check == "stale_provisional"]
+    assert hits and not hits[0].blocking
+    assert "dg confirm D02" in str(hits[0])
+
+
+def test_provisional_under_a_reopened_premise_is_not_reported(store, g):
+    """The legitimate case: D01 is under review, so D02 resting on it is exactly
+    what PROVISIONAL is for."""
+    from dataclasses import replace
+    g.vertices["D01"] = replace(g.vertices["D01"], status="REOPENED")
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    g.save()
+    write(Graph.load())
+    assert not [v for v in run() if v.check == "stale_provisional"]

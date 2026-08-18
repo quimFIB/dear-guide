@@ -49,6 +49,15 @@ def test_frontier(g):
     assert g.frontier() == ["D05", "D06"]
 
 
+def test_waiting_on_is_the_unsettled_premises(g):
+    """One implementation, three callers: `dg show`, the propagation check, and
+    the brief. D06 is BLOCKED on D05, which is OPEN; D02 rests on a settled D01.
+    """
+    assert g.waiting_on("D06") == ["D05"]
+    assert g.waiting_on("D02") == []
+    assert g.waiting_on("D01") == []
+
+
 def test_path(g):
     assert g.path("D01", "D05") == ["D01", "D02", "D04", "D05"]
     assert g.path("D03", "D05") is None

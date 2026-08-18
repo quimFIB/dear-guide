@@ -60,12 +60,14 @@ found by walking up from the cwd, or set explicitly with `--project PATH` or
 dg init --areas "Data,Modelling,Infra"   # start a graph
 dg import-md old-decisions.md            # or bootstrap from markdown
 dg                                       # the frontier: what is still open
+dg brief                                 # ...plus provisional work, staging, validity
 dg node D06                              # one decision in full
 dg path D01 D09                          # the chain of evidence between two
 dg tree                                  # the DAG
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg reopen D06                            # stage a reopen + its propagation
+dg confirm D12                           # a provisional decision, re-examined and standing
 dg pending                               # review
 dg apply                                 # validate, then write both files
 dg check                                 # every invariant
@@ -182,8 +184,9 @@ Well-formed unique IDs · legal statuses · no dangling edge or `BLOCKED:`
 references · at most one active edge per vertex · every `DECIDED` vertex has a
 date, source, falsifier and decision edge · `OPEN`/`BLOCKED` vertices carry no
 answer · no `DECIDED` vertex resting on an unsettled premise · nothing
-`BLOCKED` on something already settled · no orphans · acyclic · the rendered
-markdown matches the store.
+`BLOCKED` on something already settled · nothing left `PROVISIONAL` once its
+premises are settled again · no orphans · acyclic · the rendered markdown
+matches the store.
 
 ## Future work
 

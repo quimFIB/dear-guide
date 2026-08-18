@@ -183,6 +183,16 @@ class Graph:
             {e.src for e in self.edges if e.active and vid in e.to}
         )
 
+    def waiting_on(self, vid: str) -> list[str]:
+        """The premises this vertex rests on that are not settled yet.
+
+        One implementation because there are three callers with the same
+        question — `dg show`'s "Waiting on" column, the `propagation` check
+        below, and the brief — and a vertex whose premises differ between two
+        of them is exactly the disagreement this tool exists to prevent.
+        """
+        return [p for p in self.depends(vid) if not self.vertices[p].settled]
+
     def descendants(self, vid: str) -> set[str]:
         seen: set[str] = set()
         stack = list(self.children(vid))
@@ -204,6 +214,22 @@ class Graph:
             seen.add(cur)
             stack.extend(self.depends(cur))
         return seen
+
+    def provisional_because(self, vid: str) -> list[str]:
+        """The premises under review that a PROVISIONAL vertex rests on.
+
+        The transitive form of `waiting_on`: `pending.expand` marks every decided
+        descendant of a reopened vertex PROVISIONAL, so the cause can be any
+        distance up the chain.
+
+        The store never records *why* a vertex is PROVISIONAL — `derived_from`
+        lives only in the staged op — so this is recomputed, and an empty result
+        is meaningful: every premise has been settled again and the vertex is
+        waiting for someone to re-examine it (`stale_provisional`).
+        """
+        return sorted(
+            a for a in self.ancestors(vid) if not self.vertices[a].settled
+        )
 
     def roots(self) -> list[str]:
         return sorted(v for v in self.vertices if not self.depends(v))
@@ -319,16 +345,24 @@ class Graph:
                 )
 
         for vid, vert in self.vertices.items():
+            if vert.base_status == "PROVISIONAL" and not self.provisional_because(vid):
+                add(
+                    "stale_provisional",
+                    f"{vid} is PROVISIONAL but every premise it rests on is "
+                    f"settled again — re-examine it, then `dg confirm {vid}`",
+                    "warning",
+                )
+
+        for vid, vert in self.vertices.items():
             if vert.base_status != "DECIDED":
                 continue
-            for p in self.depends(vid):
-                if not self.vertices[p].settled:
-                    add(
-                        "propagation",
-                        f"{vid} is DECIDED but rests on {p} "
-                        f"({self.vertices[p].status}) — mark it PROVISIONAL or "
-                        f"settle the premise",
-                    )
+            for p in self.waiting_on(vid):
+                add(
+                    "propagation",
+                    f"{vid} is DECIDED but rests on {p} "
+                    f"({self.vertices[p].status}) — mark it PROVISIONAL or "
+                    f"settle the premise",
+                )
 
         touched = {e.src for e in self.edges} | {
             t for e in self.edges for t in e.to

@@ -54,3 +54,16 @@ def store(tmp_path, monkeypatch):
 @pytest.fixture
 def g(store):
     return Graph.load()
+
+
+@pytest.fixture
+def tty(monkeypatch):
+    """Pretend there is a person at a terminal.
+
+    `CliRunner` owns stdin, so a test cannot make it a tty. Anything that would
+    block on a human — a prompt, a confirmation, `$DG_EDIT` — goes through
+    `cli._interactive`, and the interactive tests say so explicitly rather than
+    getting it by accident.
+    """
+    from dgraph import cli
+    monkeypatch.setattr(cli, "_interactive", lambda: True)

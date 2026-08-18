@@ -24,6 +24,7 @@ CHECKS: tuple[str, ...] = (
     "decided_complete",
     "open_not_overspecified",
     "propagation",
+    "stale_provisional",
     "stale_block",
     "no_orphans",
     "acyclic",

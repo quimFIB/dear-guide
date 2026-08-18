@@ -10,6 +10,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["typer>=0.9", "rich>=13"]
 
+# The tool supplies a project's decision-graph tests (dgraph.testing), so
+# pytest is part of what it offers, not just how it is developed.
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
 [project.scripts]
 dg = "dgraph.cli:main"
 
