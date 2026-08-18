@@ -26,7 +26,7 @@ from dgraph import project
 from dgraph.pending import ApplyError
 from dgraph.tasks import STATUSES, Task, TaskEdge, TaskGraph
 
-OPS = {"add_task", "add_dep", "set_status"}
+OPS = {"add_task", "add_dep", "set_status", "set_link"}
 
 
 def path() -> Path:
@@ -45,7 +45,7 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             id=op["id"], title=op["title"], area=op["area"],
             status=op.get("status", "TODO"), note=op.get("note"),
             format=op.get("format") if op.get("note") else None,
-            because=op.get("because"),
+            because=op.get("because"), evidence_for=op.get("evidence_for"),
         )
         return
 
@@ -59,6 +59,17 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
                 e.to = sorted(set(e.to) | set(targets))
                 return
         tg.edges.append(TaskEdge(src=src, to=targets))
+        return
+
+    if kind == "set_link":
+        # The emergent case: work turned up a question, so the link is added
+        # after the fact — often after the task is already done.
+        tid = op["task"]
+        if tid not in tg.tasks:
+            raise ApplyError(f"unknown task {tid!r}")
+        for fld in ("because", "evidence_for"):
+            if op.get(fld) is not None:
+                setattr(tg.tasks[tid], fld, op[fld])
         return
 
     if kind == "set_status":

@@ -40,6 +40,8 @@ CHECKS: tuple[str, ...] = (
     # the relation between the two stores; checked only when both exist
     "link_resolves",
     "link_premise_under_review",
+    "link_acyclic",
+    "evidence_unharvested",
 )
 
 

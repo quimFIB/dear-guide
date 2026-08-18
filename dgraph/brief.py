@@ -80,7 +80,8 @@ def counts(g: Graph) -> dict[str, int]:
 
 #: The empty task summary, so every return site and every consumer sees the
 #: same shape whether or not the project tracks work.
-NO_TASKS = {"counts": {}, "ready": 0, "blocked": 0, "under_review": []}
+NO_TASKS = {"counts": {}, "ready": 0, "blocked": 0, "under_review": [],
+            "unharvested": []}
 
 
 def tasks(proj: project.Project) -> dict:
@@ -115,15 +116,42 @@ def tasks(proj: project.Project) -> dict:
     if g is None:
         ready = [t for t in tg.frontier() if tg.ready(t)]
         reviewed: list[dict] = []
+        loose: list[dict] = []
     else:
         ready = [t for t in tg.frontier() if cross.ready(tg, g, t)]
         reviewed = cross.under_review(tg, g)
+        loose = cross.unharvested(tg, g)
     return {
         "counts": tg.counts(),
         "ready": len(ready),
         "blocked": len(tg.frontier()) - len(ready),
         "under_review": reviewed,
+        "unharvested": loose,
     }
+
+
+def evidence_map(proj: project.Project) -> dict[str, list[str]]:
+    """Unfinished evidence tasks, per decision they inform.
+
+    Kept out of `Row` on purpose: `waiting_on` holds decision ids and callers
+    dereference them into the decision store, so a task id in that list would
+    eventually be looked up as a decision and crash. The two lists stay apart
+    in the data and are joined only where they are printed.
+    """
+    if not (proj.has_tasks and proj.has_decisions):
+        return {}
+    try:
+        from dgraph import cross
+        from dgraph.tasks import TaskGraph
+        g, tg = Graph.load(proj.store), TaskGraph.load(proj.tasks)
+    except Exception:
+        return {}
+    out = {}
+    for vid in g.frontier():
+        waiting = cross.pending_evidence(tg, vid)
+        if waiting:
+            out[vid] = waiting
+    return out
 
 
 def data(proj: project.Project | None = None) -> dict:
@@ -165,12 +193,14 @@ def data(proj: project.Project | None = None) -> dict:
         return {"project": str(proj.root), "counts": {}, "frontier": [],
                 "attention": [], "staged": staged, "violations": violations,
                 "tasks": tasks(proj)}
+    ev = evidence_map(proj)
     return {
         "project": str(proj.root),
         "counts": counts(g),
         "frontier": [
             {"id": r.id, "status": r.status, "title": r.title, "area": r.area,
-             "waiting_on": r.waiting_on, "unblocks": r.unblocks}
+             "waiting_on": r.waiting_on, "unblocks": r.unblocks,
+             "evidence": ev.get(r.id, [])}
             for r in rows(g)
         ],
         "attention": attention(g),
@@ -219,8 +249,12 @@ def text(proj: project.Project | None = None, limit: int = LIMIT) -> str:
     width = max((len(r.status) for r in fr[:limit]), default=0)
     for r in fr[:limit]:
         out.append(f"  {r.id}  {r.status:<{width}}  {r.title}  [{r.area}]")
+        # An open decision with a spike running is not decidable now, and
+        # saying so is a correction to the most-read line in the tool.
+        pending_ev = {e["id"]: e["evidence"] for e in d["frontier"]}.get(r.id, [])
         aside = ("waiting on " + ", ".join(r.waiting_on) if r.waiting_on
-                 else "decidable now")
+                 else "waiting on evidence from " + ", ".join(pending_ev)
+                 if pending_ev else "decidable now")
         if r.unblocks:
             aside += "; unblocks " + ", ".join(r.unblocks)
         out.append(f"       {aside}")
@@ -253,6 +287,12 @@ def text(proj: project.Project | None = None, limit: int = LIMIT) -> str:
         total = sum(tk["counts"].values())
         out += ["", f"TASKS  {total}: {tally}"
                     f"   ({tk['ready']} ready, {tk['blocked']} blocked)"]
+        if tk["unharvested"]:
+            out.append(f"  evidence in hand, nothing recorded "
+                       f"({len(tk['unharvested'])}):")
+            for u in tk["unharvested"][:limit]:
+                out.append(f"    {u['id']}  {u['title']}  "
+                           f"-> `dg decide {u['decision']}`")
         if tk["under_review"]:
             out.append(f"  premise under review ({len(tk['under_review'])}) "
                        f"-- work resting on a decision being re-examined")

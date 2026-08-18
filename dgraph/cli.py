@@ -245,6 +245,9 @@ def node(vid: str) -> None:
     doing = _tasks_implementing(vid)
     if doing:
         lines += [f"implemented by {', '.join(doing)}"]
+    ev = _tasks_informing(vid)
+    if ev:
+        lines += [f"evidence from {', '.join(ev)}"]
     hist = g.history(vid)
     if hist:
         lines += ["", "[bold]Superseded[/]"]
@@ -986,6 +989,8 @@ def task_add(
                               help="comma-separated tasks that must come first"),
     because: str = typer.Option(None, "--because",
                                 help="the decision this work exists because of"),
+    evidence_for: str = typer.Option(None, "--evidence-for",
+                                     help="the decision this work will inform"),
     note: str = typer.Option(None, "--note", "-n"),
 ) -> None:
     """Stage a new task."""
@@ -1020,6 +1025,8 @@ def task_add(
         op["note"] = note
     if because:
         op["because"] = _resolve_premise(because)
+    if evidence_for:
+        op["evidence_for"] = _resolve_premise(evidence_for)
     _tstage(op)
     for p in parents:
         _tstage({"op": "add_dep", "from": p, "to": [tid]})
@@ -1061,6 +1068,19 @@ def _tasks_implementing(did: str) -> list[str]:
         return []
 
 
+def _tasks_informing(did: str) -> list[str]:
+    """Every task whose outcome bears on this decision, with its status."""
+    proj = project.find()
+    if not proj.has_tasks:
+        return []
+    try:
+        from dgraph import cross
+        tg = TaskGraph.load(proj.tasks)
+        return [f"{t} ({tg.tasks[t].status})" for t in cross.evidence(tg, did)]
+    except Exception:
+        return []
+
+
 def _tasks_resting_on(dids: list[str]) -> list[str]:
     """Unfinished work whose premise is one of these decisions.
 
@@ -1098,6 +1118,34 @@ def _resolve_premise(did: str) -> str:
                   f"[dim]`dg show` lists what is on the frontier[/]")
         raise typer.Exit(1)
     return did
+
+
+@task_app.command("link")
+def task_link(
+    tid: str,
+    because: str = typer.Option(None, "--because",
+                                help="the decision this work exists because of"),
+    evidence_for: str = typer.Option(None, "--evidence-for",
+                                     help="the decision this work will inform"),
+) -> None:
+    """Point an existing task at a decision.
+
+    The emergent case: work turns up a question nobody had written down, so you
+    record the decision and then say which work raised it — after the fact, and
+    often after the task is already done.
+    """
+    _require_task(tid)
+    if not because and not evidence_for:
+        con.print("[red]nothing to link[/]\n"
+                  "[dim]pass --because or --evidence-for[/]")
+        raise typer.Exit(2)
+    op = {"op": "set_link", "task": tid}
+    if because:
+        op["because"] = _resolve_premise(because)
+    if evidence_for:
+        op["evidence_for"] = _resolve_premise(evidence_for)
+    _tstage(op)
+    con.print(f"[green]staged[/] {tid} linked")
 
 
 @task_app.command("start")

@@ -154,6 +154,121 @@ def test_no_cross_checks_without_both_stores(task_store):
     assert not [v for v in run() if v.check.startswith("link_")]
 
 
+# ---- evidence: work whose outcome bears on a decision --------------------
+
+
+def test_evidence_is_derived_in_reverse(both):
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D05"
+    assert cross.evidence(tg, "D05") == ["T04"]
+    assert cross.pending_evidence(tg, "D05") == ["T04"]   # DOING
+    tg.tasks["T04"].status, tg.tasks["T04"].done = "DONE", "2026-01-09"
+    tg.tasks["T04"].outcome = "notes/bench.md"
+    assert cross.pending_evidence(tg, "D05") == []
+
+
+def test_unharvested_evidence_warns(both):
+    """The spike ran and nobody wrote down the conclusion. Invisible in either
+    graph alone: the task looks done, the decision merely undecided."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T01"].evidence_for = "D05"        # T01 is DONE, D05 is OPEN
+    tg.save(both / "tasks.json")
+    hits = [v for v in run() if v.check == "evidence_unharvested"]
+    assert len(hits) == 1
+    assert not hits[0].blocking
+    assert "dg decide D05" in str(hits[0])
+
+
+def test_evidence_for_a_settled_decision_is_quiet(both):
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T01"].evidence_for = "D01"        # D01 is DECIDED
+    tg.save(both / "tasks.json")
+    assert not [v for v in run() if v.check == "evidence_unharvested"]
+
+
+def test_unfinished_evidence_does_not_warn(both):
+    """Nothing to harvest until the work is done."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D05"        # TODO
+    tg.save(both / "tasks.json")
+    assert not [v for v in run() if v.check == "evidence_unharvested"]
+
+
+def test_a_decision_waiting_on_a_spike_is_not_decidable_now(both):
+    """The correction to the most-read line in the tool."""
+    from dgraph import brief
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D05"
+    tg.save(both / "tasks.json")
+    out = brief.text(project.Project(both))
+    assert "waiting on evidence from T02" in out
+    assert "D05" in out
+
+
+# ---- cycles across the two graphs ----------------------------------------
+
+
+def test_because_and_evidence_for_the_same_decision_is_refused(both):
+    """A task cannot rest on the answer it exists to produce."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D01"        # already because D01
+    tg.save(both / "tasks.json")
+    hits = [v for v in run() if v.check == "link_acyclic"]
+    assert hits and hits[0].blocking
+    assert "Split the decision" in str(hits[0])
+
+
+def test_a_cycle_across_the_graphs_is_caught(both):
+    """The deadlock neither validator can see on its own: T09 informs D, a task
+    that exists because of D must precede it, so nothing in the loop can start."""
+    from dgraph.tasks import TaskEdge
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D01"        # T04 -> D01
+    tg.edges.append(TaskEdge(src="T02", to=["T04"]))   # T02 -> T04, T02 because D01
+    tg.save(both / "tasks.json")
+    assert tg.validate() == []                  # the task graph alone is clean
+    g = Graph.load(both / "decisions.json")
+    assert not [v for v in g.validate() if v.check == "acyclic"]
+    hits = [v for v in cross.validate(tg, g) if v.check == "link_acyclic"]
+    assert hits and hits[0].blocking
+
+
+def test_because_alone_cannot_make_a_cross_cycle(both):
+    """Without a task->decision edge every cycle lies wholly inside one graph,
+    which is why the cycle check ships with `evidence_for` and not before."""
+    tg = TaskGraph.load(both / "tasks.json")
+    for t in tg.tasks.values():
+        t.evidence_for = None
+    assert not [v for v in cross.validate(tg, Graph.load(both / "decisions.json"))
+                if v.check == "link_acyclic"]
+
+
+# ---- the emergent case ---------------------------------------------------
+
+
+def test_work_can_be_linked_to_a_decision_it_turned_up(run_cli, both):
+    """The case that prompted the feature: doing the work reveals a question
+    nobody had written down, so the decision is recorded and the finished task
+    pointed at it afterwards."""
+    assert run_cli("task", "done", "T02", "-o", "PR #9").exit_code == 0
+    assert run_cli("add", "--id", "D30", "-t", "What about backups?",
+                   "--area", "Alpha").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    res = run_cli("task", "link", "T02", "--evidence-for", "D30")
+    assert res.exit_code == 0, res.output
+    assert run_cli("apply").exit_code == 0
+
+    tg = TaskGraph.load(both / "tasks.json")
+    assert tg.tasks["T02"].evidence_for == "D30"
+    assert "evidence from" in run_cli("node", "D30").output
+    # ...and it nags until the conclusion is recorded
+    assert [v for v in run() if v.check == "evidence_unharvested"]
+
+
+def test_link_needs_something_to_link(run_cli):
+    assert run_cli("task", "link", "T02").exit_code == 2
+
+
 # ---- the barrier ---------------------------------------------------------
 
 
@@ -204,7 +319,7 @@ def test_only_cross_reasons_about_the_link():
             continue
         src = inspect.getsource(__import__(f"dgraph.{info.name}",
                                            fromlist=["_"]))
-        if ".because" in src:
+        if ".because" in src or ".evidence_for" in src:
             offenders.append(info.name)
     assert offenders == [], (
         f"these reason about the cross-graph link outside cross.py: {offenders}"

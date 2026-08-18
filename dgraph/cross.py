@@ -27,6 +27,16 @@ def rests_on(tg: TaskGraph, did: str) -> list[str]:
     return sorted(t.id for t in tg.tasks.values() if t.because == did)
 
 
+def evidence(tg: TaskGraph, did: str) -> list[str]:
+    """The tasks whose outcome bears on this decision. The derived reverse."""
+    return sorted(t.id for t in tg.tasks.values() if t.evidence_for == did)
+
+
+def pending_evidence(tg: TaskGraph, did: str) -> list[str]:
+    """Evidence tasks not finished yet — what an open decision is waiting on."""
+    return [t for t in evidence(tg, did) if tg.tasks[t].unfinished]
+
+
 def gated_by(tg: TaskGraph, g: Graph, tid: str) -> str | None:
     """The decision this task waits on, if it is waiting on one.
 
@@ -87,6 +97,84 @@ def under_review(tg: TaskGraph, g: Graph) -> list[dict]:
     return out
 
 
+def unharvested(tg: TaskGraph, g: Graph) -> list[dict]:
+    """Finished work whose question is still open.
+
+    The spike ran and nobody wrote down what it told us. Invisible in either
+    graph alone — the task looks done, the decision looks merely undecided —
+    and always actionable, which is what makes it the most valuable reading
+    the join produces.
+    """
+    out = []
+    for tid in sorted(tg.tasks):
+        t = tg.tasks[tid]
+        if t.status != "DONE" or not t.evidence_for:
+            continue
+        if t.evidence_for not in g.vertices:
+            continue
+        if not g.vertices[t.evidence_for].settled:
+            out.append({"id": tid, "title": t.title, "outcome": t.outcome,
+                        "decision": t.evidence_for,
+                        "decision_title": g.vertices[t.evidence_for].title})
+    return out
+
+
+def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
+    """The two graphs as one digraph, for cycle detection.
+
+    Four edge kinds, all meaning "the head waits on the tail":
+    decision→decision (a premise opens a question), task→task (a prerequisite),
+    decision→task (`because`: work waits on the answer), and task→decision
+    (`evidence_for`: the answer waits on the work).
+
+    Note the last kind is what makes cross-graph cycles possible at all. With
+    `because` alone every cycle would have to lie wholly inside one graph, and
+    both graphs already prove themselves acyclic.
+    """
+    adj: dict[str, list[str]] = {}
+    for vid in g.vertices:
+        adj.setdefault(vid, []).extend(
+            c for c in g.children(vid) if c in g.vertices)
+    for tid in tg.tasks:
+        adj.setdefault(tid, []).extend(tg.unblocks(tid))
+    for tid, t in tg.tasks.items():
+        if t.because and t.because in g.vertices:
+            adj.setdefault(t.because, []).append(tid)
+        if t.evidence_for and t.evidence_for in g.vertices:
+            adj.setdefault(tid, []).append(t.evidence_for)
+    return adj
+
+
+def _cycles(adj: dict[str, list[str]]) -> list[list[str]]:
+    """Iterative DFS colouring, for the reason both validators are iterative:
+    a deep but legal graph must not crash the check that guards it."""
+    colour: dict[str, int] = {}
+    found: list[list[str]] = []
+    for start in sorted(adj):
+        if colour.get(start):
+            continue
+        colour[start] = 1
+        stack = [(start, iter(adj.get(start, ())))]
+        trail = [start]
+        while stack:
+            node, nxt = stack[-1]
+            for c in nxt:
+                if colour.get(c) == 1:
+                    found.append(trail[trail.index(c):] + [c])
+                    continue
+                if colour.get(c) == 2:
+                    continue
+                colour[c] = 1
+                stack.append((c, iter(adj.get(c, ()))))
+                trail.append(c)
+                break
+            else:
+                colour[node] = 2
+                stack.pop()
+                trail.pop()
+    return found
+
+
 def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
     """The invariants that need both stores.
 
@@ -105,12 +193,46 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
     v: list[Violation] = []
 
     for tid in sorted(tg.tasks):
-        because = tg.tasks[tid].because
-        if because and because not in g.vertices:
+        t = tg.tasks[tid]
+        for fld in ("because", "evidence_for"):
+            ref = getattr(t, fld)
+            if ref and ref not in g.vertices:
+                v.append(Violation(
+                    "link_resolves",
+                    f"{tid}: {fld} names unknown decision {ref}",
+                ))
+        if t.because and t.because == t.evidence_for:
             v.append(Violation(
-                "link_resolves",
-                f"{tid}: because names unknown decision {because}",
+                "link_acyclic",
+                f"{tid}: because and evidence_for both name {t.because} — a "
+                f"task cannot rest on the answer it exists to produce. Split "
+                f"the decision: one question settled cheaply now, another "
+                f"settled by this evidence.",
             ))
+
+    for cyc in _cycles(_union_edges(tg, g)):
+        # A deadlock: every node in the loop waits on another node in it. The
+        # situation it represents ("we must build it to decide it") is real,
+        # but it means the decision is at the wrong grain, so the message names
+        # the way out rather than only refusing.
+        if len({c for c in cyc if c in tg.tasks}) and \
+                len({c for c in cyc if c in g.vertices}):
+            v.append(Violation(
+                "link_acyclic",
+                f"cycle across the graphs: {' -> '.join(cyc)} — nothing in "
+                f"this loop can start. Split the decision into one you can "
+                f"settle now and one the evidence settles, or break the task "
+                f"dependency.",
+            ))
+
+    for u in unharvested(tg, g):
+        v.append(Violation(
+            "evidence_unharvested",
+            f"{u['id']} is DONE and was to inform {u['decision']} "
+            f"({u['decision_title']}), which is still unsettled — record what "
+            f"it showed with `dg decide {u['decision']}`, or drop the link",
+            "warning",
+        ))
 
     for u in under_review(tg, g):
         v.append(Violation(

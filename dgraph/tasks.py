@@ -70,6 +70,12 @@ class Task:
     #: module resolves it; that is `dgraph/cross.py`'s job, and this module
     #: cannot even see the decision store.
     because: str | None = None
+    #: The decision this work will *bear on* — the spike whose result feeds a
+    #: question, or the chore that turned out to raise one. Opposite polarity
+    #: to `because`: that one makes the task wait on the decision, this one
+    #: makes the decision wait on the task. Deliberately not called `settles`:
+    #: a task produces evidence, a person decides.
+    evidence_for: str | None = None
 
     @property
     def unfinished(self) -> bool:
@@ -131,6 +137,7 @@ class TaskGraph:
                         ("status", t.status), ("note", t.note),
                         ("done", t.done), ("outcome", t.outcome),
                         ("format", t.format), ("because", t.because),
+                        ("evidence_for", t.evidence_for),
                     )
                     if val is not None
                 }
