@@ -1,0 +1,292 @@
+"""The relation between the two graphs.
+
+The link is stored on the task and derived in the other direction, so most of
+what is pinned here is that `decisions.json` never learns what a task is, and
+that the one thing joining them cannot hold a decision hostage to a backlog.
+"""
+
+import json
+from dataclasses import replace
+
+import pytest
+from typer.testing import CliRunner
+
+from dgraph import cross, gate, project
+from dgraph.check import run
+from dgraph.cli import app
+from dgraph.model import Graph
+from dgraph.render import write
+from dgraph.tasks import TaskGraph
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def both(store, task_store, g):
+    """A project with both stores, the tasks pointing at real decisions.
+
+    `store` and `task_store` share one tmp_path, so requesting both gives a
+    directory holding a decision graph and a task graph.
+    """
+    write(g)
+    tg = TaskGraph.load(task_store / "tasks.json")
+    tg.tasks["T01"].because = "D01"     # DONE
+    tg.tasks["T02"].because = "D01"     # TODO
+    tg.tasks["T03"].because = "D05"     # TODO, premise never settled (OPEN)
+    tg.save(task_store / "tasks.json")
+    from dgraph import task_render
+    task_render.write(tg, task_store / "tasks.md")
+    return task_store
+
+
+def _reopen(root, vid="D01"):
+    """Put a decision under review, the way `dg reopen` would."""
+    g = Graph.load(root / "decisions.json")
+    g.vertices[vid] = replace(g.vertices[vid], status="REOPENED")
+    for d in g.descendants(vid):
+        if g.vertices[d].base_status == "DECIDED":
+            g.vertices[d] = replace(g.vertices[d], status="PROVISIONAL")
+    e = g.active_edge(vid)
+    if e:
+        e.answer = e.falsifier = e.source = e.date = None
+    g.save(root / "decisions.json")
+    write(g, root / "decision-graph.md")
+    return g
+
+
+# ---- derived accessors ---------------------------------------------------
+
+
+def test_the_reverse_link_is_derived_not_stored(both):
+    """`decisions.json` never names a task; the decision->task direction is
+    computed by scanning the task store."""
+    raw = json.loads((both / "decisions.json").read_text())
+    assert "T01" not in json.dumps(raw)
+    tg = TaskGraph.load(both / "tasks.json")
+    assert cross.rests_on(tg, "D01") == ["T01", "T02"]
+
+
+def test_gated_by_is_none_once_the_premise_is_settled(both):
+    tg, g = TaskGraph.load(both / "tasks.json"), Graph.load(both / "decisions.json")
+    assert cross.gated_by(tg, g, "T02") is None     # D01 is DECIDED
+    assert cross.gated_by(tg, g, "T03") == "D05"    # D05 is OPEN
+
+
+def test_gated_by_skips_an_unknown_decision(both):
+    """A dangling reference must not crash the traversal that was about to
+    report it — the class of bug audit item A1 fixed."""
+    tg, g = TaskGraph.load(both / "tasks.json"), Graph.load(both / "decisions.json")
+    tg.tasks["T02"].because = "D99"
+    assert cross.gated_by(tg, g, "T02") is None
+
+
+def test_ready_needs_prerequisites_and_a_settled_premise(both):
+    tg, g = TaskGraph.load(both / "tasks.json"), Graph.load(both / "decisions.json")
+    assert cross.ready(tg, g, "T02")            # T01 done, D01 decided
+    tg.tasks["T02"].because = "D05"             # an unsettled premise
+    assert not cross.ready(tg, g, "T02")
+    assert tg.ready("T02")                      # ...but the task graph alone says yes
+
+
+def test_blast_radius_is_unfinished_work_only(both):
+    tg = TaskGraph.load(both / "tasks.json")
+    assert cross.blast_radius(tg, ["D01"]) == ["T02"]      # T01 is DONE
+
+
+# ---- the invariants ------------------------------------------------------
+
+
+def test_a_dangling_because_is_a_blocking_error(both):
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].because = "D99"
+    tg.save(both / "tasks.json")
+    hits = [v for v in run() if v.check == "link_resolves"]
+    assert hits and hits[0].blocking and "D99" in str(hits[0])
+
+
+def test_a_reopened_premise_warns_about_unfinished_work(both):
+    _reopen(both)
+    hits = [v for v in run() if v.check == "link_premise_under_review"]
+    assert len(hits) == 1
+    assert "T02" in str(hits[0]) and not hits[0].blocking
+
+
+def test_completed_work_is_never_flagged(both):
+    """The user's explicit choice: reversing a decision must not raise warnings
+    about history. T01 is DONE and rests on the reopened D01."""
+    _reopen(both)
+    assert not [v for v in run()
+                if v.check == "link_premise_under_review" and "T01" in str(v)]
+
+
+def test_a_never_settled_premise_does_not_warn(both):
+    """T03 rests on D05, which is OPEN. Planning work ahead of a decision is
+    ordinary; warning about it would emit one warning per task per open
+    decision — noise proportional to the backlog."""
+    assert not [v for v in run() if v.check == "link_premise_under_review"]
+
+
+def test_a_provisional_premise_warns_too(both):
+    """The propagated case: D02 becomes PROVISIONAL when D01 is reopened, so
+    work resting on D02 is equally on shaky ground."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T03"].because = "D02"
+    tg.save(both / "tasks.json")
+    _reopen(both)
+    hits = [v for v in run() if v.check == "link_premise_under_review"]
+    assert any("T03" in str(h) for h in hits)
+
+
+def test_the_cross_check_never_blocks_a_commit(both, tmp_path):
+    """The governing severity rule. If resting on a reopened decision were an
+    error, `dg reopen` would deny every commit in the repo until the backlog
+    was triaged — and the check would be switched off the same day."""
+    _reopen(both)
+    problems = run()
+    assert any(p.check == "link_premise_under_review" for p in problems)
+    assert not [p for p in problems if p.blocking]
+    assert gate.verdict("git commit -m x",
+                        project.Project(both))["verdict"] == "allow"
+
+
+def test_no_cross_checks_without_both_stores(task_store):
+    """A tasks-only project cannot have a link to check."""
+    assert not [v for v in run() if v.check.startswith("link_")]
+
+
+# ---- the barrier ---------------------------------------------------------
+
+
+def _imports(module) -> set[str]:
+    """Every `dgraph.*` module this one imports, parsed rather than grepped —
+    the modules discuss each other in prose, so text matching false-positives."""
+    import ast
+    import inspect
+
+    names = set()
+    for node in ast.walk(ast.parse(inspect.getsource(module))):
+        if isinstance(node, ast.Import):
+            names |= {a.name for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module)
+            if node.module == "dgraph":
+                names |= {f"dgraph.{a.name}" for a in node.names}
+    return {n for n in names if n.startswith("dgraph")}
+
+
+def test_the_two_models_are_mutually_ignorant():
+    """The structural half of the barrier: neither model can see the other, so
+    neither can grow a dependency on the other's vocabulary. Everything needing
+    both lives in `cross.py`, which is visible in a diff."""
+    from dgraph import model, tasks
+    assert "dgraph.tasks" not in _imports(model)
+    assert "dgraph.model" not in _imports(tasks)
+
+
+def test_only_cross_reasons_about_the_link():
+    """Aggregators (`cli`, `check`, `brief`) may load both stores — that is
+    what composing a report means. What they must not do is decide *what the
+    link means*, or the rule ends up in two places and drifts. `tasks` declares
+    and serialises the field, `cli` prints it; every other use is reasoning and
+    belongs in `cross`.
+
+    This is not hypothetical: `brief` first shipped with its own copy of the
+    "is this premise shaky?" rule, and this test is what found it.
+    """
+    import inspect
+    import pkgutil
+
+    import dgraph
+    allowed = {"cross", "tasks", "cli"}
+    offenders = []
+    for info in pkgutil.iter_modules(dgraph.__path__):
+        if info.name in allowed:
+            continue
+        src = inspect.getsource(__import__(f"dgraph.{info.name}",
+                                           fromlist=["_"]))
+        if ".because" in src:
+            offenders.append(info.name)
+    assert offenders == [], (
+        f"these reason about the cross-graph link outside cross.py: {offenders}"
+    )
+
+
+def test_the_decision_store_never_gains_a_task_field(both):
+    """The "stored twice, in two directions" failure, guarded. A decision store
+    that listed its tasks would dirty on every chore."""
+    _reopen(both)
+    raw = json.loads((both / "decisions.json").read_text())
+    blob = json.dumps(raw)
+    for key in ("task", "because", "T01", "T02", "T03"):
+        assert key not in blob
+
+
+def test_the_decision_view_never_mentions_tasks(both):
+    """`decision-graph.md` is checked in and guarded by `stale_view`, a
+    blocking violation and a gate denial — so a task in it would mean filing a
+    chore makes the decision view stale and denies the commit."""
+    view = (both / "decision-graph.md").read_text()
+    assert "T01" not in view and "implemented by" not in view
+
+
+# ---- the command surface -------------------------------------------------
+
+
+@pytest.fixture
+def run_cli(both, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setenv("TERM", "dumb")
+
+    def go(*args, input=None):
+        return runner.invoke(app, ["--project", str(both), *args], input=input)
+    return go
+
+
+def test_because_resolves_against_the_effective_graph(run_cli, both):
+    """The A3 lesson across the barrier: a decision staged but not applied must
+    still be nameable as a premise."""
+    assert run_cli("add", "--id", "D20", "-t", "New question",
+                   "--area", "Alpha").exit_code == 0
+    res = run_cli("task", "add", "--id", "T20", "-t", "The work",
+                  "--area", "Alpha", "--because", "D20")
+    assert res.exit_code == 0, res.output
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(both / "tasks.json").tasks["T20"].because == "D20"
+
+
+def test_because_refuses_an_unknown_decision(run_cli):
+    res = run_cli("task", "add", "--id", "T21", "-t", "x", "--area", "Alpha",
+                  "--because", "D99")
+    assert res.exit_code == 1 and "unknown decision" in res.output
+
+
+def test_reopen_reports_the_work_resting_on_it(run_cli):
+    res = run_cli("reopen", "D01", "--why", "new evidence", "--yes")
+    assert res.exit_code == 0
+    assert "unfinished task" in res.output
+    assert "T02" in res.output.split("unfinished task")[1]
+
+
+def test_node_shows_what_implements_a_decision(run_cli):
+    out = run_cli("node", "D01").output
+    assert "implemented by" in out and "T01 (DONE)" in out
+
+
+def test_the_task_list_shows_the_premise_gate(run_cli):
+    out = run_cli("task").output
+    assert "D05 (undecided)" in out          # T03's premise is OPEN
+
+
+def test_brief_carries_a_bounded_task_section(run_cli, both):
+    _reopen(both)
+    out = run_cli("brief").output
+    assert "TASKS" in out
+    assert "premise under review" in out and "T02" in out
+
+
+def test_brief_has_no_task_section_without_a_task_store(store, g, monkeypatch):
+    """A project that has never heard of tasks pays nothing for the feature."""
+    monkeypatch.setenv("COLUMNS", "200")
+    write(g)
+    out = runner.invoke(app, ["--project", str(store), "brief"]).output
+    assert "TASKS" not in out

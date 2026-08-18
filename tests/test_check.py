@@ -127,12 +127,12 @@ def _emitting_source() -> str:
     import inspect
 
     from dgraph import check as check_mod
-    from dgraph import model, tasks
+    from dgraph import cross, model, tasks
     src = inspect.getsource(check_mod)
     start = src.index("CHECKS: tuple")
     end = src.index("\n)\n", start) + len("\n)\n")
     return (inspect.getsource(model) + inspect.getsource(tasks)
-            + src[:start] + src[end:])
+            + inspect.getsource(cross) + src[:start] + src[end:])
 
 
 def test_the_reachability_guard_can_actually_fail():

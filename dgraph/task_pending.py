@@ -45,6 +45,7 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             id=op["id"], title=op["title"], area=op["area"],
             status=op.get("status", "TODO"), note=op.get("note"),
             format=op.get("format") if op.get("note") else None,
+            because=op.get("because"),
         )
         return
 

@@ -238,6 +238,13 @@ def node(vid: str) -> None:
         lines += [f"opens       {', '.join(g.children(vid)) or '—'}"]
         if v.note:
             lines += ["", "[bold]Note[/]", _x(v.note)]
+    # Derived from the task store, stored nowhere: `decisions.json` never names
+    # a task. Absent from `decision-graph.md` on purpose — that file is guarded
+    # by `stale_view`, so a task count in it would mean filing a chore makes the
+    # decision view stale and denies the commit.
+    doing = _tasks_implementing(vid)
+    if doing:
+        lines += [f"implemented by {', '.join(doing)}"]
     hist = g.history(vid)
     if hist:
         lines += ["", "[bold]Superseded[/]"]
@@ -620,11 +627,18 @@ def reopen(
     ops = pending.expand(eff, op)
 
     affected = [o["vertex"] for o in ops if o["op"] == "set_status"]
+    # The blast radius in work terms, reported before the reopen is staged:
+    # every unfinished task resting on this decision or on anything the reopen
+    # just dragged into PROVISIONAL. No task tracker can compute this, because
+    # none of them knows why a task exists.
+    stalled = _tasks_resting_on([vid, *affected])
     con.print(Panel(
         f"[bold]{_x(eff.vertices[vid].title)}[/]\n\n"
         f"Its answer becomes superseded; its dependencies stay.\n\n"
         f"[cyan]{len(affected)}[/] decided descendant(s) rest on it and become "
-        f"PROVISIONAL:\n  {', '.join(affected) or 'none'}",
+        f"PROVISIONAL:\n  {', '.join(affected) or 'none'}"
+        + (f"\n\n[cyan]{len(stalled)}[/] unfinished task(s) rest on a premise "
+           f"under review:\n  {', '.join(stalled)}" if stalled else ""),
         title=f"reopen {vid}", border_style="magenta",
     ))
     if not yes:
@@ -970,6 +984,8 @@ def task_add(
     area: str = typer.Option(None, "--area"),
     after: str = typer.Option(None, "--after",
                               help="comma-separated tasks that must come first"),
+    because: str = typer.Option(None, "--because",
+                                help="the decision this work exists because of"),
     note: str = typer.Option(None, "--note", "-n"),
 ) -> None:
     """Stage a new task."""
@@ -1002,10 +1018,86 @@ def task_add(
     op = {"op": "add_task", "id": tid, "title": title, "area": area}
     if note:
         op["note"] = note
+    if because:
+        op["because"] = _resolve_premise(because)
     _tstage(op)
     for p in parents:
         _tstage({"op": "add_dep", "from": p, "to": [tid]})
     con.print(f"[green]staged[/] add {tid}")
+
+
+def _decisions_or_none() -> Graph | None:
+    """The decision store if this project has a readable one, else None.
+
+    Task commands must work in a project that tracks only work, so every
+    cross-graph view degrades to "no premise information" rather than failing.
+    """
+    proj = project.find()
+    if not proj.has_decisions:
+        return None
+    try:
+        return Graph.load(proj.store)
+    except Exception:
+        return None
+
+
+def _gated_by(tg: TaskGraph, g: Graph | None, tid: str) -> str | None:
+    if g is None:
+        return None
+    from dgraph import cross
+    return cross.gated_by(tg, g, tid)
+
+
+def _tasks_implementing(did: str) -> list[str]:
+    """Every task that exists because of this decision, with its status."""
+    proj = project.find()
+    if not proj.has_tasks:
+        return []
+    try:
+        from dgraph import cross
+        tg = TaskGraph.load(proj.tasks)
+        return [f"{t} ({tg.tasks[t].status})" for t in cross.rests_on(tg, did)]
+    except Exception:
+        return []
+
+
+def _tasks_resting_on(dids: list[str]) -> list[str]:
+    """Unfinished work whose premise is one of these decisions.
+
+    Silent in a project with no task store, which is most of them — the
+    decision commands must cost nothing extra where there are no tasks.
+    """
+    proj = project.find()
+    if not proj.has_tasks:
+        return []
+    try:
+        from dgraph import cross
+        return cross.blast_radius(TaskGraph.load(proj.tasks), dids)
+    except Exception:
+        # A broken task store must never stop a decision being reopened;
+        # `dg check` reports it separately.
+        return []
+
+
+def _resolve_premise(did: str) -> str:
+    """Check a `--because` against the *effective* decision graph.
+
+    Resolved against the store plus its staged ops, so recording a decision and
+    the work it implies in one batch is possible — the A3 lesson. The converse
+    never holds: a decision command must not consult tasks.
+    """
+    proj = project.find()
+    if not proj.has_decisions:
+        con.print(f"[red]--because {_x(did)} names a decision, but there is no "
+                  f"{project.STORE_NAME} here[/]\n"
+                  f"[dim]`dg init` to start a decision graph, or drop "
+                  f"--because[/]")
+        raise typer.Exit(1)
+    if did not in _eff(Graph.load(proj.store)).vertices:
+        con.print(f"[red]unknown decision {_x(did)}[/]\n"
+                  f"[dim]`dg show` lists what is on the frontier[/]")
+        raise typer.Exit(1)
+    return did
 
 
 @task_app.command("start")
@@ -1068,17 +1160,28 @@ def task_show(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     tg = _tg()
+    g = _decisions_or_none()
     t = Table(title="Tasks", header_style="bold")
-    for c in ("ID", "Task", "Status", "Waiting on", "Unblocks", "Area"):
+    for c in ("ID", "Task", "Status", "Waiting on", "Because", "Area"):
         t.add_column(c)
     for tid in tg.frontier():
         task = tg.tasks[tid]
+        # Two waiting-on lists, kept apart in the data and joined only here:
+        # a mixed list of T- and D-ids would eventually be fed to a task lookup
+        # and crash, which is the class of bug audit item A1 fixed.
+        waiting = list(tg.waiting_on(tid))
+        gate = _gated_by(tg, g, tid)
+        if gate:
+            waiting.append(f"{gate} (undecided)")
+        premise = task.because or "—"
+        if gate:
+            premise = f"[yellow]{premise}[/]"
         t.add_row(tid, _x(task.title),
                   f"[{TASK_STYLE.get(task.status, 'white')}]{task.status}[/]",
-                  ", ".join(tg.waiting_on(tid)) or "—",
-                  ", ".join(tg.unblocks(tid)) or "—", _x(task.area))
+                  ", ".join(waiting) or "—", premise, _x(task.area))
     con.print(t)
-    ready = [tid for tid in sorted(tg.tasks) if tg.ready(tid)]
+    ready = [tid for tid in sorted(tg.tasks)
+             if tg.ready(tid) and not _gated_by(tg, g, tid)]
     con.print(f"[green]ready[/] {', '.join(ready) or '—'}")
     con.print("  ".join(
         f"[{TASK_STYLE.get(k, 'white')}]{k} {n}[/]"

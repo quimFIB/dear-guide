@@ -78,6 +78,54 @@ def counts(g: Graph) -> dict[str, int]:
     return out
 
 
+#: The empty task summary, so every return site and every consumer sees the
+#: same shape whether or not the project tracks work.
+NO_TASKS = {"counts": {}, "ready": 0, "blocked": 0, "under_review": []}
+
+
+def tasks(proj: project.Project) -> dict:
+    """A *bounded* summary of the task store.
+
+    Deliberately never enumerates the backlog. The brief is injected into every
+    agent session and paid for in tokens each time, so what it carries has to
+    stay roughly flat as the task list grows: counts, the ready/blocked split,
+    and only the tasks whose premise went back under review — which is rare,
+    bounded by a reversal, and the one thing nobody can afford to miss.
+    """
+    if not proj.has_tasks:
+        return dict(NO_TASKS)
+    try:
+        from dgraph.tasks import TaskGraph
+        tg = TaskGraph.load(proj.tasks)
+    except Exception:
+        # `_check_run` has already reported the unreadable store.
+        return dict(NO_TASKS)
+
+    # Every cross-graph reading comes from `cross`, so the rule for "is this
+    # premise shaky?" exists once rather than here as well.
+    from dgraph import cross
+
+    g = None
+    if proj.has_decisions:
+        try:
+            g = Graph.load(proj.store)
+        except Exception:
+            g = None
+
+    if g is None:
+        ready = [t for t in tg.frontier() if tg.ready(t)]
+        reviewed: list[dict] = []
+    else:
+        ready = [t for t in tg.frontier() if cross.ready(tg, g, t)]
+        reviewed = cross.under_review(tg, g)
+    return {
+        "counts": tg.counts(),
+        "ready": len(ready),
+        "blocked": len(tg.frontier()) - len(ready),
+        "under_review": reviewed,
+    }
+
+
 def data(proj: project.Project | None = None) -> dict:
     """The brief as data, for a host adapter.
 
@@ -89,7 +137,7 @@ def data(proj: project.Project | None = None) -> dict:
     proj = proj or project.find()
     if not proj.exists:
         return {"project": None, "counts": {}, "frontier": [], "attention": [],
-                "staged": 0, "violations": []}
+                "staged": 0, "violations": [], "tasks": dict(NO_TASKS)}
     # `str(Violation)` verbatim, so an adapter quoting a refusal quotes the
     # same words `dg check` would have printed.
     violations = [
@@ -115,7 +163,8 @@ def data(proj: project.Project | None = None) -> dict:
         # crash, which the host hooks read as "nothing to say" — silence at
         # the one moment the graph most needs attention.
         return {"project": str(proj.root), "counts": {}, "frontier": [],
-                "attention": [], "staged": staged, "violations": violations}
+                "attention": [], "staged": staged, "violations": violations,
+                "tasks": tasks(proj)}
     return {
         "project": str(proj.root),
         "counts": counts(g),
@@ -127,6 +176,7 @@ def data(proj: project.Project | None = None) -> dict:
         "attention": attention(g),
         "staged": staged,
         "violations": violations,
+        "tasks": tasks(proj),
     }
 
 
@@ -193,6 +243,24 @@ def text(proj: project.Project | None = None, limit: int = LIMIT) -> str:
 
     out += ["", f"STAGED BUT NOT APPLIED: {d['staged']}"
                 + (" -- `dg pending`, then `dg apply`" if d["staged"] else "")]
+
+    # Printed only where a task store exists. Empty sections print for the
+    # decision half because silence there is ambiguous, but a project that has
+    # never heard of tasks must pay nothing at all for the feature.
+    tk = d["tasks"]
+    if proj.has_tasks:
+        tally = ", ".join(f"{k} {n}" for k, n in sorted(tk["counts"].items()))
+        total = sum(tk["counts"].values())
+        out += ["", f"TASKS  {total}: {tally}"
+                    f"   ({tk['ready']} ready, {tk['blocked']} blocked)"]
+        if tk["under_review"]:
+            out.append(f"  premise under review ({len(tk['under_review'])}) "
+                       f"-- work resting on a decision being re-examined")
+            for u in tk["under_review"][:limit]:
+                out.append(f"    {u['id']}  {u['title']}  "
+                           f"<- because {u['because']}, {u['premise_status']}")
+            if len(tk["under_review"]) > limit:
+                out.append(f"    +{len(tk['under_review']) - limit} more")
 
     blocking = [v for v in d["violations"] if v["blocking"]]
     warnings = [v for v in d["violations"] if not v["blocking"]]

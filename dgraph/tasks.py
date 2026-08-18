@@ -64,6 +64,12 @@ class Task:
     done: str | None = None      # ISO date, required once DONE
     outcome: str | None = None   # what the work produced, required once DONE
     format: str | None = None    # the note's dialect: "org", else markdown
+    #: The decision this work exists because of — a `D`-id in the *other*
+    #: store. Held here and nowhere else: `decisions.json` never names a task,
+    #: so a change to it always means a decision changed. Nothing in this
+    #: module resolves it; that is `dgraph/cross.py`'s job, and this module
+    #: cannot even see the decision store.
+    because: str | None = None
 
     @property
     def unfinished(self) -> bool:
@@ -124,7 +130,7 @@ class TaskGraph:
                         ("id", t.id), ("title", t.title), ("area", t.area),
                         ("status", t.status), ("note", t.note),
                         ("done", t.done), ("outcome", t.outcome),
-                        ("format", t.format),
+                        ("format", t.format), ("because", t.because),
                     )
                     if val is not None
                 }

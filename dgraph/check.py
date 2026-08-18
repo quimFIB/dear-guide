@@ -37,6 +37,9 @@ CHECKS: tuple[str, ...] = (
     "task_done_complete",
     "task_done_before_prerequisite",
     "stale_task_view",
+    # the relation between the two stores; checked only when both exist
+    "link_resolves",
+    "link_premise_under_review",
 )
 
 
@@ -58,6 +61,8 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
 
     problems = _decisions(proj) if proj.has_decisions else []
     problems += _tasks(proj) if proj.has_tasks else []
+    if proj.has_decisions and proj.has_tasks:
+        problems += _link(proj)
 
     unknown = sorted({p.check for p in problems} - set(CHECKS))
     if unknown:
@@ -66,6 +71,31 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
             f"internal: checks emitted but not declared in CHECKS: {unknown}",
         ))
     return problems
+
+
+def _link(proj: _project.Project) -> list[Violation]:
+    """The cross-graph invariants, when the project has both stores.
+
+    Silent if either store is unreadable: `_decisions`/`_tasks` have already
+    reported that as a blocking `store_loads`, and a second complaint about the
+    same file helps nobody.
+    """
+    from dgraph import cross
+    from dgraph.tasks import TaskGraph
+
+    try:
+        g = Graph.load(proj.store)
+        tg = TaskGraph.load(proj.tasks)
+    except Exception:
+        return []
+    try:
+        return cross.validate(tg, g)
+    except Exception as exc:
+        return [Violation(
+            "store_loads",
+            f"internal: the cross-graph check failed ({exc!r}) — the link "
+            f"between {proj.store.name} and {proj.tasks.name} cannot be judged",
+        )]
 
 
 def _tasks(proj: _project.Project) -> list[Violation]:
