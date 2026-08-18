@@ -22,6 +22,10 @@ VIEW_NAME = "decision-graph.md"
 PENDING_NAME = ".dgraph-pending.json"
 EDIT_NAME = ".dgraph-edit.org"
 
+TASKS_NAME = "tasks.json"
+TASK_VIEW_NAME = "tasks.md"
+TASK_PENDING_NAME = ".dgraph-task-pending.json"
+
 _override: Path | None = None
 
 
@@ -48,8 +52,41 @@ class Project:
         return self.root / EDIT_NAME
 
     @property
-    def exists(self) -> bool:
+    def tasks(self) -> Path:
+        return self.root / TASKS_NAME
+
+    @property
+    def task_view(self) -> Path:
+        return self.root / TASK_VIEW_NAME
+
+    @property
+    def task_pending(self) -> Path:
+        """The task staging area, deliberately its own file.
+
+        `pending.preview` walks every op in a pending file and `_apply_one`
+        raises on any op it does not know, so task ops sharing the decision
+        staging file would break every decision command until it was cleared.
+        """
+        return self.root / TASK_PENDING_NAME
+
+    @property
+    def has_decisions(self) -> bool:
         return self.store.exists()
+
+    @property
+    def has_tasks(self) -> bool:
+        return self.tasks.exists()
+
+    @property
+    def exists(self) -> bool:
+        """Whether this directory is a `dg` project at all.
+
+        Either store is enough: a team may track work before it tracks
+        decisions, and refusing `dg task` until somebody records a decision
+        would be a strange gate. Callers that need one store specifically ask
+        `has_decisions` / `has_tasks`.
+        """
+        return self.has_decisions or self.has_tasks
 
 
 def use(path: str | Path | None) -> None:
@@ -66,6 +103,6 @@ def find(start: Path | None = None) -> Project:
         return Project(Path(env).expanduser().resolve())
     cur = (start or Path.cwd()).resolve()
     for d in (cur, *cur.parents):
-        if (d / STORE_NAME).exists():
+        if (d / STORE_NAME).exists() or (d / TASKS_NAME).exists():
             return Project(d)
     return Project(cur)

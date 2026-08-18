@@ -5,9 +5,10 @@ A project should not have to restate the tool's invariants. Put one file in
 
     from dgraph.testing import *  # noqa: F401,F403
 
-and every check the tool knows about becomes a test. Adding a check to the tool
-adds it to every project, with no list to keep in sync — keeping one was how
-`stale_block` nearly went unchecked.
+and every check the tool knows about becomes a test — across every store the
+project has, since `check.CHECKS` names the task and decision rules alike.
+Adding a check to the tool adds it to every project, with no list to keep in
+sync — keeping one was how `stale_block` nearly went unchecked.
 
 The project is located from pytest's rootdir, or from `$DG_PROJECT`, or with
 ``--decision-graph PATH`` if the plugin is registered.
@@ -35,7 +36,8 @@ __all__ = [
 def decision_project(pytestconfig):
     proj = _project.find(Path(pytestconfig.rootpath))
     if not proj.exists:
-        pytest.skip(f"no decisions.json at or above {pytestconfig.rootpath}")
+        pytest.skip(f"no {_project.STORE_NAME} or {_project.TASKS_NAME} at or "
+                    f"above {pytestconfig.rootpath}")
     return proj
 
 

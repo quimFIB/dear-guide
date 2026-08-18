@@ -56,6 +56,43 @@ def g(store):
     return Graph.load()
 
 
+#: A task graph over the same areas, exercising every status and a chain deep
+#: enough to have a middle. T04 is unconnected, which is ordinary for tasks.
+TASK_FIXTURE = {
+    "areas": ["Alpha", "Beta"],
+    "tasks": [
+        {"id": "T01", "title": "First, a prerequisite", "area": "Alpha",
+         "status": "DONE", "done": "2026-01-05", "outcome": "PR #1"},
+        {"id": "T02", "title": "Second, now startable", "area": "Alpha",
+         "status": "TODO"},
+        {"id": "T03", "title": "Third, still waiting", "area": "Beta",
+         "status": "TODO"},
+        {"id": "T04", "title": "Unconnected, which is fine", "area": "Beta",
+         "status": "DOING", "note": "Nobody has finished this yet."},
+    ],
+    "edges": [
+        {"from": "T01", "to": ["T02"]},
+        {"from": "T02", "to": ["T03"]},
+    ],
+}
+
+
+@pytest.fixture
+def task_store(tmp_path, monkeypatch):
+    """A project directory holding the task fixture, and no decision store."""
+    (tmp_path / "tasks.json").write_text(
+        json.dumps(TASK_FIXTURE, indent=2), encoding="utf-8"
+    )
+    monkeypatch.setattr(project, "_override", tmp_path)
+    return tmp_path
+
+
+@pytest.fixture
+def tg(task_store):
+    from dgraph.tasks import TaskGraph
+    return TaskGraph.load(task_store / "tasks.json")
+
+
 @pytest.fixture
 def tty(monkeypatch):
     """Pretend there is a person at a terminal.

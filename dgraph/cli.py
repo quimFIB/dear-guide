@@ -17,8 +17,10 @@ from rich.tree import Tree
 
 from dgraph import brief as _brief
 from dgraph import check as _check
-from dgraph import editor, pending, project, render
+from dgraph import editor, pending, project, render, task_pending, task_render
 from dgraph.model import SIMPLE_STATUSES, Graph
+from dgraph.tasks import ID_RE as TASK_ID_RE
+from dgraph.tasks import TaskGraph
 
 app = typer.Typer(
     add_completion=False,
@@ -71,7 +73,7 @@ STATUS_STYLE = {
 
 def _g() -> Graph:
     proj = project.find()
-    if not proj.exists:
+    if not proj.has_decisions:
         con.print(f"[red]no decisions.json under {proj.root}[/]\n"
                   f"[dim]run `dg init` there, or pass --project PATH[/]")
         raise typer.Exit(2)
@@ -341,8 +343,10 @@ def check() -> None:
         # 2, not 1, matching `_g()`. "This project has no graph" is a different
         # thing from "this graph is broken", and an adapter keying on the exit
         # code has to be able to tell them apart.
-        con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
-                  f"[dim]run `dg init` there, or pass --project PATH[/]")
+        con.print(f"[red]no {project.STORE_NAME} or {project.TASKS_NAME} under "
+                  f"{proj.root}[/]\n"
+                  f"[dim]run `dg init` or `dg task init` there, or pass "
+                  f"--project PATH[/]")
         raise typer.Exit(2)
     problems = _check.run(proj)
     for p in problems:
@@ -350,10 +354,16 @@ def check() -> None:
                   f"{'✗' if p.blocking else '!'}[/] {_x(p)}")
     if any(p.blocking for p in problems):
         raise typer.Exit(1)
-    g = Graph.load(proj.store)
+    # Counted per store that actually exists — a project may have either.
+    sizes = []
+    if proj.has_decisions:
+        g = Graph.load(proj.store)
+        sizes.append(f"{len(g.vertices)} vertices, {len(g.edges)} edges")
+    if proj.has_tasks:
+        tg = TaskGraph.load(proj.tasks)
+        sizes.append(f"{len(tg.tasks)} tasks")
     tail = f", {len(problems)} warning(s)" if problems else ""
-    con.print(f"[green]✓[/] {len(g.vertices)} vertices, {len(g.edges)} edges, "
-              f"all invariants hold{tail}")
+    con.print(f"[green]✓[/] {'; '.join(sizes)}, all invariants hold{tail}")
 
 
 # ---- editing -------------------------------------------------------------
@@ -806,11 +816,24 @@ def clear() -> None:
 
 @app.command()
 def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
-    """Validate the staged ops and write both files."""
+    """Validate everything staged and write it.
+
+    One verb for both stores, but two independent batches: each is validated
+    and written on its own, so a task batch that will not apply can never stop
+    a decision batch that would.
+    """
     ops = pending.load()
-    if not ops:
+    task_ops = pending.load(task_pending.path())
+    if not ops and not task_ops:
         con.print("[dim]nothing staged[/]")
         return
+    if ops:
+        _apply_decisions(ops, dry_run)
+    if task_ops:
+        _apply_tasks(task_ops, dry_run)
+
+
+def _apply_decisions(ops: list[dict], dry_run: bool) -> None:
     g = _g()
     try:
         out = pending.apply_all(g, ops)
@@ -818,7 +841,7 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
         con.print(f"[red]✗ aborted, nothing written[/]\n{_x(exc)}")
         raise typer.Exit(1)
     if dry_run:
-        con.print(f"[green]✓[/] {len(ops)} op(s) would apply cleanly")
+        con.print(f"[green]✓[/] {len(ops)} decision op(s) would apply cleanly")
         return
     # Render first: it is pure, so a rendering bug aborts before anything is
     # written. Then the store, then clear pending — the ops are in the store
@@ -839,11 +862,303 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
               f"decision-graph.md")
 
 
+def _apply_tasks(ops: list[dict], dry_run: bool) -> None:
+    tg = _tg()
+    try:
+        out = task_pending.apply_all(tg, ops)
+    except pending.ApplyError as exc:
+        con.print(f"[red]✗ task ops aborted, nothing written[/]\n{_x(exc)}")
+        raise typer.Exit(1)
+    if dry_run:
+        con.print(f"[green]✓[/] {len(ops)} task op(s) would apply cleanly")
+        return
+    proj = project.find()
+    view_text = task_render.render(out)
+    out.save(proj.tasks)
+    pending.clear(task_pending.path())
+    try:
+        proj.task_view.write_text(view_text, encoding="utf-8")
+    except OSError as exc:
+        con.print(f"[yellow]applied {len(ops)} op(s) → {proj.tasks.name}, but "
+                  f"{proj.task_view.name} could not be written[/]\n{_x(exc)}\n"
+                  f"[dim]`dg task render` regenerates it[/]")
+        raise typer.Exit(1)
+    con.print(f"[green]✓[/] applied {len(ops)} op(s) → {proj.tasks.name} + "
+              f"{proj.task_view.name}")
+
+
 @app.command(name="render")
 def render_cmd() -> None:
     """Regenerate decision-graph.md from the store."""
     render.write(_g())
     con.print(f"[green]✓[/] wrote {project.find().view}")
+
+
+# ---- tasks ---------------------------------------------------------------
+#
+# A separate store, a separate staging file and a separate view, so that work
+# can never be mistaken for a decision — the barrier is structural rather than a
+# convention somebody has to remember.
+
+task_app = typer.Typer(
+    add_completion=False,
+    help="Track the work a project has to do. tasks.json is the source of "
+         "truth; tasks.md is generated from it.",
+)
+app.add_typer(task_app, name="task")
+
+TASK_STYLE = {
+    "TODO": "bold red",
+    "DOING": "yellow",
+    "DONE": "green",
+    "DROPPED": "dim",
+}
+
+
+def _tg() -> TaskGraph:
+    proj = project.find()
+    if not proj.has_tasks:
+        con.print(f"[red]no {project.TASKS_NAME} under {proj.root}[/]\n"
+                  f"[dim]run `dg task init` there, or pass --project PATH[/]")
+        raise typer.Exit(2)
+    return TaskGraph.load(proj.tasks)
+
+
+def _teff(tg: TaskGraph, skip: int | None = None) -> TaskGraph:
+    """The task store plus its staged ops — what task guards judge against."""
+    try:
+        return task_pending.preview(tg, skip=skip)
+    except pending.ApplyError as exc:
+        con.print(f"[red]the staged task ops no longer apply cleanly[/]\n{_x(exc)}\n"
+                  f"[dim]`dg task pending` to review; `dg task drop N` to fix[/]")
+        raise typer.Exit(1) from None
+
+
+def _tstage(op: dict) -> None:
+    """Vet an op against the effective task graph, then stage it."""
+    tg = _teff(_tg())
+    try:
+        task_pending.vet(tg, op)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    pending.stage(op, task_pending.path())
+
+
+@task_app.command("init")
+def task_init(
+    areas: str = typer.Option(
+        "General", "--areas",
+        help="comma-separated area names, used to group the rendered view",
+    ),
+) -> None:
+    """Start an empty task graph in this directory."""
+    proj = project.find()
+    if proj.has_tasks:
+        con.print(f"[red]{proj.tasks} already exists[/]")
+        raise typer.Exit(1)
+    tg = TaskGraph(areas=[a.strip() for a in areas.split(",") if a.strip()])
+    tg.save(proj.tasks)
+    task_render.write(tg, proj.task_view)
+    con.print(f"[green]✓[/] created {proj.tasks} and {proj.task_view.name}")
+
+
+@task_app.command("add")
+def task_add(
+    tid: str = typer.Option(None, "--id"),
+    title: str = typer.Option(None, "--title", "-t"),
+    area: str = typer.Option(None, "--area"),
+    after: str = typer.Option(None, "--after",
+                              help="comma-separated tasks that must come first"),
+    note: str = typer.Option(None, "--note", "-n"),
+) -> None:
+    """Stage a new task."""
+    tg = _teff(_tg())
+    missing = [f for f, val in (("--id", tid), ("--title", title),
+                                ("--area", area)) if not val]
+    if missing:
+        con.print(f"[red]missing option(s): {', '.join(missing)}[/]")
+        raise typer.Exit(2)
+    # Checked here rather than at apply, so a typo is reported by the command
+    # that contains it. The decision side only catches this at validate time.
+    if not TASK_ID_RE.fullmatch(tid):
+        con.print(f"[red]malformed id {_x(tid)} — expected something like T07[/]\n"
+                  f"[dim]decisions are D-ids and live in a different store[/]")
+        raise typer.Exit(1)
+    if tid in tg.tasks:
+        con.print(f"[red]{tid} already exists"
+                  + ("" if tid in _tg().tasks else " in the staging area") + "[/]")
+        raise typer.Exit(1)
+    if area not in tg.areas:
+        con.print(f"[red]unknown area. one of: "
+                  f"{', '.join(_x(a) for a in tg.areas)}[/]")
+        raise typer.Exit(1)
+    parents = [x.strip() for x in after.split(",") if x.strip()] if after else []
+    unknown = [p for p in parents if p not in tg.tasks]
+    if unknown:
+        con.print(f"[red]unknown prerequisite(s): {', '.join(unknown)}[/]")
+        raise typer.Exit(1)
+
+    op = {"op": "add_task", "id": tid, "title": title, "area": area}
+    if note:
+        op["note"] = note
+    _tstage(op)
+    for p in parents:
+        _tstage({"op": "add_dep", "from": p, "to": [tid]})
+    con.print(f"[green]staged[/] add {tid}")
+
+
+@task_app.command("start")
+def task_start(tid: str) -> None:
+    """Stage a task moving to DOING."""
+    _require_task(tid)
+    _tstage({"op": "set_status", "task": tid, "status": "DOING"})
+    con.print(f"[green]staged[/] {tid} → DOING")
+
+
+@task_app.command("done")
+def task_done(
+    tid: str,
+    outcome: str = typer.Option(None, "--outcome", "-o",
+                                help="what the work produced: a path, a PR, a note"),
+) -> None:
+    """Stage a task as finished. Records what it produced."""
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    waiting = tg.waiting_on(tid)
+    if waiting:
+        con.print(f"[yellow]note: {tid} still waits on "
+                  f"{', '.join(waiting)}[/]")
+    outcome = outcome or _ask(
+        "Outcome (what did this produce? a path, a PR, a note)", "--outcome/-o")
+    _tstage({"op": "set_status", "task": tid, "status": "DONE",
+             "outcome": outcome, "done": _date.today().isoformat()})
+    con.print(f"[green]staged[/] {tid} → DONE")
+
+
+@task_app.command("drop")
+def task_drop(
+    tid: str,
+    why: str = typer.Option(None, "--why", "-w", help="why it is not being done"),
+) -> None:
+    """Stage a task as abandoned. Releases anything waiting on it."""
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    released = [t for t in tg.unblocks(tid) if tg.waiting_on(t) == [tid]]
+    op = {"op": "set_status", "task": tid, "status": "DROPPED"}
+    if why:
+        op["note"] = why
+    _tstage(op)
+    if released:
+        con.print(f"[cyan]{len(released)}[/] task(s) waited only on {tid} and "
+                  f"are released: {', '.join(released)}")
+    con.print(f"[green]staged[/] {tid} → DROPPED")
+
+
+def _require_task(tid: str, tg: TaskGraph | None = None) -> None:
+    tg = tg if tg is not None else _teff(_tg())
+    if tid not in tg.tasks:
+        con.print(f"[red]unknown task {tid}[/]")
+        raise typer.Exit(1)
+
+
+@task_app.callback(invoke_without_command=True)
+def task_show(ctx: typer.Context) -> None:
+    """What is outstanding, and what can be picked up now."""
+    if ctx.invoked_subcommand is not None:
+        return
+    tg = _tg()
+    t = Table(title="Tasks", header_style="bold")
+    for c in ("ID", "Task", "Status", "Waiting on", "Unblocks", "Area"):
+        t.add_column(c)
+    for tid in tg.frontier():
+        task = tg.tasks[tid]
+        t.add_row(tid, _x(task.title),
+                  f"[{TASK_STYLE.get(task.status, 'white')}]{task.status}[/]",
+                  ", ".join(tg.waiting_on(tid)) or "—",
+                  ", ".join(tg.unblocks(tid)) or "—", _x(task.area))
+    con.print(t)
+    ready = [tid for tid in sorted(tg.tasks) if tg.ready(tid)]
+    con.print(f"[green]ready[/] {', '.join(ready) or '—'}")
+    con.print("  ".join(
+        f"[{TASK_STYLE.get(k, 'white')}]{k} {n}[/]"
+        for k, n in sorted(tg.counts().items())
+    ))
+
+
+@task_app.command("node")
+def task_node(tid: str) -> None:
+    """Everything known about one task."""
+    tg = _tg()
+    if tid not in tg.tasks:
+        con.print(f"[red]unknown task {tid}[/]")
+        raise typer.Exit(1)
+    t = tg.tasks[tid]
+    state = ("ready" if tg.ready(tid)
+             else "blocked" if tg.blocked(tid) else t.status.lower())
+    lines = [
+        f"[bold]{_x(t.title)}[/]", "",
+        f"status      [{TASK_STYLE.get(t.status, 'white')}]{t.status}[/]  "
+        f"[dim]({state})[/]",
+        f"area        {_x(t.area)}",
+        f"waiting on  {', '.join(tg.waiting_on(tid)) or '—'}",
+        f"unblocks    {', '.join(tg.unblocks(tid)) or '—'}",
+    ]
+    if t.done:
+        lines.append(f"done        {t.done}")
+    if t.outcome:
+        lines += ["", "[bold]Outcome[/]", _x(t.outcome)]
+    if t.note:
+        lines += ["", "[bold]Note[/]", _x(t.note)]
+    con.print(Panel("\n".join(lines), title=tid,
+                    border_style=TASK_STYLE.get(t.status, "white")))
+
+
+@task_app.command("pending")
+def task_pending_cmd() -> None:
+    """What is staged for the task store but not yet applied."""
+    ops = pending.load(task_pending.path())
+    if not ops:
+        con.print("[dim]nothing staged[/]")
+        return
+    t = Table(header_style="bold", title="Staged tasks")
+    for c in ("#", "Op", "Task", "Detail"):
+        t.add_column(c)
+    for i, o in enumerate(ops):
+        detail = {
+            "add_task": lambda o: _x(o.get("title", "")),
+            "add_dep": lambda o: "→ " + ", ".join(o.get("to", [])),
+            "set_status": lambda o: f"→ {o['status']}",
+        }.get(o["op"], lambda o: _x(json.dumps(o)))(o)
+        t.add_row(str(i), o["op"], o.get("task") or o.get("from") or o.get("id"),
+                  detail)
+    con.print(t)
+    con.print("[dim]`dg apply` to write, `dg task drop-op N` to unstage[/]")
+
+
+@task_app.command("drop-op")
+def task_drop_op(i: int) -> None:
+    """Unstage one staged task op."""
+    try:
+        pending.drop(i, task_pending.path())
+    except IndexError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    con.print(f"[green]dropped[/] task op {i}")
+
+
+@task_app.command("clear")
+def task_clear() -> None:
+    """Unstage every task op."""
+    pending.clear(task_pending.path())
+    con.print("[green]cleared[/]")
+
+
+@task_app.command("render")
+def task_render_cmd() -> None:
+    """Regenerate tasks.md from the store."""
+    task_render.write(_tg())
+    con.print(f"[green]✓[/] wrote {project.find().task_view}")
 
 
 @app.command()
@@ -855,7 +1170,7 @@ def init(
 ) -> None:
     """Start an empty decision graph in this directory."""
     proj = project.find()
-    if proj.exists:
+    if proj.has_decisions:
         con.print(f"[red]{proj.store} already exists[/]")
         raise typer.Exit(1)
     g = Graph(areas=[a.strip() for a in areas.split(",") if a.strip()])
@@ -874,7 +1189,7 @@ def import_md(
     """Bootstrap a store from a hand-written markdown decision document."""
     from dgraph.md_import import import_markdown
     proj = project.find()
-    if proj.exists:
+    if proj.has_decisions:
         con.print(f"[red]{proj.store} already exists — refusing to overwrite[/]")
         raise typer.Exit(1)
     try:

@@ -120,15 +120,19 @@ def _emitting_source() -> str:
     The declaration is a run of string literals naming every check, so leaving
     it in makes "is this name emitted anywhere?" true by construction — which
     is why the first version of the guard below could not fail for any input.
+
+    Every module that may emit a Violation belongs in this list; a check
+    emitted from one that is missing looks exactly like a dead check.
     """
     import inspect
 
     from dgraph import check as check_mod
-    from dgraph import model
+    from dgraph import model, tasks
     src = inspect.getsource(check_mod)
     start = src.index("CHECKS: tuple")
     end = src.index("\n)\n", start) + len("\n)\n")
-    return inspect.getsource(model) + src[:start] + src[end:]
+    return (inspect.getsource(model) + inspect.getsource(tasks)
+            + src[:start] + src[end:])
 
 
 def test_the_reachability_guard_can_actually_fail():

@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.elc
 .dgraph-pending.json
+.dgraph-task-pending.json
 .dgraph-edit.org
 *.egg-info/
 build/

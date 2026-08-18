@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dgraph import project
+from dgraph.violation import Violation  # re-exported: callers import it from here
 
 SIMPLE_STATUSES = {"DECIDED", "OPEN", "REOPENED", "PROVISIONAL"}
 UNSETTLED = {"OPEN", "BLOCKED", "REOPENED"}
@@ -75,29 +76,6 @@ class Edge:
     @property
     def terminal(self) -> bool:
         return self.decided and not self.to
-
-
-@dataclass
-class Violation:
-    """A broken invariant.
-
-    `error` means the graph is structurally wrong and must not be written.
-    `warn` means it is probably a mistake but is representable and legal — an
-    isolated vertex, say, which is exactly what the first vertex of a new graph
-    looks like.
-    """
-
-    check: str
-    message: str
-    severity: str = "error"
-
-    def __str__(self) -> str:
-        mark = "" if self.severity == "error" else " (warning)"
-        return f"[{self.check}]{mark} {self.message}"
-
-    @property
-    def blocking(self) -> bool:
-        return self.severity == "error"
 
 
 @dataclass

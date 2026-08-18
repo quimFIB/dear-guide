@@ -42,11 +42,8 @@ decision that was overturned is kept, not deleted — how a project changed its
 mind is usually worth more than the conclusion it landed on."""
 
 
-def _cell(text: str | None) -> str:
-    """A value bound for a markdown table cell. A `|` splits the row and a raw
-    newline ends it — prose is composed in an editor, so both are routine —
-    and either silently corrupts every row after it."""
-    return (text or "").replace("|", "\\|").replace("\n", "<br>")
+#: Shared with the task view; see `orgmd.cell`.
+_cell = orgmd.cell
 
 
 def _resolves_cell(g: Graph, vid: str) -> str:

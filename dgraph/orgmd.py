@@ -117,6 +117,16 @@ def to_markdown(text: str | None, fmt: str | None = None) -> str | None:
     return out
 
 
+def cell(text: str | None) -> str:
+    """A value bound for a markdown table cell.
+
+    A `|` splits the row and a raw newline ends it — prose is composed in an
+    editor, so both are routine — and either silently corrupts every row after
+    it. Shared by both generated views; nothing here knows what it is escaping.
+    """
+    return (text or "").replace("|", "\\|").replace("\n", "<br>")
+
+
 def anchor(vid: str) -> str:
     """The explicit anchor `render.py` emits so `dg:` links actually resolve.
 
