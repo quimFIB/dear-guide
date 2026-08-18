@@ -32,6 +32,9 @@ truth; this file is the readable view of it. `dg check` enforces the invariants.
 - **Blocked is derived, never stored.** A task is ready when everything before
   it is resolved, so there is no blocked status to keep up to date and none to
   go stale. Abandoning a prerequisite releases what waited on it.
+- A task may name the **decision** it exists because of, and the one its
+  outcome will inform. Those live in `decisions.json`; this view names the id
+  and nothing more, because it is generated from `tasks.json` alone.
 
 Statuses: `TODO` · `DOING` · `DONE` · `DROPPED`
 """
@@ -39,16 +42,28 @@ Statuses: `TODO` · `DOING` · `DONE` · `DROPPED`
 
 def _index(tg: TaskGraph) -> str:
     rows = [
-        "| ID | Task | Status | Waiting on |",
-        "|---|---|---|---|",
+        "| ID | Task | Status | Waiting on | Because |",
+        "|---|---|---|---|---|",
     ]
     order = {a: i for i, a in enumerate(tg.areas)}
     for t in sorted(tg.tasks.values(), key=lambda t: (order.get(t.area, 99), t.id)):
         waiting = ", ".join(tg.waiting_on(t.id)) or NONE
-        rows.append(f"| {t.id} | {orgmd.cell(t.title)} | {t.status} | {waiting} |")
+        rows.append(f"| {t.id} | {orgmd.cell(t.title)} | {t.status} | {waiting} "
+                    f"| {t.because or NONE} |")
     ready = ", ".join(t for t in sorted(tg.tasks) if tg.ready(t))
     rows.append("")
-    rows.append(f"**Ready** — nothing outstanding before them: {ready or NONE}.")
+    # Qualified, because this file is rendered from one store: `tg.ready` means
+    # "nothing outstanding in *this* graph", and a task whose premise is still
+    # undecided is not startable however this column reads. `dg task` joins the
+    # two stores and is the honest answer; saying so here beats printing a
+    # claim the tool itself contradicts.
+    rows.append(f"**Ready** — nothing outstanding *in this graph* before them: "
+                f"{ready or NONE}.")
+    if any(t.because for t in tg.tasks.values()):
+        rows.append("")
+        rows.append("Work whose **Because** is not settled yet is not startable "
+                    "even where it appears above — this view cannot see the "
+                    "decision store. `dg task` reports both.")
     return "## Index\n\n" + "\n".join(rows) + "\n"
 
 
@@ -60,10 +75,20 @@ def _section(tg: TaskGraph, tid: str) -> str:
     out.append(f"- **Status:** {status}")
     out.append(f"- **Waiting on:** {', '.join(tg.waiting_on(tid)) or NONE}")
     out.append(f"- **Unblocks:** {', '.join(tg.unblocks(tid)) or NONE}")
+    # The link the whole cross-graph design exists for. Stored on the task, so
+    # printing it needs nothing from the decision store and keeps this view's
+    # staleness independent of `decisions.json` — leaving it out only hid it.
+    if t.because:
+        out.append(f"- **Because:** {t.because}")
+    if t.evidence_for:
+        out.append(f"- **Evidence for:** {t.evidence_for}")
     out.append("")
 
     if t.note:
         out.append(orgmd.to_markdown(t.note, fmt=t.format).strip())
+        out.append("")
+    if t.why:
+        out.append(f"*Not being done:* {orgmd.to_markdown(t.why, fmt=t.format)}")
         out.append("")
     if t.outcome:
         out.append(f"*Outcome:* {orgmd.to_markdown(t.outcome, fmt=t.format)}")

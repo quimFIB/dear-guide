@@ -31,6 +31,7 @@ CHECKS: tuple[str, ...] = (
     "stale_view",
     # the task store; absent in most projects, checked only when present
     "task_ids_wellformed",
+    "task_area_known",
     "task_status_legal",
     "task_no_dangling_refs",
     "task_acyclic",
@@ -125,6 +126,15 @@ def _tasks(proj: _project.Project) -> list[Violation]:
             f"internal: validate() itself failed on {proj.tasks.name} "
             f"({exc!r}) — the task graph cannot be judged valid",
         )]
+
+    if not proj.has_decisions:
+        # The link fields are checked here too, against an empty decision
+        # graph: every link a tasks-only project holds names a decision that
+        # cannot exist, which is the same breakage `_link` reports when both
+        # stores are present — and reporting it there only would make an
+        # absent `decisions.json` the way to hide it.
+        from dgraph import cross
+        problems += cross.validate(tg, Graph())
 
     if not proj.task_view.exists():
         problems.append(Violation(

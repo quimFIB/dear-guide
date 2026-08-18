@@ -63,6 +63,11 @@ class Task:
     note: str | None = None      # prose: what this involves, why it is parked
     done: str | None = None      # ISO date, required once DONE
     outcome: str | None = None   # what the work produced, required once DONE
+    #: Why the work is not being done, written by `dg task drop`. Its own
+    #: field rather than the note, because overwriting the only description of
+    #: what the work *was* is the opposite of keeping a record: the decision
+    #: store keeps a superseded answer forever for the same reason.
+    why: str | None = None
     format: str | None = None    # the note's dialect: "org", else markdown
     #: The decision this work exists because of — a `D`-id in the *other*
     #: store. Held here and nowhere else: `decisions.json` never names a task,
@@ -136,6 +141,7 @@ class TaskGraph:
                         ("id", t.id), ("title", t.title), ("area", t.area),
                         ("status", t.status), ("note", t.note),
                         ("done", t.done), ("outcome", t.outcome),
+                        ("why", t.why),
                         ("format", t.format), ("because", t.because),
                         ("evidence_for", t.evidence_for),
                     )
@@ -214,7 +220,7 @@ class TaskGraph:
                 add("task_ids_wellformed",
                     f"malformed id {tid!r} — expected something like T07")
             if t.area not in self.areas:
-                add("task_ids_wellformed", f"{tid}: unknown area {t.area!r}")
+                add("task_area_known", f"{tid}: unknown area {t.area!r}")
             if t.status not in STATUSES:
                 add("task_status_legal",
                     f"{tid}: illegal status {t.status!r} — one of "
@@ -232,6 +238,15 @@ class TaskGraph:
 
         for tid, t in self.tasks.items():
             if t.status != "DONE":
+                # Applying a status change clears these, so this catches a
+                # hand-edit: an outcome under unfinished work is a claim the
+                # store cannot support, and the view prints it as if it could.
+                stale = [f for f in ("done", "outcome") if getattr(t, f)]
+                if stale:
+                    add("task_done_complete",
+                        f"{tid} is {t.status} but still carries "
+                        f"{' and '.join(stale)} — completion data from an "
+                        f"earlier DONE; clear it, or set the status back")
                 continue
             if not t.done:
                 add("task_done_complete", f"{tid}: DONE without a date")

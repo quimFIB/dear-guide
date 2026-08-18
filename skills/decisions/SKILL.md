@@ -158,10 +158,24 @@ dg apply
 - If work turns up a question nobody had written down: add the decision, then
   link the task to it. Do not leave it in prose.
 
+Corrections have commands; never hand-edit `tasks.json`:
+
+```sh
+dg task dep T14 --after T09        # a prerequisite discovered later
+dg task undep T14 --after T09      # ...and removing one
+dg task unlink T14 --because       # drop a link recorded against the wrong decision
+```
+
 `dg check` warns when work rests on a decision that has been reopened, and when
 a finished `--evidence-for` task's decision is still unsettled — that second one
 means a spike ran and its conclusion was never recorded. Both are warnings and
 never block a commit.
+
+Two things about the link are errors rather than warnings: a link naming a
+decision that does not exist, and a cycle across the two graphs (work that must
+finish before a decision that the work exists because of). `dg apply` refuses a
+batch that would create either, names the op, and writes nothing — so the fix is
+always `dg task drop-op N` or restating the link, never editing the store.
 
 ## When a commit is refused
 

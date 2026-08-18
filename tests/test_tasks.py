@@ -109,10 +109,12 @@ def _check(tg, name):
 
 
 def test_detects_malformed_id_and_unknown_area(tg):
+    """Two rules, two names: the plugin gives a project one test per check, so
+    filing an area problem under the id check loses the distinction there."""
     from dgraph.tasks import Task
     tg.tasks["X9"] = Task(id="X9", title="bad", area="Nope")
-    hits = _check(tg, "task_ids_wellformed")
-    assert len(hits) == 2
+    assert len(_check(tg, "task_ids_wellformed")) == 1
+    assert len(_check(tg, "task_area_known")) == 1
 
 
 def test_detects_illegal_status(tg):
@@ -294,3 +296,122 @@ def test_the_two_staging_files_are_distinct(run_cli, task_store):
     run_cli("task", "add", "--id", "T30", "-t", "x", "--area", "Alpha")
     assert pending.load(task_pending.path())
     assert pending.load(project.find().pending) == []
+
+
+# ---- editing the graph after the fact (audit D2b, E4) --------------------
+
+
+def test_a_dependency_can_be_added_between_existing_tasks(run_cli, task_store):
+    """`add --after` could only say this at creation, so a dependency
+    discovered later had no way in at all and meant hand-editing the store."""
+    assert run_cli("task", "dep", "T04", "--after", "T02").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(task_store / "tasks.json").waiting_on("T04") == ["T02"]
+
+
+def test_a_dependency_can_be_removed(run_cli, task_store):
+    assert run_cli("task", "undep", "T03", "--after", "T02").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    tg = TaskGraph.load(task_store / "tasks.json")
+    assert tg.waiting_on("T03") == [] and tg.ready("T03")
+
+
+def test_removing_a_dependency_that_is_not_there_is_refused(run_cli):
+    res = run_cli("task", "undep", "T03", "--after", "T04")
+    assert res.exit_code == 1 and "not a prerequisite" in res.output
+
+
+def test_a_task_cannot_be_made_to_wait_on_itself(run_cli):
+    res = run_cli("task", "dep", "T02", "--after", "T02")
+    assert res.exit_code == 1 and "cannot come before itself" in res.output
+
+
+def test_a_link_can_be_removed(run_cli, task_store):
+    """The undo `dg task link` never had. Without it a link recorded against
+    the wrong decision could only be fixed by hand-editing tasks.json."""
+    tg = TaskGraph.load(task_store / "tasks.json")
+    tg.tasks["T02"].because = "D01"
+    tg.save(task_store / "tasks.json")
+    assert run_cli("task", "unlink", "T02", "--because").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(task_store / "tasks.json").tasks["T02"].because is None
+
+
+def test_unlinking_what_is_not_linked_is_refused(run_cli):
+    res = run_cli("task", "unlink", "T02", "--because")
+    assert res.exit_code == 1 and "no --because" in res.output
+
+
+# ---- the record (audit E2, E3) -------------------------------------------
+
+
+def test_dropping_a_task_keeps_the_note_that_described_it(run_cli, task_store):
+    """`--why` used to overwrite the note — destroying the only description of
+    what the abandoned work was, which is the opposite of keeping a record."""
+    res = run_cli("task", "drop", "T04", "--why", "the vendor tool does it")
+    assert res.exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
+    assert t.note == "Nobody has finished this yet."
+    assert t.why == "the vendor tool does it"
+    assert "the vendor tool does it" in (task_store / "tasks.md").read_text()
+
+
+def test_leaving_done_clears_the_completion_data(run_cli, task_store):
+    """The one thing the task store keeps that can go stale. `tasks.md` printed
+    an outcome under work that was in progress again, and nothing complained."""
+    assert run_cli("task", "start", "T01").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    t = TaskGraph.load(task_store / "tasks.json").tasks["T01"]
+    assert t.status == "DOING" and t.done is None and t.outcome is None
+    assert "Outcome" not in (task_store / "tasks.md").read_text()
+
+
+def test_a_status_that_changes_nothing_is_refused(run_cli):
+    res = run_cli("task", "start", "T04")          # already DOING
+    assert res.exit_code == 1 and "already DOING" in res.output
+
+
+def test_completion_data_under_unfinished_work_is_a_violation(tg):
+    """Applying a status change clears it, so this can only be a hand-edit —
+    an outcome under unfinished work is a claim the store cannot support."""
+    tg.tasks["T02"].outcome = "left over"
+    hits = _check(tg, "task_done_complete")
+    assert hits and "T02" in str(hits[0])
+
+
+def test_the_stage_time_warning_names_the_stuck_batch(run_cli):
+    """Audit D3: `_warn_stuck` for the task tray. Staging a finish ahead of its
+    prerequisite was accepted with a note, and `apply` then refused the whole
+    batch naming a remedy that was not the one that works."""
+    res = run_cli("task", "done", "T03", "-o", "PR #12")
+    assert res.exit_code == 0                      # a warning, never a refusal
+    assert "would currently refuse this task batch" in res.output
+    assert "dg task drop-op" in res.output
+
+
+# ---- the generated view (audit E1) ---------------------------------------
+
+
+def test_the_view_names_the_decisions_a_task_is_linked_to(task_store):
+    """The link the whole cross-graph design exists for was invisible in the
+    committed, human-readable view."""
+    from dgraph import task_render
+    tg = TaskGraph.load(task_store / "tasks.json")
+    tg.tasks["T02"].because = "D01"
+    tg.tasks["T02"].evidence_for = "D05"
+    text = task_render.render(tg)
+    assert "**Because:** D01" in text and "**Evidence for:** D05" in text
+    assert "| D01 |" in text                       # and in the index
+
+
+def test_the_view_does_not_claim_readiness_it_cannot_judge(task_store):
+    """`tasks.md` is rendered from one store, so "ready" there can only mean
+    "nothing outstanding in this graph" — it said so unqualified while `dg
+    task`, which joins both, disagreed."""
+    from dgraph import task_render
+    tg = TaskGraph.load(task_store / "tasks.json")
+    tg.tasks["T02"].because = "D01"
+    text = task_render.render(tg)
+    assert "nothing outstanding *in this graph* before them" in text
+    assert "cannot see the decision store" in text

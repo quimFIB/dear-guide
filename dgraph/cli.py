@@ -839,8 +839,11 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
     and written on its own, so a task batch that will not apply can never stop
     a decision batch that would.
     """
-    ops = pending.load()
-    task_ops = pending.load(task_pending.path())
+    proj = project.find()
+    ops = _staged_ops(proj.pending, "dg clear")
+    task_ops = _staged_ops(proj.task_pending, "dg task clear")
+    if ops is None and task_ops is None:
+        raise typer.Exit(1)
     if not ops and not task_ops:
         con.print("[dim]nothing staged[/]")
         return
@@ -848,6 +851,25 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
         _apply_decisions(ops, dry_run)
     if task_ops:
         _apply_tasks(task_ops, dry_run)
+    if ops is None or task_ops is None:
+        # One tray applied, the other could not even be read. Exit nonzero so
+        # nothing downstream reads this as "everything staged is now written".
+        raise typer.Exit(1)
+
+
+def _staged_ops(path: pathlib.Path, discard: str) -> list[dict] | None:
+    """One staging tray, or `None` if it cannot be read.
+
+    Read separately and reported separately, because the two batches are
+    independent: a task tray nobody can parse must not stop a decision batch
+    that would apply cleanly — which is exactly what an unguarded load did.
+    """
+    try:
+        return pending.load(path)
+    except Exception as exc:
+        con.print(f"[red]{path.name} could not be read[/]\n{_x(exc)}\n"
+                  f"[dim]inspect it by hand, or discard it with `{discard}`[/]")
+        return None
 
 
 def _apply_decisions(ops: list[dict], dry_run: bool) -> None:
@@ -953,8 +975,11 @@ def _teff(tg: TaskGraph, skip: int | None = None) -> TaskGraph:
     try:
         return task_pending.preview(tg, skip=skip)
     except pending.ApplyError as exc:
+        # `dg task drop-op N`, not `dg task drop N`: the latter exists and
+        # abandons a task called N, which is not what a stuck tray needs.
         con.print(f"[red]the staged task ops no longer apply cleanly[/]\n{_x(exc)}\n"
-                  f"[dim]`dg task pending` to review; `dg task drop N` to fix[/]")
+                  f"[dim]`dg task pending` to review; `dg task drop-op N` to "
+                  f"fix[/]")
         raise typer.Exit(1) from None
 
 
@@ -967,6 +992,25 @@ def _tstage(op: dict) -> None:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
     pending.stage(op, task_pending.path())
+
+
+def _twarn_stuck() -> None:
+    """After staging: say now if `dg apply` would refuse the task batch.
+
+    `_warn_stuck` for the other store. A warning, never a refusal — a batch can
+    be legitimately transitional mid-way (a task finished before the
+    prerequisite whose own completion is still to come) — but the user must not
+    learn several commands later which op to blame. Called once per command
+    rather than once per op, since one command may stage several.
+    """
+    try:
+        task_pending.apply_all(TaskGraph.load(), pending.load(task_pending.path()),
+                               cross.guard_tasks())
+    except pending.ApplyError as exc:
+        con.print(f"[yellow]note: as staged, `dg apply` would currently refuse "
+                  f"this task batch[/]\n[dim]{_x(exc)}[/]\n"
+                  f"[dim]staging what is missing, or `dg task drop-op N`, "
+                  f"clears it[/]")
 
 
 @task_app.command("init")
@@ -1038,6 +1082,7 @@ def task_add(
     for p in parents:
         _tstage({"op": "add_dep", "from": p, "to": [tid]})
     con.print(f"[green]staged[/] add {tid}")
+    _twarn_stuck()
 
 
 def _decisions_or_none() -> Graph | None:
@@ -1052,6 +1097,10 @@ def _decisions_or_none() -> Graph | None:
     try:
         return Graph.load(proj.store)
     except Exception:
+        # Degrading silently would print "ready" for work whose premise is
+        # undecided — a wrong answer, which is worse than an absent one.
+        con.print(f"[dim]{project.STORE_NAME} could not be read, so premise "
+                  f"information is missing here — `dg check`[/]")
         return None
 
 
@@ -1153,6 +1202,93 @@ def task_link(
         op["evidence_for"] = _resolve_premise(evidence_for)
     _tstage(op)
     con.print(f"[green]staged[/] {tid} linked")
+    _twarn_stuck()
+
+
+@task_app.command("unlink")
+def task_unlink(
+    tid: str,
+    because: bool = typer.Option(False, "--because",
+                                 help="drop the decision this work rests on"),
+    evidence_for: bool = typer.Option(False, "--evidence-for",
+                                      help="drop the decision this work informs"),
+) -> None:
+    """Remove a task's link to a decision.
+
+    The undo `dg task link` never had. A link recorded against the wrong
+    decision, or one that stopped being true, is a correction the tool has to
+    be able to make: hand-editing the store is the failure this command exists
+    to prevent.
+    """
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    if not because and not evidence_for:
+        con.print("[red]nothing to unlink[/]\n"
+                  "[dim]pass --because or --evidence-for[/]")
+        raise typer.Exit(2)
+    wanted = ([f for f, on in (("because", because),
+                               ("evidence_for", evidence_for)) if on])
+    missing = [f for f in wanted if getattr(tg.tasks[tid], f) is None]
+    if missing:
+        con.print(f"[red]{tid} has no {' or '.join('--' + f.replace('_', '-') for f in missing)} "
+                  f"to remove[/]")
+        raise typer.Exit(1)
+    _tstage({"op": "set_link", "task": tid, "clear": wanted})
+    con.print(f"[green]staged[/] {tid} unlinked from "
+              f"{', '.join(getattr(tg.tasks[tid], f) for f in wanted)}")
+    _twarn_stuck()
+
+
+@task_app.command("dep")
+def task_dep(
+    tid: str,
+    after: str = typer.Option(..., "--after",
+                              help="comma-separated tasks that must come first"),
+) -> None:
+    """Record that this task waits on others.
+
+    `dg task add --after` could only say this when the task was created, so a
+    dependency discovered later had no way in at all.
+    """
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    parents = [x.strip() for x in after.split(",") if x.strip()]
+    unknown = [p for p in parents if p not in tg.tasks]
+    if unknown:
+        con.print(f"[red]unknown prerequisite(s): {', '.join(unknown)}[/]")
+        raise typer.Exit(1)
+    if tid in parents:
+        con.print(f"[red]{tid} cannot come before itself[/]")
+        raise typer.Exit(1)
+    already = [p for p in parents if p in tg.prerequisites(tid)]
+    if already:
+        con.print(f"[dim]already waiting on {', '.join(already)}[/]")
+    for p in parents:
+        if p not in already:
+            _tstage({"op": "add_dep", "from": p, "to": [tid]})
+    con.print(f"[green]staged[/] {tid} after {', '.join(parents)}")
+    _twarn_stuck()
+
+
+@task_app.command("undep")
+def task_undep(
+    tid: str,
+    after: str = typer.Option(..., "--after",
+                              help="comma-separated prerequisites to drop"),
+) -> None:
+    """Remove a prerequisite. Releases this task if it waited only on that."""
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    parents = [x.strip() for x in after.split(",") if x.strip()]
+    unknown = [p for p in parents if p not in tg.prerequisites(tid)]
+    if unknown:
+        con.print(f"[red]not a prerequisite of {tid}: {', '.join(unknown)}[/]\n"
+                  f"[dim]`dg task node {tid}` lists what it waits on[/]")
+        raise typer.Exit(1)
+    for p in parents:
+        _tstage({"op": "remove_dep", "from": p, "to": [tid]})
+    con.print(f"[green]staged[/] {tid} no longer after {', '.join(parents)}")
+    _twarn_stuck()
 
 
 @task_app.command("start")
@@ -1161,6 +1297,7 @@ def task_start(tid: str) -> None:
     _require_task(tid)
     _tstage({"op": "set_status", "task": tid, "status": "DOING"})
     con.print(f"[green]staged[/] {tid} → DOING")
+    _twarn_stuck()
 
 
 @task_app.command("done")
@@ -1181,6 +1318,7 @@ def task_done(
     _tstage({"op": "set_status", "task": tid, "status": "DONE",
              "outcome": outcome, "done": _date.today().isoformat()})
     con.print(f"[green]staged[/] {tid} → DONE")
+    _twarn_stuck()
 
 
 @task_app.command("drop")
@@ -1194,12 +1332,13 @@ def task_drop(
     released = [t for t in tg.unblocks(tid) if tg.waiting_on(t) == [tid]]
     op = {"op": "set_status", "task": tid, "status": "DROPPED"}
     if why:
-        op["note"] = why
+        op["why"] = why
     _tstage(op)
     if released:
         con.print(f"[cyan]{len(released)}[/] task(s) waited only on {tid} and "
                   f"are released: {', '.join(released)}")
     con.print(f"[green]staged[/] {tid} → DROPPED")
+    _twarn_stuck()
 
 
 def _require_task(tid: str, tg: TaskGraph | None = None) -> None:
@@ -1252,7 +1391,13 @@ def task_node(tid: str) -> None:
         con.print(f"[red]unknown task {tid}[/]")
         raise typer.Exit(1)
     t = tg.tasks[tid]
-    state = ("ready" if tg.ready(tid)
+    # Readiness joined across both stores, like `dg task` and unlike the
+    # generated view: a task whose premise is undecided is not startable, and
+    # the detail view saying "ready" was the tool contradicting itself.
+    g = _decisions_or_none()
+    gate = _gated_by(tg, g, tid)
+    state = ("waiting on a decision" if gate and t.unfinished
+             else "ready" if tg.ready(tid)
              else "blocked" if tg.blocked(tid) else t.status.lower())
     lines = [
         f"[bold]{_x(t.title)}[/]", "",
@@ -1262,10 +1407,17 @@ def task_node(tid: str) -> None:
         f"waiting on  {', '.join(tg.waiting_on(tid)) or '—'}",
         f"unblocks    {', '.join(tg.unblocks(tid)) or '—'}",
     ]
+    if t.because:
+        lines.append(f"because     {t.because}"
+                     + ("  [yellow](undecided)[/]" if gate else ""))
+    if t.evidence_for:
+        lines.append(f"informs     {t.evidence_for}")
     if t.done:
         lines.append(f"done        {t.done}")
     if t.outcome:
         lines += ["", "[bold]Outcome[/]", _x(t.outcome)]
+    if t.why:
+        lines += ["", "[bold]Not being done[/]", _x(t.why)]
     if t.note:
         lines += ["", "[bold]Note[/]", _x(t.note)]
     con.print(Panel("\n".join(lines), title=tid,
@@ -1286,6 +1438,10 @@ def task_pending_cmd() -> None:
         detail = {
             "add_task": lambda o: _x(o.get("title", "")),
             "add_dep": lambda o: "→ " + ", ".join(o.get("to", [])),
+            "remove_dep": lambda o: "✗ " + ", ".join(o.get("to", [])),
+            "set_link": lambda o: ", ".join(
+                [f"{f} {o[f]}" for f in ("because", "evidence_for") if o.get(f)]
+                + [f"clear {f}" for f in o.get("clear", ())]),
             "set_status": lambda o: f"→ {o['status']}",
         }.get(o["op"], lambda o: _x(json.dumps(o)))(o)
         t.add_row(str(i), o["op"], o.get("task") or o.get("from") or o.get("id"),

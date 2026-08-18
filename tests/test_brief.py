@@ -240,3 +240,52 @@ def test_show_reports_provisional_too(run, store, g):
     write(g)
     _provisional(store, "D02", premise="D01")
     assert "premise under review" in run("show").output
+
+
+# ---- a project that tracks work and no decisions yet (audit D1, D5) ------
+
+
+@pytest.fixture
+def run_tasks(task_store, monkeypatch):
+    def go(*args, cols="200"):
+        monkeypatch.setenv("COLUMNS", cols)
+        return runner.invoke(app, ["--project", str(task_store), *args])
+    return go
+
+
+def test_brief_works_with_a_task_store_and_no_decisions(run_tasks):
+    """`Project.exists` accepts either store — a team may track work before it
+    tracks decisions — but `text()` still raised straight through the CLI's
+    guard, so the session hook read the nonzero exit as "nothing to say" and
+    went silent. The A2 failure, restored through the new store."""
+    res = run_tasks("brief")
+    assert res.exit_code == 0
+    assert "Traceback" not in res.output
+    assert "TASK GRAPH" in res.output and "no decisions.json here" in res.output
+    assert "TASKS  4" in res.output
+    assert "CHECK:" in res.output
+
+
+def test_brief_json_survives_a_project_with_no_decisions(run_tasks):
+    payload = json.loads(run_tasks("brief", "--json").output)
+    assert payload["counts"] == {} and payload["tasks"]["counts"]
+
+
+def test_brief_counts_both_staging_trays(run_tasks, task_store):
+    """"STAGED BUT NOT APPLIED: 0" beside a full task tray is the reading that
+    loses work."""
+    pending.stage({"op": "set_status", "task": "T02", "status": "DOING"},
+                  task_store / ".dgraph-task-pending.json")
+    out = run_tasks("brief").output
+    assert "STAGED BUT NOT APPLIED: 0 decision, 1 task" in out
+    assert "dg task pending" in out
+    assert json.loads(run_tasks("brief", "--json").output)["staged_tasks"] == 1
+
+
+def test_an_unreadable_task_tray_is_reported_not_counted_as_none(run_tasks,
+                                                                 task_store):
+    (task_store / ".dgraph-task-pending.json").write_text("{oh no")
+    payload = json.loads(run_tasks("brief", "--json").output)
+    assert payload["staged_tasks"] == 0
+    assert any(".dgraph-task-pending.json" in v["text"] and v["blocking"]
+               for v in payload["violations"])

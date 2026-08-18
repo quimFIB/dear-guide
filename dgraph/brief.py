@@ -165,24 +165,30 @@ def data(proj: project.Project | None = None) -> dict:
     proj = proj or project.find()
     if not proj.exists:
         return {"project": None, "counts": {}, "frontier": [], "attention": [],
-                "staged": 0, "violations": [], "tasks": dict(NO_TASKS)}
+                "staged": 0, "staged_tasks": 0, "violations": [],
+                "tasks": dict(NO_TASKS)}
     # `str(Violation)` verbatim, so an adapter quoting a refusal quotes the
     # same words `dg check` would have printed.
     violations = [
         {"check": v.check, "blocking": v.blocking, "text": str(v)}
         for v in _check_run(proj)
     ]
-    try:
-        staged = len(pending.load(proj.pending))
-    except Exception as exc:
-        # Unreadable is not "none staged" — that is the reading that loses
-        # work. Report it the way the gate will refuse it.
-        staged = 0
-        violations.append({
-            "check": "store_loads", "blocking": True,
-            "text": f"[store_loads] {proj.pending.name} could not be read: "
-                    f"{exc}",
-        })
+    def count(path) -> int:
+        """Staged ops in one tray. Unreadable is not "none staged" — that is
+        the reading that loses work, so it is reported the way the gate will
+        refuse it."""
+        try:
+            return len(pending.load(path))
+        except Exception as exc:
+            violations.append({
+                "check": "store_loads", "blocking": True,
+                "text": f"[store_loads] {path.name} could not be read: {exc}",
+            })
+            return 0
+
+    staged = count(proj.pending)
+    # Both trays, because both hold work a commit would drop with no trace.
+    staged_tasks = count(proj.task_pending) if proj.has_tasks else 0
     try:
         g = Graph.load(proj.store)
     except Exception:
@@ -191,8 +197,8 @@ def data(proj: project.Project | None = None) -> dict:
         # crash, which the host hooks read as "nothing to say" — silence at
         # the one moment the graph most needs attention.
         return {"project": str(proj.root), "counts": {}, "frontier": [],
-                "attention": [], "staged": staged, "violations": violations,
-                "tasks": tasks(proj)}
+                "attention": [], "staged": staged, "staged_tasks": staged_tasks,
+                "violations": violations, "tasks": tasks(proj)}
     ev = evidence_map(proj)
     return {
         "project": str(proj.root),
@@ -205,6 +211,7 @@ def data(proj: project.Project | None = None) -> dict:
         ],
         "attention": attention(g),
         "staged": staged,
+        "staged_tasks": staged_tasks,
         "violations": violations,
         "tasks": tasks(proj),
     }
@@ -224,19 +231,33 @@ def text(proj: project.Project | None = None, limit: int = LIMIT) -> str:
     """The brief as prose, for injection into a session and for a terminal."""
     proj = proj or project.find()
     d = data(proj)
-    try:
-        g = Graph.load(proj.store)
-    except FileNotFoundError:
-        # No store is the caller's case to handle (the CLI checks first and
-        # says so); only an *unreadable* store gets the degraded brief.
-        raise
-    except Exception:
-        blocking = [v for v in d["violations"] if v["blocking"]]
-        out = [f"DECISION GRAPH  {proj.root}  (store unreadable)",
-               "",
-               f"CHECK: {len(blocking)} error(s) -- fix before committing"]
-        out += [f"  {v['text']}" for v in blocking[:limit]]
-        return "\n".join(out)
+
+    if proj.has_decisions:
+        try:
+            g = Graph.load(proj.store)
+        except Exception:
+            blocking = [v for v in d["violations"] if v["blocking"]]
+            out = [f"DECISION GRAPH  {proj.root}  (store unreadable)",
+                   "",
+                   f"CHECK: {len(blocking)} error(s) -- fix before committing"]
+            out += [f"  {v['text']}" for v in blocking[:limit]]
+            return "\n".join(out)
+        out = _decisions_text(proj, g, d, limit)
+    else:
+        # A project may track work before it tracks decisions — `Project.exists`
+        # says so — and this used to raise straight through the CLI's guard,
+        # taking the session hook silent with it. There is no decision half to
+        # print; everything below still applies.
+        out = [f"TASK GRAPH  {proj.root}  (no {project.STORE_NAME} here)",
+               "`dg init` starts a decision graph beside it, and `dg task add "
+               "--because` links work to what justifies it."]
+
+    return "\n".join(out + _tail(proj, d, limit))
+
+
+def _decisions_text(proj: project.Project, g: Graph, d: dict,
+                    limit: int) -> list[str]:
+    """The decision half of the brief: frontier, attention, and their asides."""
     fr, att = rows(g), attention(g)
 
     tally = ", ".join(f"{k} {n}" for k, n in sorted(d["counts"].items()))
@@ -275,8 +296,24 @@ def text(proj: project.Project | None = None, limit: int = LIMIT) -> str:
     if len(att) > limit:
         out.append(f"  +{len(att) - limit} more")
 
-    out += ["", f"STAGED BUT NOT APPLIED: {d['staged']}"
-                + (" -- `dg pending`, then `dg apply`" if d["staged"] else "")]
+    return out
+
+
+def _tail(proj: project.Project, d: dict, limit: int) -> list[str]:
+    """Staging, work, and validity — the sections that mean the same thing
+    whichever stores the project has."""
+    out: list[str] = []
+    # Both trays are named where both exist: `.dgraph-task-pending.json` is
+    # gitignored like its sibling, so unapplied task work is dropped by a
+    # commit just as silently.
+    if proj.has_tasks:
+        count = f"{d['staged']} decision, {d['staged_tasks']} task"
+        todo = " -- `dg pending` / `dg task pending`, then `dg apply`"
+    else:
+        count = str(d["staged"])
+        todo = " -- `dg pending`, then `dg apply`"
+    out += ["", f"STAGED BUT NOT APPLIED: {count}"
+                + (todo if d["staged"] or d["staged_tasks"] else "")]
 
     # Printed only where a task store exists. Empty sections print for the
     # decision half because silence there is ambiguous, but a project that has
@@ -311,4 +348,4 @@ def text(proj: project.Project | None = None, limit: int = LIMIT) -> str:
         out.append(f"CHECK: clean, {len(warnings)} warning(s) -- `dg check`")
     else:
         out.append("CHECK: clean")
-    return "\n".join(out)
+    return out

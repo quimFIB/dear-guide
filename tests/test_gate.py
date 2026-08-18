@@ -249,3 +249,63 @@ def test_gate_exits_zero_on_a_corrupt_pending_file(repo):
                               "--command", "git commit -m x", "--json"])
     assert res.exit_code == 0
     assert json.loads(res.output)["verdict"] == "deny"
+
+
+# ---- the task store, and its staging tray (audit D5, F1) -----------------
+
+
+@pytest.fixture
+def repo_with_tasks(repo, task_store):
+    """The fixture graphs, both rendered, in a repository with both committed."""
+    from dgraph import task_render
+    from dgraph.tasks import TaskGraph
+    task_render.write(TaskGraph.load(repo / "tasks.json"), repo / "tasks.md")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c",
+                    "user.name=t", "commit", "-qm", "tasks"], check=True,
+                   capture_output=True)
+    return repo
+
+
+def test_staged_task_ops_ask_rather_than_pass(repo_with_tasks):
+    """`.dgraph-task-pending.json` is gitignored like its sibling, so a commit
+    drops staged work with no trace in the diff — whichever store it is for."""
+    pending.stage({"op": "set_status", "task": "T02", "status": "DOING"},
+                  repo_with_tasks / ".dgraph-task-pending.json")
+    v = _v(repo_with_tasks)
+    assert v["verdict"] == "ask"
+    assert "1 task op(s)" in v["reason"] and "dg task clear" in v["reason"]
+
+
+def test_an_unreadable_task_tray_denies(repo_with_tasks):
+    (repo_with_tasks / ".dgraph-task-pending.json").write_text("{oh no")
+    v = _v(repo_with_tasks)
+    assert v["verdict"] == "deny"
+    assert ".dgraph-task-pending.json" in v["reason"]
+    assert "dg task clear" in v["reason"]
+
+
+def test_a_staged_task_store_without_its_view_denies(repo_with_tasks):
+    """The same drift the decision pair is guarded against: a commit recording
+    a store and a view that disagree."""
+    from dgraph.tasks import TaskGraph
+    tg = TaskGraph.load(repo_with_tasks / "tasks.json")
+    tg.tasks["T02"].title = "Renamed"
+    tg.save(repo_with_tasks / "tasks.json")
+    subprocess.run(["git", "-C", str(repo_with_tasks), "add", "tasks.json"],
+                   check=True, capture_output=True)
+    v = _v(repo_with_tasks)
+    assert v["verdict"] == "deny"
+    assert "tasks.md" in v["reason"] and "dg task render" in v["reason"]
+
+
+def test_the_deny_names_the_store_that_broke(repo_with_tasks):
+    """A task-store violation framed as "the decision graph is not valid" sends
+    the reader — often a model that will act on the sentence — to the wrong
+    file."""
+    (repo_with_tasks / "tasks.md").write_text("hand-edited\n")
+    v = _v(repo_with_tasks)
+    assert v["verdict"] == "deny"
+    assert "The task graph is not valid" in v["reason"]
+    assert "dg task render" in v["reason"]

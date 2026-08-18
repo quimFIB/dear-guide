@@ -109,7 +109,12 @@ def preview(g: Graph, path: Path | None = None, *, skip: int | None = None) -> G
     for i, op in enumerate(load(path)):
         if i == skip:
             continue
-        _apply_one(out, op)
+        try:
+            _apply_one(out, op)
+        except KeyError as exc:
+            raise ApplyError(
+                f"staged op {i} is missing required field {exc.args[0]!r}"
+            ) from None
     return out
 
 

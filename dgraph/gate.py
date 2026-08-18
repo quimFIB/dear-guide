@@ -189,6 +189,22 @@ def _allow() -> dict:
     return {"verdict": "allow", "reason": ""}
 
 
+#: Which store a check belongs to, for the deny's opening sentence.
+_SUBJECT = {
+    frozenset({"decision"}): "The decision graph is not valid",
+    frozenset({"task"}): "The task graph is not valid",
+    frozenset({"link"}): "The link between the two graphs is not valid",
+}
+
+
+def _origin(check: str) -> str:
+    if check.startswith("link_"):
+        return "link"
+    if check.startswith(("task_", "stale_task_")):
+        return "task"
+    return "decision"
+
+
 def verdict(command: str, proj: project.Project | None = None) -> dict:
     """The gate. Never raises, never blocks on anything, always answers.
 
@@ -223,12 +239,20 @@ def _verdict(command: str, proj: project.Project | None = None) -> dict:
     problems = [v for v in _check.run(proj) if v.blocking]
     if problems:
         fixes = ["`dg check` names every rule that broke"]
+        if any(v.check == "stale_task_view" for v in problems):
+            fixes.insert(0, f"`dg task render` regenerates {proj.task_view.name}")
         if any(v.check == "stale_view" for v in problems):
             fixes.insert(0, f"`dg render` regenerates {proj.view.name}")
+        # Named by what actually broke: a task-store or link violation framed
+        # as "the decision graph is not valid" sends the reader to the wrong
+        # file, and the reader is often a model that will act on the sentence.
+        origins = {_origin(v.check) for v in problems}
+        subject = _SUBJECT.get(
+            frozenset(origins), "The graphs this project keeps are not valid")
         return {
             "verdict": "deny",
-            "reason": "The decision graph is not valid, so this commit would "
-                      "record a contradiction:\n"
+            "reason": f"{subject}, so this commit would record a "
+                      "contradiction:\n"
                       + "\n".join(f"  {v}" for v in problems)
                       + "\nFix it first: " + "; ".join(fixes) + ".",
         }
@@ -240,34 +264,47 @@ def _verdict(command: str, proj: project.Project | None = None) -> dict:
     # writing and staging a file mid-command, which is more magic than a decision
     # log deserves.
     staged = _staged(proj.root)
-    if proj.store.resolve() in staged and proj.view.resolve() not in staged:
-        return {
-            "verdict": "deny",
-            "reason": f"{proj.store.name} is staged but {proj.view.name} is not, "
-                      f"so the commit would record a store and a view that "
-                      f"disagree. Run `dg render`, then "
-                      f"`git add {proj.view.name}`.",
-        }
+    for store, view, cmd in ((proj.store, proj.view, "dg render"),
+                             (proj.tasks, proj.task_view, "dg task render")):
+        if store.resolve() in staged and view.resolve() not in staged:
+            return {
+                "verdict": "deny",
+                "reason": f"{store.name} is staged but {view.name} is not, "
+                          f"so the commit would record a store and a view that "
+                          f"disagree. Run `{cmd}`, then "
+                          f"`git add {view.name}`.",
+            }
 
-    try:
-        ops = pending.load(proj.pending)
-    except Exception as exc:
-        # An unreadable staging file may hold staged decision work, and this
-        # commit would drop it with no trace in the diff — the one situation
-        # the `ask` verdict below exists for, unreadable. Fail closed.
-        return {
-            "verdict": "deny",
-            "reason": f"{proj.pending.name} could not be read ({exc}), so it "
-                      f"is impossible to tell whether decision op(s) are "
-                      f"staged and about to be lost. Inspect the file, or "
-                      f"discard it with `dg clear`, then retry.",
-        }
-    if ops:
+    # Both trays. `.dgraph-task-pending.json` is gitignored like its sibling,
+    # so unapplied task work is dropped by a commit just as silently, and an
+    # unreadable tray is the case `ask` exists for with the count unreadable.
+    trays = [(proj.pending, "decision", "dg clear")]
+    if proj.has_tasks:
+        trays.append((proj.task_pending, "task", "dg task clear"))
+    waiting = []
+    for path, kind, discard in trays:
+        try:
+            ops = pending.load(path)
+        except Exception as exc:
+            return {
+                "verdict": "deny",
+                "reason": f"{path.name} could not be read ({exc}), so it "
+                          f"is impossible to tell whether {kind} op(s) are "
+                          f"staged and about to be lost. Inspect the file, or "
+                          f"discard it with `{discard}`, then retry.",
+            }
+        if ops:
+            waiting.append((len(ops), kind, path.name, discard))
+    if waiting:
         return {
             "verdict": "ask",
-            "reason": f"{len(ops)} decision op(s) are staged and not applied. "
-                      f"{proj.pending.name} is gitignored, so committing now "
-                      f"drops them from the record with no trace in the diff. "
-                      f"`dg apply` writes them; `dg clear` discards them.",
+            "reason": ", ".join(f"{n} {kind} op(s)" for n, kind, _, _ in waiting)
+                      + " are staged and not applied. "
+                      + " and ".join(name for _, _, name, _ in waiting)
+                      + " is gitignored, so committing now drops them from the "
+                        "record with no trace in the diff. `dg apply` writes "
+                        "them; "
+                      + " / ".join(f"`{d}`" for _, _, _, d in waiting)
+                      + " discards them.",
         }
     return _allow()

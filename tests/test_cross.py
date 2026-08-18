@@ -137,10 +137,14 @@ def test_a_provisional_premise_warns_too(both):
     assert any("T03" in str(h) for h in hits)
 
 
-def test_the_cross_check_never_blocks_a_commit(both, tmp_path):
-    """The governing severity rule. If resting on a reopened decision were an
+def test_a_reopened_premise_never_blocks_a_commit(both, tmp_path):
+    """The governing severity rule, and the whole of what it covers: *anything
+    a reopen can cause* is a warning. If resting on a reopened decision were an
     error, `dg reopen` would deny every commit in the repo until the backlog
-    was triaged — and the check would be switched off the same day."""
+    was triaged — and the check would be switched off the same day.
+
+    The two link *errors* are a different thing and do deny — see below. The
+    old name for this test claimed the general property and was wrong."""
     _reopen(both)
     problems = run()
     assert any(p.check == "link_premise_under_review" for p in problems)
@@ -149,9 +153,30 @@ def test_the_cross_check_never_blocks_a_commit(both, tmp_path):
                         project.Project(both))["verdict"] == "allow"
 
 
-def test_no_cross_checks_without_both_stores(task_store):
-    """A tasks-only project cannot have a link to check."""
-    assert not [v for v in run() if v.check.startswith("link_")]
+def test_the_two_link_errors_do_deny_a_commit(both):
+    """The counterpart to the rule above: a dangling premise and a cross-graph
+    deadlock are contradictions, not states of play, so they block — which is
+    exactly why `dg apply` refuses to write one in the first place."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].because = "D99"
+    tg.save(both / "tasks.json")
+    from dgraph import task_render
+    task_render.write(tg, both / "tasks.md")     # the link is the only problem
+    v = gate.verdict("git commit -m x", project.Project(both))
+    assert v["verdict"] == "deny" and "link_resolves" in v["reason"]
+    assert "link between the two graphs" in v["reason"]
+
+
+def test_a_tasks_only_project_still_resolves_its_links(task_store):
+    """Deleting `decisions.json` must not be a way to silence a dangling link:
+    with no decision store every link names something that cannot exist."""
+    tg = TaskGraph.load(task_store / "tasks.json")
+    tg.tasks["T02"].because = "D01"
+    tg.save(task_store / "tasks.json")
+    from dgraph import task_render
+    task_render.write(tg, task_store / "tasks.md")
+    hits = [v for v in run() if v.check == "link_resolves"]
+    assert hits and hits[0].blocking and "D01" in str(hits[0])
 
 
 # ---- evidence: work whose outcome bears on a decision --------------------
@@ -302,8 +327,8 @@ def test_only_cross_reasons_about_the_link():
     """Aggregators (`cli`, `check`, `brief`) may load both stores — that is
     what composing a report means. What they must not do is decide *what the
     link means*, or the rule ends up in two places and drifts. `tasks` declares
-    and serialises the field, `cli` prints it; every other use is reasoning and
-    belongs in `cross`.
+    and serialises the field, `cli` and `task_render` print it; every other use is
+    reasoning and belongs in `cross`.
 
     This is not hypothetical: `brief` first shipped with its own copy of the
     "is this premise shaky?" rule, and this test is what found it.
@@ -312,7 +337,14 @@ def test_only_cross_reasons_about_the_link():
     import pkgutil
 
     import dgraph
-    allowed = {"cross", "tasks", "cli"}
+    from dgraph import task_render
+
+    # `task_render` prints the stored id and joins nothing — which is only safe
+    # while it cannot reach the decision store at all, so that is asserted
+    # rather than assumed.
+    assert not {"dgraph.cross", "dgraph.model"} & _imports(task_render)
+
+    allowed = {"cross", "tasks", "cli", "task_render"}
     offenders = []
     for info in pkgutil.iter_modules(dgraph.__path__):
         if info.name in allowed:
@@ -530,3 +562,38 @@ def test_a_cycle_reads_the_same_way_twice(both):
     tg.tasks = dict(reversed(list(tg.tasks.items())))
     assert [str(v) for v in cross.validate(tg, g)
             if v.check == "link_acyclic"] == first
+
+
+# ---- one command, two independent batches (audit D4, F4) -----------------
+
+
+def test_an_unreadable_task_tray_does_not_stop_the_decision_batch(run_cli, both):
+    """`apply`'s own docstring promises this: "a task batch that will not apply
+    can never stop a decision batch that would". It loaded the task tray first,
+    unguarded, so an unparseable file took the whole command down."""
+    (both / ".dgraph-task-pending.json").write_text("{oh no")
+    assert run_cli("add", "--id", "D20", "-t", "A question",
+                   "--area", "Alpha").exit_code == 0
+    res = run_cli("apply")
+    assert res.exit_code == 1                       # the tray is still broken
+    assert ".dgraph-task-pending.json could not be read" in res.output
+    assert "dg task clear" in res.output
+    assert "D20" in Graph.load(both / "decisions.json").vertices   # ...and yet
+
+
+def test_a_malformed_staged_op_is_a_message_not_a_traceback(run_cli, both):
+    json.dump([{"op": "set_status", "status": "DONE"}],
+              (both / ".dgraph-task-pending.json").open("w"))
+    res = run_cli("task", "start", "T02")       # consults the effective graph
+    assert res.exit_code == 1
+    assert "Traceback" not in res.output
+    assert "missing required field" in res.output
+    assert "dg task drop-op" in res.output
+
+
+def test_the_task_list_says_when_premise_information_is_missing(run_cli, both):
+    """Degrading silently prints "ready" for work whose premise is undecided —
+    a wrong answer, which is worse than an absent one."""
+    (both / "decisions.json").write_text("{not json")
+    res = run_cli("task")
+    assert "premise information is missing" in res.output
