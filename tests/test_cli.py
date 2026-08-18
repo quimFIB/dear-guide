@@ -211,6 +211,88 @@ def test_add_without_edit_still_requires_its_flags(run, store, g):
     assert "--id" in res.output
 
 
+# ---- staging judges the store PLUS the staged ops (audit A3) -------------
+
+
+def test_add_can_chain_onto_a_staged_vertex(run, store, g):
+    """Audit A3(1): `--after` a vertex whose add is staged but not applied used
+    to fail with "unknown parent(s)" — a chain needed an apply between adds."""
+    write(g)
+    assert run("add", "--id", "D07", "-t", "First of a chain",
+               "--area", "Alpha").exit_code == 0
+    res = run("add", "--id", "D08", "-t", "Rests on the first",
+              "--area", "Alpha", "--after", "D07")
+    assert res.exit_code == 0
+    assert run("apply").exit_code == 0
+    assert Graph.load(store / "decisions.json").depends("D08") == ["D07"]
+
+
+def test_a_second_decide_is_refused_with_a_staging_remedy(run, store, g):
+    """Audit A3(2): both closes used to stage, then `apply` refused the whole
+    batch quoting "reopen it first" — the wrong remedy for a staged duplicate."""
+    write(g)
+    assert run("decide", "D05", "-a", "one", "-s", "s", "-f", "f").exit_code == 0
+    res = run("decide", "D05", "-a", "two", "-s", "s", "-f", "f")
+    assert res.exit_code == 1
+    assert "already staged" in res.output
+    assert "dg edit" in res.output and "reopen" not in res.output
+    assert run("apply").exit_code == 0            # the batch stayed appliable
+
+
+def test_a_staged_add_is_a_taken_id(run, store, g):
+    """The flag path never checked the id at all; apply refused it later."""
+    write(g)
+    run("add", "--id", "D07", "-t", "First", "--area", "Alpha")
+    res = run("add", "--id", "D07", "-t", "Again", "--area", "Alpha")
+    assert res.exit_code == 1
+    assert "staging area" in res.output
+
+
+def test_reopen_then_redecide_without_an_apply_between(run, store, g):
+    """Audit A3(3): the documented reopen -> re-decide workflow in one batch.
+    `decide` used to read the store alone and answer "reopen it first" — the
+    reopen it demanded was already staged."""
+    write(g)
+    assert run("reopen", "D01", "-w", "it was mismeasured", "--yes").exit_code == 0
+    res = run("decide", "D01", "-a", "the corrected answer", "-s", "discussion",
+              "-f", "newer evidence")
+    assert res.exit_code == 0
+    assert run("apply").exit_code == 0
+    gg = Graph.load(store / "decisions.json")
+    assert gg.vertices["D01"].status == "DECIDED"
+    assert gg.active_edge("D01").answer == "the corrected answer"
+    assert len(gg.history("D01")) == 2            # the reversal is on file
+
+
+def test_reopen_marks_a_descendant_whose_close_is_only_staged(run, store, g):
+    """Audit A3(4): expand used to derive propagation from the store, so a
+    descendant decided in the staging area was missed and `apply` refused the
+    batch wholesale, telling the user to stage an op no command stages."""
+    write(g)
+    run("decide", "D05", "-a", "yes", "-s", "s", "-f", "f")
+    res = run("reopen", "D01", "-w", "shaken", "--yes")
+    assert res.exit_code == 0
+    marked = {o["vertex"] for o in pending.load(store / ".dgraph-pending.json")
+              if o["op"] == "set_status" and o["status"] == "PROVISIONAL"}
+    assert "D05" in marked
+    assert run("apply").exit_code == 0
+
+
+def test_staging_warns_when_the_batch_would_not_apply_yet(run, store, g):
+    """Deciding a child before its premise is transitional, not refused — but
+    the user hears at stage time which rule the batch currently breaks, not at
+    apply time several commands later."""
+    write(g)
+    res = run("decide", "D06", "-a", "early", "-s", "s", "-f", "f")
+    assert res.exit_code == 0                     # staged, with a warning
+    assert "would currently refuse" in res.output
+    assert "propagation" in res.output
+    # staging the missing premise clears it
+    res = run("decide", "D05", "-a", "the premise", "-s", "s", "-f", "f")
+    assert "would currently refuse" not in res.output
+    assert run("apply").exit_code == 0
+
+
 def test_edit_replaces_a_staged_op_in_place(run, store, g, stub_editor):
     write(g)
     stub_editor(lambda t: _fill(t, answer="First.", source="s", falsifier="f"))

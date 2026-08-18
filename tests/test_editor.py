@@ -133,6 +133,26 @@ def test_comments_and_org_escapes_are_stripped(g, store, fake_emacs):
     assert ops[0]["answer"] == "Real prose.\n* a literal star"
 
 
+@pytest.mark.parametrize("answer", [
+    "First line.\n* reads as a heading unescaped\nmore prose",
+    ",* a stored literal comma-star line",
+    "* leading star\n,* comma-star\n,,* two commas",
+])
+def test_stored_star_lines_survive_a_re_render(g, store, fake_emacs, answer):
+    """Audit A4. The parser unescapes `,*`, but the renderer never applied the
+    inverse to seeded bodies — so `dg edit N` on a close whose answer carried a
+    `* ` line handed the parser a heading: Answer truncated at that line, every
+    later field swallowed ("Source is empty"), the op uneditable. One comma is
+    added per render and removed per parse, so any stored text round-trips."""
+    op = {"op": "close", "vertex": "D05", "answer": answer,
+          "source": "discussion", "falsifier": "f", "to": [],
+          "date": "2026-08-18"}
+    fake_emacs(lambda t: t + "# touched\n")       # revise nothing, just save
+    ops = editor.compose(g, "close", vertex="D05", index=0, op=op)
+    assert ops[0]["answer"] == answer
+    assert ops[0]["source"] == "discussion"       # the field after Answer survives
+
+
 def test_a_deeper_heading_inside_a_field_stays_in_the_body(g, store, fake_emacs):
     fake_emacs(lambda t: fill(t, answer="Lead.\n*** Detail\nmore", source="s",
                               falsifier="f"))

@@ -76,6 +76,31 @@ def clear(path: Path | None = None) -> None:
     save([], path)
 
 
+def preview(g: Graph, path: Path | None = None, *, skip: int | None = None) -> Graph:
+    """The graph as it will stand once the staged ops apply.
+
+    What every stage-time guard consults. A guard that reads the store alone
+    judges a graph the user has already moved past: it refuses the chain they
+    just staged (`add --after` a staged vertex), accepts a duplicate of it
+    (`dg decide` twice), demands a reopen that is already staged, and lets
+    `expand` miss a descendant whose decision is staged but not applied.
+    `skip` leaves one op out — `dg edit N` revises op N against the graph as
+    it stands *without* that op.
+
+    Deliberately not validated: mid-batch the combined state may be
+    legitimately transitional (a child closed before its premise, with the
+    premise's close still to come). Raises ApplyError only if a staged op
+    cannot apply at all — the staging area itself needs attention before
+    anything more goes into it.
+    """
+    out = copy.deepcopy(g)
+    for i, op in enumerate(load(path)):
+        if i == skip:
+            continue
+        _apply_one(out, op)
+    return out
+
+
 # ---- propagation ---------------------------------------------------------
 
 

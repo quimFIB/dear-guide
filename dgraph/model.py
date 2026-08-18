@@ -16,6 +16,7 @@ the previous markdown-native format.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -104,6 +105,16 @@ class Graph:
     @classmethod
     def load(cls, path: Path | None = None) -> Graph:
         raw = json.loads((path or project.find().store).read_text(encoding="utf-8"))
+        # Refused here, not in validate(): building the vertex dict collapses
+        # duplicates (last one wins), so by the time validate() runs, the
+        # discarded decision is invisible and "unique ids" can never fire.
+        counts = Counter(v["id"] for v in raw["vertices"])
+        dupes = sorted(i for i, n in counts.items() if n > 1)
+        if dupes:
+            raise ValueError(
+                f"duplicate vertex id(s): {', '.join(dupes)} — one entry per "
+                f"id; merge or renumber them by hand"
+            )
         return cls(
             areas=raw.get("areas", []),
             vertices={v["id"]: Vertex(**v) for v in raw["vertices"]},

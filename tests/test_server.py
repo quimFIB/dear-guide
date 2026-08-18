@@ -106,6 +106,24 @@ def test_a_wrong_token_is_refused(srv, monkeypatch):
     assert jreq(srv, "/api/compose", "POST", CLOSE, token="not-it")[0] == 403
 
 
+def test_stage_expands_against_the_staged_ops_too(srv, store):
+    """Audit A3, server side. A reopen must mark a descendant whose close sits
+    in the tray unapplied, or Apply refuses the whole batch — the same
+    effective-graph rule the CLI stages by."""
+    code, _ = jreq(srv, "/api/pending", "POST",
+                   {"op": "close", "vertex": "D05", "answer": "a",
+                    "source": "s", "falsifier": "f", "to": []})
+    assert code == 200
+    code, body = jreq(srv, "/api/pending", "POST",
+                      {"op": "reopen", "vertex": "D01", "why": "shaken"})
+    assert code == 200, body
+    marked = {o["vertex"] for o in body["staged"]
+              if o["op"] == "set_status" and o["status"] == "PROVISIONAL"}
+    assert "D05" in marked
+    code, body = jreq(srv, "/api/apply", "POST")
+    assert code == 200, body
+
+
 # ---- composing -----------------------------------------------------------
 
 

@@ -78,6 +78,39 @@ def _g() -> Graph:
     return Graph.load()
 
 
+def _eff(g: Graph, skip: int | None = None) -> Graph:
+    """The store plus the staged ops — what stage-time guards judge against.
+
+    See `pending.preview`. If the staged batch itself no longer applies,
+    staging more on top of it helps nobody, so this stops and names the fix
+    instead of guessing from the store alone.
+    """
+    try:
+        return pending.preview(g, skip=skip)
+    except pending.ApplyError as exc:
+        con.print(f"[red]the staged ops no longer apply cleanly, so this "
+                  f"command cannot judge the graph they produce[/]\n{_x(exc)}\n"
+                  f"[dim]`dg pending` to review; `dg drop N` or `dg edit N` "
+                  f"to fix[/]")
+        raise typer.Exit(1) from None
+
+
+def _warn_stuck() -> None:
+    """After staging: say now if `dg apply` would refuse the batch as it stands.
+
+    A warning, never a refusal — mid-batch invalidity can be transitional (a
+    child decided before its premise, with the premise's close still to come),
+    and `apply` re-validates regardless. What must not happen is the user
+    learning at apply time, several commands later, which op to blame.
+    """
+    try:
+        pending.apply_all(Graph.load(), pending.load())
+    except pending.ApplyError as exc:
+        con.print(f"[yellow]note: as staged, `dg apply` would currently refuse "
+                  f"this batch[/]\n[dim]{_x(exc)}[/]\n"
+                  f"[dim]staging what is missing, or `dg drop N`, clears it[/]")
+
+
 def _style(status: str) -> str:
     return STATUS_STYLE.get(status.split(":")[0], "white")
 
@@ -406,6 +439,7 @@ def _stage_close(g: Graph, op: dict) -> None:
                   f"{', '.join(released)}")
     con.print(f"[green]staged[/] {len(ops)} op(s) — review with `dg pending`, "
               f"then `dg apply`")
+    _warn_stuck()
 
 
 @app.command()
@@ -422,20 +456,32 @@ def decide(
 ) -> None:
     """Stage a decision. Prompts for anything not given as a flag."""
     g = _g()
-    if vid not in g.vertices:
+    # Judged against the store *plus* the staged ops: a staged reopen makes the
+    # vertex decidable again, a staged add makes it exist, and a staged close
+    # makes a second close a duplicate — the store alone gets all three wrong.
+    eff = _eff(g)
+    if vid not in eff.vertices:
         con.print(f"[red]unknown vertex {vid}[/]")
         raise typer.Exit(1)
-    v = g.vertices[vid]
-    e = g.active_edge(vid)
+    v = eff.vertices[vid]
+    e = eff.active_edge(vid)
     if e is not None and e.decided:
         # Caught here rather than at `apply`, which would refuse the same thing
         # (pending._apply_one) after the op was already staged, leaving the
         # staging area holding something that can never be applied. PROVISIONAL
         # reaches this branch too: it keeps the answer it was given.
-        fix = ("`dg confirm` it if it still holds, or `dg reopen` it"
-               if v.base_status == "PROVISIONAL" else "`dg reopen` it first")
-        con.print(f"[red]{vid} already has an answer, and is {v.status} — "
-                  f"{fix}[/]")
+        se = g.active_edge(vid) if vid in g.vertices else None
+        if se is not None and se.decided:
+            fix = ("`dg confirm` it if it still holds, or `dg reopen` it"
+                   if v.base_status == "PROVISIONAL" else "`dg reopen` it first")
+            con.print(f"[red]{vid} already has an answer, and is {v.status} — "
+                      f"{fix}[/]")
+        else:
+            # Decided only in the staging area: the remedy is a staging verb,
+            # not a reopen that would file a reversal of an unapplied answer.
+            con.print(f"[red]a close for {vid} is already staged — "
+                      f"`dg pending` to review it, `dg edit N` to revise it, "
+                      f"or `dg drop N` to unstage it[/]")
         raise typer.Exit(1)
 
     if _wants_editor(edit):
@@ -444,18 +490,18 @@ def decide(
             ("summary", summary),
             ("to", [x.strip() for x in opens.split(",") if x.strip()] if opens else None),
         ) if val}
-        ops = _compose(g, "close", vertex=vid, seed=seed)
-        _stage_close(g, ops[0])
+        ops = _compose(eff, "close", vertex=vid, seed=seed)
+        _stage_close(eff, ops[0])
         return
 
     con.print(Panel(f"[bold]{_x(v.title)}[/]\n\n"
-                    f"depends on {', '.join(g.depends(vid)) or '—'}",
+                    f"depends on {', '.join(eff.depends(vid)) or '—'}",
                     title=vid, border_style=_style(v.status)))
     answer = answer or _ask(
         "Answer (what was decided, and on what evidence)", "--answer/-a")
     source = source or _ask(
         "Source (a report/ path, a script, or 'discussion')", "--source/-s")
-    existing = g.children(vid)
+    existing = eff.children(vid)
     opens_l = (
         [x.strip() for x in opens.split(",") if x.strip()] if opens
         else [x.strip() for x in _ask(
@@ -474,7 +520,7 @@ def decide(
     }
     if summary:
         op["summary"] = summary
-    _stage_close(g, op)
+    _stage_close(eff, op)
 
 
 @app.command()
@@ -491,23 +537,24 @@ def confirm(vid: str) -> None:
     premise and found it still stands.
     """
     g = _g()
-    if vid not in g.vertices:
+    eff = _eff(g)
+    if vid not in eff.vertices:
         con.print(f"[red]unknown vertex {vid}[/]")
         raise typer.Exit(1)
-    v = g.vertices[vid]
+    v = eff.vertices[vid]
     if v.base_status != "PROVISIONAL":
         con.print(f"[red]{vid} is {v.status}, not PROVISIONAL — "
                   f"there is nothing to re-affirm[/]")
         raise typer.Exit(1)
-    unsettled = g.provisional_because(vid)
+    unsettled = eff.provisional_because(vid)
     if unsettled:
         con.print(f"[red]{vid} still rests on {', '.join(unsettled)}[/]\n"
                   f"[dim]settle the premise first — until then PROVISIONAL is "
                   f"the accurate status[/]")
         raise typer.Exit(1)
 
-    ops = pending.expand(g, {"op": "set_status", "vertex": vid,
-                             "status": "DECIDED"})
+    ops = pending.expand(eff, {"op": "set_status", "vertex": vid,
+                               "status": "DECIDED"})
     for o in ops:
         pending.stage(o)
     released = [o["vertex"] for o in ops[1:]]
@@ -516,6 +563,7 @@ def confirm(vid: str) -> None:
                   f"are released to OPEN: {', '.join(released)}")
     con.print(f"[green]staged[/] {len(ops)} op(s) — {vid} back to DECIDED, "
               f"review with `dg pending`, then `dg apply`")
+    _warn_stuck()
 
 
 @app.command()
@@ -530,27 +578,31 @@ def reopen(
 ) -> None:
     """Stage a reopen, showing what it drags into PROVISIONAL."""
     g = _g()
-    if vid not in g.vertices:
+    # The effective graph, so a decision that exists only in the staging area
+    # can be reopened, and — more importantly — so the propagation set counts
+    # descendants whose close is staged but not applied.
+    eff = _eff(g)
+    if vid not in eff.vertices:
         con.print(f"[red]unknown vertex {vid}[/]")
         raise typer.Exit(1)
-    e = g.active_edge(vid)
+    e = eff.active_edge(vid)
     if e is None or not e.decided:
         con.print(f"[red]{vid} has no decision to reopen[/]")
         raise typer.Exit(1)
 
     if _wants_editor(edit):
         seed = {k: v for k, v in (("why", why), ("summary", summary)) if v}
-        op = _compose(g, "reopen", vertex=vid, seed=seed)[0]
+        op = _compose(eff, "reopen", vertex=vid, seed=seed)[0]
     else:
         why = why or _ask("Why is this being reopened?", "--why/-w")
         op = {"op": "reopen", "vertex": vid, "why": why}
         if summary:
             op["summary"] = summary
-    ops = pending.expand(g, op)
+    ops = pending.expand(eff, op)
 
     affected = [o["vertex"] for o in ops if o["op"] == "set_status"]
     con.print(Panel(
-        f"[bold]{_x(g.vertices[vid].title)}[/]\n\n"
+        f"[bold]{_x(eff.vertices[vid].title)}[/]\n\n"
         f"Its answer becomes superseded; its dependencies stay.\n\n"
         f"[cyan]{len(affected)}[/] decided descendant(s) rest on it and become "
         f"PROVISIONAL:\n  {', '.join(affected) or 'none'}",
@@ -569,6 +621,7 @@ def reopen(
     for o in ops:
         pending.stage(o)
     con.print(f"[green]staged[/] {len(ops)} op(s)")
+    _warn_stuck()
 
 
 @app.command()
@@ -585,6 +638,9 @@ def add(
 ) -> None:
     """Stage a new decision vertex."""
     g = _g()
+    # The effective graph: `--after` may name a vertex whose add is staged but
+    # not applied, and an id already staged is as taken as an id in the store.
+    eff = _eff(g)
 
     if _wants_editor(edit):
         seed = {k: v for k, v in (
@@ -592,10 +648,11 @@ def add(
             ("note", note),
             ("after", [x.strip() for x in after.split(",") if x.strip()] if after else None),
         ) if v}
-        ops = _compose(g, "add_vertex", seed=seed)
+        ops = _compose(eff, "add_vertex", seed=seed)
         for o in ops:
             pending.stage(o)
         con.print(f"[green]staged[/] {len(ops)} op(s) — add {ops[0]['id']}")
+        _warn_stuck()
         return
 
     # Required only without --edit; typer cannot express that, so it is checked
@@ -606,19 +663,26 @@ def add(
         con.print(f"[red]missing option(s): {', '.join(missing)}[/]\n"
                   f"[dim]give them as flags, or use `dg add --edit`[/]")
         raise typer.Exit(2)
-    if area not in g.areas:
+    if vid in eff.vertices:
+        con.print(f"[red]{vid} already exists"
+                  + (""
+                     if vid in g.vertices
+                     else " in the staging area — `dg pending` to review")
+                  + "[/]")
+        raise typer.Exit(1)
+    if area not in eff.areas:
         con.print(f"[red]unknown area. one of: "
-                  f"{', '.join(_x(a) for a in g.areas)}[/]")
+                  f"{', '.join(_x(a) for a in eff.areas)}[/]")
         raise typer.Exit(1)
     # `decide` validates its targets before staging; this does too, so that a
     # typo is reported by the command that contains it rather than by `apply`
     # two commands later.
     parents = [x.strip() for x in after.split(",") if x.strip()] if after else []
-    unknown = [x for x in parents if x not in g.vertices]
+    unknown = [x for x in parents if x not in eff.vertices]
     if unknown:
         con.print(f"[red]unknown parent(s): {', '.join(unknown)}[/]")
         raise typer.Exit(1)
-    if not _status_legal(g, status):
+    if not _status_legal(eff, status):
         con.print(f"[red]illegal status {_x(status)}[/]\n"
                   f"[dim]one of {', '.join(sorted(SIMPLE_STATUSES))}, "
                   f"or BLOCKED:<existing id>[/]")
@@ -631,6 +695,7 @@ def add(
     for parent in parents:
         pending.stage({"op": "add_edge", "from": parent, "to": [vid]})
     con.print(f"[green]staged[/] add {vid}")
+    _warn_stuck()
 
 
 @app.command(name="pending")
@@ -679,7 +744,9 @@ def edit_cmd(i: int) -> None:
     # Deliberately not re-expanded: the derived ops are already staged, and
     # propagation depends only on which vertex is settled — never on the answer
     # text or the target list — so revising either cannot invalidate them.
-    new = _compose(g, kind, vertex=op.get("vertex"), index=i, op=op)
+    # Rendered against the batch *without* op i: the other staged ops are
+    # context this revision should see, but the op being replaced is not.
+    new = _compose(_eff(g, skip=i), kind, vertex=op.get("vertex"), index=i, op=op)
     pending.replace(i, new[0])
     con.print(f"[green]updated[/] op {i} — review with `dg pending`")
 

@@ -38,6 +38,19 @@ def test_malformed_store_is_reported(tmp_path, monkeypatch):
     assert [v.check for v in hits] == ["store_loads"]
 
 
+def test_duplicate_vertex_ids_surface_as_store_loads(store, g):
+    """The check-level face of audit A5: the refusal in `Graph.load` arrives
+    here as a violation naming the id, not as a clean report or a crash."""
+    import json
+    write(g)
+    raw = json.loads((store / "decisions.json").read_text(encoding="utf-8"))
+    raw["vertices"].append(dict(raw["vertices"][0]))
+    (store / "decisions.json").write_text(json.dumps(raw), encoding="utf-8")
+    hits = run()
+    assert [v.check for v in hits] == ["store_loads"]
+    assert hits[0].blocking and "D01" in str(hits[0])
+
+
 def test_a_validator_crash_degrades_to_a_violation(store, g, monkeypatch):
     """Audit A1, belt and braces: whatever future bug makes `validate()` raise,
     `run()` must answer with a blocking violation — a crash here is read by the

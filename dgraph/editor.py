@@ -86,11 +86,24 @@ def _header(title: str, **props: str) -> str:
     )
 
 
+def _escape(body: str) -> str:
+    """The inverse of `_body`'s comma-unescape, applied to seeded content.
+
+    A stored line whose first non-blank character is `*` would otherwise come
+    back as an org heading: the parser would read it as the end of the field —
+    or of the whole Input subtree — and refuse the tool's own output
+    (`dg edit N` on a close whose answer carries such a line). One comma is
+    added per line and `_body` removes exactly one, so any stored text,
+    including one already starting with `,*`, round-trips unchanged.
+    """
+    return re.sub(r"^([ \t]*)(,*\*)", r"\1,\2", body, flags=re.M)
+
+
 def _field(name: str, hint: str = "", body: str = "") -> str:
     out = [f"** {name}"]
     if hint:
         out += [f"# {ln}" for ln in hint.splitlines()]
-    out.append(body.rstrip("\n") if body else "")
+    out.append(_escape(body.rstrip("\n")) if body else "")
     # exactly one blank line after every field, whether or not it was seeded
     return "\n".join(out).rstrip("\n") + "\n\n"
 
@@ -304,9 +317,14 @@ def _sections(text: str) -> dict[str, tuple[str, str]]:
 
 
 def _body(raw: str) -> str:
-    """Strip comments, org's comma-escape, and common indentation."""
+    """Strip comments, org's comma-escape, and common indentation.
+
+    The unescape removes exactly one comma from a `,,,*`-style run — the
+    mirror of `_escape` adding one — so escape∘unescape is the identity for
+    any content, however many literal commas it starts with.
+    """
     text = _COMMENT.sub("", raw)
-    text = re.sub(r"^([ \t]*),(\*)", r"\1\2", text, flags=re.M)
+    text = re.sub(r"^([ \t]*),(,*\*)", r"\1\2", text, flags=re.M)
     return textwrap.dedent(text).strip()
 
 

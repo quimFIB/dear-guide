@@ -86,6 +86,17 @@ def test_a_dangling_source_into_a_decided_vertex_is_reported_not_fatal(g):
     assert not _check(g, "propagation")           # D99 is not a premise
 
 
+def test_load_refuses_duplicate_vertex_ids(store):
+    """Audit A5. The vertex dict collapsed duplicates silently (last one wins),
+    so a hand-edit or a bad merge lost a decision and `dg check` called the
+    graph clean — the declared "unique ids" invariant could never fire."""
+    raw = json.loads((store / "decisions.json").read_text(encoding="utf-8"))
+    raw["vertices"].append(dict(raw["vertices"][0], title="a second D01"))
+    (store / "decisions.json").write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="D01"):
+        Graph.load(store / "decisions.json")
+
+
 def test_a_dangling_source_above_a_provisional_vertex_is_reported_not_fatal(g):
     """Same crash, other path: `provisional_because` walks ancestors."""
     from dataclasses import replace

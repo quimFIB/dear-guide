@@ -77,8 +77,13 @@ def editor_payload() -> dict:
 
 
 def stage(g: Graph, op: dict) -> list[dict]:
-    """Stage an op and everything it implies. The one staging path."""
-    ops = pending.expand(g, op)
+    """Stage an op and everything it implies. The one staging path.
+
+    Expansion is derived from the store *plus* the already-staged ops, exactly
+    as the CLI does it: a reopen must mark descendants whose close is staged
+    but not applied, or the batch fails `apply` wholesale.
+    """
+    ops = pending.expand(pending.preview(g), op)
     for o in ops:
         pending.stage(o)
     return ops
@@ -182,8 +187,10 @@ class Handler(BaseHTTPRequestHandler):
                           "it with C-c C-c, or cancel with C-c C-k"}, 409)
         try:
             g = Graph.load()
+            # The buffer's context and the parser's target checks see the
+            # staged ops too, matching the CLI's `_eff`.
             ops = editor.compose(
-                g, kind,
+                pending.preview(g), kind,
                 vertex=body.get("vertex"),
                 seed=body.get("seed") or None,
                 launcher=editor.launch_gui,
