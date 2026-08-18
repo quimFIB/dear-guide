@@ -86,6 +86,21 @@ def test_errors_filters_out_warnings(store, g):
     assert "no_orphans" not in {v.check for v in errors()}
 
 
+def test_advisory_findings_warn_but_never_fail(store, g):
+    """Audit B3. An isolated vertex is the documented-normal look of a fresh
+    graph (`model.Violation`), yet the shipped pytest plugin failed CI on it.
+    Advisory findings now surface through pytest's warning summary; only
+    blocking violations fail, one test per rule."""
+    from dgraph import testing
+    from dgraph.model import Violation
+
+    with pytest.warns(UserWarning, match="no_orphans"):
+        testing.test_decision_graph_advisory_warnings(
+            [Violation("no_orphans", "D01 is connected to nothing", "warn")])
+    # a clean graph: no warning, and — the point — never an assertion
+    testing.test_decision_graph_advisory_warnings([])
+
+
 def _emitting_source() -> str:
     """Tool source with the CHECKS declaration itself cut out.
 

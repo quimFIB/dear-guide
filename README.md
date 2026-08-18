@@ -178,8 +178,10 @@ is no list to keep in sync:
 from dgraph.testing import *  # noqa: F401,F403
 ```
 
-That yields one test per rule, plus one for advisory warnings. A check added to
-the tool shows up in every project automatically.
+That yields one test per rule, plus one that surfaces advisory findings — an
+isolated vertex, a stale `PROVISIONAL` — through pytest's warning summary
+without failing the build; the normal look of work in progress stays green. A
+check added to the tool shows up in every project automatically.
 
 ## What `dg check` enforces
 

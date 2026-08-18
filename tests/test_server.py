@@ -106,6 +106,76 @@ def test_a_wrong_token_is_refused(srv, monkeypatch):
     assert jreq(srv, "/api/compose", "POST", CLOSE, token="not-it")[0] == 403
 
 
+# ---- the Host boundary (audit B2a) ---------------------------------------
+
+
+def test_a_foreign_host_header_is_refused_on_every_method(srv):
+    """DNS rebinding: an attacker's hostname pointed at 127.0.0.1 reaches this
+    socket carrying its own name — and would be same-origin with the page that
+    embeds the token. Reads are refused too, because `/` is where the token
+    lives."""
+    import http.client
+    host, port = srv.removeprefix("http://").split(":")
+    for method, path in (("GET", "/"), ("GET", "/api/graph"),
+                         ("POST", "/api/apply"), ("DELETE", "/api/pending/0")):
+        c = http.client.HTTPConnection(host, int(port))
+        c.request(method, path, headers={"Host": "evil.example",
+                                         server.TOKEN_HEADER: server.TOKEN})
+        assert c.getresponse().status == 403, (method, path)
+        c.close()
+
+
+# ---- stage-time vetting (audit B4) ---------------------------------------
+
+
+def test_staging_an_unknown_op_is_refused(srv):
+    code, body = jreq(srv, "/api/pending", "POST", {"op": "wibble"})
+    assert code == 400 and "wibble" in body["error"]
+    assert pending.load() == []
+
+
+def test_staging_a_close_for_a_decided_vertex_is_refused(srv):
+    """The CLI refuses this at stage time; the API used to stage it and let
+    the whole batch die at apply."""
+    code, body = jreq(srv, "/api/pending", "POST",
+                      {"op": "close", "vertex": "D01", "answer": "a",
+                       "source": "s", "falsifier": "f", "to": []})
+    assert code == 400 and "reopen" in body["error"]
+    assert pending.load() == []
+
+
+def test_staging_a_dangling_target_is_refused(srv):
+    code, body = jreq(srv, "/api/pending", "POST",
+                      dict(CLOSE, answer="a", source="s", falsifier="f",
+                           to=["D99"]))
+    assert code == 400 and "D99" in body["error"]
+    assert pending.load() == []
+
+
+def test_a_broken_store_is_a_json_error_not_a_dropped_connection(srv, store):
+    (store / "decisions.json").write_text("{not json", encoding="utf-8")
+    code, body = jreq(srv, "/api/graph", token=False)
+    assert code == 500 and "error" in body
+
+
+# ---- apply's write order (audit B1) --------------------------------------
+
+
+def test_apply_recovers_when_the_view_cannot_be_written(srv, store):
+    """Store first, pending cleared, view last: a view failure is the one
+    recoverable case (`dg render`), and the applied ops must not stay staged —
+    they are in the store now, and re-applying them is the A3 dead end."""
+    from dgraph.model import Graph
+    code, _ = jreq(srv, "/api/pending", "POST",
+                   dict(CLOSE, answer="a", source="s", falsifier="f", to=[]))
+    assert code == 200
+    (store / "decision-graph.md").mkdir()          # write_text now fails
+    code, body = jreq(srv, "/api/apply", "POST")
+    assert code == 500 and "dg render" in body["error"]
+    assert Graph.load(store / "decisions.json").vertices["D05"].status == "DECIDED"
+    assert pending.load() == []
+
+
 def test_stage_expands_against_the_staged_ops_too(srv, store):
     """Audit A3, server side. A reopen must mark a descendant whose close sits
     in the tray unapplied, or Apply refuses the whole batch — the same

@@ -15,6 +15,7 @@ The project is located from pytest's rootdir, or from `$DG_PROJECT`, or with
 
 from __future__ import annotations
 
+import warnings as _warnings
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,7 @@ __all__ = [
     "decision_project",
     "decision_violations",
     "test_decision_graph_invariant",
-    "test_decision_graph_has_no_warnings",
+    "test_decision_graph_advisory_warnings",
 ]
 
 
@@ -51,7 +52,18 @@ def test_decision_graph_invariant(check, decision_violations):
     assert not hits, "\n".join(hits)
 
 
-def test_decision_graph_has_no_warnings(decision_violations):
-    """Non-blocking findings — an isolated vertex, say. Legal, but usually a slip."""
+def test_decision_graph_advisory_warnings(decision_violations):
+    """Non-blocking findings, surfaced through pytest's warning summary.
+
+    Deliberately never a failure: an isolated vertex is exactly what the first
+    vertex of a new graph looks like (see `Violation` in `dgraph/model.py`),
+    and a CI that goes red on the documented-normal state of work in progress
+    teaches people to delete the test. Blocking violations still fail above,
+    one test per rule.
+    """
     warns = [str(v) for v in decision_violations if not v.blocking]
-    assert not warns, "\n".join(warns)
+    if warns:
+        _warnings.warn(
+            "decision graph advisory finding(s):\n" + "\n".join(warns),
+            UserWarning, stacklevel=1,
+        )

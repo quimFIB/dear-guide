@@ -211,6 +211,44 @@ def test_add_without_edit_still_requires_its_flags(run, store, g):
     assert "--id" in res.output
 
 
+# ---- apply's write order (audit B1) --------------------------------------
+
+
+def test_apply_renders_before_writing_anything(run, store, g, monkeypatch):
+    """The view text is computed first, so a rendering bug aborts with the
+    store untouched and the staged ops intact — not with a half-applied
+    project."""
+    import dgraph.render
+    write(g)
+    run("decide", "D05", "-a", "yes", "-s", "s", "-f", "f")
+    staged_before = pending.load(store / ".dgraph-pending.json")
+    store_before = (store / "decisions.json").read_text(encoding="utf-8")
+
+    def boom(g):
+        raise RuntimeError("render bug")
+
+    monkeypatch.setattr(dgraph.render, "render", boom)
+    res = run("apply")
+    assert res.exit_code == 1
+    assert (store / "decisions.json").read_text(encoding="utf-8") == store_before
+    assert pending.load(store / ".dgraph-pending.json") == staged_before
+
+
+def test_apply_recovers_when_the_view_cannot_be_written(run, store, g):
+    """Store first, pending cleared, view last. The applied ops must not stay
+    staged — they are in the store now, and re-applying them is the dead end
+    A3 removed — and the failure names the recovery: `dg render`."""
+    write(g)
+    run("decide", "D05", "-a", "yes", "-s", "s", "-f", "f")
+    (store / "decision-graph.md").unlink()
+    (store / "decision-graph.md").mkdir()          # write_text now fails
+    res = run("apply")
+    assert res.exit_code == 1
+    assert "dg render" in res.output
+    assert Graph.load(store / "decisions.json").vertices["D05"].status == "DECIDED"
+    assert pending.load(store / ".dgraph-pending.json") == []
+
+
 # ---- staging judges the store PLUS the staged ops (audit A3) -------------
 
 

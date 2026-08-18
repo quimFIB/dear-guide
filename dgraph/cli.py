@@ -811,9 +811,21 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
     if dry_run:
         con.print(f"[green]✓[/] {len(ops)} op(s) would apply cleanly")
         return
+    # Render first: it is pure, so a rendering bug aborts before anything is
+    # written. Then the store, then clear pending — the ops are in the store
+    # now, and keeping them staged would re-apply them — and the view last,
+    # where a failure is the one recoverable case.
+    view_text = render.render(out)
     out.save()
-    render.write(out)
     pending.clear()
+    proj = project.find()
+    try:
+        proj.view.write_text(view_text, encoding="utf-8")
+    except OSError as exc:
+        con.print(f"[yellow]applied {len(ops)} op(s) → decisions.json, but "
+                  f"{proj.view.name} could not be written[/]\n{_x(exc)}\n"
+                  f"[dim]`dg render` regenerates it once the cause is fixed[/]")
+        raise typer.Exit(1)
     con.print(f"[green]✓[/] applied {len(ops)} op(s) → decisions.json + "
               f"decision-graph.md")
 

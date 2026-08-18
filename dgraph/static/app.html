@@ -151,7 +151,7 @@ async function boot(){
 function chips(){
   const seen = [...new Set(G.vertices.map(v=>base(v.status)))].sort();
   $("#statusChips").innerHTML = seen.map(s=>
-    `<button class="chip" data-s="${s}">${s}</button>`).join(" ");
+    `<button class="chip" data-s="${esc(s)}">${esc(s)}</button>`).join(" ");
   $("#statusChips").querySelectorAll("button").forEach(b=>b.onclick=()=>{
     const s=b.dataset.s;
     filter.status.has(s)?filter.status.delete(s):filter.status.add(s);
@@ -168,7 +168,7 @@ function chips(){
 
 function legend(){
   $("#legend").innerHTML = G.areas.map(a=>
-    `<span><i style="background:${AREA_COLOR[a]}"></i>${a}</span>`).join("");
+    `<span><i style="background:${AREA_COLOR[a]}"></i>${esc(a)}</span>`).join("");
 }
 
 /* ---- layered DAG layout: rank by longest path, barycentre within rank ---- */
@@ -241,11 +241,11 @@ function draw(){
     const t=v.title.length>46?v.title.slice(0,44)+"…":v.title;
     const half = t.length>26 ? t.slice(0,t.lastIndexOf(" ",26)||26) : t;
     const rest = t.length>26 ? t.slice((t.lastIndexOf(" ",26)||26)+1) : "";
-    nodes+=`<g class="node${show?"":" dim"}" data-id="${v.id}" transform="translate(${p.x},${p.y})">
+    nodes+=`<g class="node${show?"":" dim"}" data-id="${esc(v.id)}" transform="translate(${p.x},${p.y})">
       <rect width="${NW}" height="${NH}" rx="7" fill="${AREA_COLOR[v.area]}22"
             stroke="${stroke}" ${dash}/>
-      <text class="vid" x="8" y="15">${v.id}</text>
-      <text x="34" y="15" fill="${stroke}" font-size="9.5">${v.status}</text>
+      <text class="vid" x="8" y="15">${esc(v.id)}</text>
+      <text x="34" y="15" fill="${stroke}" font-size="9.5">${esc(v.status)}</text>
       <text x="8" y="29">${esc(half)}</text><text x="8" y="41">${esc(rest)}</text>
     </g>`;
   });
@@ -263,7 +263,11 @@ function draw(){
    documented limitation as dgraph/orgmd.py; see that module for why no
    heuristic can fix it. tests/fixtures/org_cases.json pins these rules against
    the Python converter, so the two cannot drift. */
-const esc=s=>(s||"").replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+/* Quotes included: escaped text is interpolated into attributes (data-dg,
+   href, option value), and an unescaped quote there is an attribute breakout —
+   stored prose must never reach the DOM as markup. */
+const esc=s=>(s||"").replace(/[<>&"']/g,
+  c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&#39;"}[c]));
 const isRule=l=>/^\s*\|[-+|\s]*\|\s*$/.test(l);
 function mdInline(s){
   return s
@@ -275,6 +279,10 @@ function mdInline(s){
       if(t.startsWith("dg:")){ const v=t.slice(3).trim();
         return `<a href="#" data-dg="${v}">${l||v}</a>`; }
       if(t.startsWith("file:")) t=t.slice(5).trim();
+      /* http(s) and relative targets only. Anything else carrying a scheme —
+         javascript:, data:, … — must not become a clickable href. */
+      if(/^[a-z][a-z0-9+.-]*:/i.test(t) && !/^https?:/i.test(t))
+        return `<code>${l||t}</code>`;
       return `<a href="${t}" target="_blank" rel="noopener">${l||t}</a>`;
     })
     /* org =verbatim= / ~code~, honouring org's own emphasis boundaries so
@@ -368,7 +376,7 @@ const editBtn = () => {
   if(EDITING) return EDITING.vertex===sel
     ? `<button class="ghost" id="doEdit" disabled>waiting for ${name}…</button>`
     : `<button class="ghost" id="doEdit" disabled
-         title="an editor is open for ${EDITING.vertex}">Compose in ${name}</button>`;
+         title="an editor is open for ${esc(EDITING.vertex)}">Compose in ${name}</button>`;
   return `<button class="ghost" id="doEdit">Compose in ${name}</button>`;
 };
 const editKeys = () => !(ED && ED.available) ? ""
@@ -381,12 +389,12 @@ function panel(){
   const v=G.vertices.find(x=>x.id===sel), d=G.derived[sel];
   const e=G.edges.find(x=>x.from===sel&&x.active);
   const st=base(v.status);
-  let h=`<h2>${v.id} — ${esc(v.title)}</h2>
-    <span class="pill" style="background:${STATUS_COLOR[st]};color:#04121f">${v.status}</span>
-    <span class="muted"> ${v.area}</span>
+  let h=`<h2>${esc(v.id)} — ${esc(v.title)}</h2>
+    <span class="pill" style="background:${STATUS_COLOR[st]};color:#04121f">${esc(v.status)}</span>
+    <span class="muted"> ${esc(v.area)}</span>
     <div class="kv">
-      <div>depends on</div><div>${d.depends.join(", ")||"—"}</div>
-      <div>opens</div><div>${d.children.join(", ")|| (e&&e.answer?"TERMINAL":"—")}</div>`;
+      <div>depends on</div><div>${esc(d.depends.join(", "))||"—"}</div>
+      <div>opens</div><div>${esc(d.children.join(", "))|| (e&&e.answer?"TERMINAL":"—")}</div>`;
   if(e&&e.answer) h+=`<div>falsifier</div><div>${esc(e.falsifier||"—")}</div>
       <div>source</div><div>${esc(e.source||"")} <span class="muted">${e.date||""}</span></div>`;
   h+=`</div>`;
@@ -413,7 +421,7 @@ function panel(){
       <div class="note" id="note"></div>`;
   } else {
     const opts=G.vertices.filter(x=>x.id!==sel)
-      .map(x=>`<option value="${x.id}">${x.id} — ${esc(x.title)}</option>`).join("");
+      .map(x=>`<option value="${esc(x.id)}">${esc(x.id)} — ${esc(x.title)}</option>`).join("");
     h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
       <label>Answer — what was decided, and on what evidence</label>
       <textarea id="answer"></textarea>
@@ -552,9 +560,9 @@ function tray(){
     PEND.map((o,i)=>{
       const det = o.op==="close"?esc((o.answer||"").slice(0,90))
         : o.op==="reopen"?esc(o.why||"")
-        : o.op==="set_status"?`→ ${o.status}`+(o.derived_from?` <span class="muted">(from ${o.derived_from})</span>`:"")
+        : o.op==="set_status"?`→ ${esc(o.status)}`+(o.derived_from?` <span class="muted">(from ${esc(o.derived_from)})</span>`:"")
         : esc(JSON.stringify(o));
-      return `<tr><td>${i}</td><td>${o.op}</td><td>${o.vertex||o.from||o.id||""}</td>
+      return `<tr><td>${i}</td><td>${esc(o.op)}</td><td>${esc(o.vertex||o.from||o.id||"")}</td>
         <td>${det}</td><td><button class="x" data-i="${i}">✕</button></td></tr>`;
     }).join("")+`</table>`;
   $("#tray").querySelectorAll(".x").forEach(b=>b.onclick=async()=>{

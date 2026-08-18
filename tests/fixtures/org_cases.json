@@ -67,6 +67,18 @@
       "org": "Compare <a> & <b>.",
       "markdown": "Compare <a> & <b>.",
       "html": "<p>Compare &lt;a&gt; &amp; &lt;b&gt;.</p>"
+    },
+    {
+      "name": "a quoted link target cannot break out of the attribute",
+      "org": "Rests on [[dg:D04\" onmouseover=\"alert(1)][x]].",
+      "markdown": "Rests on [x](#d04\" onmouseover=\"alert(1)).",
+      "html": "<p>Rests on <a href=\"#\" data-dg=\"D04&quot; onmouseover=&quot;alert(1)\">x</a>.</p>"
+    },
+    {
+      "name": "a javascript scheme never becomes a link",
+      "org": "Click [[javascript:alert(1)][here]].",
+      "markdown": "Click [here](javascript:alert(1)).",
+      "html": "<p>Click <code>here</code>.</p>"
     }
   ],
   "markdown_is_a_no_op": [

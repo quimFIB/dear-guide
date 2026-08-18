@@ -14,7 +14,7 @@ from datetime import date as _date
 from pathlib import Path
 
 from dgraph import project
-from dgraph.model import UNSETTLED, Edge, Graph, Vertex
+from dgraph.model import SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "set_status"}
 
@@ -99,6 +99,33 @@ def preview(g: Graph, path: Path | None = None, *, skip: int | None = None) -> G
             continue
         _apply_one(out, op)
     return out
+
+
+def vet(g: Graph, op: dict) -> None:
+    """Raise ApplyError if `op` could not be staged against `g`.
+
+    The stage-time guard for callers that receive ops as data — the web API,
+    chiefly. The CLI's commands each run their own richer checks first; this is
+    the shared floor: the op must apply to the effective graph, every target it
+    names must exist, and any status it writes must be legal. Validation-level
+    rules (propagation, falsifiers) stay with `apply`, where a transitional
+    mid-batch state is allowed.
+    """
+    probe = copy.deepcopy(g)
+    try:
+        _apply_one(probe, op)
+    except KeyError as exc:
+        raise ApplyError(f"op is missing required field {exc.args[0]!r}") from None
+    unknown = [t for t in (op.get("to") or []) if t not in g.vertices]
+    if unknown:
+        raise ApplyError(f"unknown target(s): {', '.join(unknown)}")
+    status = op.get("status")
+    if status is not None:
+        base, _, blocker = status.partition(":")
+        legal = (bool(blocker) and blocker in g.vertices) if base == "BLOCKED" \
+            else (base in SIMPLE_STATUSES and not blocker)
+        if not legal:
+            raise ApplyError(f"illegal status {status!r}")
 
 
 # ---- propagation ---------------------------------------------------------

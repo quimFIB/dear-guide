@@ -39,6 +39,13 @@ TOKEN = secrets.token_urlsafe(24)
 TOKEN_HEADER = "X-DG-Token"
 TOKEN_MARK = "__DG_TOKEN__"
 
+#: The only Host headers this loopback server answers. A DNS-rebound page — an
+#: attacker's hostname pointed at 127.0.0.1 — connects to the same socket but
+#: presents its own name here; without this check it is same-origin with the
+#: server, reads the token off `/`, and can drive every mutating route. The
+#: token guards against cross-origin pages; this guards the token.
+ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
+
 #: Held for as long as an editor is open, which may be minutes.
 _editing = threading.Lock()
 
@@ -81,9 +88,14 @@ def stage(g: Graph, op: dict) -> list[dict]:
 
     Expansion is derived from the store *plus* the already-staged ops, exactly
     as the CLI does it: a reopen must mark descendants whose close is staged
-    but not applied, or the batch fails `apply` wholesale.
+    but not applied, or the batch fails `apply` wholesale. The op is vetted
+    first, matching the CLI's stage-time guards — an unknown op kind, a close
+    for a decided vertex, or a dangling target is refused here rather than
+    staged as a batch-poisoning op `apply` rejects later.
     """
-    ops = pending.expand(pending.preview(g), op)
+    eff = pending.preview(g)
+    pending.vet(eff, op)
+    ops = pending.expand(eff, op)
     for o in ops:
         pending.stage(o)
     return ops
@@ -116,26 +128,55 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "stale page — reload to pick up this run's token"}, 403)
         return False
 
+    def _host_ok(self) -> bool:
+        """Reject requests addressed to any name but this server's own.
+
+        See ALLOWED_HOSTS: applied to every route, reads included, because the
+        page at `/` is where the token lives.
+        """
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip().lower()
+        if host in ALLOWED_HOSTS:
+            return True
+        self._json({"error": "unrecognised Host header"}, 403)
+        return False
+
     def _page(self) -> bytes:
         html = (STATIC / "app.html").read_text(encoding="utf-8")
         return html.replace(TOKEN_MARK, TOKEN).encode()
 
     # -- routes --
+    #: Each do_* checks the Host, dispatches, and turns an unexpected exception
+    #: — an unloadable store, chiefly — into a JSON 500 instead of a dropped
+    #: connection and a traceback on the server's terminal.
+
     def do_GET(self) -> None:
-        if self.path in ("/", "/index.html"):
-            self._send(200, self._page(), "text/html; charset=utf-8")
-        elif self.path == "/api/graph":
-            self._json(graph_payload(Graph.load()))
-        elif self.path == "/api/pending":
-            self._json(pending.load())
-        elif self.path == "/api/editor":
-            self._json(editor_payload())
-        else:
-            self._json({"error": "not found"}, 404)
+        if not self._host_ok():
+            return
+        try:
+            if self.path in ("/", "/index.html"):
+                self._send(200, self._page(), "text/html; charset=utf-8")
+            elif self.path == "/api/graph":
+                self._json(graph_payload(Graph.load()))
+            elif self.path == "/api/pending":
+                self._json(pending.load())
+            elif self.path == "/api/editor":
+                self._json(editor_payload())
+            else:
+                self._json({"error": "not found"}, 404)
+        except Exception as exc:
+            self._json({"error": str(exc)}, 500)
 
     def do_POST(self) -> None:
+        if not self._host_ok():
+            return
         if not self._authed():
             return
+        try:
+            self._post()
+        except Exception as exc:
+            self._json({"error": str(exc)}, 500)
+
+    def _post(self) -> None:
         if self.path == "/api/pending":
             g = Graph.load()
             op = self._body()
@@ -150,7 +191,7 @@ class Handler(BaseHTTPRequestHandler):
             # preview propagation without staging
             g = Graph.load()
             try:
-                self._json({"ops": pending.expand(g, self._body())})
+                self._json({"ops": pending.expand(pending.preview(g), self._body())})
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
         elif self.path == "/api/apply":
@@ -162,9 +203,21 @@ class Handler(BaseHTTPRequestHandler):
                 out = pending.apply_all(g, ops)
             except pending.ApplyError as exc:
                 return self._json({"error": str(exc)}, 400)
+            # Same order as `dg apply`: render first (pure — a rendering bug
+            # aborts before anything is written), then the store, then clear
+            # pending (the ops are in the store; keeping them staged would
+            # re-apply them), and the view last, where failure is recoverable.
+            view_text = render.render(out)
             out.save()
-            render.write(out)
             pending.clear()
+            try:
+                project.find().view.write_text(view_text, encoding="utf-8")
+            except OSError as exc:
+                return self._json(
+                    {"error": f"applied {len(ops)} op(s) to the store, but "
+                              f"{project.find().view.name} could not be written "
+                              f"({exc}) — run `dg render` to regenerate it",
+                     "applied": len(ops)}, 500)
             self._json({"applied": len(ops), "graph": graph_payload(out)})
         else:
             self._json({"error": "not found"}, 404)
@@ -195,9 +248,14 @@ class Handler(BaseHTTPRequestHandler):
                 seed=body.get("seed") or None,
                 launcher=editor.launch_gui,
             )
+            # Re-read the store: the editor session can last minutes, and
+            # another tab or a terminal may have applied meanwhile. The ops
+            # must expand against the graph as it is now, not as it was when
+            # the buffer was written.
+            fresh = Graph.load()
             staged: list[dict] = []
             for op in ops:
-                staged += stage(g, op)
+                staged += stage(fresh, op)
         except editor.EditorAbort as exc:
             return self._json({"aborted": str(exc), "pending": pending.load()})
         except (editor.EditorError, pending.ApplyError) as exc:
@@ -207,16 +265,21 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"staged": staged, "pending": pending.load()})
 
     def do_DELETE(self) -> None:
+        if not self._host_ok():
+            return
         if not self._authed():
             return
-        if self.path.startswith("/api/pending/"):
-            try:
-                pending.drop(int(self.path.rsplit("/", 1)[1]))
-            except (ValueError, IndexError) as exc:
-                return self._json({"error": str(exc)}, 400)
-            self._json(pending.load())
-        else:
-            self._json({"error": "not found"}, 404)
+        try:
+            if self.path.startswith("/api/pending/"):
+                try:
+                    pending.drop(int(self.path.rsplit("/", 1)[1]))
+                except (ValueError, IndexError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+                self._json(pending.load())
+            else:
+                self._json({"error": "not found"}, 404)
+        except Exception as exc:
+            self._json({"error": str(exc)}, 500)
 
 
 def run(port: int = 8765) -> None:
