@@ -30,12 +30,25 @@ MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
 MARKET = ROOT / ".claude-plugin" / "marketplace.json"
 
 
-def commands() -> set[str]:
-    """Every subcommand `dg` actually has."""
+def _names(typer_app) -> set[str]:
     return {
         c.name or c.callback.__name__.removesuffix("_cmd").rstrip("_")
-        for c in app.registered_commands
+        for c in typer_app.registered_commands
     }
+
+
+def commands() -> set[str]:
+    """Every invocation `dg` actually accepts.
+
+    Includes grouped commands as their full path (`task add`), so the skill
+    cannot advertise `dg task frobnicate` and pass — the group name alone would
+    have made every subcommand under it unverifiable.
+    """
+    out = _names(app)
+    for group in app.registered_groups:
+        out.add(group.name)
+        out |= {f"{group.name} {sub}" for sub in _names(group.typer_instance)}
+    return out
 
 
 def frontmatter(text: str) -> dict:
@@ -73,8 +86,17 @@ def project_dir(tmp_path):
 def test_skill_mentions_only_subcommands_that_exist():
     """The drift that already happened: hand-written instructions advertising a
     command table the tool had moved past."""
-    used = set(re.findall(r"\bdg ([a-z][a-z-]*)", SKILL.read_text()))
-    assert used <= commands(), sorted(used - commands())
+    text = SKILL.read_text()
+    known = commands()
+    # Two words where the first names a group, one otherwise — so a bogus
+    # subcommand under `dg task` is caught, not waved through by the group.
+    used = set()
+    for first, second in re.findall(r"\bdg ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?",
+                                    text):
+        used.add(f"{first} {second}" if second and f"{first} {second}" in known
+                 or (second and first in {g.name for g in app.registered_groups})
+                 else first)
+    assert used <= known, sorted(used - known)
 
 
 def test_skill_does_not_restate_the_check_list():

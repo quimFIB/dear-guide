@@ -265,18 +265,100 @@ nowhere a diff will ever show.
 the markdown — it is regenerated from the store on every apply, and `dg check`
 fails if the two have drifted apart.
 
-## What this is not
+## What belongs in the decision graph
 
-The graph stops being useful the moment it becomes a tracker. It holds
-**decisions**, not:
+The decision graph stops being useful the moment it becomes a tracker, so it
+holds **decisions** and nothing else — not a changelog (git does that better),
+not a roadmap, not a file list, and **not tasks**.
 
-- tasks or milestones — those have a start and an end; a decision has evidence
-- a changelog — git already does that, better
-- a file list, a roadmap, or a set of notes
+Tasks get their own graph, which is a different thing on purpose:
 
-The test is whether the entry answers a question the project had to settle, and
-whether you can say what would change your mind about it. If you cannot write a
-falsifier, it is probably not a decision.
+| | decision | task |
+|---|---|---|
+| answers | a question | nothing; it produces something |
+| finished when | somebody settles it, with evidence | the work is done |
+| carries | an answer, a source, a **falsifier** | an **outcome** |
+| reversed by | new evidence, kept forever as a reversal | nothing — abandoned work is `DROPPED` |
+| status | explicit, never inferred | blocked is *derived* from what precedes it |
+
+The test for which store an entry belongs in: **can you write a falsifier for
+it?** Then it is a decision. **Can you write a definition of done?** Then it is
+a task. An entry that admits both is really two entries — record the decision,
+then the work it implies, and link them.
+
+See [tracking the work as well](#tracking-the-work-as-well) below.
+
+## Tracking the work as well
+
+`tasks.json` is a second, independent graph: tasks, and edges saying what has to
+be done before what. Separate store, separate view (`tasks.md`), separate ids
+(`T01`, not `D01`), so work can never be mistaken for a decision. Either store
+alone is enough — you can track work in a project that records no decisions.
+
+```sh
+dg task init --areas "Infra,Backend"
+dg task add --id T01 --title "Provision the VMs"    --area Infra   --because D01
+dg task add --id T02 --title "Migrate the database" --area Backend --after T01 --because D01
+dg apply
+dg task                     # what is outstanding, and what is startable now
+```
+
+Blocked is **derived**, never stored: a task is ready when everything before it
+is resolved. Finish T01 and T02 simply becomes ready — nothing to update, and no
+status that can go stale. Abandoning a prerequisite releases what waited on it,
+for the same reason.
+
+### What linking the two graphs buys
+
+One optional field ties them: `--because D01` says *this work exists because of
+that answer*. It is stored on the task and derived the other way, so
+`decisions.json` never mentions a task and a change to it still always means a
+decision changed.
+
+Now go back to the moment the contract forces you off the managed platform:
+
+```
+$ dg reopen D01 --why "a customer contract requires our own hardware"
+
+  2 decided descendant(s) rest on it and become PROVISIONAL:
+    D02, D03
+
+  1 unfinished task(s) rest on a premise under review:
+    T02
+```
+
+**That last line is what neither tool can produce alone.** A task tracker does
+not know why T02 exists. A decision log does not know T02 exists at all. Here,
+reversing the hosting decision tells you there is work in flight built on it —
+and says nothing about T01, which is already done, because reversing an old
+decision should not raise alarms about history.
+
+The link points the other way too. `--evidence-for D05` says *finishing this
+work bears on that question* — the spike whose result settles something, or the
+chore that turned up a question nobody had written down:
+
+```sh
+dg task add  --id T09 --title "Benchmark both databases" --area Backend --evidence-for D05
+dg task link T20 --evidence-for D08     # ...or after the fact, once work reveals D08
+```
+
+Which makes the frontier honest — an open decision with a spike running reads
+`waiting on evidence from T09` rather than `decidable now` — and buys the check
+worth the whole exercise:
+
+```
+! [evidence_unharvested] T09 is DONE and was to inform D05 (Which cache?),
+  which is still unsettled — record what it showed with `dg decide D05`
+```
+
+*The spike ran and nobody wrote down the conclusion.* Invisible in both graphs
+separately: the task looks finished, the decision merely undecided.
+
+One rule keeps this from becoming a nuisance: **anything a reopen can cause is a
+warning, never an error.** If work resting on a reopened decision made the store
+invalid, one `dg reopen` would block every commit in the repository until
+somebody triaged the backlog — and the check would be switched off the same day.
+Decisions are never held hostage by tasks.
 
 ## Keeping it honest
 

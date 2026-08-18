@@ -39,6 +39,8 @@ Add the staging files to `.gitignore` now:
 ## 2. Add the questions
 
 A vertex is a **decision the project must make** — a question, not a task.
+(Work belongs in the task graph, which is separate: `dg task --help`, and
+[how it works](how-it-works.md#tracking-the-work-as-well).)
 
 ```sh
 dg add --id D01 --title "Where does the app run?" --area Infra

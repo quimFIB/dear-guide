@@ -40,6 +40,7 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 |---|---|
 | `decisions.json` | the store — source of truth |
 | `decision-graph.md` | generated view; **never hand-edit** |
+| `tasks.json` · `tasks.md` | the task graph and its view — a separate store, optional |
 | `.dgraph-pending.json` | staging area; gitignore it |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG`; gitignore it |
 | `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
@@ -85,6 +86,23 @@ dg serve                                 # web app on 127.0.0.1:8765
 dg edit 0                                # revise a staged op
 dg export                                # the graph as JSON
 ```
+
+Work gets its own graph, if you want one — separate store, separate ids, so a
+task can never be mistaken for a decision:
+
+```sh
+dg task init --areas "Infra,Backend"
+dg task add --id T02 --title "Migrate the database" --after T01 --because D01
+dg task done T02 --outcome "PR #241"
+dg task                                  # outstanding work, and what is startable
+```
+
+`--because D01` is what makes the two worth keeping together: reopening a
+decision reports the unfinished work resting on it, which neither a decision log
+nor a task tracker can do alone. `--evidence-for D05` points the other way — a
+spike whose result settles a question — and `dg check` says so when the spike
+finished and the conclusion was never recorded. See
+[how it works](docs/how-it-works.md#tracking-the-work-as-well).
 
 Decisions are **staged** first and only reach the store on `apply`, which
 validates a copy and aborts without writing if the result would be invalid.

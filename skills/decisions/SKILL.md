@@ -52,8 +52,11 @@ Vertices and edges, nothing else.
    computes that set; do not work it out by hand.
 6. **One active answer per decision.** A decision that already has one must be
    reopened before it can be answered again.
-7. **Decisions only** — not tasks, not milestones, not file lists. The graph
-   stops being useful the moment it becomes a tracker.
+7. **Decisions only in this store** — not milestones, not file lists. The graph
+   stops being useful the moment it becomes a tracker. Work belongs in the task
+   store, which is a separate graph with its own ids: see "Recording work"
+   below. The test is whether you can write a falsifier (a decision) or a
+   definition of done (a task).
 8. **Update the graph in the same commit** as the work that changed it, and
    commit `decisions.json` and `decision-graph.md` together.
 
@@ -127,6 +130,39 @@ dg apply
 `dg pending` reviews staged work, `dg drop N` removes one op, `dg clear` all of
 it.
 
+## Recording work
+
+Only if the project has a `tasks.json`; if it does not, this section does not
+apply and you should not create one uninvited.
+
+Tasks are a second, independent graph — `T` ids, their own store and view, their
+own commands. A task is a unit of work with an `outcome`; a decision is a
+question with a falsifier. They never share a store.
+
+```sh
+dg task                                   # outstanding work, and what is startable
+dg task add --id T14 --title "Migrate the database" --area Backend \
+            --after T09 --because D02
+dg task done T14 --outcome "PR #241"
+dg apply
+```
+
+- `--after` names tasks that must be resolved first. Blocked is derived, so
+  there is no blocked status to set and none to clear.
+- `--because D02` names the decision this work exists because of. Use it
+  whenever the work follows from a recorded decision — it is what lets
+  `dg reopen` report the work now resting on a premise under review.
+- `--evidence-for D05` names a decision this work will *inform* — a spike, or a
+  chore that turned up a question. `dg task link T14 --evidence-for D08` adds it
+  after the fact, which is the usual case when work reveals a new question.
+- If work turns up a question nobody had written down: add the decision, then
+  link the task to it. Do not leave it in prose.
+
+`dg check` warns when work rests on a decision that has been reopened, and when
+a finished `--evidence-for` task's decision is still unsettled — that second one
+means a spike ran and its conclusion was never recorded. Both are warnings and
+never block a commit.
+
 ## When a commit is refused
 
 A refusal quotes the violations. Run `dg check` — it names the rule that broke
@@ -138,5 +174,6 @@ and staged work by `dg apply`.
 - Hand-edit `decision-graph.md`. It is regenerated and your edits are lost.
 - Delete a vertex or an edge, or overwrite an existing answer.
 - Invent a status outside the five above.
-- Record a task, a plan step, or a file list.
+- Record a plan step or a file list anywhere, or a task in `decisions.json` —
+  work goes in the task store, with a `T` id.
 - Close a decision without a falsifier and a source.
