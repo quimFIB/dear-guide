@@ -43,6 +43,7 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 | `.dgraph-pending.json` | staging area; gitignore it |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG`; gitignore it |
 | `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
+| `docs/` | quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) |
 | `skills/decisions/` | the recording discipline, as a skill both agent hosts load |
 | `hooks/`, `.claude-plugin/` | the Claude Code plugin |
 | `opencode/` | the same two mechanisms for opencode |
@@ -56,6 +57,10 @@ pip install -e ~/workspace/random/decision-graph-assistant
 `dg` then works in any project directory containing `decisions.json`. It is
 found by walking up from the cwd, or set explicitly with `--project PATH` or
 `$DG_PROJECT`.
+
+In a hurry? Three quick starts: the [CLI](docs/quickstart-cli.md), the
+[web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md)
+for Claude Code and opencode.
 
 ## Use
 
