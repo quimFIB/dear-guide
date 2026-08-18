@@ -185,6 +185,50 @@ def test_unchecking_a_linked_child_does_not_drop_the_edge(g, store, fake_emacs):
 # ---- refusals ------------------------------------------------------------
 
 
+def test_a_second_compose_is_refused_while_one_is_open(g, store):
+    """Audit C4. The web app has always refused a second session; the CLI
+    overwrote the buffer being typed in. One pid-stamped lock now covers both,
+    across processes."""
+    def nested(path):
+        with pytest.raises(EditorError, match="already open"):
+            editor.compose(g, "reopen", vertex="D01", launcher=lambda p: 0)
+        path.write_text(complete(path.read_text(encoding="utf-8")),
+                        encoding="utf-8")
+        return 0
+
+    ops = editor.compose(g, "close", vertex="D05", launcher=nested)
+    assert ops[0]["vertex"] == "D05"                 # the outer session finished
+    assert not (store / ".dgraph-edit.org.lock").exists()   # and released
+
+
+def test_a_crashed_sessions_lock_is_reclaimed(g, store, fake_emacs):
+    """A lock whose pid is gone is debris, not a session."""
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    (store / ".dgraph-edit.org.lock").write_text(str(dead.pid), encoding="utf-8")
+    fake_emacs(complete)
+    assert editor.compose(g, "close", vertex="D05")[0]["op"] == "close"
+    assert not (store / ".dgraph-edit.org.lock").exists()
+
+
+def test_a_live_sessions_lock_refuses_and_names_the_pid(g, store, fake_emacs):
+    (store / ".dgraph-edit.org.lock").write_text(str(os.getpid()), encoding="utf-8")
+    fake_emacs(complete)
+    with pytest.raises(EditorError, match=str(os.getpid())):
+        editor.compose(g, "close", vertex="D05")
+    (store / ".dgraph-edit.org.lock").unlink()
+
+
+def test_an_unreadable_lock_is_never_stolen(g, store, fake_emacs):
+    """Stealing on a parse failure could race a live session; the safe answer
+    is to make a human look."""
+    (store / ".dgraph-edit.org.lock").write_text("not a pid", encoding="utf-8")
+    fake_emacs(complete)
+    with pytest.raises(EditorError, match="unreadable"):
+        editor.compose(g, "close", vertex="D05")
+    (store / ".dgraph-edit.org.lock").unlink()
+
+
 def test_untouched_template_aborts(g, store, fake_emacs):
     fake_emacs(lambda t: t + "\n")          # changed, but no field filled
     with pytest.raises(EditorAbort, match="untouched"):

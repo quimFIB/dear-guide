@@ -64,7 +64,15 @@ def parse(text: str) -> tuple[list[str], list[dict], list[dict]]:
             sup_at if sup_at != -1 else len(text)
         )
         body = text[m.start():end]
-        bits = [b.strip() for b in RE_STATUS.search(body).group(1).split("·")]
+        status = RE_STATUS.search(body)
+        if status is None:
+            # Named per section, not a bare AttributeError: the document is
+            # hand-written, and the fix is a line in it.
+            raise ValueError(
+                f"{m.group(1)} ({m.group(2).strip()}): no `- **Status:**` line "
+                f"in its section — not the dialect this importer reads"
+            )
+        bits = [b.strip() for b in status.group(1).split("·")]
         res, fal = RE_RESOLVES.search(body), RE_FALSIFIER.search(body)
         src, dep = RE_SOURCE.search(body), RE_DEPENDS.search(body)
 

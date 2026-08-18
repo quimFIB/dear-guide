@@ -420,8 +420,12 @@ function panel(){
       ${editKeys()}
       <div class="note" id="note"></div>`;
   } else {
+    /* Linked children are edges in the store; `apply` unions them back in, so
+       a box that looked deselectable would be lying — the same rule the org
+       buffer states as "(linked) ... stay regardless". */
+    const linked=new Set(d.children);
     const opts=G.vertices.filter(x=>x.id!==sel)
-      .map(x=>`<option value="${esc(x.id)}">${esc(x.id)} — ${esc(x.title)}</option>`).join("");
+      .map(x=>`<option value="${esc(x.id)}">${esc(x.id)} — ${esc(x.title)}${linked.has(x.id)?" (linked — stays)":""}</option>`).join("");
     h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
       <label>Answer — what was decided, and on what evidence</label>
       <textarea id="answer"></textarea>
@@ -444,8 +448,12 @@ function panel(){
     if(G.vertices.some(v=>v.id===a.dataset.dg)) select(a.dataset.dg);
   });
   const already=new Set(d.children);
-  $("#opens")&&[...$("#opens").options].forEach(o=>o.selected=already.has(o.value));
+  const holdLinked=()=>$("#opens")&&[...$("#opens").options].forEach(o=>{
+    if(already.has(o.value)) o.selected=true;});
+  holdLinked();
   restoreDraft();                       /* after the defaults, so it wins */
+  holdLinked();                         /* ...except over an edge in the store */
+  $("#opens")&&$("#opens").addEventListener("change",holdLinked);
   const n=NOTES[sel];
   if(n) say(n.msg, n.cls);
   $("#doClose")&&($("#doClose").onclick=stageClose);
@@ -495,8 +503,11 @@ function stageClose(){
         to=[...$("#opens").selectedOptions].map(o=>o.value);
   if(!a||!s){ say("Answer and source are required.", "bad"); return; }
   if(to.length&&!f){ say("A non-terminal decision needs a falsifier.", "bad"); return; }
+  /* local date, not toISOString(): that is UTC, and near midnight it disagrees
+     with the date `dg decide` would file for the same decision */
+  const d=new Date(), pad=n=>String(n).padStart(2,"0");
   post({op:"close",vertex:sel,answer:a,source:s,falsifier:f||null,to,
-        date:new Date().toISOString().slice(0,10)});
+        date:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`});
 }
 function stageReopen(){
   const w=$("#why").value.trim();

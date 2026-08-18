@@ -156,6 +156,59 @@ def test_save_is_stable(g, tmp_path):
     assert a.read_text() == b.read_text()
 
 
+def test_table_cells_survive_pipes_and_newlines(g):
+    """Audit C1. A `|` in a title split the index row; a multi-line `why` —
+    routine, since reopens are composed in an editor — broke the superseded
+    table for every row after it. Both now render as one row per record."""
+    from dataclasses import replace
+    g.vertices["D05"] = replace(g.vertices["D05"], title="Tokens | subwords?")
+    ops = pending.expand(g, {"op": "reopen", "vertex": "D01",
+                             "why": "first line\nsecond line"})
+    out = pending.apply_all(g, ops)
+    text = render(out)
+    assert "| Tokens \\| subwords? |" in text
+    assert "first line<br>second line" in text
+    # the raw newline survives only as prose (the vertex's note); in the
+    # superseded table no cell spills onto a new row
+    sup = text[text.index("## Superseded"):]
+    assert "\nsecond line" not in sup
+
+
+def test_redecide_without_a_summary_still_fills_replaced_by(g):
+    """Audit C3. Without `--summary` the reversal record said "(undecided)"
+    forever about a question that has an answer; the answer's first line now
+    stands in, the same default `reopen` uses for the superseded side."""
+    ops = pending.expand(g, {"op": "reopen", "vertex": "D01", "why": "x"})
+    out = pending.apply_all(g, ops)
+    out = pending.apply_all(out, [
+        {"op": "close", "vertex": "D01",
+         "answer": "The corrected answer.\nWith supporting detail.",
+         "source": "s", "falsifier": "f", "to": ["D02", "D03"],
+         "date": "2026-03-01"},
+    ] + [{"op": "set_status", "vertex": v, "status": "DECIDED"}
+         for v in ("D02", "D03", "D04")])
+    hist = out.history("D01")
+    assert hist[1].replaced_by == "The corrected answer."
+    # a record that already names its replacement is never overwritten
+    assert hist[0].replaced_by == "the root answer"
+
+
+def test_a_deep_chain_does_not_hit_the_recursion_limit():
+    """Audit C7. `depth` and the cycle check were recursive; a chain past the
+    interpreter's limit (default 1000) crashed layout and — worse — the
+    validator, which must never die on a legal graph."""
+    from dgraph.model import Edge, Graph, Vertex
+    g = Graph(areas=["A"])
+    n = 1100
+    ids = [f"D{i:04d}" for i in range(1, n + 1)]
+    for vid in ids:
+        g.vertices[vid] = Vertex(id=vid, title="q", area="A", status="OPEN")
+    for a, b in zip(ids, ids[1:]):
+        g.edges.append(Edge(src=a, to=[b]))
+    assert g.depth(ids[-1]) == n - 1
+    assert not [x for x in g.validate() if x.check == "acyclic"]
+
+
 def test_view_contains_every_vertex_and_the_frontier(g, store):
     out = render(g)
     for vid in g.vertices:

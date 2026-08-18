@@ -211,6 +211,62 @@ def test_add_without_edit_still_requires_its_flags(run, store, g):
     assert "--id" in res.output
 
 
+def test_deciding_a_blocked_vertex_warns_about_the_block(run, store, g):
+    """Audit C2. Closing a BLOCKED vertex silently discarded the block. It is
+    still allowed — sometimes the recorded blocker turns out irrelevant, and
+    there is deliberately no other exit — but now it is said out loud."""
+    write(g)
+    res = run("decide", "D06", "-a", "a", "-s", "s", "-f", "f")
+    assert res.exit_code == 0
+    assert "BLOCKED:D05" in res.output and "did not matter" in res.output
+
+
+# ---- import-md refuses to plant a contradiction (audit C8) ----------------
+
+BAD_DOC = """# Decision graph
+## Area
+
+### D01 — A question
+- **Status:** WOBBLY
+- **Depends on:** —
+- **Falsifier:** —
+"""
+
+
+def test_import_md_refuses_a_result_that_breaks_invariants(tmp_path, monkeypatch):
+    """A bootstrap that writes a store `dg apply` would refuse plants the
+    contradiction this tool exists to prevent, on day one."""
+    monkeypatch.setenv("COLUMNS", "200")
+    doc = tmp_path / "doc.md"
+    doc.write_text(BAD_DOC, encoding="utf-8")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    res = runner.invoke(app, ["--project", str(proj), "import-md", str(doc)])
+    assert res.exit_code == 1
+    assert "status_legal" in res.output
+    assert not (proj / "decisions.json").exists()
+
+    forced = runner.invoke(app, ["--project", str(proj), "import-md",
+                                 str(doc), "--force"])
+    assert forced.exit_code == 0
+    assert (proj / "decisions.json").exists()
+
+
+def test_import_md_names_the_section_missing_its_status(tmp_path, monkeypatch):
+    """A hand-written document; the error names the line to fix, not a bare
+    AttributeError from the parser's insides."""
+    monkeypatch.setenv("COLUMNS", "200")
+    doc = tmp_path / "doc.md"
+    doc.write_text("## Area\n\n### D01 — A question\n- **Depends on:** —\n",
+                   encoding="utf-8")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    res = runner.invoke(app, ["--project", str(proj), "import-md", str(doc)])
+    assert res.exit_code == 1
+    assert "D01" in res.output and "Status" in res.output
+    assert not (proj / "decisions.json").exists()
+
+
 # ---- apply's write order (audit B1) --------------------------------------
 
 

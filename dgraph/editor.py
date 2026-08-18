@@ -542,6 +542,53 @@ def launch(path: Path, editor: str | None = None) -> int:
         ) from None
 
 
+def _acquire_buffer(path: Path) -> Path:
+    """Take the project's one compose buffer, or say who already holds it.
+
+    There is a single buffer per project (the `COMMIT_EDITMSG` property), and
+    the web app has always refused a second session rather than overwrite a
+    buffer someone is typing in. This extends the same refusal across
+    processes — a second `dg decide --edit` in another terminal, or a CLI
+    session racing the web app — via a pid-stamped lock file beside the
+    buffer. A lock whose pid is gone is a crashed session and is stolen.
+    """
+    lock = path.with_name(path.name + ".lock")
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                pid = int(lock.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                raise EditorError(
+                    f"a compose session may already be open ({lock} exists and "
+                    f"is unreadable) — finish it, or delete the file if it is "
+                    f"left over from a crash"
+                ) from None
+            if _alive(pid):
+                raise EditorError(
+                    f"a compose session is already open for this project "
+                    f"(pid {pid}) — finish it with C-c C-c or abort it with "
+                    f"C-c C-k; if it is dead, delete {lock}"
+                )
+            lock.unlink(missing_ok=True)  # crashed session; take over
+            continue
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return lock
+    raise EditorError(f"could not take {lock} — try again")
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OverflowError, ValueError):
+        pass  # not ours to signal, but something is there — assume alive
+    return True
+
+
 def compose(
     g: Graph,
     kind: str,
@@ -560,15 +607,19 @@ def compose(
         text = render_add(g, seed)
     else:
         text = RENDERERS[kind](g, vertex, seed)
-    path.write_text(text, encoding="utf-8")
-    before = path.read_text(encoding="utf-8")
+    lock = _acquire_buffer(path)
+    try:
+        path.write_text(text, encoding="utf-8")
+        before = path.read_text(encoding="utf-8")
 
-    code = (launcher or launch)(path)
-    if code != 0:
-        raise EditorAbort(f"editor exited with status {code} — nothing staged")
+        code = (launcher or launch)(path)
+        if code != 0:
+            raise EditorAbort(f"editor exited with status {code} — nothing staged")
 
-    after = path.read_text(encoding="utf-8")
-    if after == before:
-        raise EditorAbort("buffer was not changed — nothing staged")
-    return parse(after, g=g, expect_kind=kind, expect_vertex=vertex,
-                 expect_index=index)
+        after = path.read_text(encoding="utf-8")
+        if after == before:
+            raise EditorAbort("buffer was not changed — nothing staged")
+        return parse(after, g=g, expect_kind=kind, expect_vertex=vertex,
+                     expect_index=index)
+    finally:
+        lock.unlink(missing_ok=True)

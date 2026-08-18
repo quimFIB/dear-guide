@@ -483,6 +483,15 @@ def decide(
                       f"`dg pending` to review it, `dg edit N` to revise it, "
                       f"or `dg drop N` to unstage it[/]")
         raise typer.Exit(1)
+    if v.base_status == "BLOCKED" and v.blocker in eff.vertices \
+            and not eff.vertices[v.blocker].settled:
+        # A warning, not a refusal: sometimes the recorded blocker turns out
+        # irrelevant, and closing the vertex is the only way to say so — there
+        # is no unblock command, deliberately, since BLOCKED is a claim about
+        # dependence and dropping it is itself a judgement worth making here.
+        con.print(f"[yellow]note: {vid} is BLOCKED:{v.blocker} and "
+                  f"{v.blocker} is not settled — deciding it anyway records "
+                  f"that the block did not matter, and drops it[/]")
 
     if _wants_editor(edit):
         seed = {k: val for k, val in (
@@ -858,6 +867,9 @@ def init(
 @app.command(name="import-md")
 def import_md(
     path: str = typer.Argument(..., help="a decision-graph.md in the legacy format"),
+    force: bool = typer.Option(False, "--force",
+                               help="Write the store even if the imported graph "
+                                    "breaks invariants."),
 ) -> None:
     """Bootstrap a store from a hand-written markdown decision document."""
     from dgraph.md_import import import_markdown
@@ -865,10 +877,24 @@ def import_md(
     if proj.exists:
         con.print(f"[red]{proj.store} already exists — refusing to overwrite[/]")
         raise typer.Exit(1)
-    g = import_markdown(pathlib.Path(path))
+    try:
+        g = import_markdown(pathlib.Path(path))
+    except (OSError, ValueError) as exc:
+        con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
     problems = g.validate()
     for v in problems:
-        con.print(f"[yellow]![/] {_x(v)}")
+        con.print(f"[{'red' if v.blocking else 'yellow'}]"
+                  f"{'✗' if v.blocking else '!'}[/] {_x(v)}")
+    blocking = [v for v in problems if v.blocking]
+    if blocking and not force:
+        # A bootstrap that writes a store `dg apply` would refuse plants the
+        # contradiction this tool exists to prevent, on day one.
+        con.print(f"[red]✗ not imported: the result breaks {len(blocking)} "
+                  f"invariant(s)[/]\n"
+                  f"[dim]fix the source document, or `--force` to write it "
+                  f"anyway and repair with `dg` afterwards[/]")
+        raise typer.Exit(1)
     g.save(proj.store)
     render.write(g, proj.view)
     con.print(f"[green]✓[/] imported {len(g.vertices)} vertices, "

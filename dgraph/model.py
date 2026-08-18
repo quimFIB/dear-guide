@@ -258,20 +258,32 @@ class Graph:
         )
 
     def depth(self, vid: str) -> int:
-        """Longest path from any root — the rank used for graph layout."""
+        """Longest path from any root — the rank used for graph layout.
+
+        Iterative on an explicit stack: a chain a few hundred decisions deep is
+        a legitimate graph and must not hit the recursion limit.
+        """
         memo: dict[str, int] = {}
-
-        def go(n: str, seen: frozenset[str]) -> int:
+        on_path: set[str] = set()  # cycle guard; validate() reports cycles properly
+        stack = [vid]
+        while stack:
+            n = stack[-1]
             if n in memo:
-                return memo[n]
-            if n in seen:  # defensive; validate() reports cycles properly
-                return 0
+                stack.pop()
+                continue
+            on_path.add(n)
+            todo = [p for p in self.depends(n)
+                    if p not in memo and p not in on_path]
+            if todo:
+                stack.extend(todo)
+                continue
             parents = self.depends(n)
-            d = 0 if not parents else 1 + max(go(p, seen | {n}) for p in parents)
-            memo[n] = d
-            return d
-
-        return go(vid, frozenset())
+            memo[n] = 0 if not parents else 1 + max(
+                memo.get(p, 0) for p in parents  # .get: an in-cycle parent counts 0
+            )
+            on_path.discard(n)
+            stack.pop()
+        return memo[vid]
 
     def path(self, a: str, b: str) -> list[str] | None:
         """Any decision path from a to b, following active edges."""
@@ -388,21 +400,33 @@ class Graph:
         for vid in sorted(ids - touched):
             add("no_orphans", f"{vid} is connected to nothing", "warn")
 
+        # Iterative DFS colouring, for the same reason `depth` is iterative: a
+        # deep chain is a legal graph, and the validator crashing on one would
+        # be the fail-open the check exists to prevent.
         colour: dict[str, int] = {}
-
-        def visit(n: str, trail: list[str]) -> None:
-            if colour.get(n) == 2:
-                return
-            if colour.get(n) == 1:
-                add("acyclic", f"cycle: {' -> '.join(trail + [n])}")
-                return
-            colour[n] = 1
-            for c in self.children(n):
-                if c in self.vertices:
-                    visit(c, trail + [n])
-            colour[n] = 2
-
         for vid in self.vertices:
-            visit(vid, [])
+            if colour.get(vid):
+                continue
+            colour[vid] = 1
+            stack = [(vid, iter(self.children(vid)))]
+            trail = [vid]
+            while stack:
+                n, kids = stack[-1]
+                for c in kids:
+                    if c not in self.vertices:
+                        continue
+                    if colour.get(c) == 1:
+                        add("acyclic", f"cycle: {' -> '.join(trail + [c])}")
+                        continue
+                    if colour.get(c) == 2:
+                        continue
+                    colour[c] = 1
+                    stack.append((c, iter(self.children(c))))
+                    trail.append(c)
+                    break
+                else:
+                    colour[n] = 2
+                    stack.pop()
+                    trail.pop()
 
         return v

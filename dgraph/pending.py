@@ -23,6 +23,13 @@ class ApplyError(RuntimeError):
     pass
 
 
+def _clip(text: str) -> str:
+    """An answer's first line, cut to label length — the fallback for the two
+    places a short label is filed when none was given."""
+    first = text.strip().splitlines()[0].strip() if text.strip() else ""
+    return first if len(first) <= 60 else first[:59] + "…"
+
+
 # ---- store ---------------------------------------------------------------
 
 
@@ -226,12 +233,15 @@ def _apply_one(g: Graph, op: dict) -> None:
             e.to = targets
             for k, v in payload.items():
                 setattr(e, k, v)
-        # A re-decision closes out whatever it replaced.
-        summary = op.get("summary")
-        if summary:
-            for old in g.history(vid):
-                if old.replaced_by is None:
-                    old.replaced_by = summary
+        # A re-decision closes out whatever it replaced. Without a summary the
+        # answer's first line stands in — the same default `reopen` uses for
+        # the superseded side. Leaving `replaced_by` empty is worse than a
+        # rough label: the reversal record would say "(undecided)" forever
+        # about a question that has an answer.
+        label = op.get("summary") or _clip(op["answer"])
+        for old in g.history(vid):
+            if old.replaced_by is None:
+                old.replaced_by = label
         g.vertices[vid] = _dc_replace(g.vertices[vid], status="DECIDED", note=None)
         return
 
@@ -244,7 +254,7 @@ def _apply_one(g: Graph, op: dict) -> None:
         g.edges.append(Edge(
             src=vid, to=list(e.to), active=False,
             answer=e.answer, falsifier=e.falsifier, source=e.source,
-            date=e.date, summary=op.get("summary") or (e.answer or "")[:60],
+            date=e.date, summary=op.get("summary") or _clip(e.answer or ""),
             replaced_by=None, why=op["why"],
         ))
         e.answer = e.falsifier = e.source = e.date = None

@@ -174,6 +174,32 @@ def test_a_missing_git_never_makes_it_guess(repo, monkeypatch):
     assert _v(repo)["verdict"] == "allow"
 
 
+def test_a_commit_into_another_repository_is_allowed(repo, tmp_path):
+    """Audit C9. `git -C /elsewhere commit` records nothing about this graph;
+    gating it against this project's state was a false positive."""
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    subprocess.run(["git", "-C", str(other), "init", "-q"], check=True,
+                   capture_output=True)
+    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    assert _v(repo)["verdict"] == "deny"                        # ours: gated
+    assert _v(repo, f"git -C {other} commit -m x")["verdict"] == "allow"
+
+
+def test_a_dash_c_into_the_same_repository_is_still_gated(repo):
+    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    assert _v(repo, f"git -C {repo} commit -m x")["verdict"] == "deny"
+
+
+def test_every_doubt_about_the_target_keeps_gating(repo):
+    """An unresolvable -C path, or a --git-dir/--work-tree override the gate
+    does not model: the conservative direction is to keep gating."""
+    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    assert _v(repo, "git -C /no/such/dir commit -m x")["verdict"] == "deny"
+    assert _v(repo, "git --git-dir=/x/.git commit -m x")["verdict"] == "deny"
+    assert _v(repo, "git --work-tree=/x commit -m x")["verdict"] == "deny"
+
+
 def test_a_corrupt_pending_file_is_denied_naming_the_file(repo):
     """Audit A2a. An unreadable staging file may hold staged work this commit
     would silently drop — the situation `ask` exists for, unreadable. It used

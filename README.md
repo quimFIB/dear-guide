@@ -152,8 +152,10 @@ Any other editor works too: set `$DG_EDITOR` (or `$VISUAL`/`$EDITOR`) and you ge
 the same buffer as plain text, with the baked-in context but no navigation.
 
 There is one buffer per project, so only one compose session can be open at a
-time — the same property `COMMIT_EDITMSG` has. The web app refuses a second one
-rather than overwriting a buffer you are typing in.
+time — the same property `COMMIT_EDITMSG` has. A second session, from the CLI
+or the web app alike, is refused rather than allowed to overwrite a buffer you
+are typing in; a session that crashed leaves a `.dgraph-edit.org.lock` naming
+its pid, which the next compose reclaims on its own.
 
 ### Prose in answers
 

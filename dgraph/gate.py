@@ -23,6 +23,7 @@ import os
 import re
 import shlex
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from dgraph import check as _check
@@ -70,41 +71,99 @@ def _segments(command: str) -> list[list[str]]:
     return out
 
 
-def _is_commit(argv: list[str]) -> bool:
-    """Whether one command is a `git commit` that will actually commit."""
+@dataclass(frozen=True)
+class _Commit:
+    """One commit found in a command: where git was pointed, if anywhere.
+
+    `cdir` is the composed `-C` value (git chains successive `-C`s the same
+    way). `gitdir` flags `--git-dir`, which points at a `.git` directory
+    rather than a worktree — comparing repositories through it is a different
+    computation, so the gate treats it as "unknown target" and keeps gating.
+    """
+    cdir: str | None = None
+    gitdir: bool = False
+
+
+def _parse_commit(argv: list[str]) -> _Commit | None:
+    """The `_Commit` if this one command actually commits, else None."""
     i = 0
     while i < len(argv) and (ASSIGNMENT.match(argv[i]) or argv[i] in WRAPPERS):
         i += 1
     argv = argv[i:]
     if not argv or os.path.basename(argv[0]) != "git":
-        return False
+        return None
 
+    cdirs: list[str] = []
+    gitdir = False
     i = 1
     while i < len(argv):
         tok = argv[i]
         if tok in GIT_VALUE_OPTS:
+            if tok == "-C" and i + 1 < len(argv):
+                cdirs.append(argv[i + 1])
+            if tok in ("--git-dir", "--work-tree"):
+                gitdir = True
             i += 2
+            continue
+        if tok.startswith(("--git-dir=", "--work-tree=")):
+            gitdir = True
+            i += 1
             continue
         if tok.startswith("-"):
             i += 1
             continue
         if tok != "commit":
-            return False
+            return None
         # `--dry-run` writes nothing. Deliberately not `-n`, which for
         # `git commit` means `--no-verify` — precisely the commits somebody is
         # trying to slip past a hook, and the last ones to wave through.
-        return "--dry-run" not in argv[i:]
-    return False
+        if "--dry-run" in argv[i:]:
+            return None
+        return _Commit(cdir=os.path.join(*cdirs) if cdirs else None,
+                       gitdir=gitdir)
+    return None
+
+
+def _commits(command: str) -> list[_Commit]:
+    try:
+        segments = _segments(command)
+    except ValueError:
+        return []
+    return [c for c in (_parse_commit(seg) for seg in segments) if c is not None]
 
 
 def is_commit(command: str) -> bool:
     """Whether this shell command commits. Known misses, documented not fixed:
     `bash -c "git commit …"`, git aliases (`git ci`), and `gh` merge paths."""
+    return bool(_commits(command))
+
+
+def _toplevel(path: Path) -> str | None:
     try:
-        segments = _segments(command)
-    except ValueError:
-        return False
-    return any(_is_commit(seg) for seg in segments)
+        r = subprocess.run(["git", "-C", str(path), "rev-parse",
+                            "--show-toplevel"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _targets_this_repo(commit: _Commit, root: Path) -> bool:
+    """Whether the commit lands in the same repository as the project.
+
+    A `git -C /elsewhere commit` records nothing about this graph, and gating
+    it against this project's state is a false positive. Every doubt resolves
+    to True — no `-C` (the cwd's repo, the case the gate has always covered),
+    a `--git-dir`/`--work-tree` override, an unresolvable path, no git —
+    because the gate's conservative direction is to keep gating.
+    """
+    if commit.cdir is None or commit.gitdir:
+        return True
+    ours = _toplevel(root)
+    theirs = _toplevel(Path(commit.cdir))
+    if ours is None or theirs is None:
+        return True
+    return ours == theirs
 
 
 def _staged(root: Path) -> set[Path]:
@@ -150,10 +209,15 @@ def verdict(command: str, proj: project.Project | None = None) -> dict:
 
 
 def _verdict(command: str, proj: project.Project | None = None) -> dict:
-    if _off() or not is_commit(command):
+    if _off():
+        return _allow()
+    commits = _commits(command)
+    if not commits:
         return _allow()
     proj = proj or project.find()
     if not proj.exists:
+        return _allow()
+    if not any(_targets_this_repo(c, proj.root) for c in commits):
         return _allow()
 
     problems = [v for v in _check.run(proj) if v.blocking]

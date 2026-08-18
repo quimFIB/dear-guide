@@ -42,6 +42,13 @@ decision that was overturned is kept, not deleted — how a project changed its
 mind is usually worth more than the conclusion it landed on."""
 
 
+def _cell(text: str | None) -> str:
+    """A value bound for a markdown table cell. A `|` splits the row and a raw
+    newline ends it — prose is composed in an editor, so both are routine —
+    and either silently corrupts every row after it."""
+    return (text or "").replace("|", "\\|").replace("\n", "<br>")
+
+
 def _resolves_cell(g: Graph, vid: str) -> str:
     e = g.active_edge(vid)
     if e is None or not e.decided:
@@ -56,7 +63,7 @@ def _index(g: Graph) -> str:
     ]
     order = {a: i for i, a in enumerate(g.areas)}
     for v in sorted(g.vertices.values(), key=lambda v: (order.get(v.area, 99), v.id)):
-        rows.append(f"| {v.id} | {v.title} | {v.status} | {_resolves_cell(g, v.id)} |")
+        rows.append(f"| {v.id} | {_cell(v.title)} | {v.status} | {_resolves_cell(g, v.id)} |")
     frontier = ", ".join(g.frontier())
     rows.append("")
     rows.append(
@@ -106,9 +113,9 @@ def _superseded(g: Graph) -> str:
     inactive: list[Edge] = [e for e in g.edges if not e.active]
     for e in sorted(inactive, key=lambda e: (e.src, e.date or "")):
         rows.append(
-            f"| {e.src} | {orgmd.to_markdown(e.summary)} "
-            f"| {orgmd.to_markdown(e.replaced_by) or '*(undecided)*'} "
-            f"| {orgmd.to_markdown(e.why)} |"
+            f"| {e.src} | {_cell(orgmd.to_markdown(e.summary))} "
+            f"| {_cell(orgmd.to_markdown(e.replaced_by)) or '*(undecided)*'} "
+            f"| {_cell(orgmd.to_markdown(e.why))} |"
         )
     return "## Superseded edges\n\n" + SUPERSEDED_INTRO + "\n\n" + "\n".join(rows) + "\n"
 
