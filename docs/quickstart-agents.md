@@ -182,5 +182,6 @@ lost.
 
 ## Where to go next
 
+- [How it works, and why](how-it-works.md) — what the agent is maintaining.
 - [The CLI](quickstart-cli.md) — what the agent is actually driving.
 - [The web interface](quickstart-web.md) — for reviewing a graph by eye.

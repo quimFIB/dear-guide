@@ -218,6 +218,8 @@ while markdown typed anywhere else keeps markdown's meaning.
 
 ## Where to go next
 
+- [How it works, and why](how-it-works.md) — the ideas behind the
+  commands, as one project's story.
 - [The web interface](quickstart-web.md) — the same graph, laid out and
   clickable.
 - [The agent plugin](quickstart-agents.md) — the brief at session start, and a

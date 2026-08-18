@@ -43,7 +43,7 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 | `.dgraph-pending.json` | staging area; gitignore it |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG`; gitignore it |
 | `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
-| `docs/` | quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) |
+| `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) |
 | `skills/decisions/` | the recording discipline, as a skill both agent hosts load |
 | `hooks/`, `.claude-plugin/` | the Claude Code plugin |
 | `opencode/` | the same two mechanisms for opencode |
@@ -59,9 +59,10 @@ pip install -e .
 found by walking up from the cwd, or set explicitly with `--project PATH` or
 `$DG_PROJECT`.
 
-In a hurry? Three quick starts: the [CLI](docs/quickstart-cli.md), the
-[web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md)
-for Claude Code and opencode.
+New here? [**How it works, and why**](docs/how-it-works.md) walks one project's
+decisions from first question to first reversal. Then the quick starts: the
+[CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the
+[agent plugin](docs/quickstart-agents.md) for Claude Code and opencode.
 
 ## Use
 

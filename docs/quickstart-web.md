@@ -119,5 +119,6 @@ open**. Reload it and the new token comes with it.
 
 ## Where to go next
 
+- [How it works, and why](how-it-works.md) — the ideas behind the buttons.
 - [The CLI](quickstart-cli.md) — the same operations, scriptable.
 - [The agent plugin](quickstart-agents.md) — for Claude Code and opencode.
