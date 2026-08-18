@@ -405,3 +405,128 @@ def test_brief_has_no_task_section_without_a_task_store(store, g, monkeypatch):
     write(g)
     out = runner.invoke(app, ["--project", str(store), "brief"]).output
     assert "TASKS" not in out
+
+
+# ---- the apply-time guard (audit D2) -------------------------------------
+#
+# `cross.validate` is what `dg check` reads; these pin what refuses to *write*.
+# Before this guard, every scenario below applied cleanly and was discovered
+# afterwards by `dg check`, with the commit gate denying every commit in the
+# repository and no `dg` command able to undo the link.
+
+
+def test_apply_refuses_a_task_batch_that_closes_a_cross_cycle(run_cli, both):
+    """T20 informs D01 and comes after T02, which exists because of D01:
+    nothing in the loop can start, and neither store's own validator sees it."""
+    assert run_cli("task", "add", "--id", "T20", "-t", "Benchmark it",
+                   "--area", "Alpha", "--evidence-for", "D01",
+                   "--after", "T02").exit_code == 0
+    res = run_cli("apply")
+    assert res.exit_code == 1
+    assert "link_acyclic" in res.output
+    assert "T20" not in (both / "tasks.json").read_text()
+    assert not [v for v in run() if v.blocking]
+
+
+def test_apply_refuses_a_task_that_rests_on_the_answer_it_produces(run_cli, both):
+    assert run_cli("task", "add", "--id", "T20", "-t", "Spike",
+                   "--area", "Alpha", "--because", "D01",
+                   "--evidence-for", "D01").exit_code == 0
+    res = run_cli("apply")
+    assert res.exit_code == 1 and "link_acyclic" in res.output
+    assert "T20" not in (both / "tasks.json").read_text()
+
+
+def test_apply_refuses_a_decision_batch_that_closes_a_cross_cycle(run_cli, both):
+    """The inversion that matters most: the batch is decisions-only, and what
+    makes it invalid is in the task store."""
+    assert run_cli("add", "--id", "D20", "-t", "A new question",
+                   "--area", "Alpha").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "add", "--id", "T20", "-t", "The spike",
+                   "--area", "Alpha", "--because", "D20",
+                   "--evidence-for", "D05").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+
+    # D05 -> D20 closes it: D05 -> D20 -> T20 -> D05.
+    assert run_cli("decide", "D05", "-a", "The answer", "-s", "a meeting",
+                   "--falsifier", "new evidence", "--opens", "D20").exit_code == 0
+    res = run_cli("apply")
+    assert res.exit_code == 1 and "link_acyclic" in res.output
+    assert Graph.load(both / "decisions.json").vertices["D05"].status == "OPEN"
+
+
+def test_apply_refuses_a_premise_that_no_longer_exists(run_cli, both):
+    """`--because` vets against the *effective* decision graph, so a premise
+    staged and then discarded leaves a task pointing at nothing."""
+    assert run_cli("add", "--id", "D20", "-t", "A new question",
+                   "--area", "Alpha").exit_code == 0
+    assert run_cli("task", "add", "--id", "T20", "-t", "The work",
+                   "--area", "Alpha", "--because", "D20").exit_code == 0
+    assert run_cli("clear").exit_code == 0          # the premise is discarded
+    res = run_cli("apply")
+    assert res.exit_code == 1 and "link_resolves" in res.output
+    assert "T20" not in (both / "tasks.json").read_text()
+
+
+def test_a_decision_and_the_work_resting_on_it_apply_in_one_batch(run_cli, both):
+    """The guard must not cost the documented workflow: record the decision and
+    the work it implies together, apply once."""
+    assert run_cli("add", "--id", "D20", "-t", "Use Postgres",
+                   "--area", "Alpha").exit_code == 0
+    assert run_cli("task", "add", "--id", "T20", "-t", "Provision it",
+                   "--area", "Alpha", "--because", "D20").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert not [v for v in run() if v.blocking]
+    assert cross.rests_on(TaskGraph.load(both / "tasks.json"), "D20") == ["T20"]
+
+
+def test_a_pre_existing_violation_does_not_freeze_either_store(run_cli, both):
+    """"No worse than before", not "perfect or nothing". A store that is
+    already invalid — hand-edited, or written before this guard existed — must
+    stay repairable with `dg`, which is the only way out the tool offers."""
+    from dgraph import task_render
+    from dgraph.tasks import TaskEdge
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D01"                # T04 -> D01
+    tg.edges.append(TaskEdge(src="T02", to=["T04"]))    # T02 -> T04, because D01
+    tg.save(both / "tasks.json")
+    task_render.write(tg, both / "tasks.md")
+    assert [v for v in run() if v.check == "link_acyclic"]
+
+    # Writes still go through, in both stores...
+    assert run_cli("add", "--id", "D20", "-t", "Somewhere to re-point",
+                   "--area", "Alpha").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    # ...and the repair applies, leaving the join valid again.
+    assert run_cli("task", "link", "T04", "--evidence-for", "D20").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert not [v for v in run() if v.blocking]
+
+
+def test_the_stage_time_warning_covers_the_join_too(run_cli, both):
+    """`_warn_stuck` runs the same guard, so the refusal is visible when the op
+    is staged rather than several commands later at apply."""
+    assert run_cli("task", "add", "--id", "T20", "-t", "The spike",
+                   "--area", "Alpha", "--because", "D01",
+                   "--evidence-for", "D05").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    res = run_cli("decide", "D05", "-a", "The answer", "-s", "a meeting",
+                  "--falsifier", "new evidence", "--opens", "D01")
+    assert res.exit_code == 0                      # a warning, never a refusal
+    assert "would currently refuse this batch" in res.output
+
+
+def test_a_cycle_reads_the_same_way_twice(both):
+    """The guard compares findings by their text, so the walk must not report
+    the same deadlock differently depending on where the DFS entered it."""
+    from dgraph.tasks import TaskEdge
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D01"
+    tg.edges.append(TaskEdge(src="T02", to=["T04"]))
+    g = Graph.load(both / "decisions.json")
+    first = [str(v) for v in cross.validate(tg, g) if v.check == "link_acyclic"]
+    tg.edges.reverse()
+    tg.tasks = dict(reversed(list(tg.tasks.items())))
+    assert [str(v) for v in cross.validate(tg, g)
+            if v.check == "link_acyclic"] == first

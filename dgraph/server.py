@@ -28,7 +28,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from dgraph import editor, pending, project, render
+from dgraph import cross, editor, pending, project, render
 from dgraph.model import Graph
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -201,7 +201,9 @@ class Handler(BaseHTTPRequestHandler):
             if not ops:
                 return self._json({"error": "nothing staged"}, 400)
             try:
-                out = pending.apply_all(g, ops)
+                # Same guard as `dg apply`: the two hosts must not disagree
+                # about what may be written.
+                out = pending.apply_all(g, ops, cross.guard_decisions())
             except pending.ApplyError as exc:
                 return self._json({"error": str(exc)}, 400)
             # Same order as `dg apply`: render first (pure — a rendering bug

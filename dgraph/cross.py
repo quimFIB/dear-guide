@@ -17,6 +17,8 @@ supposed to be readable stays readable.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
 from dgraph.violation import Violation
@@ -142,7 +144,13 @@ def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
             adj.setdefault(t.because, []).append(tid)
         if t.evidence_for and t.evidence_for in g.vertices:
             adj.setdefault(tid, []).append(t.evidence_for)
-    return adj
+    # Sorted, so the walk depends on what the graphs *are* and not on the order
+    # rows happen to sit in the two files. Where several cycles overlap, which
+    # one is reported is still whichever the DFS meets first — deterministic
+    # now, but a store holding more than one deadlock may see the report change
+    # as the graphs grow. The apply guard treats an unrecognised finding as new
+    # and refuses, which is the safe direction.
+    return {node: sorted(heads) for node, heads in adj.items()}
 
 
 def _cycles(adj: dict[str, list[str]]) -> list[list[str]]:
@@ -160,7 +168,12 @@ def _cycles(adj: dict[str, list[str]]) -> list[list[str]]:
             node, nxt = stack[-1]
             for c in nxt:
                 if colour.get(c) == 1:
-                    found.append(trail[trail.index(c):] + [c])
+                    # Rotated to start at the smallest id: the same deadlock
+                    # must read the same way twice, because the apply guard
+                    # below compares findings by their text.
+                    loop = trail[trail.index(c):]
+                    k = loop.index(min(loop))
+                    found.append(loop[k:] + loop[:k] + [min(loop)])
                     continue
                 if colour.get(c) == 2:
                     continue
@@ -173,6 +186,111 @@ def _cycles(adj: dict[str, list[str]]) -> list[list[str]]:
                 stack.pop()
                 trail.pop()
     return found
+
+
+# ---- the apply-time guard -------------------------------------------------
+#
+# `validate` above is what `dg check` *reads*. What follows is how a write is
+# refused: both apply paths pass one of these to `apply_all`, so a batch that
+# would leave the join invalid aborts with nothing written. Without it the
+# blocking half of `validate` is only ever discovered after the fact, by which
+# point the store is written, the commit gate denies every commit in the
+# repository, and no `dg` command can undo the link that caused it.
+#
+# Only blocking findings refuse (`apply_all` filters), so relaxing this later
+# means demoting `link_resolves` / `link_acyclic` to warnings in `validate` —
+# one severity argument, no change here or in either staging module.
+
+
+def effective_tasks() -> TaskGraph | None:
+    """The task graph as it will stand once everything staged has applied.
+
+    Staged, not merely stored, for the A3 reason: `dg apply` writes both
+    batches, so judging a decision batch against the task store alone would
+    miss a violation the same command is about to create.
+
+    `None` — meaning "no cross-graph guard" — when the project has no task
+    store, or when what it has cannot be read or applied. An apply must not be
+    held up by a second store that is already broken in its own right:
+    `check.run` reports that separately, and refusing here would leave no way
+    to repair anything.
+    """
+    from dgraph import project, task_pending
+
+    proj = project.find()
+    if not proj.has_tasks:
+        return None
+    try:
+        tg = TaskGraph.load(proj.tasks)
+    except Exception:
+        return None
+    try:
+        return task_pending.preview(tg)
+    except Exception:
+        return tg
+
+
+def effective_decisions() -> Graph | None:
+    """The decision graph as it will stand once everything staged has applied.
+    The mirror of `effective_tasks`, with the same silence on a broken store."""
+    from dgraph import pending, project
+
+    proj = project.find()
+    if not proj.has_decisions:
+        return None
+    try:
+        g = Graph.load(proj.store)
+    except Exception:
+        return None
+    try:
+        return pending.preview(g)
+    except Exception:
+        return g
+
+
+def _seen(problems: list[Violation]) -> set[str]:
+    """Findings by their text, for the "no worse than before" comparison."""
+    return {str(v) for v in problems}
+
+
+def guard_decisions() -> Callable[[Graph], list[Violation]] | None:
+    """The `also` argument for `pending.apply_all`: judge a proposed decision
+    graph against the work resting on it.
+
+    Reports only what the batch *introduces*. A store that is already invalid
+    must stay repairable: `dg` is the only way out this tool offers, and a
+    guard that refused every write while a pre-existing cycle sat in the store
+    would freeze both graphs and leave hand-editing as the sole exit — the
+    thing the guard exists to make unnecessary. `dg check` keeps reporting the
+    pre-existing finding the whole time.
+    """
+    tg = effective_tasks()
+    if tg is None:
+        return None
+    try:
+        before = _seen(validate(tg, Graph.load(_root().store)))
+    except Exception:
+        before = set()
+    return lambda g: [v for v in validate(tg, g) if str(v) not in before]
+
+
+def guard_tasks() -> Callable[[TaskGraph], list[Violation]] | None:
+    """The `also` argument for `task_pending.apply_all`: judge a proposed task
+    graph against the decisions it points at. Introduced findings only, for the
+    reason `guard_decisions` gives."""
+    g = effective_decisions()
+    if g is None:
+        return None
+    try:
+        before = _seen(validate(TaskGraph.load(_root().tasks), g))
+    except Exception:
+        before = set()
+    return lambda tg: [v for v in validate(tg, g) if str(v) not in before]
+
+
+def _root():
+    from dgraph import project
+    return project.find()
 
 
 def validate(tg: TaskGraph, g: Graph) -> list[Violation]:

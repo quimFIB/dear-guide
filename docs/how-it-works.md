@@ -358,7 +358,29 @@ One rule keeps this from becoming a nuisance: **anything a reopen can cause is a
 warning, never an error.** If work resting on a reopened decision made the store
 invalid, one `dg reopen` would block every commit in the repository until
 somebody triaged the backlog — and the check would be switched off the same day.
-Decisions are never held hostage by tasks.
+Decisions are never held hostage by a backlog.
+
+Two things about the link *are* errors, because they are contradictions rather
+than states of play: a link naming a decision that does not exist, and a cycle
+across the two graphs — `D01` opens work that has to finish before `D01` can be
+answered, so nothing in the loop can start. Both are refused by `dg apply`, in
+either store and through either door, so a batch that would create one aborts
+with nothing written and the id of the op to drop:
+
+```
+✗ task ops aborted, nothing written
+would leave the task graph invalid:
+  [link_acyclic] cycle across the graphs: D01 -> T01 -> T02 -> D01 — nothing in
+  this loop can start. Split the decision into one you can settle now and one
+  the evidence settles, or break the task dependency.
+`dg task pending` to review; `dg task drop-op N` to unstage
+```
+
+Refusing at apply is what makes them safe to treat as errors: they are caught
+where a `dg` command can still take them back, rather than after the fact by
+`dg check`, with the store already written. A store that is *already* invalid
+still accepts writes — the guard reports only what a batch introduces, because
+`dg` has to stay able to repair what it finds.
 
 ## Keeping it honest
 

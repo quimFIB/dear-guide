@@ -20,13 +20,18 @@ sees the new status. Nothing to compute, nothing to leave inconsistent.
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from pathlib import Path
 
 from dgraph import project
 from dgraph.pending import ApplyError
 from dgraph.tasks import STATUSES, Task, TaskEdge, TaskGraph
+from dgraph.violation import Violation
 
 OPS = {"add_task", "add_dep", "set_status", "set_link"}
+
+#: An extra validator over a proposed task graph — see `apply_all`.
+Checker = Callable[[TaskGraph], list[Violation]]
 
 
 def path() -> Path:
@@ -119,12 +124,19 @@ def vet(tg: TaskGraph, op: dict) -> None:
         raise ApplyError(f"illegal status {status!r} — one of {', '.join(STATUSES)}")
 
 
-def apply_all(tg: TaskGraph, ops: list[dict]) -> TaskGraph:
-    """Apply to a copy and validate. Raises rather than returning a bad graph."""
+def apply_all(tg: TaskGraph, ops: list[dict],
+              also: Checker | None = None) -> TaskGraph:
+    """Apply to a copy and validate. Raises rather than returning a bad graph.
+
+    `also` carries the cross-graph invariants, passed in by the caller for the
+    reason `pending.apply_all` documents: this module cannot see a decision,
+    and must not have to. Only blocking findings refuse.
+    """
     out = copy.deepcopy(tg)
     for op in ops:
         _apply_one(out, op)
     problems = [p for p in out.validate() if p.blocking]
+    problems += [p for p in also(out) if p.blocking] if also else []
     if problems:
         raise ApplyError(
             "would leave the task graph invalid:\n  "

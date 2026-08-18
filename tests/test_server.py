@@ -345,3 +345,47 @@ def test_the_page_makes_every_request_through_one_helper():
     sites = [ln.strip() for ln in html.splitlines() if "fetch(" in ln]
     assert len(sites) == 1, f"expected one fetch call site, got: {sites}"
     assert "const r = await fetch(path, opts)" in sites[0]
+
+
+# ---- the cross-graph guard (audit D2), server side ------------------------
+
+
+def test_apply_refuses_a_batch_that_closes_a_cross_cycle(srv, store):
+    """Host parity: the two doors must not disagree about what may be written.
+    A decision batch that is invalid only because of what is in the task store
+    is refused here exactly as `dg apply` refuses it."""
+    import json as _json
+
+    from dgraph import render, task_render
+    from dgraph.model import Graph
+    from dgraph.tasks import TaskGraph
+
+    (store / "decisions.json").write_text(_json.dumps({
+        "areas": ["Alpha"],
+        "vertices": [
+            {"id": "D01", "title": "First question", "area": "Alpha",
+             "status": "OPEN"},
+            {"id": "D02", "title": "Second question", "area": "Alpha",
+             "status": "OPEN"},
+        ],
+        "edges": [],
+    }), encoding="utf-8")
+    (store / "tasks.json").write_text(_json.dumps({
+        "areas": ["Alpha"],
+        "tasks": [{"id": "T01", "title": "The spike", "area": "Alpha",
+                   "status": "TODO", "because": "D02", "evidence_for": "D01"}],
+        "edges": [],
+    }), encoding="utf-8")
+    render.write(Graph.load(store / "decisions.json"), store / "decision-graph.md")
+    task_render.write(TaskGraph.load(store / "tasks.json"), store / "tasks.md")
+
+    # D01 -> D02 closes it: D01 -> D02 -> T01 -> D01.
+    code, _ = jreq(srv, "/api/pending", "POST",
+                   {"op": "close", "vertex": "D01", "answer": "the answer",
+                    "source": "a meeting", "falsifier": "new evidence",
+                    "to": ["D02"]})
+    assert code == 200
+    code, body = jreq(srv, "/api/apply", "POST")
+    assert code == 400 and "link_acyclic" in body["error"]
+    assert Graph.load(store / "decisions.json").vertices["D01"].status == "OPEN"
+    assert pending.load()          # still staged, nothing written

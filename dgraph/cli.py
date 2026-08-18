@@ -17,7 +17,7 @@ from rich.tree import Tree
 
 from dgraph import brief as _brief
 from dgraph import check as _check
-from dgraph import editor, pending, project, render, task_pending, task_render
+from dgraph import cross, editor, pending, project, render, task_pending, task_render
 from dgraph.model import SIMPLE_STATUSES, Graph
 from dgraph.tasks import ID_RE as TASK_ID_RE
 from dgraph.tasks import TaskGraph
@@ -106,7 +106,7 @@ def _warn_stuck() -> None:
     learning at apply time, several commands later, which op to blame.
     """
     try:
-        pending.apply_all(Graph.load(), pending.load())
+        pending.apply_all(Graph.load(), pending.load(), cross.guard_decisions())
     except pending.ApplyError as exc:
         con.print(f"[yellow]note: as staged, `dg apply` would currently refuse "
                   f"this batch[/]\n[dim]{_x(exc)}[/]\n"
@@ -853,9 +853,14 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
 def _apply_decisions(ops: list[dict], dry_run: bool) -> None:
     g = _g()
     try:
-        out = pending.apply_all(g, ops)
+        # `cross.guard_decisions()` judges the result against the work resting
+        # on it: a decision batch can close a cycle through the task store
+        # (`D02 opens D01`, with a task between them), and neither store's own
+        # validator can see it.
+        out = pending.apply_all(g, ops, cross.guard_decisions())
     except pending.ApplyError as exc:
-        con.print(f"[red]✗ aborted, nothing written[/]\n{_x(exc)}")
+        con.print(f"[red]✗ aborted, nothing written[/]\n{_x(exc)}\n"
+                  f"[dim]`dg pending` to review; `dg drop N` to unstage[/]")
         raise typer.Exit(1)
     if dry_run:
         con.print(f"[green]✓[/] {len(ops)} decision op(s) would apply cleanly")
@@ -882,9 +887,11 @@ def _apply_decisions(ops: list[dict], dry_run: bool) -> None:
 def _apply_tasks(ops: list[dict], dry_run: bool) -> None:
     tg = _tg()
     try:
-        out = task_pending.apply_all(tg, ops)
+        out = task_pending.apply_all(tg, ops, cross.guard_tasks())
     except pending.ApplyError as exc:
-        con.print(f"[red]✗ task ops aborted, nothing written[/]\n{_x(exc)}")
+        con.print(f"[red]✗ task ops aborted, nothing written[/]\n{_x(exc)}\n"
+                  f"[dim]`dg task pending` to review; `dg task drop-op N` to "
+                  f"unstage[/]")
         raise typer.Exit(1)
     if dry_run:
         con.print(f"[green]✓[/] {len(ops)} task op(s) would apply cleanly")

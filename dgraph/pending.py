@@ -9,14 +9,19 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Callable
 from dataclasses import replace as _dc_replace
 from datetime import date as _date
 from pathlib import Path
 
 from dgraph import project
 from dgraph.model import SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex
+from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "set_status"}
+
+#: An extra validator over a proposed graph — see `apply_all`.
+Checker = Callable[[Graph], list[Violation]]
 
 
 class ApplyError(RuntimeError):
@@ -273,12 +278,25 @@ def _apply_one(g: Graph, op: dict) -> None:
         return
 
 
-def apply_all(g: Graph, ops: list[dict]) -> Graph:
-    """Apply to a copy and validate. Raises rather than returning a bad graph."""
+def apply_all(g: Graph, ops: list[dict],
+              also: Checker | None = None) -> Graph:
+    """Apply to a copy and validate. Raises rather than returning a bad graph.
+
+    `also` is an extra validator run over the result, supplied by the caller so
+    this module never learns what a second store is. It exists for the
+    cross-graph invariants: they are the only ones a decision batch can break
+    that `Graph.validate` cannot see, and a batch that breaks them must abort
+    here rather than be discovered later by `dg check`, when the store is
+    already written and the commit gate is already denying.
+
+    Only *blocking* findings refuse, so demoting a cross-graph check to a
+    warning relaxes this guard on its own, with no change in this module.
+    """
     out = copy.deepcopy(g)
     for op in ops:
         _apply_one(out, op)
     problems = [p for p in out.validate() if p.blocking]
+    problems += [p for p in also(out) if p.blocking] if also else []
     if problems:
         raise ApplyError(
             "would leave the graph invalid:\n  "
