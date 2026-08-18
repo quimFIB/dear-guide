@@ -82,23 +82,28 @@ def _section(g: Graph, vid: str) -> str:
     out.append(f"- **Status:** {status}")
     out.append(f"- **Depends on:** {deps}")
     out.append(
-        f"- **Falsifier:** {orgmd.to_markdown(e.falsifier if e else None) or NONE}"
+        f"- **Falsifier:** "
+        f"{orgmd.to_markdown(e.falsifier if e else None, fmt=e.format if e else None) or NONE}"
     )
     out.append("")
 
     if e is not None and e.decided:
         targets = "TERMINAL" if not e.to else ", ".join(e.to)
         out.append(f"**Resolves to → {targets}**")
-        out.append(orgmd.to_markdown(e.answer).strip())
+        out.append(orgmd.to_markdown(e.answer, fmt=e.format).strip())
+        # source: links convert universally; emphasis deliberately never does —
+        # a source is a path or a citation, where a `/` pair is data
         out.append(f"*Source:* {orgmd.to_markdown(e.source)}")
     elif v.note:
-        out.append(orgmd.to_markdown(v.note).strip())
+        out.append(orgmd.to_markdown(v.note, fmt=v.format).strip())
 
     hist = g.history(vid)
     if hist:
         out.append("")
+        # summary carries its record's tag; replaced_by was written by a later
+        # op whose dialect this record does not know, so it stays untouched
         out.append("*Superseded here:* " + " · ".join(
-            f"\u201c{orgmd.to_markdown(h.summary)}\u201d \u2192 "
+            f"\u201c{orgmd.to_markdown(h.summary, fmt=h.format)}\u201d \u2192 "
             f"{orgmd.to_markdown(h.replaced_by) or '*(undecided)*'}"
             for h in hist
         ))
@@ -113,9 +118,9 @@ def _superseded(g: Graph) -> str:
     inactive: list[Edge] = [e for e in g.edges if not e.active]
     for e in sorted(inactive, key=lambda e: (e.src, e.date or "")):
         rows.append(
-            f"| {e.src} | {_cell(orgmd.to_markdown(e.summary))} "
+            f"| {e.src} | {_cell(orgmd.to_markdown(e.summary, fmt=e.format))} "
             f"| {_cell(orgmd.to_markdown(e.replaced_by)) or '*(undecided)*'} "
-            f"| {_cell(orgmd.to_markdown(e.why))} |"
+            f"| {_cell(orgmd.to_markdown(e.why, fmt=e.format))} |"
         )
     return "## Superseded edges\n\n" + SUPERSEDED_INTRO + "\n\n" + "\n".join(rows) + "\n"
 

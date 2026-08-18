@@ -22,7 +22,7 @@ APP = Path(__file__).resolve().parents[1] / "dgraph" / "static" / "app.html"
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
 def test_org_converts_to_the_expected_markdown(case):
-    assert to_markdown(case["org"]) == case["markdown"]
+    assert to_markdown(case["org"], fmt=case.get("format")) == case["markdown"]
 
 
 @pytest.mark.parametrize("text", CORPUS["markdown_is_a_no_op"])
@@ -40,16 +40,30 @@ def test_markdown_passes_through_untouched(text):
 def test_conversion_is_idempotent():
     """`render` runs on every apply; converting twice must not drift."""
     for case in CASES:
-        once = to_markdown(case["org"])
-        assert to_markdown(once) == once, case["name"]
+        fmt = case.get("format")
+        once = to_markdown(case["org"], fmt=fmt)
+        assert to_markdown(once, fmt=fmt) == once, case["name"]
 
 
-def test_emphasis_is_deliberately_left_alone():
-    """Org `*bold*` and markdown `*italic*` are the same syntax. Documented
-    limitation, pinned so nobody 'fixes' it with a heuristic that breaks paths."""
+def test_emphasis_is_left_alone_without_provenance():
+    """Org `*bold*` and markdown `*italic*` are the same syntax, so without a
+    provenance tag no rewrite can be right for both — untagged prose keeps its
+    bytes. Pinned so nobody 'fixes' it with a heuristic that breaks paths."""
     assert to_markdown("*bold*") == "*bold*"
     assert to_markdown("/italic/") == "/italic/"
     assert to_markdown("see report/x.md and and/or") == "see report/x.md and and/or"
+
+
+def test_org_emphasis_converts_only_under_provenance():
+    """The transparency the tag buys: org-composed prose renders with org's
+    meaning everywhere, and markdown stays markdown."""
+    assert to_markdown("*bold*", fmt="org") == "**bold**"
+    assert to_markdown("/italic/", fmt="org") == "_italic_"
+    # org's own boundaries: none of these are emphasis in org either
+    assert to_markdown("2*3*4 and/or report/x.md", fmt="org") == \
+        "2*3*4 and/or report/x.md"
+    # an unknown tag is inert, never a guess
+    assert to_markdown("*bold*", fmt="wiki") == "*bold*"
 
 
 def test_empty_and_none_survive():
@@ -84,7 +98,7 @@ def test_the_extraction_sentinels_still_exist():
     """If someone removes the markers, the JS half would silently stop running."""
     src = APP.read_text(encoding="utf-8")
     assert src.count(START) == 1 and src.count(END) == 1
-    assert "function md(s)" in _extract_md()
+    assert "function md(s, fmt)" in _extract_md()
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -94,7 +108,7 @@ def test_app_md_matches_the_corpus():
 const cases = %s;
 let bad = [];
 for (const c of cases) {
-  const got = md(c.org);
+  const got = md(c.org, c.format);
   if (got !== c.html) bad.push(`${c.name}\n  want ${c.html}\n  got  ${got}`);
 }
 if (bad.length) { console.log(bad.join("\n")); process.exit(1); }

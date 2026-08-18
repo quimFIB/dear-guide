@@ -33,6 +33,7 @@ class Vertex:
     area: str
     status: str
     note: str | None = None  # prose for a vertex with no decision yet
+    format: str | None = None  # the note's dialect: "org", else markdown
 
     @property
     def base_status(self) -> str:
@@ -59,6 +60,11 @@ class Edge:
     summary: str | None = None
     replaced_by: str | None = None  # superseded edges: the answer that won
     why: str | None = None  # superseded edges: what overturned it
+    #: Provenance of the prose the views render from this record — the
+    #: answer/falsifier of an active edge, the why/summary of a superseded one:
+    #: "org" when composed through the editor, else markdown. `replaced_by` is
+    #: written later by a different op and is deliberately not covered.
+    format: str | None = None
 
     @property
     def decided(self) -> bool:
@@ -130,6 +136,7 @@ class Graph:
                     summary=e.get("summary"),
                     replaced_by=e.get("replaced_by"),
                     why=e.get("why"),
+                    format=e.get("format"),
                 )
                 for e in raw["edges"]
             ],
@@ -138,7 +145,7 @@ class Graph:
     def to_dict(self) -> dict:
         def edge_dict(e: Edge) -> dict:
             d: dict = {"from": e.src, "to": e.to, "active": e.active}
-            for k in ("answer", "falsifier", "source", "date", "summary", "replaced_by", "why"):
+            for k in ("answer", "falsifier", "source", "date", "summary", "replaced_by", "why", "format"):
                 v = getattr(e, k)
                 if v is not None:
                     d[k] = v
@@ -157,6 +164,7 @@ class Graph:
                     for k, val in (
                         ("id", v.id), ("title", v.title), ("area", v.area),
                         ("status", v.status), ("note", v.note),
+                        ("format", v.format),
                     )
                     if val is not None
                 }

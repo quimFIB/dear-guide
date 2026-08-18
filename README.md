@@ -161,13 +161,18 @@ its pid, which the next compose reclaims on its own.
 
 Answers are stored exactly as you type them, and emacs users get the whole of
 org — tables, `dg:` and `file:` links, verbatim markers, source blocks. The
-generated views convert what they can: org links become markdown links, org
-table rules become markdown rules, `=verbatim=` becomes backticks.
+generated views convert on the way out: org links become markdown links, org
+table rules become markdown rules, `=verbatim=` becomes backticks, and org
+emphasis becomes markdown emphasis — `*bold*` renders bold, `/italic/` renders
+italic, everywhere.
 
-One thing does not convert. `*single asterisks*` mean bold in org and italic in
-markdown — the same syntax with two meanings — so no renderer can tell them
-apart, and the views show italic either way. Write `**bold**` if you care how it
-looks outside emacs.
+That last conversion is possible because the store records **provenance**:
+`*single asterisks*` mean bold in org and italic in markdown — the same syntax
+with two meanings — so anything composed through the editor is tagged
+`format: "org"` and converted with org's meaning, while prose from the web
+form, `dg import-md`, or an agent stays markdown and keeps markdown's meaning,
+untouched. Which door you type into is the only thing that decides, and the
+stored bytes are never rewritten either way.
 
 ## Checking it in CI
 

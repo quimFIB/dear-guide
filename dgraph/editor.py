@@ -416,6 +416,11 @@ def _parse_close(g: Graph, meta: dict, f: dict, raw: dict) -> list[dict]:
         "falsifier": f.get("falsifier", "").strip() or None,
         "to": to,
         "date": meta.get("date") or _date.today().isoformat(),
+        # Provenance: this buffer is org, so the views may convert its
+        # emphasis. Applies to whatever the op writes — including an op that
+        # started life in the web form and was revised here, which makes it
+        # org by virtue of having been edited as org.
+        "format": "org",
     }
     if to and not op["falsifier"]:
         raise EditorError(
@@ -428,7 +433,8 @@ def _parse_close(g: Graph, meta: dict, f: dict, raw: dict) -> list[dict]:
 
 
 def _parse_reopen(meta: dict, f: dict) -> list[dict]:
-    op = {"op": "reopen", "vertex": meta.get("vertex"), "why": _need(f, "why")}
+    op = {"op": "reopen", "vertex": meta.get("vertex"), "why": _need(f, "why"),
+          "format": "org"}
     if f.get("summary", "").strip():
         op["summary"] = f["summary"].strip()
     return [op]
@@ -447,6 +453,7 @@ def _parse_add(g: Graph, f: dict) -> list[dict]:
           "area": area, "status": f.get("status", "").strip() or "OPEN"}
     if f.get("note", "").strip():
         op["note"] = f["note"].strip()
+        op["format"] = "org"
     ops = [op]
     for parent in [p.strip() for p in f.get("after", "").split(",") if p.strip()]:
         if parent not in g.vertices:

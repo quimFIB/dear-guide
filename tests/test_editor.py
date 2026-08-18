@@ -94,11 +94,47 @@ def test_close_round_trips_into_an_appliable_op(g, store, fake_emacs):
     assert ops == [{
         "op": "close", "vertex": "D05", "answer": "Settle on 32k.",
         "source": "discussion", "falsifier": "the corpus changes",
-        "to": ["D06"], "date": ops[0]["date"],
+        "to": ["D06"], "date": ops[0]["date"], "format": "org",
     }]
     out = pending.apply_all(g, pending.expand(g, ops[0]))
     assert out.vertices["D05"].status == "DECIDED"
     assert out.validate() == []
+
+
+def test_org_provenance_flows_from_editor_to_store_and_view(g, store, fake_emacs):
+    """The dialect tag: a buffer is org, so the op says `format: "org"`, the
+    edge records it, a save/load round-trip keeps it, and the rendered view
+    converts the emphasis with org's meaning — `*x*` is bold here."""
+    fake_emacs(lambda t: fill(t, answer="Chose the *small* model.",
+                              source="discussion",
+                              falsifier="a /genuinely/ large corpus shift"))
+    ops = editor.compose(g, "close", vertex="D05")
+    assert ops[0]["format"] == "org"
+    out = pending.apply_all(g, pending.expand(g, ops[0]))
+    assert out.active_edge("D05").format == "org"
+
+    out.save(store / "roundtrip.json")
+    assert Graph.load(store / "roundtrip.json").active_edge("D05").format == "org"
+
+    from dgraph.render import render
+    text = render(out)
+    assert "Chose the **small** model." in text
+    assert "a _genuinely_ large corpus shift" in text
+
+
+def test_reopen_why_carries_its_dialect_into_the_record(g, store, fake_emacs):
+    """The superseded edge's rendered prose (why, summary) comes from the
+    reopen op, so it carries that op's tag; the vertex note (set to the why)
+    does too."""
+    fake_emacs(lambda t: fill(t, why="the *sweep* was mis-seeded"))
+    op = editor.compose(g, "reopen", vertex="D01")[0]
+    assert op["format"] == "org"
+    out = pending.apply_all(g, pending.expand(g, op))
+    assert out.history("D01")[-1].format == "org"
+    assert out.vertices["D01"].format == "org"
+
+    from dgraph.render import render
+    assert "the **sweep** was mis-seeded" in render(out)
 
 
 def test_org_prose_is_stored_verbatim(g, store, fake_emacs):
@@ -115,7 +151,8 @@ def test_reopen_round_trips(g, store, fake_emacs):
                               summary="the old answer"))
     ops = editor.compose(g, "reopen", vertex="D01")
     assert ops[0] == {"op": "reopen", "vertex": "D01",
-                      "why": "the sweep was mis-seeded", "summary": "the old answer"}
+                      "why": "the sweep was mis-seeded",
+                      "summary": "the old answer", "format": "org"}
 
 
 def test_add_round_trips_into_two_ops(g, store, fake_emacs):

@@ -58,7 +58,8 @@ def graph_payload(g: Graph) -> dict:
             "depth": g.depth(vid),
             "children": g.children(vid),
             "history": [
-                {"summary": h.summary, "replaced_by": h.replaced_by, "why": h.why}
+                {"summary": h.summary, "replaced_by": h.replaced_by,
+                 "why": h.why, "format": h.format}
                 for h in g.history(vid)
             ],
         }

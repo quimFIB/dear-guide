@@ -174,6 +174,19 @@ def test_table_cells_survive_pipes_and_newlines(g):
     assert "\nsecond line" not in sup
 
 
+def test_untagged_prose_keeps_markdown_meaning(g):
+    """The other half of provenance: a close staged without a tag — the web
+    form, an agent, `md_import` — is markdown, and its single stars must stay
+    italic in the view, exactly as before."""
+    out = pending.apply_all(g, pending.expand(g, {
+        "op": "close", "vertex": "D05",
+        "answer": "This stays *italic* in the view.",
+        "source": "s", "falsifier": "f", "to": [], "date": "2026-02-01",
+    }))
+    assert out.active_edge("D05").format is None
+    assert "This stays *italic* in the view." in render(out)
+
+
 def test_redecide_without_a_summary_still_fills_replaced_by(g):
     """Audit C3. Without `--summary` the reversal record said "(undecided)"
     forever about a question that has an answer; the answer's first line now

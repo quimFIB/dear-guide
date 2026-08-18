@@ -196,6 +196,8 @@ def _apply_one(g: Graph, op: dict) -> None:
         g.vertices[op["id"]] = Vertex(
             id=op["id"], title=op["title"], area=op["area"],
             status=op.get("status", "OPEN"), note=op.get("note"),
+            # the tag describes the note; without one it describes nothing
+            format=op.get("format") if op.get("note") else None,
         )
         return
 
@@ -222,6 +224,7 @@ def _apply_one(g: Graph, op: dict) -> None:
         payload = dict(
             answer=op["answer"], falsifier=op.get("falsifier"),
             source=op["source"], date=op.get("date") or _date.today().isoformat(),
+            format=op.get("format"),
         )
         if e is None:
             g.edges.append(Edge(src=vid, to=targets, **payload))
@@ -242,7 +245,8 @@ def _apply_one(g: Graph, op: dict) -> None:
         for old in g.history(vid):
             if old.replaced_by is None:
                 old.replaced_by = label
-        g.vertices[vid] = _dc_replace(g.vertices[vid], status="DECIDED", note=None)
+        g.vertices[vid] = _dc_replace(g.vertices[vid], status="DECIDED",
+                                      note=None, format=None)
         return
 
     if kind == "reopen":
@@ -256,10 +260,15 @@ def _apply_one(g: Graph, op: dict) -> None:
             answer=e.answer, falsifier=e.falsifier, source=e.source,
             date=e.date, summary=op.get("summary") or _clip(e.answer or ""),
             replaced_by=None, why=op["why"],
+            # the superseded record's rendered prose (why, summary) comes from
+            # this op; the archived answer/falsifier are never rendered again
+            format=op.get("format"),
         ))
         e.answer = e.falsifier = e.source = e.date = None
+        e.format = None
         g.vertices[vid] = _dc_replace(
-            g.vertices[vid], status="REOPENED", note=op.get("note") or op["why"]
+            g.vertices[vid], status="REOPENED",
+            note=op.get("note") or op["why"], format=op.get("format"),
         )
         return
 

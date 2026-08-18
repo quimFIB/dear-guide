@@ -79,6 +79,47 @@
       "org": "Click [[javascript:alert(1)][here]].",
       "markdown": "Click [here](javascript:alert(1)).",
       "html": "<p>Click <code>here</code>.</p>"
+    },
+    {
+      "name": "org bold converts under provenance",
+      "format": "org",
+      "org": "Chose the *small* model.",
+      "markdown": "Chose the **small** model.",
+      "html": "<p>Chose the <b>small</b> model.</p>"
+    },
+    {
+      "name": "org italic converts under provenance",
+      "format": "org",
+      "org": "Strictly /provisional/ for now.",
+      "markdown": "Strictly _provisional_ for now.",
+      "html": "<p>Strictly <i>provisional</i> for now.</p>"
+    },
+    {
+      "name": "org boundaries hold: arithmetic, options, paths",
+      "format": "org",
+      "org": "Compute 2*3*4 with lr=0.001 and/or shrug.",
+      "markdown": "Compute 2*3*4 with lr=0.001 and/or shrug.",
+      "html": "<p>Compute 2*3*4 with lr=0.001 and/or shrug.</p>"
+    },
+    {
+      "name": "emphasis never fires inside a code span",
+      "format": "org",
+      "org": "Run =ls *.md= then *check* it.",
+      "markdown": "Run `ls *.md` then **check** it.",
+      "html": "<p>Run <code>ls *.md</code> then <b>check</b> it.</p>"
+    },
+    {
+      "name": "emphasis never fires inside a link target",
+      "format": "org",
+      "org": "Rests on [[file:/docs/][the docs]] and /notably/ so.",
+      "markdown": "Rests on [the docs](/docs/) and _notably_ so.",
+      "html": "<p>Rests on <a href=\"/docs/\" target=\"_blank\" rel=\"noopener\">the docs</a> and <i>notably</i> so.</p>"
+    },
+    {
+      "name": "single stars stay italic without provenance",
+      "org": "Still *italic* here.",
+      "markdown": "Still *italic* here.",
+      "html": "<p>Still <i>italic</i> here.</p>"
     }
   ],
   "markdown_is_a_no_op": [

@@ -263,7 +263,7 @@ def test_compose_reopen_round_trips(srv, monkeypatch):
                       {"op": "reopen", "vertex": "D01"})
     assert code == 200, body
     assert body["staged"][0] == {"op": "reopen", "vertex": "D01",
-                                 "why": "the sweep was wrong"}
+                                 "why": "the sweep was wrong", "format": "org"}
     # reopening D01 drags its decided descendants into PROVISIONAL
     assert {o["vertex"] for o in body["staged"] if o["op"] == "set_status"} == {
         "D02", "D03", "D04"}

@@ -259,18 +259,30 @@ function draw(){
    future agent plugin). Render both.
 
    Single-marker emphasis is ambiguous between the two - org `*x*` means bold,
-   markdown `*x*` means italic - so it renders as italic either way. Same
-   documented limitation as dgraph/orgmd.py; see that module for why no
-   heuristic can fix it. tests/fixtures/org_cases.json pins these rules against
-   the Python converter, so the two cannot drift. */
+   markdown `*x*` means italic - so it is resolved by PROVENANCE: records
+   composed through the editor carry `format: "org"`, and md() converts their
+   `*bold*` and `/italic/` accordingly (outside code spans and tags). Untagged
+   prose is markdown and keeps markdown's meaning, untouched.
+   tests/fixtures/org_cases.json pins these rules against the Python converter,
+   so the two cannot drift. */
 /* Quotes included: escaped text is interpolated into attributes (data-dg,
    href, option value), and an unescaped quote there is an attribute breakout —
    stored prose must never reach the DOM as markup. */
 const esc=s=>(s||"").replace(/[<>&"']/g,
   c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&#39;"}[c]));
 const isRule=l=>/^\s*\|[-+|\s]*\|\s*$/.test(l);
-function mdInline(s){
-  return s
+/* Org single-marker emphasis, applied only to org-tagged prose and only to
+   text segments — never inside a tag (an href full of slashes) or a code
+   span. The boundaries are org's own, so 2*3*4 and and/or stay untouched. */
+function orgEmphasis(s){
+  return s.split(/(<code>[^<]*<\/code>|<[^>]+>)/g).map(seg=>
+    seg.startsWith("<") ? seg : seg
+      .replace(/(^|[-\u2014\s('"{])\*([^\s*](?:[^\n*]*?[^\s*])?)\*(?=[-\u2014\s.,:!?;'")}\[]|$)/g,'$1<b>$2</b>')
+      .replace(/(^|[-\u2014\s('"{])\/([^\s\/](?:[^\n\/]*?[^\s\/])?)\/(?=[-\u2014\s.,:!?;'")}\[]|$)/g,'$1<i>$2</i>')
+  ).join("");
+}
+function mdInline(s, fmt){
+  s = s
     /* org links: [[target]] or [[target][label]]. dg: targets select the node
        in place; everything else opens out. Markdown has no [[ ]], so a markdown
        link or reference link is never touched here. */
@@ -291,27 +303,29 @@ function mdInline(s){
       (m,pre,mk,body)=> (body.startsWith(mk)||body.endsWith(mk))
         ? m : `${pre}<code>${body}</code>`)
     .replace(/`([^`]+)`/g,'<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
-    .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<i>$2</i>');
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+  /* single-marker emphasis is dialect-specific — see the block comment above */
+  return fmt==="org" ? orgEmphasis(s)
+                     : s.replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<i>$2</i>');
 }
-function mdTable(lines){
+function mdTable(lines, fmt){
   let head=lines.some(isRule), rows=[];
   for(const ln of lines){
     if(isRule(ln)){ head=false; continue; }
     const tag=head?"th":"td";
     const cells=ln.trim().replace(/^\||\|$/g,"").split("|")
-      .map(c=>`<${tag}>${mdInline(c.trim())}</${tag}>`);
+      .map(c=>`<${tag}>${mdInline(c.trim(), fmt)}</${tag}>`);
     rows.push("<tr>"+cells.join("")+"</tr>");
   }
   return "<table>"+rows.join("")+"</table>";
 }
-function md(s){
+function md(s, fmt){
   return esc(s||"").split(/\n\s*\n/).map(par=>{
     const lines=par.split("\n").filter(l=>l.trim());
     if(!lines.length) return "";
     /* a block of pipe rows is a table in both dialects */
-    if(lines.every(l=>l.trim().startsWith("|"))) return mdTable(lines);
-    return "<p>"+mdInline(par.replace(/\n/g," ").trim())+"</p>";
+    if(lines.every(l=>l.trim().startsWith("|"))) return mdTable(lines, fmt);
+    return "<p>"+mdInline(par.replace(/\n/g," ").trim(), fmt)+"</p>";
   }).filter(Boolean).join("");
 }
 /* --- end prose rendering --- */
@@ -398,14 +412,14 @@ function panel(){
   if(e&&e.answer) h+=`<div>falsifier</div><div>${esc(e.falsifier||"—")}</div>
       <div>source</div><div>${esc(e.source||"")} <span class="muted">${e.date||""}</span></div>`;
   h+=`</div>`;
-  if(e&&e.answer) h+=`<div class="answer">${md(e.answer)}</div>`;
-  else if(v.note) h+=`<div class="answer muted">${md(v.note)}</div>`;
+  if(e&&e.answer) h+=`<div class="answer">${md(e.answer, e.format)}</div>`;
+  else if(v.note) h+=`<div class="answer muted">${md(v.note, v.format)}</div>`;
   if(d.history.length){
     h+=`<p class="muted" style="margin-bottom:4px">Superseded here</p>`;
     d.history.forEach(x=>h+=`<div class="answer" style="font-size:12px">
       <span style="text-decoration:line-through;opacity:.65">${esc(x.summary)}</span>
       → <b>${esc(x.replaced_by||"(undecided)")}</b><br>
-      <span class="muted">${md(x.why||"")}</span></div>`);
+      <span class="muted">${md(x.why||"", x.format)}</span></div>`);
   }
 
   if(e&&e.answer){
