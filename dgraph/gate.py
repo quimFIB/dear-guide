@@ -131,7 +131,25 @@ def _allow() -> dict:
 
 
 def verdict(command: str, proj: project.Project | None = None) -> dict:
-    """The gate. Never raises, never blocks on anything, always answers."""
+    """The gate. Never raises, never blocks on anything, always answers.
+
+    "Never raises" is load-bearing: both host adapters read a crash as "no
+    verdict" and run the command, so an exception here is a gate that fails
+    open on exactly the state it cannot vouch for. Anything unexpected
+    therefore becomes a deny that says what could not be read.
+    """
+    try:
+        return _verdict(command, proj)
+    except Exception as exc:
+        return {
+            "verdict": "deny",
+            "reason": f"dg gate could not judge this commit ({exc!r}). "
+                      f"`dg check` and `dg pending` show the state it failed "
+                      f"to read; fix that first, then retry.",
+        }
+
+
+def _verdict(command: str, proj: project.Project | None = None) -> dict:
     if _off() or not is_commit(command):
         return _allow()
     proj = proj or project.find()
@@ -167,7 +185,19 @@ def verdict(command: str, proj: project.Project | None = None) -> dict:
                       f"`git add {proj.view.name}`.",
         }
 
-    ops = pending.load(proj.pending)
+    try:
+        ops = pending.load(proj.pending)
+    except Exception as exc:
+        # An unreadable staging file may hold staged decision work, and this
+        # commit would drop it with no trace in the diff — the one situation
+        # the `ask` verdict below exists for, unreadable. Fail closed.
+        return {
+            "verdict": "deny",
+            "reason": f"{proj.pending.name} could not be read ({exc}), so it "
+                      f"is impossible to tell whether decision op(s) are "
+                      f"staged and about to be lost. Inspect the file, or "
+                      f"discard it with `dg clear`, then retry.",
+        }
     if ops:
         return {
             "verdict": "ask",

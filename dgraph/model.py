@@ -178,9 +178,16 @@ class Graph:
         return list(e.to) if e else []
 
     def depends(self, vid: str) -> list[str]:
-        """Derived, never stored: the parents that point at this vertex."""
+        """Derived, never stored: the parents that point at this vertex.
+
+        An edge source that names no vertex is skipped: it cannot be a premise,
+        and `validate()` reports the dangling edge itself. Returning it here
+        would make every traversal that looks premises up crash on a graph
+        `validate()` is in the middle of judging.
+        """
         return sorted(
-            {e.src for e in self.edges if e.active and vid in e.to}
+            {e.src for e in self.edges
+             if e.active and vid in e.to and e.src in self.vertices}
         )
 
     def waiting_on(self, vid: str) -> list[str]:

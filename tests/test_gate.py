@@ -174,6 +174,30 @@ def test_a_missing_git_never_makes_it_guess(repo, monkeypatch):
     assert _v(repo)["verdict"] == "allow"
 
 
+def test_a_corrupt_pending_file_is_denied_naming_the_file(repo):
+    """Audit A2a. An unreadable staging file may hold staged work this commit
+    would silently drop — the situation `ask` exists for, unreadable. It used
+    to crash the gate instead, and a crash is an allow to both adapters."""
+    (repo / ".dgraph-pending.json").write_text("{not json", encoding="utf-8")
+    v = _v(repo)
+    assert v["verdict"] == "deny"
+    assert ".dgraph-pending.json" in v["reason"]
+    assert "dg clear" in v["reason"]
+
+
+def test_verdict_never_raises_even_when_state_reading_does(repo, monkeypatch):
+    """The contract in the docstring, pinned. Anything unexpected must come
+    back as a deny, because the adapters fail open on a crash."""
+    def boom(proj):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(gate._check, "run", boom)
+    v = _v(repo)
+    assert v["verdict"] == "deny"
+    assert "disk on fire" in v["reason"]
+    assert "DG_HOOK_OFF" not in v["reason"]      # never advertise the bypass
+
+
 # ---- the command surface ------------------------------------------------
 
 
@@ -190,3 +214,12 @@ def test_gate_json_is_one_object_of_two_keys(repo):
     res = runner.invoke(app, ["--project", str(repo), "gate",
                               "--command", "git log", "--json"])
     assert json.loads(res.output) == {"verdict": "allow", "reason": ""}
+
+
+def test_gate_exits_zero_on_a_corrupt_pending_file(repo):
+    """The A2a crash end-to-end: exit 0 with a deny, parseable, no traceback."""
+    (repo / ".dgraph-pending.json").write_text("{not json", encoding="utf-8")
+    res = runner.invoke(app, ["--project", str(repo), "gate",
+                              "--command", "git commit -m x", "--json"])
+    assert res.exit_code == 0
+    assert json.loads(res.output)["verdict"] == "deny"

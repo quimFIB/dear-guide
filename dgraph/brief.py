@@ -90,7 +90,32 @@ def data(proj: project.Project | None = None) -> dict:
     if not proj.exists:
         return {"project": None, "counts": {}, "frontier": [], "attention": [],
                 "staged": 0, "violations": []}
-    g = Graph.load(proj.store)
+    # `str(Violation)` verbatim, so an adapter quoting a refusal quotes the
+    # same words `dg check` would have printed.
+    violations = [
+        {"check": v.check, "blocking": v.blocking, "text": str(v)}
+        for v in _check_run(proj)
+    ]
+    try:
+        staged = len(pending.load(proj.pending))
+    except Exception as exc:
+        # Unreadable is not "none staged" — that is the reading that loses
+        # work. Report it the way the gate will refuse it.
+        staged = 0
+        violations.append({
+            "check": "store_loads", "blocking": True,
+            "text": f"[store_loads] {proj.pending.name} could not be read: "
+                    f"{exc}",
+        })
+    try:
+        g = Graph.load(proj.store)
+    except Exception:
+        # `_check_run` above has already turned the load failure into a
+        # `store_loads` violation; a brief that says so is worth more than a
+        # crash, which the host hooks read as "nothing to say" — silence at
+        # the one moment the graph most needs attention.
+        return {"project": str(proj.root), "counts": {}, "frontier": [],
+                "attention": [], "staged": staged, "violations": violations}
     return {
         "project": str(proj.root),
         "counts": counts(g),
@@ -100,13 +125,8 @@ def data(proj: project.Project | None = None) -> dict:
             for r in rows(g)
         ],
         "attention": attention(g),
-        "staged": len(pending.load(proj.pending)),
-        # `str(Violation)` verbatim, so an adapter quoting a refusal quotes the
-        # same words `dg check` would have printed.
-        "violations": [
-            {"check": v.check, "blocking": v.blocking, "text": str(v)}
-            for v in _check_run(proj)
-        ],
+        "staged": staged,
+        "violations": violations,
     }
 
 
@@ -123,8 +143,20 @@ def _note_line(note: str | None) -> str | None:
 def text(proj: project.Project | None = None, limit: int = LIMIT) -> str:
     """The brief as prose, for injection into a session and for a terminal."""
     proj = proj or project.find()
-    g = Graph.load(proj.store)
     d = data(proj)
+    try:
+        g = Graph.load(proj.store)
+    except FileNotFoundError:
+        # No store is the caller's case to handle (the CLI checks first and
+        # says so); only an *unreadable* store gets the degraded brief.
+        raise
+    except Exception:
+        blocking = [v for v in d["violations"] if v["blocking"]]
+        out = [f"DECISION GRAPH  {proj.root}  (store unreadable)",
+               "",
+               f"CHECK: {len(blocking)} error(s) -- fix before committing"]
+        out += [f"  {v['text']}" for v in blocking[:limit]]
+        return "\n".join(out)
     fr, att = rows(g), attention(g)
 
     tally = ", ".join(f"{k} {n}" for k, n in sorted(d["counts"].items()))

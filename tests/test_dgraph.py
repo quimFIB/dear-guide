@@ -75,6 +75,27 @@ def test_detects_dangling_edge(g):
     assert _check(g, "no_dangling_refs")
 
 
+def test_a_dangling_source_into_a_decided_vertex_is_reported_not_fatal(g):
+    """Audit A1. `depends()` used to return the unknown source, and the
+    propagation walk then crashed on `vertices[p]` — validation died on
+    exactly the hand-edit damage it exists to report, and the commit gate
+    read the crash as "no verdict" and failed open."""
+    from dgraph.model import Edge
+    g.edges.append(Edge(src="D99", to=["D02"], active=True))
+    assert _check(g, "no_dangling_refs")          # reported, no KeyError
+    assert not _check(g, "propagation")           # D99 is not a premise
+
+
+def test_a_dangling_source_above_a_provisional_vertex_is_reported_not_fatal(g):
+    """Same crash, other path: `provisional_because` walks ancestors."""
+    from dataclasses import replace
+
+    from dgraph.model import Edge
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    g.edges.append(Edge(src="D99", to=["D02"], active=True))
+    assert _check(g, "no_dangling_refs")
+
+
 def test_detects_two_active_edges(g):
     from dgraph.model import Edge
     g.edges.append(Edge(src="D01", to=["D04"], active=True))

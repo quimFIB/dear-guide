@@ -38,6 +38,21 @@ def test_malformed_store_is_reported(tmp_path, monkeypatch):
     assert [v.check for v in hits] == ["store_loads"]
 
 
+def test_a_validator_crash_degrades_to_a_violation(store, g, monkeypatch):
+    """Audit A1, belt and braces: whatever future bug makes `validate()` raise,
+    `run()` must answer with a blocking violation — a crash here is read by the
+    commit gate as "no verdict" and fails open."""
+    write(g)
+
+    def boom(self):
+        raise KeyError("D99")
+
+    monkeypatch.setattr(Graph, "validate", boom)
+    hits = run()
+    assert [v.check for v in hits] == ["store_loads"]
+    assert hits[0].blocking and "validate()" in str(hits[0])
+
+
 def test_graph_violations_surface(store, g):
     write(g)
     bad = Graph.load()

@@ -145,6 +145,18 @@ def test_brief_reports_a_broken_graph(run, store, g):
     assert "stale_view" in run("brief").output
 
 
+def test_brief_survives_a_corrupt_store(run, store, g):
+    """Audit A2b. A store that no longer parses is the moment the graph most
+    needs attention, and it used to be the moment the brief crashed — which
+    the session hook reads as "nothing to say"."""
+    write(g)
+    (store / "decisions.json").write_text("{not json", encoding="utf-8")
+    res = run("brief")
+    assert res.exit_code == 0
+    assert "store_loads" in res.output
+    assert "could not be read" in res.output
+
+
 def test_brief_without_a_store_tells_a_human(run, tmp_path):
     empty = tmp_path / "nothing-here"
     empty.mkdir()
@@ -163,6 +175,33 @@ def test_brief_json_reports_no_project_instead_of_failing(tmp_path):
     res = runner.invoke(app, ["--project", str(empty), "brief", "--json"])
     assert res.exit_code == 0
     assert json.loads(res.output)["project"] is None
+
+
+def test_brief_json_survives_a_corrupt_store(run, store):
+    """The JSON twin of the crash above: an adapter must always get a payload,
+    and the payload must carry the store_loads violation it can quote."""
+    (store / "decisions.json").write_text("{not json", encoding="utf-8")
+    res = run("brief", "--json")
+    assert res.exit_code == 0
+    payload = json.loads(res.output)
+    assert payload["project"] == str(store)
+    assert payload["frontier"] == []
+    assert any(v["check"] == "store_loads" and v["blocking"]
+               for v in payload["violations"])
+
+
+def test_brief_json_reports_an_unreadable_pending_file(run, store, g):
+    """Unreadable is not "none staged" — that reading loses work. The count
+    stays honest at 0 and a blocking violation names the file, matching the
+    gate's refusal."""
+    write(g)
+    (store / ".dgraph-pending.json").write_text("{not json", encoding="utf-8")
+    res = run("brief", "--json")
+    assert res.exit_code == 0
+    payload = json.loads(res.output)
+    assert payload["staged"] == 0
+    assert any(".dgraph-pending.json" in v["text"] and v["blocking"]
+               for v in payload["violations"])
 
 
 def test_brief_json_carries_the_violation_text_verbatim(run, store, g):

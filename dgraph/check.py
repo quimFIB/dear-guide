@@ -45,7 +45,17 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
     except Exception as exc:  # malformed JSON, bad shape
         return [Violation("store_loads", f"{proj.store} could not be read: {exc}")]
 
-    problems = g.validate()
+    try:
+        problems = g.validate()
+    except Exception as exc:
+        # A validator bug must degrade to a violation, never to a crash: the
+        # commit gate treats a crash as "no verdict" and would fail open on
+        # exactly the store damage validation exists to catch.
+        return [Violation(
+            "store_loads",
+            f"internal: validate() itself failed on {proj.store.name} "
+            f"({exc!r}) — the graph cannot be judged valid",
+        )]
 
     if not proj.view.exists():
         problems.append(Violation(
