@@ -5,8 +5,11 @@ starts contradicting itself.
 
 ## Install
 
+From your checkout of this repository:
+
 ```sh
-pip install -e ~/workspace/random/decision-graph-assistant
+cd /path/to/decision-graph-assistant
+pip install -e .
 ```
 
 `dg` then works in any project directory containing `decisions.json`. The

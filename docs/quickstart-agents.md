@@ -18,17 +18,20 @@ is a few dozen lines of translation with no policy of its own.
 Two steps, always. The hosts distribute plugins their own way and neither
 installs Python packages.
 
+Throughout, `/path/to/decision-graph-assistant` is your checkout of this
+repository.
+
 ### 1. The CLI (both hosts)
 
 ```sh
-pip install -e ~/workspace/random/decision-graph-assistant
+pip install -e /path/to/decision-graph-assistant
 dg --version        # so an adapter can tell when the two halves have drifted
 ```
 
 ### 2a. Claude Code
 
 ```
-/plugin marketplace add ~/workspace/random/decision-graph-assistant
+/plugin marketplace add /path/to/decision-graph-assistant
 /plugin install decision-graph
 ```
 
@@ -37,7 +40,7 @@ dg --version        # so an adapter can tell when the two halves have drifted
 Three symlinks, since opencode has no marketplace:
 
 ```sh
-repo=~/workspace/random/decision-graph-assistant
+repo=/path/to/decision-graph-assistant
 ln -s "$repo/skills/decisions"               ~/.config/opencode/skills/decisions
 ln -s "$repo/opencode/decision-graph.ts"     ~/.config/opencode/plugins/decision-graph.ts
 ln -s "$repo/opencode/commands/decisions.md" ~/.config/opencode/commands/decisions.md

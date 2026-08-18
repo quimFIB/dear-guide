@@ -51,7 +51,8 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 ## Install
 
 ```sh
-pip install -e ~/workspace/random/decision-graph-assistant
+cd /path/to/decision-graph-assistant
+pip install -e .
 ```
 
 `dg` then works in any project directory containing `decisions.json`. It is
@@ -230,10 +231,10 @@ actually about to be lost.
 ### Install
 
 ```sh
-pip install -e ~/workspace/random/decision-graph-assistant   # the CLI
+pip install -e /path/to/decision-graph-assistant   # the CLI
 
 # Claude Code
-/plugin marketplace add ~/workspace/random/decision-graph-assistant
+/plugin marketplace add /path/to/decision-graph-assistant
 /plugin install decision-graph
 ```
 

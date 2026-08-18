@@ -9,13 +9,13 @@ commit that would leave the graph contradicting itself is refused.
 `dg` itself first:
 
 ```sh
-pip install -e <this repo>
+pip install -e /path/to/decision-graph-assistant
 ```
 
 Then three symlinks, since opencode has no plugin marketplace:
 
 ```sh
-repo=<this repo>
+repo=/path/to/decision-graph-assistant
 ln -s "$repo/skills/decisions"              ~/.config/opencode/skills/decisions
 ln -s "$repo/opencode/decision-graph.ts"    ~/.config/opencode/plugins/decision-graph.ts
 ln -s "$repo/opencode/commands/decisions.md" ~/.config/opencode/commands/decisions.md
