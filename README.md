@@ -43,8 +43,9 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 | `.dgraph-pending.json` | staging area; gitignore it |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG`; gitignore it |
 | `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
-| `skills/decisions/` | the recording discipline, as a skill an agent loads on demand |
+| `skills/decisions/` | the recording discipline, as a skill both agent hosts load |
 | `hooks/`, `.claude-plugin/` | the Claude Code plugin |
+| `opencode/` | the same two mechanisms for opencode |
 
 ## Install
 
@@ -193,8 +194,8 @@ matches the store.
 ## Driving it from a coding agent
 
 A CLI only records what somebody remembers to run, and the thing that forgets is
-an agent working across many sessions. The tool ships as a **Claude Code
-plugin**, which turns three of the four habits into mechanisms:
+an agent working across many sessions. The tool ships as a plugin for **Claude
+Code** and **opencode**, which turns three of the four habits into mechanisms:
 
 | | how |
 |---|---|
@@ -216,20 +217,23 @@ actually about to be lost.
 
 ```sh
 pip install -e ~/workspace/random/decision-graph-assistant   # the CLI
+
+# Claude Code
 /plugin marketplace add ~/workspace/random/decision-graph-assistant
 /plugin install decision-graph
 ```
 
-Two steps rather than one because a plugin marketplace does not install Python
-packages; `dg --version` exists so the adapter can tell when the two halves have
-drifted apart.
+For opencode it is three symlinks — see [`opencode/README.md`](opencode/README.md).
+Two install steps rather than one because the hosts distribute plugins their own
+way and neither of them installs Python packages; `dg --version` exists so an
+adapter can tell when the two halves have drifted apart.
 
 Nothing happens in a directory with no `decisions.json`: no output, no error, no
 cost. `DG_HOOK_OFF=1` switches both mechanisms off.
 
-### The policy is not in the hook
+### One implementation, two hosts
 
-The interesting parts are in `dg`, not in the adapter:
+The interesting parts are in `dg`, not in either adapter:
 
 - `dg brief` — what is worth knowing right now: the frontier with what each item
   waits on and what deciding it releases, anything `PROVISIONAL`, the staging
@@ -237,11 +241,11 @@ The interesting parts are in `dg`, not in the adapter:
 - `dg gate --command "<cmd>"` — is this shell command about to record a
   contradiction? Out comes `allow`, `ask` or `deny` with a reason.
 
-So `hooks/brief.py` and `hooks/precommit.py` are a few dozen lines of
-translation with no policy of their own, and a test asserts they name no `dg`
-subcommand but those two. The discipline itself is `skills/decisions/SKILL.md`,
-loaded on demand rather than carried in every context, with a test that its
-command table only names commands that exist.
+So each adapter is a few dozen lines of translation with no policy of its own,
+and `skills/decisions/SKILL.md` is one file both hosts read — opencode uses the
+same `name`/`description` frontmatter and will even read `.claude/skills/`
+directly. A test asserts the adapters name no `dg` subcommand but those two, and
+that the skill's command table only names commands that exist.
 
 ## Still open
 
