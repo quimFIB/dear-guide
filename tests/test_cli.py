@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from dgraph import editor, pending
+from dgraph import cli, editor, pending
 from dgraph.check import run as check_run
 from dgraph.cli import app
 from dgraph.model import Graph
@@ -1556,3 +1556,95 @@ def test_a_composed_add_never_reaches_the_tray_unvetted(run, store, g,
     assert res.exit_code == 1
     assert "DONE" in res.output
     assert pending.load() == []
+
+
+# ---- `--help` is grouped, and the grouping is complete --------------------
+
+
+def _panels(layout):
+    """`{command name: panel}` from a LAYOUT declaration."""
+    return {name: panel for panel, names in layout for name in names}
+
+
+@pytest.mark.parametrize(
+    "typer_app, layout",
+    [(cli.app, cli.LAYOUT), (cli.task_app, cli.TASK_LAYOUT)],
+    ids=["dg", "dg task"],
+)
+def test_every_command_is_in_a_help_panel(typer_app, layout):
+    """`_ordered` lists an unnamed command at the end rather than dropping it,
+    so a forgotten one is untidy instead of invisible. This is what stops it
+    being lived with."""
+    declared = set(_panels(layout))
+    registered = {c.name or c.callback.__name__.replace("_", "-")
+                  for c in typer_app.registered_commands}
+    registered |= {g.name for g in typer_app.registered_groups}
+    assert not registered - declared, (
+        f"command(s) missing from the help layout: "
+        f"{sorted(registered - declared)}")
+    assert not declared - registered, (
+        f"layout names a command that does not exist: "
+        f"{sorted(declared - registered)}")
+
+
+@pytest.mark.parametrize(
+    "typer_app, layout",
+    [(cli.app, cli.LAYOUT), (cli.task_app, cli.TASK_LAYOUT)],
+    ids=["dg", "dg task"],
+)
+def test_each_command_declares_the_panel_the_layout_puts_it_in(typer_app, layout):
+    """The layout says where a command reads; `rich_help_panel` says where it
+    renders. Two places, so they are checked against each other — a command in
+    the right sequence under the wrong heading looks deliberate and is not."""
+    want = _panels(layout)
+    for c in typer_app.registered_commands:
+        name = c.name or c.callback.__name__.replace("_", "-")
+        assert c.rich_help_panel == want[name], name
+    for g in typer_app.registered_groups:
+        assert g.rich_help_panel == want[g.name], g.name
+
+
+def test_the_help_renders_the_panels_in_the_declared_order(tmp_path):
+    """Rich builds a panel per heading in the order `list_commands` yields
+    them, which is the property `_ordered` exists for."""
+    out = runner.invoke(app, ["--project", str(tmp_path), "--help"]).output
+    seen = [p for p, _ in cli.LAYOUT if p.split("—")[0].strip() in out]
+    positions = [out.index(p.split("—")[0].strip()) for p in seen]
+    assert positions == sorted(positions)
+    assert len(seen) == len(cli.LAYOUT)
+
+
+def test_the_rendered_order_follows_the_layout_not_the_file(tmp_path):
+    """Rich takes command order from the file by default. `_ordered` is what
+    makes the declaration win — so this compares the help against `LAYOUT`
+    (which moves with the declaration, and is only evidence the override runs)
+    *and* against the registration order (which does not).
+    """
+    out = runner.invoke(app, ["--project", str(tmp_path), "--help"]).output
+    at = lambda n: out.index(f"│ {n} ")
+    for _, names in cli.LAYOUT:
+        seen = [at(n) for n in names if f"│ {n} " in out]
+        assert seen == sorted(seen), names
+
+    # The override is doing something: `decide` is registered before `add` and
+    # `export` before `init`, and both read the other way round. Written out
+    # rather than derived from LAYOUT, so reordering LAYOUT cannot quietly
+    # bring this assertion along with it.
+    registered = [c.name or c.callback.__name__.replace("_", "-")
+                  for c in cli.app.registered_commands]
+    assert registered.index("decide") < registered.index("add")
+    assert registered.index("export") < registered.index("init")
+    assert at("add") < at("decide")
+    assert at("init") < at("export")
+
+
+def test_the_order_inside_a_panel_is_the_order_you_meet_them(tmp_path):
+    """The sequences that motivated ordering the help at all, pinned literally:
+    create before settle, settle before reverse, and removal last."""
+    out = runner.invoke(app, ["--project", str(tmp_path), "--help"]).output
+    at = lambda n: out.index(f"│ {n} ")
+    for earlier, later in (("add", "decide"), ("decide", "reopen"),
+                           ("reopen", "rm"), ("init", "import"),
+                           ("import", "export"), ("pending", "apply"),
+                           ("show", "areas"), ("check", "render")):
+        assert at(earlier) < at(later), f"{earlier} should read before {later}"

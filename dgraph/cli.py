@@ -10,6 +10,7 @@ import sys
 from datetime import date as _date
 
 import typer
+from typer.core import TyperGroup
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
@@ -26,7 +27,81 @@ from dgraph.model import SIMPLE_STATUSES, Graph
 from dgraph.tasks import ID_RE as TASK_ID_RE
 from dgraph.tasks import MISSING_EDGE, TaskGraph
 
+# ---- how `--help` reads --------------------------------------------------
+#
+# Thirty commands in one flat list is a list nobody reaches the end of, and the
+# question a reader arrives with is not "what is there?" but "what do I run to
+# do this?" — so the headings below name intentions rather than kinds.
+#
+# `LAYOUT` is the whole help screen in one place: the panels, their order, and
+# the order of the commands inside each. Nothing else decides it. In particular
+# **it is not the order the functions happen to sit in this file**, which is
+# where Rich takes it from by default — an accident of editing history is a
+# poor table of contents, and moving a function would silently rearrange the
+# documentation.
+
+READ = "Reading the graph"
+HONEST = "Keeping it honest"
+RECORD = "Recording decisions"
+STAGE = "The staging area — nothing is written until `apply`"
+STORE = "Starting a graph, and moving one"
+ELSEWHERE = "Beyond the decision graph"
+
+#: Panel, then the commands in it, both in the order `dg --help` shows them.
+#: Within a panel the sequence is the order you would meet them: what a person
+#: runs first, then the rarer neighbours, with anything destructive last.
+LAYOUT = (
+    (READ, ("show", "brief", "node", "context", "why", "tree", "path", "areas")),
+    (HONEST, ("check", "gate", "render")),
+    (RECORD, ("add", "decide", "reopen", "confirm", "repair",
+              "dep", "undep", "rm")),
+    (STAGE, ("pending", "edit", "drop", "clear", "apply")),
+    (STORE, ("init", "import", "import-md", "export")),
+    (ELSEWHERE, ("serve", "task")),
+)
+
+#: The same for `dg task --help`, and deliberately parallel: the two stores are
+#: peers, and a reader who has learned one help screen should not have to learn
+#: the other. There is no `check` here because `dg check` judges both stores.
+T_READ = "Reading the work"
+T_RECORD = "Recording work"
+T_STAGE = "The staging area — nothing is written until `apply`"
+T_STORE = "Starting a backlog, and moving one"
+
+TASK_LAYOUT = (
+    (T_READ, ("node", "export")),
+    (T_RECORD, ("add", "start", "done", "drop", "link", "unlink",
+                "dep", "undep", "rm")),
+    (T_STAGE, ("pending", "drop-op", "clear")),
+    (T_STORE, ("init", "import", "render")),
+)
+
+
+def _ordered(layout) -> type[TyperGroup]:
+    """A command group that lists its commands in `layout`'s order.
+
+    Rich builds a panel per `rich_help_panel` in the order `list_commands`
+    yields them, so this one list fixes both which panel comes first and how
+    the commands inside it read.
+
+    A command absent from the layout is still listed — at the end, in
+    alphabetical order — rather than dropped. Losing a command from `--help`
+    because somebody forgot to name it here would be a documentation bug that
+    hides a feature, which is worse than an untidy tail. `test_cli.py` asserts
+    the tail is empty, so the untidiness is caught rather than lived with.
+    """
+    order = [name for _, names in layout for name in names]
+
+    class Ordered(TyperGroup):
+        def list_commands(self, ctx):
+            known = [n for n in order if n in self.commands]
+            return known + sorted(set(self.commands) - set(known))
+
+    return Ordered
+
+
 app = typer.Typer(
+    cls=_ordered(LAYOUT),
     add_completion=False,
     help="Read and edit a decision graph. decisions.json is the source of "
          "truth; decision-graph.md is generated from it.",
@@ -164,7 +239,7 @@ def _tag(v) -> str:
 # ---- reading -------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel=READ)
 def show(
     full: bool = typer.Option(False, "--full",
                               help="The table, with no title clipped."),
@@ -281,7 +356,7 @@ def _show_table(g: Graph, att: list[dict]) -> None:
     ))
 
 
-@app.command()
+@app.command(rich_help_panel=READ)
 def tree(root: str = typer.Argument(None, help="Vertex to root at")) -> None:
     """The DAG as a tree, from the roots or from one vertex."""
     g = _g()
@@ -308,7 +383,7 @@ def tree(root: str = typer.Argument(None, help="Vertex to root at")) -> None:
     con.print(top)
 
 
-@app.command()
+@app.command(rich_help_panel=READ)
 def node(vid: str) -> None:
     """Everything known about one decision."""
     g = _g()
@@ -355,7 +430,7 @@ def node(vid: str) -> None:
     con.print(Panel("\n".join(lines), title=vid, border_style=_style(v.status)))
 
 
-@app.command()
+@app.command(rich_help_panel=READ)
 def path(a: str, b: str) -> None:
     """The chain of evidence linking two decisions."""
     g = _g()
@@ -374,7 +449,7 @@ def path(a: str, b: str) -> None:
             con.print("  [dim]▼[/]")
 
 
-@app.command()
+@app.command(rich_help_panel=READ)
 def context(
     vid: str = typer.Argument(..., help="A decision id (D..) or a task id (T..)"),
     as_json: bool = typer.Option(False, "--json", help="The same as data."),
@@ -423,10 +498,10 @@ def context(
 #: settled, and what would unsettle it?") and the one `dear-guide` is named
 #: for. `context` stays because it is what the thing *is*, and because scripts
 #: and docs already say it.
-app.command(name="why")(context)
+app.command(name="why", rich_help_panel=READ)(context)
 
 
-@app.command()
+@app.command(rich_help_panel=READ)
 def areas() -> None:
     """Counts by area and status."""
     g = _g()
@@ -443,7 +518,7 @@ def areas() -> None:
     con.print(t)
 
 
-@app.command()
+@app.command(rich_help_panel=READ)
 def brief(
     as_json: bool = typer.Option(False, "--json",
                                  help="The same information as data."),
@@ -472,7 +547,7 @@ def brief(
     print(_brief.text(proj, limit=limit))
 
 
-@app.command()
+@app.command(rich_help_panel=HONEST)
 def gate(
     command: str = typer.Option(None, "--command", metavar="CMD",
                                 help="The shell command a host is about to run."),
@@ -511,7 +586,7 @@ def gate(
     print(v["verdict"] if not v["reason"] else f"{v['verdict']}: {v['reason']}")
 
 
-@app.command()
+@app.command(rich_help_panel=HONEST)
 def check() -> None:
     """Run every invariant, plus the markdown staleness check."""
     proj = project.find()
@@ -629,7 +704,7 @@ def _stage_close(g: Graph, op: dict) -> None:
     _warn_stuck()
 
 
-@app.command()
+@app.command(rich_help_panel=RECORD)
 def decide(
     vid: str,
     answer: str = typer.Option(None, "--answer", "-a"),
@@ -719,7 +794,7 @@ def decide(
     _stage_close(eff, op)
 
 
-@app.command()
+@app.command(rich_help_panel=RECORD)
 def repair() -> None:
     """Stage the PROVISIONAL a reopen would have derived, where one is missing.
 
@@ -767,7 +842,7 @@ def repair() -> None:
     _warn_stuck()
 
 
-@app.command()
+@app.command(rich_help_panel=RECORD)
 def confirm(vid: str) -> None:
     """Re-affirm a PROVISIONAL decision: its premise moved, its answer holds.
 
@@ -809,7 +884,7 @@ def confirm(vid: str) -> None:
     _warn_stuck()
 
 
-@app.command()
+@app.command(rich_help_panel=RECORD)
 def reopen(
     vid: str,
     why: str = typer.Option(None, "--why", "-w", help="what challenges it"),
@@ -873,7 +948,7 @@ def reopen(
     _warn_stuck()
 
 
-@app.command()
+@app.command(rich_help_panel=RECORD)
 def add(
     vid: str = typer.Option(None, "--id"),
     title: str = typer.Option(None, "--title", "-t"),
@@ -1019,7 +1094,7 @@ def _sanction(what: str, lines: list[str], yes: bool) -> None:
         raise typer.Exit(1)
 
 
-@app.command()
+@app.command(rich_help_panel=RECORD)
 def dep(
     vid: str,
     after: str = typer.Option(..., "--after",
@@ -1066,7 +1141,7 @@ def dep(
     _warn_stuck()
 
 
-@app.command()
+@app.command(rich_help_panel=RECORD)
 def undep(
     vid: str,
     after: str = typer.Option(..., "--after",
@@ -1144,7 +1219,7 @@ def undep(
     _warn_stuck()
 
 
-@app.command()
+@app.command(rich_help_panel=RECORD)
 def rm(
     vid: str,
     splice: bool = typer.Option(False, "--splice",
@@ -1253,7 +1328,7 @@ def _tasks_naming(did: str) -> list[str]:
         return []
 
 
-@app.command(name="pending")
+@app.command(name="pending", rich_help_panel=STAGE)
 def pending_cmd() -> None:
     """What is staged but not yet applied."""
     ops = pending.load()
@@ -1331,7 +1406,7 @@ _PENDING_DETAIL = {
 }
 
 
-@app.command(name="edit")
+@app.command(name="edit", rich_help_panel=STAGE)
 def edit_cmd(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
                                        help="the op's id, or its position")) -> None:
     """Revise a staged op in the editor, in place.
@@ -1405,7 +1480,7 @@ def _supersedes(kind: str, op: dict):
     return supersede
 
 
-@app.command()
+@app.command(rich_help_panel=STORE)
 def export(
     vid: str = typer.Argument(None, help="Scope to one decision"),
 ) -> None:
@@ -1431,7 +1506,7 @@ def export(
     print(json.dumps(payload, ensure_ascii=False))
 
 
-@app.command()
+@app.command(rich_help_panel=STAGE)
 def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
                                    help="the op's id, or its position")) -> None:
     """Unstage one op, by its id or its position, and say which one it was.
@@ -1456,14 +1531,14 @@ def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
               f"{_op_summary(gone, _PENDING_DETAIL, 'vertex')}")
 
 
-@app.command()
+@app.command(rich_help_panel=STAGE)
 def clear() -> None:
     """Unstage everything."""
     pending.clear()
     con.print("[green]cleared[/]")
 
 
-@app.command()
+@app.command(rich_help_panel=STAGE)
 def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
     """Validate everything staged and write it.
 
@@ -1642,7 +1717,7 @@ def _apply_tasks(ops: list[dict], dry_run: bool) -> bool:
     return True
 
 
-@app.command(name="render")
+@app.command(name="render", rich_help_panel=HONEST)
 def render_cmd() -> None:
     """Regenerate decision-graph.md from the store."""
     render.write(_g())
@@ -1656,11 +1731,12 @@ def render_cmd() -> None:
 # convention somebody has to remember.
 
 task_app = typer.Typer(
+    cls=_ordered(TASK_LAYOUT),
     add_completion=False,
     help="Track the work a project has to do. tasks.json is the source of "
          "truth; tasks.md is generated from it.",
 )
-app.add_typer(task_app, name="task")
+app.add_typer(task_app, name="task", rich_help_panel=ELSEWHERE)
 
 TASK_STYLE = {
     "TODO": "bold red",
@@ -1751,7 +1827,7 @@ def _twarn_stuck() -> None:
                   f"clears it[/]")
 
 
-@task_app.command("init")
+@task_app.command("init", rich_help_panel=T_STORE)
 def task_init(
     areas: str = typer.Option(
         "General", "--areas",
@@ -1835,7 +1911,7 @@ def _say_relation(tid: str, kind: str, fresh: list[str],
         con.print(f"[green]staged[/] {tid} {rel['reads']} {', '.join(fresh)}")
 
 
-@task_app.command("add")
+@task_app.command("add", rich_help_panel=T_RECORD)
 def task_add(
     tid: str = typer.Option(None, "--id"),
     title: str = typer.Option(None, "--title", "-t"),
@@ -1990,7 +2066,7 @@ def _resolve_premise(did: str) -> str:
     return did
 
 
-@task_app.command("link")
+@task_app.command("link", rich_help_panel=T_RECORD)
 def task_link(
     tid: str,
     because: str = typer.Option(None, "--because",
@@ -2019,7 +2095,7 @@ def task_link(
     _twarn_stuck()
 
 
-@task_app.command("unlink")
+@task_app.command("unlink", rich_help_panel=T_RECORD)
 def task_unlink(
     tid: str,
     because: bool = typer.Option(False, "--because",
@@ -2053,7 +2129,7 @@ def task_unlink(
     _twarn_stuck()
 
 
-@task_app.command("dep")
+@task_app.command("dep", rich_help_panel=T_RECORD)
 def task_dep(
     tid: str,
     after: str = typer.Option(None, "--after",
@@ -2096,7 +2172,7 @@ def task_dep(
     _twarn_stuck()
 
 
-@task_app.command("undep")
+@task_app.command("undep", rich_help_panel=T_RECORD)
 def task_undep(
     tid: str,
     after: str = typer.Option(None, "--after",
@@ -2144,7 +2220,7 @@ def task_undep(
     _twarn_stuck()
 
 
-@task_app.command("start")
+@task_app.command("start", rich_help_panel=T_RECORD)
 def task_start(tid: str) -> None:
     """Stage a task moving to DOING."""
     _require_task(tid)
@@ -2153,7 +2229,7 @@ def task_start(tid: str) -> None:
     _twarn_stuck()
 
 
-@task_app.command("done")
+@task_app.command("done", rich_help_panel=T_RECORD)
 def task_done(
     tid: str,
     outcome: str = typer.Option(None, "--outcome", "-o",
@@ -2207,7 +2283,7 @@ def _fallout(tg: TaskGraph, tid: str) -> dict[str, str]:
     return out
 
 
-@task_app.command("drop")
+@task_app.command("drop", rich_help_panel=T_RECORD)
 def task_drop(
     tid: str,
     why: str = typer.Option(None, "--why", "-w", help="why it is not being done"),
@@ -2393,7 +2469,7 @@ def _task_table(tg: TaskGraph, waiting_for) -> None:
     con.print(t)
 
 
-@task_app.command("rm")
+@task_app.command("rm", rich_help_panel=T_RECORD)
 def task_rm(
     tid: str,
     splice: bool = typer.Option(False, "--splice",
@@ -2452,7 +2528,7 @@ def task_rm(
     _twarn_stuck()
 
 
-@task_app.command("node")
+@task_app.command("node", rich_help_panel=T_READ)
 def task_node(tid: str) -> None:
     """Everything known about one task."""
     tg = _tg()
@@ -2500,7 +2576,7 @@ def task_node(tid: str) -> None:
                     border_style=TASK_STYLE.get(t.status, "white")))
 
 
-@task_app.command("pending")
+@task_app.command("pending", rich_help_panel=T_STAGE)
 def task_pending_cmd() -> None:
     """What is staged for the task store but not yet applied."""
     ops = pending.load(task_pending.path())
@@ -2539,7 +2615,7 @@ _TASK_DETAIL = {
 }
 
 
-@task_app.command("drop-op")
+@task_app.command("drop-op", rich_help_panel=T_STAGE)
 def task_drop_op(
     ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
                               help="the op's id, or its position"),
@@ -2554,14 +2630,14 @@ def task_drop_op(
               f"{_op_summary(gone, _TASK_DETAIL, 'task')}")
 
 
-@task_app.command("clear")
+@task_app.command("clear", rich_help_panel=T_STAGE)
 def task_clear() -> None:
     """Unstage every task op."""
     pending.clear(task_pending.path())
     con.print("[green]cleared[/]")
 
 
-@task_app.command("export")
+@task_app.command("export", rich_help_panel=T_READ)
 def task_export(
     tid: str = typer.Argument(None, help="Scope to one task"),
 ) -> None:
@@ -2592,7 +2668,7 @@ def task_export(
     print(json.dumps(payload, ensure_ascii=False))
 
 
-@task_app.command("import")
+@task_app.command("import", rich_help_panel=T_STORE)
 def task_import(
     path: str = typer.Argument(..., help="a tasks.json prepared elsewhere"),
     force: bool = typer.Option(False, "--force",
@@ -2623,14 +2699,14 @@ def task_import(
            f"{len(tg.tasks)} tasks, {len(tg.edges)} edges", "the file")
 
 
-@task_app.command("render")
+@task_app.command("render", rich_help_panel=T_STORE)
 def task_render_cmd() -> None:
     """Regenerate tasks.md from the store."""
     task_render.write(_tg())
     con.print(f"[green]✓[/] wrote {project.find().task_view}")
 
 
-@app.command()
+@app.command(rich_help_panel=STORE)
 def init(
     areas: str = typer.Option(
         "General", "--areas",
@@ -2718,7 +2794,7 @@ def _refuse_overwrite(exists: bool, store: pathlib.Path) -> None:
         raise typer.Exit(1)
 
 
-@app.command(name="import")
+@app.command(name="import", rich_help_panel=STORE)
 def import_json(
     path: str = typer.Argument(..., help="a decisions.json prepared elsewhere"),
     force: bool = typer.Option(False, "--force",
@@ -2749,7 +2825,7 @@ def import_json(
            f"{len(g.vertices)} vertices, {len(g.edges)} edges", "the file")
 
 
-@app.command(name="import-md")
+@app.command(name="import-md", rich_help_panel=STORE)
 def import_md(
     path: str = typer.Argument(..., metavar="DECISION_GRAPH_MD",
                                help="a decision-graph.md that `dg render` wrote"),
@@ -2782,7 +2858,7 @@ def import_md(
            "the source document")
 
 
-@app.command()
+@app.command(rich_help_panel=ELSEWHERE)
 def serve(
     port: int = typer.Option(8765, "--port", "-p"),
     detach: bool = typer.Option(False, "--detach", "-d",
