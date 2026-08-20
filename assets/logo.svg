@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
      role="img" aria-labelledby="dg-title">
-  <title id="dg-title">development-graph — two linked graphs, joined at one seam</title>
+  <title id="dg-title">dear-guide — two linked graphs, joined at one seam</title>
   <!-- The drawing is 51x45; this centres it in the square box and scales it to
        fill, so the mark works as an avatar and a favicon without a second file. -->
   <g transform="translate(32 32) scale(1.15) translate(-28 -29)">

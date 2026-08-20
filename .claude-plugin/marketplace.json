@@ -1,12 +1,12 @@
 {
-  "name": "development-graph",
-  "description": "The development-graph assistant, as a Claude Code plugin.",
+  "name": "dear-guide",
+  "description": "dear-guide, as a Claude Code plugin.",
   "owner": {
     "name": "quimFIB"
   },
   "plugins": [
     {
-      "name": "development-graph",
+      "name": "dear-guide",
       "description": "Read, record and reverse a project's decisions, and track the work that follows from them, through the `dg` CLI.",
       "source": "./"
     }

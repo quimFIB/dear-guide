@@ -24,7 +24,7 @@ dg = "dgraph.cli:main"
 # entry point is what lets it register `--decision-graph`, since a plugin hook
 # in a file that is merely imported by a test module is never called.
 [project.entry-points.pytest11]
-development-graph = "dgraph.testing"
+dear-guide = "dgraph.testing"
 
 [tool.setuptools]
 packages = ["dgraph"]

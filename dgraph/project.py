@@ -53,7 +53,7 @@ IGNORE = (
     f"{TASKS_NAME}.lock",
 )
 
-IGNORE_HEADER = "# development-graph: staging, locks and temp files"
+IGNORE_HEADER = "# dear-guide: staging, locks and temp files"
 
 _override: Path | None = None
 

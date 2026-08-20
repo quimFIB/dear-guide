@@ -8,7 +8,7 @@ commands for the times you want to ask rather than wait to be told.
 |  | how |
 |---|---|
 | **read the frontier first** | `dg brief` is injected at the start of every session, and again after a compaction — no rule in an instructions file, no "read this first" |
-| **know the discipline** | the `development-graph` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
+| **know the discipline** | the `dear-guide` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it |
 | **ask on demand** | `/dg-brief` `/dg-frontier` `/dg-tasks` `/dg-context` `/dg-serve` — the same five files on both hosts |
 
@@ -35,7 +35,7 @@ dg --version        # so an adapter can tell when the two halves have drifted
 
 ```
 /plugin marketplace add /path/to/dear-guide
-/plugin install development-graph
+/plugin install dear-guide
 ```
 
 ### 2b. opencode
@@ -44,8 +44,8 @@ Symlinks, since opencode has no marketplace:
 
 ```sh
 repo=/path/to/dear-guide
-ln -s "$repo/skills/development-graph"      ~/.config/opencode/skills/development-graph
-ln -s "$repo/opencode/development-graph.ts" ~/.config/opencode/plugins/development-graph.ts
+ln -s "$repo/skills/dear-guide"      ~/.config/opencode/skills/dear-guide
+ln -s "$repo/opencode/dear-guide.ts" ~/.config/opencode/plugins/dear-guide.ts
 for c in "$repo"/commands/*.md; do
   ln -s "$c" ~/.config/opencode/commands/"$(basename "$c")"
 done
@@ -66,8 +66,8 @@ with nothing.
 Check it took:
 
 ```sh
-opencode debug skill  | grep development-graph  # the skill was found
-opencode debug config | grep development-graph  # the plugin and the commands loaded
+opencode debug skill  | grep dear-guide  # the skill was found
+opencode debug config | grep dear-guide  # the plugin and the commands loaded
 ```
 
 ## What a session looks like
@@ -187,7 +187,7 @@ second run reports the first one's URL — and `dg serve --stop` ends it.
 
 ## The skill
 
-`skills/development-graph/SKILL.md` is one file both hosts read — the model, the rules,
+`skills/dear-guide/SKILL.md` is one file both hosts read — the model, the rules,
 the command table, the staging workflow. It loads on demand when a decision is
 in play, rather than sitting in every context. Tests assert that the skill's and the
 commands' tables only name subcommands that actually exist, that neither adapter

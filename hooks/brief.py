@@ -60,7 +60,7 @@ def main() -> int:
         # ordinary, and its only other symptom would be this hook going quiet
         # forever.
         if "No such command" in (r.stderr or ""):
-            print("The development-graph plugin needs a newer `dg`: "
+            print("The dear-guide plugin needs a newer `dg`: "
                   "`pip install -U -e <the dear-guide checkout>`.")
         return 0
 

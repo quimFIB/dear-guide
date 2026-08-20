@@ -9,7 +9,7 @@
  * host costs one file instead of a reimplementation.
  *
  * The skill is shared verbatim: opencode reads `skills/<name>/SKILL.md` with the
- * same `name`/`description` frontmatter, so `skills/development-graph/SKILL.md` is
+ * same `name`/`description` frontmatter, so `skills/dear-guide/SKILL.md` is
  * installed, not ported. See `opencode/README.md`.
  */
 
@@ -34,7 +34,7 @@ function off(): boolean {
   return !["", "0", "false", "no"].includes(v)
 }
 
-export const DecisionGraphPlugin: Plugin = async ({ $, directory }) => {
+export const DearGuidePlugin: Plugin = async ({ $, directory }) => {
   /** Sessions already given the brief. Cleared on compaction, since that is
    *  precisely when the context it provided was thrown away. */
   const briefed = new Set<string>()
@@ -87,7 +87,7 @@ export const DecisionGraphPlugin: Plugin = async ({ $, directory }) => {
       const part: any = output.parts.find((p: any) => p.type === "text")
       if (!part) return
       briefed.add(input.sessionID)
-      part.text = `<development-graph>\n${text}\n</development-graph>\n\n${part.text}`
+      part.text = `<dear-guide>\n${text}\n</dear-guide>\n\n${part.text}`
     },
 
     /** Purpose-built for surviving a compaction — the analogue of Claude Code's

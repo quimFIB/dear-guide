@@ -34,7 +34,7 @@ trays, the compose buffer, the lock files beside them, and the temp file an
 interrupted write leaves behind:
 
 ```
-# development-graph: staging, locks and temp files
+# dear-guide: staging, locks and temp files
 .dgraph-*
 *.dg-tmp
 decisions.json.lock

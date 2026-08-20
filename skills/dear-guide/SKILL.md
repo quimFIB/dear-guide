@@ -1,5 +1,5 @@
 ---
-name: development-graph
+name: dear-guide
 description: >-
   Read, record and reverse this project's decisions, and track the work that
   follows from them, using the `dg` CLI over decisions.json and tasks.json. Use

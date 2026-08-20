@@ -67,7 +67,7 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 | `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
 | `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md) |
 | `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
-| `skills/development-graph/` | the recording discipline, as a skill both agent hosts load |
+| `skills/dear-guide/` | the recording discipline, as a skill both agent hosts load |
 | `commands/` | the slash commands, one set of files for both hosts |
 | `hooks/`, `.claude-plugin/` | the Claude Code plugin |
 | `opencode/` | the same mechanisms for opencode |
@@ -306,7 +306,7 @@ Code** and **opencode**, which turns three of the four habits into mechanisms:
 | | how |
 |---|---|
 | **read the frontier first** | the brief is injected at the start of every session, and again after a compaction — no rule in an instructions file, no "read this first" |
-| **know the discipline** | the `development-graph` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
+| **know the discipline** | the `dear-guide` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it. Work staged and never applied asks the human instead — `.dgraph-pending.json` is gitignored, so committing over it loses the record silently |
 
 Plus five slash commands, one set of files for both hosts: `/dg-brief`,
@@ -331,7 +331,7 @@ pip install -e /path/to/dear-guide   # the CLI
 
 # Claude Code
 /plugin marketplace add /path/to/dear-guide
-/plugin install development-graph
+/plugin install dear-guide
 ```
 
 For opencode it is symlinks — see [`opencode/README.md`](opencode/README.md).
@@ -358,7 +358,7 @@ The interesting parts are in `dg`, not in either adapter:
   contradiction? Out comes `allow`, `warn`, `ask` or `deny` with a reason.
 
 So each adapter is a few dozen lines of translation with no policy of its own,
-and `skills/development-graph/SKILL.md` is one file both hosts read — opencode uses the
+and `skills/dear-guide/SKILL.md` is one file both hosts read — opencode uses the
 same `name`/`description` frontmatter and will even read `.claude/skills/`
 directly. A test asserts the adapters name no `dg` subcommand but those two, and
 that the skill's command table only names commands that exist.

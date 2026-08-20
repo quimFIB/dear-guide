@@ -24,7 +24,7 @@ from dgraph.model import Graph
 from dgraph.render import write
 
 ROOT = Path(__file__).resolve().parent.parent
-SKILL = ROOT / "skills" / "development-graph" / "SKILL.md"
+SKILL = ROOT / "skills" / "dear-guide" / "SKILL.md"
 HOOKS = ROOT / "hooks"
 ADAPTERS = [HOOKS / "brief.py", HOOKS / "precommit.py"]
 MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
@@ -346,7 +346,7 @@ def test_both_fast_paths_carry_the_gates_triggers():
     }
     assert want in found, f"hooks/precommit.py does not carry {want}"
 
-    ts = (ROOT / "opencode" / "development-graph.ts").read_text()
+    ts = (ROOT / "opencode" / "dear-guide.ts").read_text()
     m = re.search(r"const TRIGGERS = \[([^\]]*)\]", ts)
     assert m, "opencode adapter has no TRIGGERS list"
     assert tuple(re.findall(r'"([^"]*)"', m.group(1))) == want
