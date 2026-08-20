@@ -21,7 +21,7 @@ from collections.abc import Callable
 
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
-from dgraph.violation import Violation
+from dgraph.violation import Violation, cycle_from
 
 
 def rests_on(tg: TaskGraph, did: str) -> list[str]:
@@ -58,6 +58,32 @@ def gated_by(tg: TaskGraph, g: Graph, tid: str) -> str | None:
 def ready(tg: TaskGraph, g: Graph, tid: str) -> bool:
     """Startable for real: prerequisites resolved *and* premise settled."""
     return tg.ready(tid) and gated_by(tg, g, tid) is None
+
+
+def task_link(tg: TaskGraph, g: Graph, tid: str) -> dict:
+    """Everything the cross-graph link says about one task, in one reading.
+
+    `dg context` needs all of it at once — the premise, whether that premise
+    resolves, whether it gates the work — and assembling it from the task's own
+    fields is exactly the second implementation of the rule this module exists
+    to prevent. Callers get the ids from here and never read `Task.because`
+    themselves.
+
+    `premise` is the `because` decision *that exists*; `dangling` says the link
+    names one that does not, which is a different fact from having no link and
+    is what `dg check` will report.
+    """
+    t = tg.tasks[tid]
+    resolves = bool(t.because) and t.because in g.vertices
+    return {
+        "because": t.because,
+        "evidence_for": t.evidence_for,
+        "premise": t.because if resolves else None,
+        "dangling": bool(t.because) and not resolves,
+        "gated_by": gated_by(tg, g, tid),
+        "ready": ready(tg, g, tid),
+        "unfinished": t.unfinished,
+    }
 
 
 def blast_radius(tg: TaskGraph, dids: list[str]) -> list[str]:
@@ -121,6 +147,30 @@ def unharvested(tg: TaskGraph, g: Graph) -> list[dict]:
     return out
 
 
+def dropped_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
+    """Unsettled decisions whose evidence was abandoned, all of it.
+
+    The silence neither store can break alone, and the sharper sibling of
+    `unharvested`. `pending_evidence` filters on `unfinished`, which DROPPED is
+    not, so a decision that was waiting on a spike reports waiting on nothing
+    the moment the spike is given up on; `unharvested` stays quiet too, because
+    it only fires on DONE. Between them the decision reads as merely undecided,
+    when in fact the thing that was going to settle it is never happening.
+
+    Only when *every* evidence task was dropped. One surviving spike and the
+    decision is visibly waiting again, which is not a silence.
+    """
+    out = []
+    for did in sorted(g.vertices):
+        if g.vertices[did].settled:
+            continue
+        ev = evidence(tg, did)
+        if ev and all(tg.tasks[t].status == "DROPPED" for t in ev):
+            out.append({"id": did, "title": g.vertices[did].title,
+                        "status": g.vertices[did].status, "tasks": ev})
+    return out
+
+
 def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
     """The two graphs as one digraph, for cycle detection.
 
@@ -134,9 +184,14 @@ def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
     both graphs already prove themselves acyclic.
     """
     adj: dict[str, list[str]] = {}
+    # `unblocks` is the `precedes` edges only, which is what this union wants:
+    # every kind here means "the head waits on the tail", and a `prompted` edge
+    # means no such thing. Feeding it in would manufacture deadlocks out of
+    # provenance — see `KINDS` in `dgraph/tasks.py`.
     for vid in g.vertices:
-        adj.setdefault(vid, []).extend(
-            c for c in g.children(vid) if c in g.vertices)
+        # `children` and `unblocks` both drop ids naming nothing, so a dangling
+        # reference cannot enter the union and be walked into as a node.
+        adj.setdefault(vid, []).extend(g.children(vid))
     for tid in tg.tasks:
         adj.setdefault(tid, []).extend(tg.unblocks(tid))
     for tid, t in tg.tasks.items():
@@ -168,12 +223,7 @@ def _cycles(adj: dict[str, list[str]]) -> list[list[str]]:
             node, nxt = stack[-1]
             for c in nxt:
                 if colour.get(c) == 1:
-                    # Rotated to start at the smallest id: the same deadlock
-                    # must read the same way twice, because the apply guard
-                    # below compares findings by their text.
-                    loop = trail[trail.index(c):]
-                    k = loop.index(min(loop))
-                    found.append(loop[k:] + loop[:k] + [min(loop)])
+                    found.append(cycle_from(trail, c))
                     continue
                 if colour.get(c) == 2:
                     continue
@@ -202,55 +252,123 @@ def _cycles(adj: dict[str, list[str]]) -> list[list[str]]:
 # one severity argument, no change here or in either staging module.
 
 
-def effective_tasks() -> TaskGraph | None:
-    """The task graph as it will stand once everything staged has applied.
+def _root():
+    from dgraph import project
+    return project.find()
 
-    Staged, not merely stored, for the A3 reason: `dg apply` writes both
-    batches, so judging a decision batch against the task store alone would
-    miss a violation the same command is about to create.
 
-    `None` — meaning "no cross-graph guard" — when the project has no task
-    store, or when what it has cannot be read or applied. An apply must not be
-    held up by a second store that is already broken in its own right:
-    `check.run` reports that separately, and refusing here would leave no way
-    to repair anything.
+def _stored_tasks() -> TaskGraph | None:
+    """The task store as it is on disk, or None if there is not one to read.
+
+    Unreadable counts as absent — meaning "no cross-graph guard" — because an
+    apply must not be held up by a second store that is already broken in its
+    own right. `check.run` reports that separately, and refusing here would
+    leave no way to repair anything.
     """
-    from dgraph import project, task_pending
-
-    proj = project.find()
+    proj = _root()
     if not proj.has_tasks:
         return None
     try:
-        tg = TaskGraph.load(proj.tasks)
+        return TaskGraph.load(proj.tasks)
     except Exception:
         return None
-    try:
-        return task_pending.preview(tg)
-    except Exception:
-        return tg
 
 
-def effective_decisions() -> Graph | None:
-    """The decision graph as it will stand once everything staged has applied.
-    The mirror of `effective_tasks`, with the same silence on a broken store."""
-    from dgraph import pending, project
-
-    proj = project.find()
+def _stored_decisions() -> Graph | None:
+    """The decision store as it is on disk. The mirror of `_stored_tasks`."""
+    proj = _root()
     if not proj.has_decisions:
         return None
     try:
-        g = Graph.load(proj.store)
+        return Graph.load(proj.store)
     except Exception:
         return None
+
+
+def _staged_task_ops() -> list[dict]:
+    from dgraph import pending, task_pending
     try:
-        return pending.preview(g)
+        return pending.load(task_pending.path())
     except Exception:
-        return g
+        return []
+
+
+def _staged_decision_ops() -> list[dict]:
+    from dgraph import pending
+    try:
+        return pending.load(_root().pending)
+    except Exception:
+        return []
 
 
 def _seen(problems: list[Violation]) -> set[str]:
     """Findings by their text, for the "no worse than before" comparison."""
     return {str(v) for v in problems}
+
+
+def _tasks_guard(g: Graph, stored_tg: TaskGraph) -> Callable[[TaskGraph], list[Violation]]:
+    """Judge a proposed task graph against a fixed decision graph, reporting
+    only what it introduces. The shared body of `guard_tasks` and of the
+    appliability test in `tasks_after`."""
+    before = _seen(validate(stored_tg, g))
+    return lambda tg: [v for v in validate(tg, g) if str(v) not in before]
+
+
+def tasks_after(stored_tg: TaskGraph, g: Graph) -> TaskGraph:
+    """The task graph as it will stand once this apply is over.
+
+    The staged task ops are included **only if they would actually apply**
+    against the decision graph `g` that is being proposed. That condition is
+    the whole finding this function exists to close.
+
+    Judging a decision batch against merely *previewed* task ops is right when
+    those ops land, and `dg apply` writes both batches, so most of the time
+    they do. But the two batches are deliberately independent — "a task batch
+    that will not apply must never stop a decision batch that would" — so
+    either can be refused while the other is written. When the task batch was
+    refused, the decision batch that landed had been validated against a task
+    graph that never existed, and the store is left holding a blocking
+    `link_acyclic` or `link_resolves` that no `dg` command produced: `dg check`
+    reports it, the commit gate denies every commit in the repository, and the
+    only exit is a hand-edit.
+
+    So the ops are put through the same `apply_all` that will judge them for
+    real — its own store's invariants *and* the cross-graph guard against `g` —
+    and on any refusal this falls back to the stored task graph, which is what
+    the store will actually hold. `preview` alone is not enough: it applies ops
+    without validating, which is precisely the difference between a batch that
+    parses and a batch that lands.
+    """
+    ops = _staged_task_ops()
+    if not ops:
+        return stored_tg
+    from dgraph import task_pending
+    try:
+        return task_pending.apply_all(stored_tg, ops, _tasks_guard(g, stored_tg))
+    except Exception:
+        return stored_tg
+
+
+def decisions_after(stored_g: Graph) -> Graph:
+    """The decision graph as it will stand once this apply is over.
+
+    The mirror of `tasks_after`, and needed in exactly one place: the
+    stage-time warning, which asks "would `dg apply` refuse this task batch?"
+    *before* anything has run. At apply time the question answers itself —
+    decisions are written first, so the file already holds a batch that landed
+    and correctly omits one that did not — but at staging time the decision
+    batch is still in its tray, and judging against the file alone would warn
+    that a link is dangling when the very next command is about to create the
+    decision it names.
+    """
+    ops = _staged_decision_ops()
+    if not ops:
+        return stored_g
+    from dgraph import pending
+    try:
+        return pending.apply_all(stored_g, ops, guard_decisions())
+    except Exception:
+        return stored_g
 
 
 def guard_decisions() -> Callable[[Graph], list[Violation]] | None:
@@ -262,35 +380,49 @@ def guard_decisions() -> Callable[[Graph], list[Violation]] | None:
     guard that refused every write while a pre-existing cycle sat in the store
     would freeze both graphs and leave hand-editing as the sole exit — the
     thing the guard exists to make unnecessary. `dg check` keeps reporting the
-    pre-existing finding the whole time.
+    pre-existing finding the whole time. That rule is load-bearing well beyond
+    convenience: it is what keeps every state reachable through these guards
+    recoverable rather than terminal.
+
+    The baseline is the project as it stands on disk — both stores, neither
+    tray — so a finding either batch introduces is attributed to the batch that
+    introduces it rather than to whichever one happens to apply first.
     """
-    tg = effective_tasks()
-    if tg is None:
+    stored_tg = _stored_tasks()
+    if stored_tg is None:
         return None
-    try:
-        before = _seen(validate(tg, Graph.load(_root().store)))
-    except Exception:
-        before = set()
-    return lambda g: [v for v in validate(tg, g) if str(v) not in before]
+    stored_g = _stored_decisions() or Graph()
+    before = _seen(validate(stored_tg, stored_g))
+    return lambda g: [v for v in validate(tasks_after(stored_tg, g), g)
+                      if str(v) not in before]
 
 
-def guard_tasks() -> Callable[[TaskGraph], list[Violation]] | None:
+def guard_tasks(*, staged_decisions: bool = False
+                ) -> Callable[[TaskGraph], list[Violation]] | None:
     """The `also` argument for `task_pending.apply_all`: judge a proposed task
     graph against the decisions it points at. Introduced findings only, for the
-    reason `guard_decisions` gives."""
-    g = effective_decisions()
+    reason `guard_decisions` gives.
+
+    Against the decision store **as it is on disk**, not against its staged
+    ops, and that is not the asymmetry with `guard_decisions` it looks like.
+    Decisions are written first, so by the time a task batch is judged the
+    store already holds a decision batch that landed — and correctly does not
+    hold one that was refused. Reading the file is therefore both the more
+    current answer and the honest one; consulting the decision tray instead
+    would mean judging this batch against decisions that may never exist,
+    which is how a task op linking to a refused `add_vertex` came to be
+    written and to deny every commit in the repository afterwards.
+
+    `staged_decisions` is for the one caller asking the question early — the
+    stage-time warning, which runs before either batch has. See
+    `decisions_after`.
+    """
+    g = _stored_decisions()
     if g is None:
         return None
-    try:
-        before = _seen(validate(TaskGraph.load(_root().tasks), g))
-    except Exception:
-        before = set()
-    return lambda tg: [v for v in validate(tg, g) if str(v) not in before]
-
-
-def _root():
-    from dgraph import project
-    return project.find()
+    if staged_decisions:
+        g = decisions_after(g)
+    return _tasks_guard(g, _stored_tasks() or TaskGraph())
 
 
 def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
@@ -349,6 +481,16 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
             f"{u['id']} is DONE and was to inform {u['decision']} "
             f"({u['decision_title']}), which is still unsettled — record what "
             f"it showed with `dg decide {u['decision']}`, or drop the link",
+            "warning",
+        ))
+
+    for u in dropped_evidence(tg, g):
+        v.append(Violation(
+            "evidence_dropped",
+            f"{u['id']} ({u['title']}) is {u['status']} and every task meant "
+            f"to inform it was abandoned ({', '.join(u['tasks'])}) — no "
+            f"evidence is coming. Settle it on what is already known with "
+            f"`dg decide {u['id']}`, plan new evidence, or drop the link",
             "warning",
         ))
 

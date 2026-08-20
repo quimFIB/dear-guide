@@ -29,7 +29,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/precommit.py\"",
-            "timeout": 15
+            "timeout": 25
           }
         ]
       }

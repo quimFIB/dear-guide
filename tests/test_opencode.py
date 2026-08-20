@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-ADAPTER = ROOT / "opencode" / "decision-graph.ts"
+ADAPTER = ROOT / "opencode" / "development-graph.ts"
 README = ROOT / "opencode" / "README.md"
 
 def test_the_opencode_adapter_parses():
@@ -67,5 +67,5 @@ def test_the_opencode_adapter_registers_hooks_that_exist():
 def test_both_hosts_share_one_skill():
     """The claim the plan rests on: the skill is installed, not ported."""
     readme = README.read_text()
-    assert "skills/decisions" in readme
+    assert "skills/development-graph" in readme
     assert not (ROOT / "opencode" / "skills").exists()

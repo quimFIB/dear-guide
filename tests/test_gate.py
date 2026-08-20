@@ -82,6 +82,21 @@ def _v(store, command="git commit -m x"):
     return gate.verdict(command, project.Project(store))
 
 
+def _break(store):
+    """A blocking violation in the decision store.
+
+    Used by every test whose subject is *something else* — which repository the
+    commit targets, whether `dg gate` exits 0 — and which only needs the gate to
+    be denying at all. Those all used to hand-edit `decision-graph.md`, which
+    stopped denying when the view checks became warnings: a stale view is a
+    lagging generated file, not a broken graph. Making the store itself invalid
+    says what those tests actually mean.
+    """
+    g = Graph.load(store / "decisions.json")
+    g.vertices["D02"] = replace(g.vertices["D02"], status="WOBBLY")
+    g.save(store / "decisions.json")
+
+
 def test_a_clean_graph_is_allowed_with_no_reason(repo):
     assert _v(repo) == {"verdict": "allow", "reason": ""}
 
@@ -97,12 +112,45 @@ def test_a_directory_with_no_graph_is_allowed(tmp_path):
                         project.Project(empty))["verdict"] == "allow"
 
 
-def test_a_stale_view_is_denied_and_names_the_remedy(repo):
-    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+def test_a_stale_view_warns_and_names_the_remedy(repo):
+    """A generated file that lags its store is worth one sentence at the moment
+    a commit records it, and is not worth refusing over: `dg render` rebuilds
+    it, and the next `dg apply` rebuilds it anyway. It denied every commit in
+    the repository until this pass — including commits touching only `src/`,
+    since `check.run` is repo-global."""
+    # The realistic shape: the store moved, nobody rendered, and the store is
+    # what the commit carries. The view is left behind *in history*, which is
+    # the one thing `dg check` cannot see and this is the last cheap moment to
+    # fix.
+    g = Graph.load(repo / "decisions.json")
+    g.vertices["D05"] = replace(g.vertices["D05"], title="Renamed")
+    g.save(repo / "decisions.json")
+    subprocess.run(["git", "-C", str(repo), "add", "decisions.json"],
+                   check=True, capture_output=True)
     v = _v(repo)
-    assert v["verdict"] == "deny"
-    assert "stale_view" in v["reason"]
+    assert v["verdict"] == "warn"
+    assert "decision-graph.md no longer matches decisions.json" in v["reason"]
     assert "dg render" in v["reason"]
+
+
+def test_a_stale_view_is_silent_for_a_commit_that_does_not_record_it(repo):
+    """The scoping that makes the warning bearable. A commit touching only
+    `src/` is not improved by being told about a generated file it has nothing
+    to do with, and that noise is most of what made the denial intolerable."""
+    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    (repo / "unrelated.txt").write_text("noise\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "unrelated.txt"], check=True,
+                   capture_output=True)
+    assert _v(repo) == {"verdict": "allow", "reason": ""}
+
+
+def test_a_stale_view_is_not_a_blocking_finding(repo):
+    """Where the severity actually lives. `dg check` still reports it, the
+    pytest plugin still raises it in the warning summary, and nothing refuses."""
+    from dgraph.check import run as check_run
+    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    hits = [v for v in check_run(project.Project(repo)) if v.check == "stale_view"]
+    assert hits and not any(v.blocking for v in hits)
 
 
 def test_a_broken_graph_is_denied_quoting_every_violation(repo):
@@ -117,18 +165,33 @@ def test_a_broken_graph_is_denied_quoting_every_violation(repo):
             assert str(problem) in v["reason"]
 
 
-def test_staging_the_store_without_the_view_is_denied(repo):
+@pytest.mark.parametrize("staged,missing", [
+    ("decisions.json", "decision-graph.md"),
+    ("decision-graph.md", "decisions.json"),
+])
+def test_staging_one_half_of_the_pair_warns(repo, staged, missing):
     """Invisible to `dg check`, which compares the worktree — and the exact way
-    a store and its view come to disagree inside one commit."""
+    a store and its view come to disagree inside one commit.
+
+    Both directions in one parametrised test, because they are one rule: the
+    pair is committed together or not at all. Only the first half was checked
+    for a long time, and the second is the likelier one — the generated file is
+    the one people `git add` without thinking about what produced it — and it
+    makes the worse commit, since the readable artifact then names decisions
+    the committed source of truth has never heard of.
+    """
     g = Graph.load(repo / "decisions.json")
     g.vertices["D05"] = replace(g.vertices["D05"], title="Renamed")
     g.save(repo / "decisions.json")
     write(g, repo / "decision-graph.md")
-    subprocess.run(["git", "-C", str(repo), "add", "decisions.json"],
+    subprocess.run(["git", "-C", str(repo), "add", staged],
                    check=True, capture_output=True)
     v = _v(repo)
-    assert v["verdict"] == "deny"
-    assert "decision-graph.md" in v["reason"] and "dg render" in v["reason"]
+    assert v["verdict"] == "warn"
+    assert f"{staged} is staged but {missing} is not" in v["reason"]
+    # each half names its own remedy: rebuild the view, or add the store
+    assert ("dg render" if staged.endswith(".json")
+            else f"git add {missing}") in v["reason"]
 
 
 def test_staging_both_is_allowed(repo):
@@ -153,7 +216,7 @@ def test_unapplied_ops_ask_rather_than_deny(repo):
 
 
 def test_the_switch_off_allows_everything(repo, monkeypatch):
-    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    _break(repo)
     monkeypatch.setenv("DG_HOOK_OFF", "1")
     assert _v(repo)["verdict"] == "allow"
 
@@ -161,7 +224,7 @@ def test_the_switch_off_allows_everything(repo, monkeypatch):
 def test_no_reason_ever_advertises_the_bypass(repo):
     """The reason is read by the model, and a model told about a bypass will use
     it. `DG_HOOK_OFF` is documented for humans, in the README."""
-    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    _break(repo)
     pending.stage({"op": "set_status", "vertex": "D05", "status": "OPEN"},
                   repo / ".dgraph-pending.json")
     for command in ("git commit -m x",):
@@ -181,20 +244,20 @@ def test_a_commit_into_another_repository_is_allowed(repo, tmp_path):
     other.mkdir()
     subprocess.run(["git", "-C", str(other), "init", "-q"], check=True,
                    capture_output=True)
-    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    _break(repo)
     assert _v(repo)["verdict"] == "deny"                        # ours: gated
     assert _v(repo, f"git -C {other} commit -m x")["verdict"] == "allow"
 
 
 def test_a_dash_c_into_the_same_repository_is_still_gated(repo):
-    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    _break(repo)
     assert _v(repo, f"git -C {repo} commit -m x")["verdict"] == "deny"
 
 
 def test_every_doubt_about_the_target_keeps_gating(repo):
     """An unresolvable -C path, or a --git-dir/--work-tree override the gate
     does not model: the conservative direction is to keep gating."""
-    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    _break(repo)
     assert _v(repo, "git -C /no/such/dir commit -m x")["verdict"] == "deny"
     assert _v(repo, "git --git-dir=/x/.git commit -m x")["verdict"] == "deny"
     assert _v(repo, "git --work-tree=/x commit -m x")["verdict"] == "deny"
@@ -229,7 +292,7 @@ def test_verdict_never_raises_even_when_state_reading_does(repo, monkeypatch):
 
 def test_gate_always_exits_zero(repo):
     """An adapter must be able to tell a refusal from a crash."""
-    (repo / "decision-graph.md").write_text("hand-edited\n", encoding="utf-8")
+    _break(repo)
     res = runner.invoke(app, ["--project", str(repo), "gate",
                               "--command", "git commit -m x", "--json"])
     assert res.exit_code == 0
@@ -286,26 +349,169 @@ def test_an_unreadable_task_tray_denies(repo_with_tasks):
     assert "dg task clear" in v["reason"]
 
 
-def test_a_staged_task_store_without_its_view_denies(repo_with_tasks):
-    """The same drift the decision pair is guarded against: a commit recording
-    a store and a view that disagree."""
+@pytest.mark.parametrize("staged,missing", [
+    ("tasks.json", "tasks.md"),
+    ("tasks.md", "tasks.json"),
+])
+def test_staging_one_half_of_the_task_pair_warns(repo_with_tasks, staged, missing):
+    """The same drift the decision pair is guarded against, in both directions:
+    a commit recording a store and a view that disagree."""
+    from dgraph import task_render
     from dgraph.tasks import TaskGraph
     tg = TaskGraph.load(repo_with_tasks / "tasks.json")
     tg.tasks["T02"].title = "Renamed"
     tg.save(repo_with_tasks / "tasks.json")
-    subprocess.run(["git", "-C", str(repo_with_tasks), "add", "tasks.json"],
+    task_render.write(tg, repo_with_tasks / "tasks.md")
+    subprocess.run(["git", "-C", str(repo_with_tasks), "add", staged],
                    check=True, capture_output=True)
     v = _v(repo_with_tasks)
-    assert v["verdict"] == "deny"
-    assert "tasks.md" in v["reason"] and "dg task render" in v["reason"]
+    assert v["verdict"] == "warn"
+    assert f"{staged} is staged but {missing} is not" in v["reason"]
 
 
 def test_the_deny_names_the_store_that_broke(repo_with_tasks):
     """A task-store violation framed as "the decision graph is not valid" sends
     the reader — often a model that will act on the sentence — to the wrong
     file."""
-    (repo_with_tasks / "tasks.md").write_text("hand-edited\n")
+    from dgraph.tasks import TaskGraph
+    tg = TaskGraph.load(repo_with_tasks / "tasks.json")
+    tg.tasks["T02"].status = "WOBBLY"
+    tg.save(repo_with_tasks / "tasks.json")
     v = _v(repo_with_tasks)
     assert v["verdict"] == "deny"
     assert "The task graph is not valid" in v["reason"]
-    assert "dg task render" in v["reason"]
+    assert "task_status_legal" in v["reason"]
+
+
+# ---- audit F11: what the commit records, not what the worktree holds -------
+
+
+def _touch_pair(repo, monkeypatch=None):
+    """Move the store and its view together, so both have something to record.
+
+    `monkeypatch` moves into the repository, because a pathspec is resolved
+    against the shell's working directory and a host hands the gate the command
+    it is about to run *there*.
+    """
+    if monkeypatch is not None:
+        monkeypatch.chdir(repo)
+    g = Graph.load(repo / "decisions.json")
+    g.vertices["D05"] = replace(g.vertices["D05"], title="Renamed")
+    g.save(repo / "decisions.json")
+    write(g, repo / "decision-graph.md")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
+                   capture_output=True)
+
+
+@pytest.mark.parametrize("command,named,missing", [
+    ("git commit -m x -- decisions.json", "decisions.json", "decision-graph.md"),
+    ("git commit decisions.json -m x", "decisions.json", "decision-graph.md"),
+    ("git commit -m x -- decision-graph.md", "decision-graph.md", "decisions.json"),
+])
+def test_a_pathspec_commit_of_half_the_pair_warns(repo, monkeypatch, command,
+                                                  named, missing):
+    """Audit F11. `git commit -- <path>` ignores the index entirely and commits
+    the worktree version of the named paths, so a gate that read only the index
+    said `allow` to the very commit the pair check exists to refuse: both files
+    staged and consistent, one of them committed.
+
+    The bare-path form (no `--`) is the same command and was equally allowed.
+    """
+    _touch_pair(repo, monkeypatch)
+    v = _v(repo, command)
+    assert v["verdict"] == "warn"
+    assert f"{named} is named in this commit but {missing} is not" in v["reason"]
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -m x",                                    # the index, consistent
+    "git commit -am x",                                   # -a commits the pair
+    "git commit -m x -- decisions.json decision-graph.md",   # both named
+    "git commit -m x -- .",                               # a directory covering both
+    "git commit -m x -- README.md",                       # names neither
+    'git commit -m x -- "*.json"',                        # opaque: falls back
+    "git commit --message=x -- decisions.json decision-graph.md",
+])
+def test_a_pathspec_that_keeps_the_pair_together_is_allowed(repo, monkeypatch,
+                                                            command):
+    """The other half of the fix, and the one that matters more day to day: a
+    parser that guessed would turn `-m x` into a pathspec named `x` and deny
+    every commit with a message."""
+    _touch_pair(repo, monkeypatch)
+    assert _v(repo, command)["verdict"] == "allow"
+
+
+def test_a_pathspec_leaving_out_an_unchanged_partner_is_allowed(repo, monkeypatch):
+    """A pathspec commit is the normal way to commit part of a dirty tree.
+    Naming the store and not the view is a contradiction only if the view has
+    something to record — here it does not, so the commit records a pair that
+    still agrees and must not be refused."""
+    monkeypatch.chdir(repo)
+    (repo / "unrelated.txt").write_text("noise\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
+                   capture_output=True)
+    assert _v(repo, "git commit -m x -- unrelated.txt")["verdict"] == "allow"
+
+
+@pytest.mark.parametrize("command,paths", [
+    ("git commit -m msg", ()),
+    ("git commit -am msg", ()),
+    ("git commit -mmsg a.py", ("a.py",)),
+    ("git commit --message=msg -- a.py", ("a.py",)),
+    ("git commit --author x -m y b.py", ("b.py",)),
+    ("git commit -F note.txt c.py", ("c.py",)),
+    ("git commit -S -m y d.py", ("d.py",)),
+])
+def test_the_pathspec_parser_knows_which_words_are_values(command, paths):
+    """`-m x` swallows its argument and `-am x` swallows it too, one option
+    later. Getting this wrong in either direction is silent: a message read as
+    a path denies every commit, a path read as a message allows every one."""
+    assert gate._commits(command)[0].paths == paths
+
+
+# ---- removals go to the human --------------------------------------------
+#
+# The only `ask` the gate emits. Not a question about validity — a removal can
+# be perfectly valid — but about whether somebody meant it, because nothing in
+# this tool records what a removal takes away.
+
+
+@pytest.mark.parametrize("command", [
+    "dg rm D02",
+    "dg rm D02 --splice",
+    "dg --project /somewhere rm D02",
+    "dg -C /somewhere task rm T01 --into T02",
+    "dg task rm T01",
+    "echo hi && dg rm D03",
+    "sudo dg rm D03",
+])
+def test_these_removals_are_put_to_the_human(command):
+    v = gate.verdict(command)
+    assert v["verdict"] == "ask" and "removes a node" in v["reason"]
+
+
+@pytest.mark.parametrize("command", [
+    "dg show",
+    "dg task drop T01 --keep T02",     # loses a claim, invents none
+    "dg undep D06 --after D05",        # likewise
+    "dg drop 0",                       # unstages an op; nothing is removed
+    "dg task drop-op 0",
+    "rm -rf D02",                      # not this tool at all
+])
+def test_these_are_not_removals(command):
+    assert gate.verdict(command)["verdict"] != "ask"
+
+
+def test_a_removal_is_asked_about_even_where_there_is_no_project(tmp_path,
+                                                                 monkeypatch):
+    """The question is about intent, not about the store, so it does not depend
+    on finding one — and a removal outside a project would fail anyway."""
+    monkeypatch.setattr(project, "_override", tmp_path)
+    assert gate.verdict("dg rm D02")["verdict"] == "ask"
+
+
+def test_the_gate_switch_still_turns_removals_off(monkeypatch):
+    """`ask` sits behind the same `_off` escape as everything else — one switch
+    for the whole gate, not one per verdict."""
+    monkeypatch.setenv("DG_HOOK_OFF", "1")
+    assert gate.verdict("dg rm D02")["verdict"] == "allow"

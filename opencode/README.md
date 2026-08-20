@@ -1,4 +1,4 @@
-# The decision graph in opencode
+# The development graph in opencode
 
 Same tool, same skill, same policy — a different host. opencode gets the two
 mechanisms Claude Code gets: the brief arrives at the start of a session, and a
@@ -9,22 +9,28 @@ commit that would leave the graph contradicting itself is refused.
 `dg` itself first:
 
 ```sh
-pip install -e /path/to/decision-graph-assistant
+pip install -e /path/to/development-graph-assistant
 ```
 
-Then three symlinks, since opencode has no plugin marketplace:
+Then symlinks, since opencode has no plugin marketplace:
 
 ```sh
-repo=/path/to/decision-graph-assistant
-ln -s "$repo/skills/decisions"              ~/.config/opencode/skills/decisions
-ln -s "$repo/opencode/decision-graph.ts"    ~/.config/opencode/plugins/decision-graph.ts
-ln -s "$repo/opencode/commands/decisions.md" ~/.config/opencode/commands/decisions.md
+repo=/path/to/development-graph-assistant
+ln -s "$repo/skills/development-graph"      ~/.config/opencode/skills/development-graph
+ln -s "$repo/opencode/development-graph.ts" ~/.config/opencode/plugins/development-graph.ts
+for c in "$repo"/commands/*.md; do
+  ln -s "$c" ~/.config/opencode/commands/"$(basename "$c")"
+done
 ```
 
 Two things about those paths:
 
 - The directories are **plural** — `plugins/`, `commands/`. The singular form
   loads nothing and says nothing about it.
+- **`commands/` is at the repo root, not under `opencode/`.** It used to hold
+  one file for one host; it now holds the same five files Claude Code loads
+  from the plugin root. One copy, two hosts — the arrangement the skill has
+  always had.
 - opencode also reads `~/.claude/skills/` and `.claude/skills/` directly, so if
   you already keep skills there, the skill symlink can point at one of those
   instead. It is the same file either way: the frontmatter is restricted to
@@ -33,24 +39,27 @@ Two things about those paths:
 Check it took:
 
 ```sh
-opencode debug skill   | grep decisions      # the skill was found
-opencode debug config  | grep decision-graph # the plugin and the command loaded
+opencode debug skill   | grep development-graph   # the skill was found
+opencode debug config  | grep development-graph  # the plugin and the command loaded
 ```
 
 Project-scoped instead of user-scoped works for two of the three:
-`.opencode/skills/decisions` and `.opencode/plugins/decision-graph.ts` are picked
-up from the repo that has the graph, but on opencode 1.18 a command in
-`.opencode/commands/` is not registered — `/decisions` needs the user-scoped
-directory. The two mechanisms do not depend on it.
+`.opencode/skills/development-graph` and `.opencode/plugins/development-graph.ts`
+are picked up from the repo that has the graph, but on opencode 1.18 a command
+in `.opencode/commands/` is not registered — the commands need the user-scoped
+directory. The two mechanisms do not depend on them.
 
 ## What you get
 
 | | |
 |---|---|
 | the brief | prepended to the first message of a session, and again after a compaction |
-| `/decisions` | the brief on demand — works whether or not the injection hook does |
+| `/dg-brief` | the brief on demand — works whether or not the injection hook does |
+| `/dg-frontier` · `/dg-tasks` | what is decidable now; the backlog and what is startable |
+| `/dg-context <id>` | every premise a decision or a task rests on — what to read before dispatching work |
+| `/dg-serve` | the graphs in a browser, started detached so the session keeps its prompt |
 | the commit gate | `dg gate` judges every `bash` call that mentions `commit`; a refusal arrives as the tool's error, with the reason and the fix |
-| the `decisions` skill | loaded by opencode's own `skill` tool when a decision is in play |
+| the `development-graph` skill | loaded by opencode's own `skill` tool when a decision or a piece of work is in play |
 
 `DG_HOOK_OFF=1` in the environment switches off both the brief and the gate. It
 has to be in opencode's own environment, not in front of the command being run —

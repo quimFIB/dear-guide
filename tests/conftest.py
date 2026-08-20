@@ -41,6 +41,20 @@ FIXTURE = {
 }
 
 
+#: What the tray adds to an op that is not part of the op: `saw` is
+#: `pending.stamp`'s drift fingerprint, `ref` is the stable id `dg drop` and
+#: `dg edit` address it by. A test comparing a staged op against the dict it
+#: wrote is otherwise comparing against the tray's own bookkeeping.
+TRAY_KEYS = ("saw", "ref")
+
+
+def bare(ops):
+    """`ops` without the tray's bookkeeping. Takes one op or a list of them."""
+    if isinstance(ops, dict):
+        return {k: v for k, v in ops.items() if k not in TRAY_KEYS}
+    return [bare(o) for o in ops]
+
+
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     """A project directory holding the fixture graph."""
@@ -71,8 +85,8 @@ TASK_FIXTURE = {
          "status": "DOING", "note": "Nobody has finished this yet."},
     ],
     "edges": [
-        {"from": "T01", "to": ["T02"]},
-        {"from": "T02", "to": ["T03"]},
+        {"from": "T01", "to": ["T02"], "kind": "precedes"},
+        {"from": "T02", "to": ["T03"], "kind": "precedes"},
     ],
 }
 

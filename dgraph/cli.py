@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pathlib
@@ -15,12 +16,14 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
+from dgraph import applying
 from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import cross, editor, pending, project, render, task_pending, task_render
+from dgraph import model
 from dgraph.model import SIMPLE_STATUSES, Graph
 from dgraph.tasks import ID_RE as TASK_ID_RE
-from dgraph.tasks import TaskGraph
+from dgraph.tasks import MISSING_EDGE, TaskGraph
 
 app = typer.Typer(
     add_completion=False,
@@ -40,11 +43,8 @@ def _version(show: bool) -> None:
     """
     if not show:
         return
-    from importlib.metadata import PackageNotFoundError, version
-    try:
-        con.print(version("decision-graph-assistant"))
-    except PackageNotFoundError:  # running from a checkout, not installed
-        con.print("unknown")
+    import dgraph
+    con.print(dgraph.version())
     raise typer.Exit()
 
 
@@ -92,8 +92,17 @@ def _eff(g: Graph, skip: int | None = None) -> Graph:
     except pending.ApplyError as exc:
         con.print(f"[red]the staged ops no longer apply cleanly, so this "
                   f"command cannot judge the graph they produce[/]\n{_x(exc)}\n"
-                  f"[dim]`dg pending` to review; `dg drop N` or `dg edit N` "
+                  f"[dim]`dg pending` to review; `dg drop <id>` or `dg edit <id>` "
                   f"to fix[/]")
+        raise typer.Exit(1) from None
+
+
+def _vet_all(g: Graph, ops: list[dict]) -> None:
+    """`pending.vet_all`, with a refusal turned into a clean CLI exit."""
+    try:
+        pending.vet_all(g, ops)
+    except pending.ApplyError as exc:
+        con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
 
 
@@ -110,7 +119,7 @@ def _warn_stuck() -> None:
     except pending.ApplyError as exc:
         con.print(f"[yellow]note: as staged, `dg apply` would currently refuse "
                   f"this batch[/]\n[dim]{_x(exc)}[/]\n"
-                  f"[dim]staging what is missing, or `dg drop N`, clears it[/]")
+                  f"[dim]staging what is missing, or `dg drop <id>`, clears it[/]")
 
 
 def _style(status: str) -> str:
@@ -138,12 +147,13 @@ def _interactive() -> bool:
     return sys.stdin.isatty()
 
 
-def _status_legal(g: Graph, status: str) -> bool:
-    """The legality rule from `Graph.validate`, applied before staging."""
-    base, _, blocker = status.partition(":")
-    if base == "BLOCKED":
-        return bool(blocker) and blocker in g.vertices
-    return base in SIMPLE_STATUSES and not blocker
+def _status_legal(g: Graph, status: str, of: str | None = None) -> bool:
+    """The legality rule from `Graph.validate`, applied before staging.
+
+    Delegates rather than restating: this used to be its own copy of the rule
+    and had already drifted from the validator's — see `model.status_fault`.
+    """
+    return model.status_fault(status, g.vertices, of=of) is None
 
 
 def _tag(v) -> str:
@@ -279,6 +289,36 @@ def path(a: str, b: str) -> None:
 
 
 @app.command()
+def context(
+    vid: str = typer.Argument(..., help="A decision id (D..) or a task id (T..)"),
+    as_json: bool = typer.Option(False, "--json", help="The same as data."),
+) -> None:
+    """Why this node is where it is: every premise it rests on.
+
+    `dg node` shows one decision; this shows the reasoning behind it — each
+    ancestor's answer, the evidence that reached it, and the falsifier that
+    would overturn it. A task id pulls in the chain behind the decision it
+    exists `because` of, which is the context a dispatched agent is otherwise
+    missing.
+    """
+    from dgraph import context as _context
+    proj = project.find()
+    if not proj.exists:
+        con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
+                  f"[dim]run `dg init` there, or pass --project PATH[/]")
+        raise typer.Exit(2)
+    try:
+        d = _context.data(proj, vid)
+    except _context.UnknownNode as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    # plain print, never con.print: this is piped into a subagent's prompt and
+    # rich soft-wraps at $COLUMNS, which would move the ids onto wrong lines.
+    print(json.dumps(d, indent=2, ensure_ascii=False) if as_json
+          else _context.text(d), end="" if not as_json else "\n")
+
+
+@app.command()
 def areas() -> None:
     """Counts by area and status."""
     g = _g()
@@ -326,9 +366,12 @@ def brief(
 
 @app.command()
 def gate(
-    command: str = typer.Option(..., "--command", metavar="CMD",
+    command: str = typer.Option(None, "--command", metavar="CMD",
                                 help="The shell command a host is about to run."),
     as_json: bool = typer.Option(False, "--json", help="Machine form."),
+    triggers: bool = typer.Option(False, "--triggers",
+                                  help="Print the substrings an adapter's fast "
+                                       "path must let through, one per line."),
 ) -> None:
     """Judge a shell command before a host runs it: allow, ask, or deny.
 
@@ -336,8 +379,23 @@ def gate(
     the answer, so the rule lives here rather than twice in two languages. Always
     exits 0 — the verdict is the output, and an adapter must be able to tell a
     refusal from a crash.
+
+    `--triggers` prints `gate.TRIGGERS` instead of judging anything. An adapter
+    skips this command entirely for a shell command containing none of them, so
+    a third host — or a check on the two that exist — can read the list from the
+    tool rather than copy it and let it go stale, which is how the removal
+    verdict came to be unreachable from both.
     """
     from dgraph import gate as _gate
+    if triggers:
+        if as_json:
+            print(json.dumps(list(_gate.TRIGGERS)))
+        else:
+            print("\n".join(_gate.TRIGGERS))
+        return
+    if command is None:
+        con.print("[red]--command is required (or --triggers)[/]")
+        raise typer.Exit(2)
     v = _gate.verdict(command)
     if as_json:
         print(json.dumps(v, ensure_ascii=False))
@@ -450,8 +508,9 @@ def _stage_close(g: Graph, op: dict) -> None:
         con.print(f"[red]unknown target(s): {', '.join(unknown)}[/]")
         raise typer.Exit(1)
     ops = pending.expand(g, op)
-    for o in ops:
-        pending.stage(o)
+    # `against`: each op records what its premises looked like now, so an
+    # apply after somebody else has moved one can say which. See `pending.stamp`.
+    pending.stage_all(ops, against=g)
     released = [o["vertex"] for o in ops if o["op"] == "set_status"]
     if released:
         con.print(f"[cyan]{len(released)}[/] vertex(es) were "
@@ -501,7 +560,7 @@ def decide(
             # not a reopen that would file a reversal of an unapplied answer.
             con.print(f"[red]a close for {vid} is already staged — "
                       f"`dg pending` to review it, `dg edit N` to revise it, "
-                      f"or `dg drop N` to unstage it[/]")
+                      f"or `dg drop <id>` to unstage it[/]")
         raise typer.Exit(1)
     if v.base_status == "BLOCKED" and v.blocker in eff.vertices \
             and not eff.vertices[v.blocker].settled:
@@ -553,6 +612,54 @@ def decide(
 
 
 @app.command()
+def repair() -> None:
+    """Stage the PROVISIONAL a reopen would have derived, where one is missing.
+
+    For a store broken from **outside** the tool. `dg reopen` marks every decided
+    descendant PROVISIONAL as it stages, and that derivation is the only producer
+    of the status — so a merge, a rebase, a partial checkout or a second clone
+    can land a DECIDED vertex on a REOPENED premise with no op to derive the
+    remedy from. `propagation` is a blocking violation, so until it is cleared
+    every `dg apply` refuses and the commit gate denies every commit in the
+    repository.
+
+    `dg check` names two ways out and, until this existed, only one of them was
+    real. *Settle the premise* — `dg decide <premise>` — does clear it, and means
+    recording an answer nobody reached; that is a lie in the one artifact this
+    tool exists to keep honest, and it is the wrong move whenever the premise is
+    genuinely still under review. *Mark it PROVISIONAL* is the truthful one, and
+    is what this stages.
+
+    Deliberately narrow. It repairs `propagation` and nothing else, and only
+    where the validator is reporting it right now — `set_status` stays an op the
+    tool derives rather than one a caller may invent, which is the property that
+    keeps a status from being writable by hand. `stale_block` and
+    `block_is_a_premise` have derivable remedies too and are left alone until
+    somebody decides they should not be; `no_dangling_refs` has none that is
+    safe to derive at all.
+    """
+    g = _g()
+    eff = _eff(g)
+    ops = pending.repairs(eff)
+    if not ops:
+        # Said precisely, because "nothing to repair" reads as "the graph is
+        # fine" and this command judges exactly one rule.
+        con.print("[dim]nothing to repair — no decision rests on an unsettled "
+                  "premise[/]\n[dim]`dg check` reports every other rule[/]")
+        return
+    for op in ops:
+        v = eff.vertices[op["vertex"]]
+        con.print(f"  [cyan]{op['vertex']}[/]  {_x(v.title)}\n"
+                  f"      [dim]DECIDED → PROVISIONAL, resting on "
+                  f"{op['derived_from']} "
+                  f"({eff.vertices[op['derived_from']].status})[/]")
+    pending.stage_all(ops, against=eff)
+    con.print(f"[green]staged[/] {len(ops)} op(s) — review with `dg pending`, "
+              f"then `dg apply`")
+    _warn_stuck()
+
+
+@app.command()
 def confirm(vid: str) -> None:
     """Re-affirm a PROVISIONAL decision: its premise moved, its answer holds.
 
@@ -584,8 +691,7 @@ def confirm(vid: str) -> None:
 
     ops = pending.expand(eff, {"op": "set_status", "vertex": vid,
                                "status": "DECIDED"})
-    for o in ops:
-        pending.stage(o)
+    pending.stage_all(ops, against=eff)
     released = [o["vertex"] for o in ops[1:]]
     if released:
         con.print(f"[cyan]{len(released)}[/] vertex(es) were BLOCKED:{vid} and "
@@ -654,8 +760,7 @@ def reopen(
             raise typer.Exit(2)
         if not typer.confirm("Stage this?", default=True):
             raise typer.Exit()
-    for o in ops:
-        pending.stage(o)
+    pending.stage_all(ops, against=eff)
     con.print(f"[green]staged[/] {len(ops)} op(s)")
     _warn_stuck()
 
@@ -685,8 +790,12 @@ def add(
             ("after", [x.strip() for x in after.split(",") if x.strip()] if after else None),
         ) if v}
         ops = _compose(eff, "add_vertex", seed=seed)
-        for o in ops:
-            pending.stage(o)
+        # The editor was the one staging route with no stage-time guard: the
+        # flag path below runs `_status_legal` and the web app runs
+        # `pending.vet`, and this ran neither, so a buffer could stage an op
+        # that could never apply — in a tray every other writer shares. F30.
+        _vet_all(eff, ops)
+        pending.stage_all(ops, against=eff)
         con.print(f"[green]staged[/] {len(ops)} op(s) — add {ops[0]['id']}")
         _warn_stuck()
         return
@@ -718,20 +827,322 @@ def add(
     if unknown:
         con.print(f"[red]unknown parent(s): {', '.join(unknown)}[/]")
         raise typer.Exit(1)
-    if not _status_legal(eff, status):
+    if not _status_legal(eff, status, of=vid):
         con.print(f"[red]illegal status {_x(status)}[/]\n"
                   f"[dim]one of {', '.join(sorted(SIMPLE_STATUSES))}, "
                   f"or BLOCKED:<existing id>[/]")
         raise typer.Exit(1)
+    # A block is a dependency, so its edge belongs in the tray beside the
+    # vertex rather than only materialising at apply time — `dg pending` is
+    # read by a person, and structure that appears from nowhere cannot be
+    # reviewed. `_apply_one` adds it regardless, and `add_edge` unions, so
+    # naming a blocker already given in --after changes nothing.
+    if status.startswith("BLOCKED:"):
+        blocker = status.split(":", 1)[1]      # `_status_legal` proved it exists
+        if blocker not in parents:
+            parents.append(blocker)
     op = {"op": "add_vertex", "id": vid, "title": title,
           "area": area, "status": status}
     if note:
         op["note"] = note
-    pending.stage(op)
-    for parent in parents:
-        pending.stage({"op": "add_edge", "from": parent, "to": [vid]})
+    # One write, and the site that most needed it: a vertex staged without its
+    # edges is only a `no_orphans` warning, so unlike every other group here a
+    # half-staged one could be applied and pass.
+    pending.stage_all([op] + [{"op": "add_edge", "from": p, "to": [vid]}
+                              for p in parents], against=eff)
     con.print(f"[green]staged[/] add {vid}")
     _warn_stuck()
+
+
+def _archived(store: pathlib.Path) -> str | None:
+    """Why this store is *not* safely removable from, or None if it is.
+
+    Removal is the one act with no record of its own: `DROPPED` keeps the task
+    and the reason, a superseded edge keeps the answer, but a removed vertex
+    leaves nothing behind — that is what it means. Git is the archive, and this
+    makes the archive real rather than assumed. Uncommitted changes to the
+    store mean `git log -p` would not recover what is about to go.
+
+    Any git trouble reads as "not a repository", the conservative direction:
+    the point is refusing when there is no archive, so an unanswerable question
+    about the archive is a refusal too.
+    """
+    from dgraph.gate import _git
+    top = _git(store.parent, "rev-parse", "--show-toplevel")
+    if top is None:
+        return "this is not a git repository, so nothing would record what is removed"
+    dirty = _git(store.parent, "status", "--porcelain", "--", str(store))
+    if dirty is None:
+        return "git could not report on the store, so the archive cannot be relied on"
+    if dirty.strip():
+        return f"{store.name} has uncommitted changes, so `git log -p` would not recover what is removed"
+    return None
+
+
+def _removal_mode(splice: bool, into: str | None) -> str:
+    if splice and into:
+        con.print("[red]--splice and --into say different things[/]\n"
+                  "[dim]--splice joins what it sat between; --into moves its "
+                  "edges onto another node[/]")
+        raise typer.Exit(2)
+    return "splice" if splice else "into" if into else "sever"
+
+
+def _sanction(what: str, lines: list[str], yes: bool) -> None:
+    """Show a removal's blast radius and get a human to agree to it.
+
+    The second belt. `dg gate` answers `ask` on these commands so a host puts
+    them to a person before they run at all; this is what the person then sees,
+    and what an agent has to pass `--yes` to get past. Neither alone is enough:
+    the gate can be switched off, and `--yes` is a flag a model can write.
+    """
+    con.print(f"[bold]{what}[/]")
+    for line in lines:
+        con.print(f"  {line}")
+    if yes:
+        return
+    if not _interactive():
+        con.print("[red]refused — removal is not reversible from inside this "
+                  "tool[/]\n[dim]re-run with --yes once the above is what you "
+                  "mean[/]")
+        raise typer.Exit(2)
+    if not typer.confirm("proceed?", default=False):
+        con.print("[dim]nothing staged[/]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def dep(
+    vid: str,
+    after: str = typer.Option(..., "--after",
+                              help="comma-separated premises this rests on"),
+) -> None:
+    """Record that this decision rests on others.
+
+    `dg add --after` could only say this when the vertex was created, so a
+    dependency between two questions that already exist had no way in — which
+    is exactly the state `dg import-md` leaves behind, since it builds a whole
+    graph of pre-existing vertices and reports the edges it could not infer.
+
+    Adding a premise to an answered question is allowed, and is not the mirror
+    of `dg undep` refusing to remove one. Recording that an answer *also*
+    opened something is additive: the answer, its source and its falsifier all
+    still stand. Removing a target says the answer never opened it, which
+    contradicts what was written down. (Making a terminal answer non-terminal
+    still needs a falsifier — `dg apply` says so.)
+    """
+    g = _g()
+    eff = _eff(g)
+    if vid not in eff.vertices:
+        con.print(f"[red]unknown vertex {vid}[/]")
+        raise typer.Exit(1)
+    parents = [x.strip() for x in after.split(",") if x.strip()]
+    unknown = [p for p in parents if p not in eff.vertices]
+    if unknown:
+        con.print(f"[red]unknown premise(s): {', '.join(unknown)}[/]")
+        raise typer.Exit(1)
+    if vid in parents:
+        con.print(f"[red]{vid} cannot rest on itself[/]")
+        raise typer.Exit(1)
+    already = [p for p in parents if p in eff.depends(vid)]
+    fresh = [p for p in parents if p not in already]
+    if already:
+        con.print(f"[dim]already rests on {', '.join(already)}[/]")
+    pending.stage_all([{"op": "add_edge", "from": p, "to": [vid]}
+                       for p in fresh], against=eff)
+    # Nothing staged is not the same as staged, and saying otherwise sends the
+    # reader to `dg pending` looking for an op that is not there.
+    if not fresh:
+        return
+    con.print(f"[green]staged[/] {vid} rests on {', '.join(fresh)}")
+    _warn_stuck()
+
+
+@app.command()
+def undep(
+    vid: str,
+    after: str = typer.Option(..., "--after",
+                              help="comma-separated premises to drop"),
+) -> None:
+    """Remove a dependency. The undo `dg add --after` never had.
+
+    Until this existed, a dependency recorded against the wrong parent could
+    only be repaired by editing `decisions.json` by hand — the exit every other
+    guard in this tool works to make unnecessary. `dg task undep` has always
+    had it; the decision store had the add half and no remove half.
+
+    Only a **bare** edge, one whose source has not been decided. A decided
+    edge's targets are part of its answer, so dropping one claims the answer no
+    longer opens that question — reopen first, and decide again meaning it.
+    """
+    g = _g()
+    eff = _eff(g)
+    if vid not in eff.vertices:
+        con.print(f"[red]unknown vertex {vid}[/]")
+        raise typer.Exit(1)
+    parents = [x.strip() for x in after.split(",") if x.strip()]
+    held = eff.depends(vid)
+    unknown = [p for p in parents if p not in held]
+    if unknown:
+        con.print(f"[red]{vid} does not rest on {', '.join(unknown)}[/]\n"
+                  f"[dim]`dg node {vid}` lists its premises[/]")
+        raise typer.Exit(1)
+    decided = [p for p in parents
+               if (e := eff.active_edge(p)) is not None and e.decided]
+    if decided:
+        con.print(f"[red]{', '.join(decided)} is decided, and its targets are "
+                  f"part of that answer[/]\n"
+                  f"[dim]`dg reopen {decided[0]}` first — that strips the "
+                  f"payload and leaves the dependency editable — then remove "
+                  f"the edge and decide again with the targets you mean[/]")
+        raise typer.Exit(1)
+
+    ops = [{"op": "remove_edge", "from": p, "to": [vid]} for p in parents]
+
+    # The one repair with no judgement in it, so it is made rather than asked
+    # about: `BLOCKED:P` asserts a dependency on P, and the edge carrying that
+    # dependency is being removed, so the status is false the moment this
+    # applies. `dg confirm` already releases blocked vertices to OPEN the same
+    # way when their blocker settles. Staged in the same batch, because
+    # `block_is_a_premise` is an error and `apply_all` would otherwise refuse
+    # the whole thing with a message about an invariant the user did not break.
+    #
+    # In the same *write*, too, and that is not the same claim. This was two
+    # `stage` calls for a while, with the comment above already asserting
+    # otherwise: safe only because the intermediate happens to be refused by
+    # `block_is_a_premise` — the coincidence F18 declined to keep relying on —
+    # and paid for by whichever other writer applied in the window, whose whole
+    # batch was refused over an invariant they had not broken. Audit F31.
+    blocker = eff.vertices[vid].blocker
+    released = (eff.vertices[vid].base_status == "BLOCKED"
+                and blocker in parents)
+    if released:
+        ops.append({"op": "set_status", "vertex": vid, "status": "OPEN"})
+    pending.stage_all(ops, against=eff)
+
+    con.print(f"[green]staged[/] {vid} no longer rests on "
+              f"{', '.join(parents)}")
+    if released:
+        con.print(f"[cyan]{vid} was BLOCKED:{blocker}[/] and is released to "
+                  f"OPEN [dim]— the block asserted the dependency being "
+                  f"removed[/]")
+
+    # Reported, not repaired: each is a judgement the graph cannot make.
+    after_eff = _eff(g)
+    fresh = {(v.check, v.message) for v in after_eff.validate()} \
+        - {(v.check, v.message) for v in eff.validate()}
+    for check, message in sorted(fresh):
+        con.print(f"[yellow]{check}[/] [dim]{_x(message)}[/]")
+    _warn_stuck()
+
+
+@app.command()
+def rm(
+    vid: str,
+    splice: bool = typer.Option(False, "--splice",
+                                help="join its premises to what it opened"),
+    into: str = typer.Option(None, "--into",
+                             help="move its edges onto this vertex instead"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation"),
+) -> None:
+    """Remove a decision. For a record made in error — nothing else.
+
+    A question that turned out not to matter is `dg decide`d and made terminal;
+    an answer that turned out wrong is `dg reopen`ed. Both keep the history,
+    which is the most valuable thing this graph holds. Removal keeps nothing:
+    it is for a vertex that should never have been written — a duplicate, an
+    import artifact, a heading that was never a decision.
+
+    By default it **severs**: the vertex goes and its edges go with it, leaving
+    a state the validators already describe. `--splice` and `--into` instead
+    **assert an edge nobody wrote**, joining what it sat between; both refuse
+    to write into a decided answer, because attaching an answer to a question
+    it never opened is the one claim this model must not manufacture.
+    """
+    mode = _removal_mode(splice, into)
+    g = _g()
+    eff = _eff(g)
+    if vid not in eff.vertices:
+        con.print(f"[red]unknown vertex {vid}[/]")
+        raise typer.Exit(1)
+    if into and into not in eff.vertices:
+        con.print(f"[red]unknown vertex {into}[/]")
+        raise typer.Exit(1)
+
+    # Refused before anything is shown, because the repair is in the other
+    # store and the two trays cannot apply as one batch. Left to `apply_all`,
+    # this would be a `link_resolves` error about a file this command never
+    # touched.
+    holding = _tasks_naming(vid)
+    if holding:
+        con.print(f"[red]{len(holding)} task(s) name {vid}: "
+                  f"{', '.join(holding)}[/]\n"
+                  f"[dim]point them elsewhere first — `dg task link <T> "
+                  f"--because <D>`, or `dg task unlink <T> --because`[/]")
+        raise typer.Exit(1)
+
+    blocked = _archived(project.find().store)
+    if blocked:
+        con.print(f"[red]refused — {blocked}[/]\n"
+                  f"[dim]commit the store first; git is the only record of "
+                  f"what a removal takes away[/]")
+        raise typer.Exit(1)
+
+    v = eff.vertices[vid]
+    lines = [f"{_x(v.title)}  [{_x(v.area)}]  {v.status}"]
+    parents, children = eff.depends(vid), eff.children(vid)
+    lines.append(f"rests on   {', '.join(parents) or '—'}")
+    lines.append(f"opens      {', '.join(children) or '—'}")
+    if mode == "splice" and parents and children:
+        lines.append(f"[yellow]asserts[/] "
+                     + ", ".join(f"{p} → {c}" for p in parents
+                                 for c in children))
+    elif mode == "into":
+        lines.append(f"[yellow]asserts[/] "
+                     + ", ".join([f"{p} → {into}" for p in parents]
+                                 + [f"{into} → {c}" for c in children]))
+    if eff.history(vid):
+        lines.append(f"[yellow]loses[/] {len(eff.history(vid))} superseded "
+                     f"answer(s) — the record of how this changed")
+    freed = sorted(o for o, x in eff.vertices.items() if x.blocker == vid)
+    if freed:
+        lines.append(f"releases   {', '.join(freed)} to OPEN")
+    op = {"op": "remove_vertex", "vertex": vid, "mode": mode}
+    if into:
+        op["into"] = into
+    # Vetted before the confirmation, not after: a `--splice` that would write
+    # into a decided answer is refused by the op itself, and asking somebody to
+    # approve a removal that cannot happen wastes the one decision this command
+    # exists to put in front of them.
+    try:
+        pending.vet(eff, op)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    _sanction(f"remove {vid} ({mode})", lines, yes)
+    pending.stage(op, against=eff)
+    con.print(f"[green]staged[/] remove {vid}")
+    _warn_stuck()
+
+
+def _tasks_naming(did: str) -> list[str]:
+    """Tasks whose `because` or `evidence_for` points at this decision.
+
+    Read through `cross`, like every other cross-graph reading. Silent where
+    there is no task store, which is most projects.
+    """
+    proj = project.find()
+    if not proj.has_tasks:
+        return []
+    try:
+        tg = TaskGraph.load(proj.tasks)
+        return sorted(set(cross.rests_on(tg, did)) | set(cross.evidence(tg, did)))
+    except Exception:
+        # A broken task store must not block a repair to the decision store;
+        # `dg check` reports it separately. Erring toward allowing the removal
+        # is safe here because `apply_all` still refuses a batch that would
+        # leave a dangling link.
+        return []
 
 
 @app.command(name="pending")
@@ -742,24 +1153,79 @@ def pending_cmd() -> None:
         con.print("[dim]nothing staged[/]")
         return
     t = Table(header_style="bold", title="Staged")
-    for c in ("#", "Op", "Vertex", "Detail"):
+    # `id` beside `#`, not instead of it: the index is what a single writer
+    # reasons about and what every message in the tool names, and the id is
+    # what survives another writer's apply. See `pending.resolve`.
+    for c in ("#", "id", "Op", "Vertex", "Detail"):
         t.add_column(c)
     for i, o in enumerate(ops):
-        detail = {
-            "close": lambda o: _x((o.get("answer") or "")[:70]),
-            "reopen": lambda o: _x(o.get("why", "")),
-            "set_status": lambda o: f"→ {o['status']}"
-            + (f"  [dim](from {o['derived_from']})[/]" if o.get("derived_from") else ""),
-            "add_vertex": lambda o: _x(o.get("title", "")),
-            "add_edge": lambda o: "→ " + ", ".join(o.get("to", [])),
-        }[o["op"]](o)
-        t.add_row(str(i), o["op"], o.get("vertex") or o.get("from") or o.get("id"), detail)
+        # `.get` with a fallback, never a direct index: this is the command
+        # every stuck-tray message sends the reader to ("`dg pending` to
+        # review"), so it has to run on a tray that is stuck. An op kind
+        # nothing recognises — a hand-edit, a file from a newer `dg` — is
+        # exactly when somebody needs to see the row, and a traceback here
+        # leaves `dg clear` as the only exit.
+        detail = _PENDING_DETAIL.get(o.get("op"), _raw_op)(o)
+        t.add_row(str(i), o.get("ref") or "—", _x(o.get("op") or "?"),
+                  _op_subject(o, "vertex"), detail)
     con.print(t)
-    con.print("[dim]`dg apply` to write, `dg drop N` to unstage[/]")
+    con.print("[dim]`dg apply` to write, `dg drop <id>` to unstage[/]")
+
+
+def _raw_op(o: dict) -> str:
+    """The fallback detail: the op itself, so an unreadable row is still a row."""
+    return _x(json.dumps(o, ensure_ascii=False))
+
+
+def _op_subject(o: dict, first: str) -> str:
+    """What a staged op is *about*, for the listing's subject column.
+
+    `first` is the store's own key — `vertex` for a decision op, `task` for a
+    task one — and the rest is shared: an edge op names its `from`, an add names
+    the `id` it is about to create.
+
+    One implementation because there are three callers now rather than two: both
+    `pending` tables and `_op_summary` below, which has to pick the same subject
+    the table showed or a drop confirmation would describe an op differently
+    from the row that named it.
+    """
+    return o.get(first) or o.get("from") or o.get("id") or "—"
+
+
+def _op_summary(o: dict, details: dict, subject: str) -> str:
+    """One line naming a staged op — the table's three columns, run together.
+
+    Printed by `dg drop` and `dg task drop-op` to say *what* was unstaged rather
+    than only which index was given. Built from the same detail map the listing
+    renders, so the two cannot drift: the row a person reviewed and the line
+    confirming its removal are the same description.
+
+    `.get` on the kind and on every field, like the tables: this is reached with
+    whatever was in the tray, including a hand-edit or an op from a newer `dg`,
+    and a traceback while unstaging would leave `dg clear` as the only exit.
+    """
+    detail = details.get(o.get("op"), _raw_op)(o)
+    return (f"{_x(o.get('op') or '?')} {_op_subject(o, subject)}"
+            + (f"  {detail}" if detail else ""))
+
+
+_PENDING_DETAIL = {
+    "close": lambda o: _x((o.get("answer") or "")[:70]),
+    "reopen": lambda o: _x(o.get("why", "")),
+    "set_status": lambda o: f"→ {_x(o.get('status', '?'))}"
+    + (f"  [dim](from {_x(o['derived_from'])})[/]" if o.get("derived_from") else ""),
+    "add_vertex": lambda o: _x(o.get("title", "")),
+    "add_edge": lambda o: "→ " + ", ".join(o.get("to", [])),
+    "remove_edge": lambda o: "✗ " + ", ".join(o.get("to", [])),
+    "remove_vertex": lambda o: f"✗ removed ({_x(o.get('mode', 'sever'))}"
+                              + (f" → {_x(o['into'])}" if o.get("into") else "")
+                              + ")",
+}
 
 
 @app.command(name="edit")
-def edit_cmd(i: int) -> None:
+def edit_cmd(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
+                                       help="the op's id, or its position")) -> None:
     """Revise a staged op in the editor, in place.
 
     Replaces rather than re-stages: re-staging would move the op to the end of
@@ -767,24 +1233,68 @@ def edit_cmd(i: int) -> None:
     was derived from.
     """
     ops = pending.load()
-    if not 0 <= i < len(ops):
-        con.print(f"[red]no staged op {i}[/]")
-        raise typer.Exit(1)
+    try:
+        i = pending.resolve(ops, ref)
+    except LookupError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
     g = _g()
     op = ops[i]
     kind = op.get("op")
     if kind not in editor.RENDERERS:
         con.print(f"[red]op {i} is {kind} — derived, not composed[/]\n"
-                  f"[dim]`dg drop {i}` to remove it[/]")
+                  f"[dim]`dg drop {op.get('ref') or i}` to remove it[/]")
         raise typer.Exit(1)
     # Deliberately not re-expanded: the derived ops are already staged, and
     # propagation depends only on which vertex is settled — never on the answer
     # text or the target list — so revising either cannot invalidate them.
     # Rendered against the batch *without* op i: the other staged ops are
     # context this revision should see, but the op being replaced is not.
-    new = _compose(_eff(g, skip=i), kind, vertex=op.get("vertex"), index=i, op=op)
-    pending.replace(i, new[0])
-    con.print(f"[green]updated[/] op {i} — review with `dg pending`")
+    eff = _eff(g, skip=i)
+    new = _compose(eff, kind, vertex=op.get("vertex"), index=i, op=op)
+    # The whole group, not `new[0]`. An `add_vertex` comes back as the vertex
+    # plus one `add_edge` per parent named in the buffer, and taking only the
+    # first discarded every structural change the edit made — silently, under a
+    # message saying it had worked. Audit F26.
+    #
+    # The edges the previous version staged go with it, or the tray would hold
+    # both readings of what the vertex rests on and apply their union. Matched
+    # under the lock by what they attach, never by index: see `replace_group`.
+    # Addressed by the op's own id, not by the index it had when the tray was
+    # read: an editor session lasts minutes, and another writer applying in that
+    # window moves every position past what it removed. The id is resolved
+    # against the tray `replace_group` is about to write. Audit F29.
+    _vet_all(eff, new)
+    pending.replace_group(op.get("ref") or i, new, against=eff,
+                          supersede=_supersedes(kind, op))
+    con.print(f"[green]updated[/] op {i} — {len(new)} op(s), review with "
+              f"`dg pending`")
+
+
+def _supersedes(kind: str, op: dict):
+    """What a revision of `op` takes out of the tray, or None for "nothing".
+
+    Only an `add_vertex` supersedes anything: `close` and `reopen` each parse
+    back to exactly one op, so a revision of either is a swap and nothing else.
+    A vertex's parents are edges, staged as separate ops, and re-stating them in
+    the buffer has to retract the old ones.
+
+    An `add_edge` naming other vertices as well keeps them. Nothing in the tool
+    stages one — every producer writes a single target — but `_apply_one` unions
+    targets and the web API takes an op as data, so dropping such an op whole
+    would lose an attachment the edit never mentioned.
+    """
+    if kind != "add_vertex":
+        return None
+    vid = op.get("id")
+
+    def supersede(other: dict) -> dict | None:
+        if other.get("op") != "add_edge" or vid not in (other.get("to") or []):
+            return other
+        rest = [t for t in other["to"] if t != vid]
+        return {**other, "to": rest} if rest else None
+
+    return supersede
 
 
 @app.command()
@@ -814,14 +1324,28 @@ def export(
 
 
 @app.command()
-def drop(i: int) -> None:
-    """Unstage one op."""
+def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
+                                   help="the op's id, or its position")) -> None:
+    """Unstage one op, by its id or its position, and say which one it was.
+
+    **Quote the id when anything else may be writing.** The tray is shared —
+    `commands/dg-serve.md` tells a user to work in the browser and a terminal at
+    once — and `pending.discard` takes applied ops out by value from wherever
+    they sit, which is what keeps a concurrent writer's work staged. Every index
+    past them then shifts, so a position read off an earlier `dg pending` can
+    address a different op by the time it is used. An id does not move: it is
+    resolved against the tray this command is about to write. Audit F29.
+
+    The position still works, because it is what a single writer sees and
+    reasons about. The two can never be confused — an id is letters only.
+    """
     try:
-        pending.drop(i)
-    except IndexError as exc:
+        gone = pending.drop(ref)
+    except LookupError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    con.print(f"[green]dropped[/] op {i}")
+    con.print(f"[green]dropped[/] {_x(ref)}: "
+              f"{_op_summary(gone, _PENDING_DETAIL, 'vertex')}")
 
 
 @app.command()
@@ -836,8 +1360,13 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
     """Validate everything staged and write it.
 
     One verb for both stores, but two independent batches: each is validated
-    and written on its own, so a task batch that will not apply can never stop
-    a decision batch that would.
+    and written on its own, so a batch that cannot be applied can never stop one
+    that can — in **either** direction, and for every reason a batch fails. A
+    refusal used to exit here and take the other batch with it; so, later and
+    less visibly, did a *missing store*, because the two helpers loaded it
+    through `_g()`/`_tg()`, which exit the process. Both are gone: each helper
+    reports its own store's absence and returns, and this function owns the one
+    exit code for the pair.
     """
     proj = project.find()
     ops = _staged_ops(proj.pending, "dg clear")
@@ -847,13 +1376,21 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
     if not ops and not task_ops:
         con.print("[dim]nothing staged[/]")
         return
-    if ops:
-        _apply_decisions(ops, dry_run)
-    if task_ops:
-        _apply_tasks(task_ops, dry_run)
-    if ops is None or task_ops is None:
-        # One tray applied, the other could not even be read. Exit nonzero so
-        # nothing downstream reads this as "everything staged is now written".
+    ok = True
+    # One lock span across both batches, not one per batch. They stay
+    # independent — either can be refused while the other is written, which is
+    # the whole point of two `_apply_*` calls — but the *pair on disk* is never
+    # observable half-applied by another writer, or by a reader that takes the
+    # same lock. A dry run writes nothing and needs none. Audit F27.
+    with contextlib.nullcontext() if dry_run else applying.writing(proj):
+        if ops:
+            ok = _apply_decisions(ops, dry_run) and ok
+        if task_ops:
+            ok = _apply_tasks(task_ops, dry_run) and ok
+    if not ok or ops is None or task_ops is None:
+        # Something was refused, or one tray could not even be read. Exit
+        # nonzero so nothing downstream reads this as "everything staged is now
+        # written" — but only after both batches have had their turn.
         raise typer.Exit(1)
 
 
@@ -872,65 +1409,129 @@ def _staged_ops(path: pathlib.Path, discard: str) -> list[dict] | None:
         return None
 
 
-def _apply_decisions(ops: list[dict], dry_run: bool) -> None:
-    g = _g()
+#: A store that will not load. Narrow on purpose: `apply_all` raises
+#: `ApplyError` for a batch that does not fit, and these are the ways the file
+#: underneath it fails instead — absent or unreadable (`OSError`), malformed
+#: JSON or a duplicate id (`ValueError`), a field the schema does not have
+#: (`TypeError`). Caught rather than allowed to propagate because a traceback
+#: out of one batch takes the other one with it, which is the whole point of
+#: `_apply_decisions` and `_apply_tasks` returning instead of exiting.
+UNREADABLE = (OSError, ValueError, TypeError)
+
+
+def _report_drift(r: applying.Result) -> None:
+    """Say what moved under this batch while it was staged.
+
+    Before the ✓, because it is context for the result rather than a footnote
+    to it. Never a refusal — the invariants already refuse the case that
+    matters, so what reaches here is a batch that applies cleanly and rests on
+    something that changed quietly. See `pending.drift`.
+    """
+    for d in r.drift:
+        con.print(f"[yellow]·[/] {_x(pending.describe(d))}")
+    if r.drift:
+        con.print(f"[dim]`dg node <id>` shows what it says now; nothing was "
+                  f"applied on the old reading[/]")
+
+
+def _apply_decisions(ops: list[dict], dry_run: bool) -> bool:
+    """Write the decision batch. Reports, and says whether it worked.
+
+    Returns rather than exiting so the task batch still gets its turn: the two
+    are independent, and `apply` owns the exit code for the pair. That is why
+    the store is *not* loaded through `_g()` here: it exits the process, and an
+    exit from inside this function is exactly the failure it exists to prevent
+    — a decision store that is absent used to take an applicable task batch
+    down with it, which is the property `apply`'s docstring claims in both
+    directions. Both trays are gitignored, so a `git checkout` of a branch
+    without `decisions.json` reaches this with work staged in the other one.
+
+    Nothing is passed to `applying` either: it re-reads under the lock on the
+    write path regardless, and reading it here first would be the second read
+    the parameter exists to avoid.
+    """
+    proj = project.find()
+    if not proj.has_decisions:
+        con.print(f"[red]✗ {len(ops)} decision op(s) not applied — no "
+                  f"{project.STORE_NAME} under {proj.root}[/]\n"
+                  f"[dim]`dg init` there, or `dg clear` to discard them[/]")
+        return False
     try:
-        # `cross.guard_decisions()` judges the result against the work resting
-        # on it: a decision batch can close a cycle through the task store
-        # (`D02 opens D01`, with a task between them), and neither store's own
-        # validator can see it.
-        out = pending.apply_all(g, ops, cross.guard_decisions())
+        r = applying.apply_decisions(ops, dry_run)
+    except pending.Collision as exc:
+        # Not a red ✗, and not "nothing written": the work *is* written — the
+        # other writer wrote it — and only this apply did nothing. The headline
+        # is what a model acts on, so a refusal that reads as loss is how one
+        # comes to re-stage under a fresh id and put two vertices behind one
+        # question. Still nonzero, because the rest of the batch was refused
+        # with the duplicate and has not landed.
+        con.print(f"[yellow]· refused — another writer got there first[/]\n"
+                  f"{_x(exc)}\n"
+                  f"[dim]`dg pending` to review; `dg drop <id>` on the duplicate, "
+                  f"then `dg apply` again for the rest of the batch[/]")
+        return False
     except pending.ApplyError as exc:
         con.print(f"[red]✗ aborted, nothing written[/]\n{_x(exc)}\n"
-                  f"[dim]`dg pending` to review; `dg drop N` to unstage[/]")
-        raise typer.Exit(1)
-    if dry_run:
-        con.print(f"[green]✓[/] {len(ops)} decision op(s) would apply cleanly")
-        return
-    # Render first: it is pure, so a rendering bug aborts before anything is
-    # written. Then the store, then clear pending — the ops are in the store
-    # now, and keeping them staged would re-apply them — and the view last,
-    # where a failure is the one recoverable case.
-    view_text = render.render(out)
-    out.save()
-    pending.clear()
-    proj = project.find()
-    try:
-        proj.view.write_text(view_text, encoding="utf-8")
-    except OSError as exc:
-        con.print(f"[yellow]applied {len(ops)} op(s) → decisions.json, but "
-                  f"{proj.view.name} could not be written[/]\n{_x(exc)}\n"
+                  f"[dim]`dg pending` to review; `dg drop <id>` to unstage[/]")
+        return False
+    except UNREADABLE as exc:
+        con.print(f"[red]✗ nothing written — {project.STORE_NAME} could not "
+                  f"be read[/]\n{_x(exc)}\n"
+                  f"[dim]`dg check` says what is wrong with it; the staged ops "
+                  f"are untouched[/]")
+        return False
+    _report_drift(r)
+    if r.dry_run:
+        con.print(f"[green]✓[/] {r.applied} decision op(s) would apply cleanly")
+        return True
+    if r.view_error:
+        con.print(f"[yellow]applied {r.applied} op(s) → {r.store}, but "
+                  f"{r.view} could not be written[/]\n{_x(r.view_error)}\n"
                   f"[dim]`dg render` regenerates it once the cause is fixed[/]")
-        raise typer.Exit(1)
-    con.print(f"[green]✓[/] applied {len(ops)} op(s) → decisions.json + "
-              f"decision-graph.md")
+        return False
+    con.print(f"[green]✓[/] applied {r.applied} op(s) → {r.store} + {r.view}")
+    return True
 
 
-def _apply_tasks(ops: list[dict], dry_run: bool) -> None:
-    tg = _tg()
+def _apply_tasks(ops: list[dict], dry_run: bool) -> bool:
+    """The same for the task batch, and `_tg()` is skipped for the same reason
+    `_g()` is. See `_apply_decisions`."""
+    proj = project.find()
+    if not proj.has_tasks:
+        con.print(f"[red]✗ {len(ops)} task op(s) not applied — no "
+                  f"{project.TASKS_NAME} under {proj.root}[/]\n"
+                  f"[dim]`dg task init` there, or `dg task clear` to discard "
+                  f"them[/]")
+        return False
     try:
-        out = task_pending.apply_all(tg, ops, cross.guard_tasks())
+        r = applying.apply_tasks(ops, dry_run)
+    except pending.Collision as exc:
+        con.print(f"[yellow]· task ops refused — another writer got there "
+                  f"first[/]\n{_x(exc)}\n"
+                  f"[dim]`dg task pending` to review; `dg task drop-op <id>` on "
+                  f"the duplicate, then `dg apply` again[/]")
+        return False
     except pending.ApplyError as exc:
         con.print(f"[red]✗ task ops aborted, nothing written[/]\n{_x(exc)}\n"
-                  f"[dim]`dg task pending` to review; `dg task drop-op N` to "
+                  f"[dim]`dg task pending` to review; `dg task drop-op <id>` to "
                   f"unstage[/]")
-        raise typer.Exit(1)
-    if dry_run:
-        con.print(f"[green]✓[/] {len(ops)} task op(s) would apply cleanly")
-        return
-    proj = project.find()
-    view_text = task_render.render(out)
-    out.save(proj.tasks)
-    pending.clear(task_pending.path())
-    try:
-        proj.task_view.write_text(view_text, encoding="utf-8")
-    except OSError as exc:
-        con.print(f"[yellow]applied {len(ops)} op(s) → {proj.tasks.name}, but "
-                  f"{proj.task_view.name} could not be written[/]\n{_x(exc)}\n"
+        return False
+    except UNREADABLE as exc:
+        con.print(f"[red]✗ nothing written — {project.TASKS_NAME} could not "
+                  f"be read[/]\n{_x(exc)}\n"
+                  f"[dim]`dg check` says what is wrong with it; the staged ops "
+                  f"are untouched[/]")
+        return False
+    if r.dry_run:
+        con.print(f"[green]✓[/] {r.applied} task op(s) would apply cleanly")
+        return True
+    if r.view_error:
+        con.print(f"[yellow]applied {r.applied} op(s) → {r.store}, but "
+                  f"{r.view} could not be written[/]\n{_x(r.view_error)}\n"
                   f"[dim]`dg task render` regenerates it[/]")
-        raise typer.Exit(1)
-    con.print(f"[green]✓[/] applied {len(ops)} op(s) → {proj.tasks.name} + "
-              f"{proj.task_view.name}")
+        return False
+    con.print(f"[green]✓[/] applied {r.applied} op(s) → {r.store} + {r.view}")
+    return True
 
 
 @app.command(name="render")
@@ -975,23 +1576,48 @@ def _teff(tg: TaskGraph, skip: int | None = None) -> TaskGraph:
     try:
         return task_pending.preview(tg, skip=skip)
     except pending.ApplyError as exc:
-        # `dg task drop-op N`, not `dg task drop N`: the latter exists and
+        # `dg task drop-op <id>`, not `dg task drop <id>`: the latter exists and
         # abandons a task called N, which is not what a stuck tray needs.
         con.print(f"[red]the staged task ops no longer apply cleanly[/]\n{_x(exc)}\n"
-                  f"[dim]`dg task pending` to review; `dg task drop-op N` to "
+                  f"[dim]`dg task pending` to review; `dg task drop-op <id>` to "
                   f"fix[/]")
         raise typer.Exit(1) from None
 
 
 def _tstage(op: dict) -> None:
-    """Vet an op against the effective task graph, then stage it."""
-    tg = _teff(_tg())
+    """Vet an op against the effective task graph, then stage it. The singular
+    of `_tstage_all`, for a command whose whole change really is one op."""
+    _tstage_all([op])
+
+
+def _tstage_all(ops: list[dict]) -> None:
+    """Vet a group against the effective task graph, then stage it as one write.
+
+    `pending.stage_all`'s argument, applied to the store that did not have it.
+    Four task commands build groups — `add --after`, `dep`, `undep`, `drop
+    --drop-too` — and each used to stage one op per iteration, one lock and one
+    load-modify-save apiece. Between two of those the tray holds half a group.
+
+    On the decision side that was safe by coincidence: a half-applied
+    propagation leaves a graph `validate` calls invalid, so an apply landing
+    mid-group was refused. **Here there is no such coincidence.** This store has
+    no orphan check, no stored blocked-ness and no cross-task completion rule,
+    so half a group validates clean and is written — `dg task add --after T01`
+    could land the task alone, and it reads as startable to everything that asks.
+    Audit F28.
+
+    The whole group is vetted before any of it is staged (`vet_all`), so a
+    refusal leaves the tray as it was rather than holding the first half of
+    something the command then gave up on.
+    """
+    if not ops:
+        return
     try:
-        task_pending.vet(tg, op)
+        task_pending.vet_all(_teff(_tg()), ops)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    pending.stage(op, task_pending.path())
+    pending.stage_all(ops, task_pending.path())
 
 
 def _twarn_stuck() -> None:
@@ -1004,12 +1630,16 @@ def _twarn_stuck() -> None:
     rather than once per op, since one command may stage several.
     """
     try:
+        # `staged_decisions=True`: this runs before either batch has, and
+        # `dg apply` writes decisions first, so a task op naming a decision
+        # that is staged alongside it will apply cleanly. Warning about it
+        # here would be a message that the very next command disproves.
         task_pending.apply_all(TaskGraph.load(), pending.load(task_pending.path()),
-                               cross.guard_tasks())
+                               cross.guard_tasks(staged_decisions=True))
     except pending.ApplyError as exc:
         con.print(f"[yellow]note: as staged, `dg apply` would currently refuse "
                   f"this task batch[/]\n[dim]{_x(exc)}[/]\n"
-                  f"[dim]staging what is missing, or `dg task drop-op N`, "
+                  f"[dim]staging what is missing, or `dg task drop-op <id>`, "
                   f"clears it[/]")
 
 
@@ -1029,6 +1659,72 @@ def task_init(
     tg.save(proj.tasks)
     task_render.write(tg, proj.task_view)
     con.print(f"[green]✓[/] created {proj.tasks} and {proj.task_view.name}")
+    _report_ignored(proj)
+
+
+#: How each edge kind reads in a CLI message, phrased from the *new* task's
+#: side — every flag below says "this task, relative to those". One table
+#: because the two relations share no verb, and a message loose enough to cover
+#: both would describe neither: `--after` makes this task wait, and
+#: `--discovered-during` deliberately does not.
+_REL = {
+    "precedes": {"flag": "--after", "reads": "after",
+                 "self": "cannot come after itself"},
+    "prompted": {"flag": "--discovered-during", "reads": "discovered during",
+                 "self": "cannot be discovered during itself"},
+}
+
+
+def _held(tg: TaskGraph, tid: str, kind: str) -> list[str]:
+    """What already relates to `tid` this way — the reverse of the stored edge."""
+    return (tg.prerequisites(tid) if kind == "precedes"
+            else tg.discovered_during(tid))
+
+
+def _relation_targets(tg: TaskGraph, tid: str, raw: str, kind: str) -> list[str]:
+    """Parse and check one relation spec, staging nothing. Exits on anything bad.
+
+    Separate from the staging below so a command taking two specs can check
+    both before writing either: `dg task add --after X --discovered-during ???`
+    must not leave the new task staged and the batch half built.
+    """
+    others = [x.strip() for x in raw.split(",") if x.strip()]
+    unknown = [o for o in others if o not in tg.tasks]
+    if unknown:
+        con.print(f"[red]unknown task(s): {', '.join(unknown)}[/]")
+        raise typer.Exit(1)
+    if tid in others:
+        con.print(f"[red]{tid} {_REL[kind]['self']}[/]")
+        raise typer.Exit(1)
+    return others
+
+
+def _relation_ops(tg: TaskGraph, tid: str, others: list[str],
+                  kind: str) -> tuple[list[dict], list[str], list[str]]:
+    """The ops for one kind of edge, and what was fresh versus already held.
+
+    Computing the ops is split from staging and from saying so, the way
+    `_relation_targets` already split *checking* from staging — and for the same
+    reason one step further on: a command taking two relation specs has to be
+    able to build both groups before writing either, or the tray holds half of
+    what was asked for. See `_tstage_all`.
+    """
+    already = [o for o in others if o in _held(tg, tid, kind)]
+    fresh = [o for o in others if o not in already]
+    return ([{"op": "add_dep", "from": o, "to": [tid], "kind": kind}
+             for o in fresh], fresh, already)
+
+
+def _say_relation(tid: str, kind: str, fresh: list[str],
+                  already: list[str]) -> None:
+    """What `_relation_ops` staged, said after the write."""
+    rel = _REL[kind]
+    if already:
+        con.print(f"[dim]already {rel['reads']} {', '.join(already)}[/]")
+    # See `dep`: claiming to have staged nothing sends the reader to
+    # `dg task pending` looking for an op that is not there.
+    if fresh:
+        con.print(f"[green]staged[/] {tid} {rel['reads']} {', '.join(fresh)}")
 
 
 @task_app.command("add")
@@ -1038,6 +1734,9 @@ def task_add(
     area: str = typer.Option(None, "--area"),
     after: str = typer.Option(None, "--after",
                               help="comma-separated tasks that must come first"),
+    discovered_during: str = typer.Option(
+        None, "--discovered-during",
+        help="comma-separated tasks whose doing turned this one up"),
     because: str = typer.Option(None, "--because",
                                 help="the decision this work exists because of"),
     evidence_for: str = typer.Option(None, "--evidence-for",
@@ -1065,12 +1764,6 @@ def task_add(
         con.print(f"[red]unknown area. one of: "
                   f"{', '.join(_x(a) for a in tg.areas)}[/]")
         raise typer.Exit(1)
-    parents = [x.strip() for x in after.split(",") if x.strip()] if after else []
-    unknown = [p for p in parents if p not in tg.tasks]
-    if unknown:
-        con.print(f"[red]unknown prerequisite(s): {', '.join(unknown)}[/]")
-        raise typer.Exit(1)
-
     op = {"op": "add_task", "id": tid, "title": title, "area": area}
     if note:
         op["note"] = note
@@ -1078,10 +1771,23 @@ def task_add(
         op["because"] = _resolve_premise(because)
     if evidence_for:
         op["evidence_for"] = _resolve_premise(evidence_for)
-    _tstage(op)
-    for p in parents:
-        _tstage({"op": "add_dep", "from": p, "to": [tid]})
+    # Both relation specs are checked before anything is staged, so a typo in
+    # the second one does not leave the new task sitting in the tray alone.
+    rels = [(_relation_targets(tg, tid, raw, kind), kind)
+            for raw, kind in ((after, "precedes"),
+                              (discovered_during, "prompted")) if raw]
+    # The task and its edges are one write. A task landing without them is not
+    # a partial batch that something refuses — it is a task that reads as
+    # startable, which is the whole of audit F28.
+    ops, said = [op], []
+    for others, kind in rels:
+        more, fresh, already = _relation_ops(tg, tid, others, kind)
+        ops += more
+        said.append((kind, fresh, already))
+    _tstage_all(ops)
     con.print(f"[green]staged[/] add {tid}")
+    for kind, fresh, already in said:
+        _say_relation(tid, kind, fresh, already)
     _twarn_stuck()
 
 
@@ -1242,52 +1948,91 @@ def task_unlink(
 @task_app.command("dep")
 def task_dep(
     tid: str,
-    after: str = typer.Option(..., "--after",
+    after: str = typer.Option(None, "--after",
                               help="comma-separated tasks that must come first"),
+    discovered_during: str = typer.Option(
+        None, "--discovered-during",
+        help="comma-separated tasks whose doing turned this one up"),
 ) -> None:
-    """Record that this task waits on others.
+    """Record how this task relates to other tasks.
 
-    `dg task add --after` could only say this when the task was created, so a
-    dependency discovered later had no way in at all.
+    Two relations, and they make different claims. `--after` is a prerequisite:
+    it makes this task wait. `--discovered-during` is provenance: it records
+    which work turned this one up, makes it wait on nothing, and frequently
+    runs the other way from the ordering — a cleanup noticed mid-task usually
+    has to land before that task can be finished.
+
+    `dg task add` could only say either when the task was created, so a relation
+    discovered later had no way in at all.
     """
     tg = _teff(_tg())
     _require_task(tid, tg)
-    parents = [x.strip() for x in after.split(",") if x.strip()]
-    unknown = [p for p in parents if p not in tg.tasks]
-    if unknown:
-        con.print(f"[red]unknown prerequisite(s): {', '.join(unknown)}[/]")
-        raise typer.Exit(1)
-    if tid in parents:
-        con.print(f"[red]{tid} cannot come before itself[/]")
-        raise typer.Exit(1)
-    already = [p for p in parents if p in tg.prerequisites(tid)]
-    if already:
-        con.print(f"[dim]already waiting on {', '.join(already)}[/]")
-    for p in parents:
-        if p not in already:
-            _tstage({"op": "add_dep", "from": p, "to": [tid]})
-    con.print(f"[green]staged[/] {tid} after {', '.join(parents)}")
+    if not after and not discovered_during:
+        con.print("[red]nothing to record[/]\n"
+                  "[dim]pass --after or --discovered-during[/]")
+        raise typer.Exit(2)
+    rels = [(_relation_targets(tg, tid, raw, kind), kind)
+            for raw, kind in ((after, "precedes"),
+                              (discovered_during, "prompted")) if raw]
+    # Both kinds in one write: `--after X --discovered-during Y` is one
+    # statement about how this task relates to the others, and half of it is a
+    # different statement. See `_tstage_all`.
+    ops, said = [], []
+    for others, kind in rels:
+        more, fresh, already = _relation_ops(tg, tid, others, kind)
+        ops += more
+        said.append((kind, fresh, already))
+    _tstage_all(ops)
+    for kind, fresh, already in said:
+        _say_relation(tid, kind, fresh, already)
     _twarn_stuck()
 
 
 @task_app.command("undep")
 def task_undep(
     tid: str,
-    after: str = typer.Option(..., "--after",
+    after: str = typer.Option(None, "--after",
                               help="comma-separated prerequisites to drop"),
+    discovered_during: str = typer.Option(
+        None, "--discovered-during",
+        help="comma-separated origins to drop"),
 ) -> None:
-    """Remove a prerequisite. Releases this task if it waited only on that."""
+    """Remove a relation. Releases this task if it waited only on that.
+
+    Naming the kind is required rather than inferred from the pair, because
+    both kinds can hold between the same two tasks: guessing would delete the
+    ordering when the correction was to the provenance.
+    """
     tg = _teff(_tg())
     _require_task(tid, tg)
-    parents = [x.strip() for x in after.split(",") if x.strip()]
-    unknown = [p for p in parents if p not in tg.prerequisites(tid)]
-    if unknown:
-        con.print(f"[red]not a prerequisite of {tid}: {', '.join(unknown)}[/]\n"
-                  f"[dim]`dg task node {tid}` lists what it waits on[/]")
-        raise typer.Exit(1)
-    for p in parents:
-        _tstage({"op": "remove_dep", "from": p, "to": [tid]})
-    con.print(f"[green]staged[/] {tid} no longer after {', '.join(parents)}")
+    if not after and not discovered_during:
+        con.print("[red]nothing to remove[/]\n"
+                  "[dim]pass --after or --discovered-during[/]")
+        raise typer.Exit(2)
+    # Every spec is checked, then every op is staged in one write, then the
+    # whole thing is reported — so a bad second spec cannot leave the first
+    # one's removals staged alone. See `_tstage_all`.
+    ops, said = [], []
+    for raw, kind in ((after, "precedes"), (discovered_during, "prompted")):
+        if not raw:
+            continue
+        held = _held(tg, tid, kind)
+        others = [x.strip() for x in raw.split(",") if x.strip()]
+        unknown = [o for o in others if o not in held]
+        if unknown:
+            con.print("[red]"
+                      + MISSING_EDGE[kind].format(
+                          src=", ".join(unknown), other=tid)
+                      + "[/]\n"
+                      f"[dim]`dg task node {tid}` lists both relations[/]")
+            raise typer.Exit(1)
+        ops += [{"op": "remove_dep", "from": o, "to": [tid], "kind": kind}
+                for o in others]
+        said.append((kind, others))
+    _tstage_all(ops)
+    for kind, others in said:
+        con.print(f"[green]staged[/] {tid} no longer {_REL[kind]['reads']} "
+                  f"{', '.join(others)}")
     _twarn_stuck()
 
 
@@ -1321,23 +2066,122 @@ def task_done(
     _twarn_stuck()
 
 
+def _csv(raw: str | None) -> list[str]:
+    return [x.strip() for x in raw.split(",") if x.strip()] if raw else []
+
+
+def _fallout(tg: TaskGraph, tid: str) -> dict[str, str]:
+    """What dropping `tid` would leave standing, and why each one is affected.
+
+    Two different consequences, deliberately reported together because they
+    need the same judgement from the same person at the same moment:
+
+    *released* — work that waited only on `tid`, which `RESOLVED` will make
+    startable. That may be wrong: a prerequisite that produced something this
+    work consumes does not release it, it undermines it.
+
+    *orphaned* — work `tid` turned up, which nothing else explains. Dropping
+    `tid` changes nothing about it at all, which is precisely why it needs
+    saying: provenance gates nothing, so the silence is total.
+
+    Only counts an origin as gone when every *other* origin is already DROPPED
+    — one surviving origin still says why the work exists.
+    """
+    out = {}
+    for t in tg.unblocks(tid):
+        if tg.waiting_on(t) == [tid]:
+            out[t] = f"released — waited only on {tid}"
+    for t in tg.prompted(tid):
+        if tg.tasks[t].unfinished and all(
+                o == tid or tg.tasks[o].status == "DROPPED"
+                for o in tg.discovered_during(t)):
+            out[t] = f"orphaned — discovered during {tid}"
+    return out
+
+
 @task_app.command("drop")
 def task_drop(
     tid: str,
     why: str = typer.Option(None, "--why", "-w", help="why it is not being done"),
+    keep: str = typer.Option(None, "--keep",
+                             help="affected tasks that are still worth doing"),
+    drop_too: str = typer.Option(None, "--drop-too",
+                                 help="affected tasks to abandon along with it"),
 ) -> None:
-    """Stage a task as abandoned. Releases anything waiting on it."""
+    """Stage a task as abandoned, and settle what that leaves behind.
+
+    Dropping is the one status change that acts on other work: it releases what
+    waited on this task and orphans what this task turned up. Each of those
+    needs a verdict, and the moment to give one is now, while the reason for
+    dropping is still in mind. `dg check` asks the same questions afterwards,
+    which is the backstop, not the intended path.
+
+    A task named in `--drop-too` is staged as dropped but its *own* fallout is
+    not walked from here — one command, one judgement. The check picks up
+    anything the cascade releases.
+
+    `--keep` settles the cascade, not the backlog. `dg check` goes on asking
+    about kept work until it starts, loses the dead prerequisite, or records
+    what it now stands on — because "still worth doing" said once in a terminal
+    is not something the store can read afterwards, and the two questions are
+    genuinely different: this one is about the drop, that one is about a task
+    sitting in the backlog with nothing explaining it.
+    """
     tg = _teff(_tg())
     _require_task(tid, tg)
-    released = [t for t in tg.unblocks(tid) if tg.waiting_on(t) == [tid]]
+    fallout = _fallout(tg, tid)
+    kept, doomed = _csv(keep), _csv(drop_too)
+
+    stray = [t for t in kept + doomed if t not in fallout]
+    if stray:
+        con.print(f"[red]not affected by dropping {tid}: "
+                  f"{', '.join(sorted(set(stray)))}[/]\n"
+                  f"[dim]--keep and --drop-too name only the work this drop "
+                  f"leaves standing[/]")
+        raise typer.Exit(1)
+    both = sorted(set(kept) & set(doomed))
+    if both:
+        con.print(f"[red]{', '.join(both)} named as both kept and dropped[/]")
+        raise typer.Exit(1)
+
+    undecided = [t for t in sorted(fallout) if t not in kept and t not in doomed]
+    if undecided:
+        if not _interactive():
+            # Refused rather than defaulted, because both defaults are wrong
+            # somewhere: assuming "keep" is how a task whose whole purpose died
+            # with `tid` stays in the backlog, and assuming "drop" throws away
+            # work that was only ever incidentally connected.
+            con.print(f"[red]{len(undecided)} task(s) need a verdict before "
+                      f"{tid} can be dropped[/]")
+            for t in undecided:
+                con.print(f"  [bold]{t}[/]  {_x(tg.tasks[t].title)}\n"
+                          f"      [dim]{fallout[t]}[/]")
+            con.print(f"[dim]re-run naming each one: --keep A,B and/or "
+                      f"--drop-too C,D[/]")
+            raise typer.Exit(2)
+        for t in undecided:
+            con.print(f"[bold]{t}[/]  {_x(tg.tasks[t].title)}\n"
+                      f"    [dim]{fallout[t]}[/]")
+            (kept if typer.confirm("  still worth doing?", default=True)
+             else doomed).append(t)
+
     op = {"op": "set_status", "task": tid, "status": "DROPPED"}
     if why:
         op["why"] = why
-    _tstage(op)
-    if released:
-        con.print(f"[cyan]{len(released)}[/] task(s) waited only on {tid} and "
-                  f"are released: {', '.join(released)}")
+    # The drop and its cascade are one write. They are one judgement — the
+    # operator was asked about each cascaded task and answered — and a tray
+    # holding only the first half says the opposite of what they answered.
+    cascade = [{"op": "set_status", "task": t, "status": "DROPPED",
+                "why": f"abandoned along with {tid}"} for t in sorted(doomed)]
+    _tstage_all([op] + cascade)
     con.print(f"[green]staged[/] {tid} → DROPPED")
+    for c in cascade:
+        con.print(f"[green]staged[/] {c['task']} → DROPPED")
+    if kept:
+        con.print(f"[cyan]kept[/]: {', '.join(sorted(kept))} "
+                  f"[dim]— still worth doing without {tid}[/]")
+        con.print(f"[dim]`dg check` asks again until each one starts, drops "
+                  f"the dead prerequisite, or records what it stands on[/]")
     _twarn_stuck()
 
 
@@ -1383,6 +2227,65 @@ def task_show(ctx: typer.Context) -> None:
     ))
 
 
+@task_app.command("rm")
+def task_rm(
+    tid: str,
+    splice: bool = typer.Option(False, "--splice",
+                                help="join what came before it to what follows"),
+    into: str = typer.Option(None, "--into",
+                             help="move its edges onto this task instead"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation"),
+) -> None:
+    """Remove a task. For a record made in error — nothing else.
+
+    Work that will not be done is `dg task drop`, which keeps the task, the
+    reason, and a verdict on everything the drop leaves standing. Removal keeps
+    none of that. Use it for a task filed twice, or one that turned out to be a
+    restatement of another — `--into` folds it into the one it duplicates.
+
+    Reconnection happens **per edge kind**: prerequisites join to
+    prerequisites, provenance to provenance. Splicing across them would assert
+    an ordering nobody claimed.
+    """
+    mode = _removal_mode(splice, into)
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    if into and into not in tg.tasks:
+        con.print(f"[red]unknown task {into}[/]")
+        raise typer.Exit(1)
+    blocked = _archived(project.find().tasks)
+    if blocked:
+        con.print(f"[red]refused — {blocked}[/]\n"
+                  f"[dim]commit the store first; git is the only record of "
+                  f"what a removal takes away[/]")
+        raise typer.Exit(1)
+
+    t = tg.tasks[tid]
+    lines = [f"{_x(t.title)}  [{_x(t.area)}]  {t.status}"]
+    for label, before, after in (
+            ("after", tg.prerequisites(tid), tg.unblocks(tid)),
+            ("found doing", tg.discovered_during(tid), tg.prompted(tid))):
+        if before or after:
+            lines.append(f"{label:<12}{', '.join(before) or '—'}  "
+                         f"→ {', '.join(after) or '—'}")
+    if t.status == "DONE" and t.outcome:
+        lines.append(f"[yellow]loses[/] the outcome: {_x(t.outcome)}")
+    if t.why:
+        lines.append(f"[yellow]loses[/] why it was dropped: {_x(t.why)}")
+    op = {"op": "remove_task", "task": tid, "mode": mode}
+    if into:
+        op["into"] = into
+    try:
+        task_pending.vet(tg, op)          # before the confirmation; see `rm`
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    _sanction(f"remove {tid} ({mode})", lines, yes)
+    _tstage(op)
+    con.print(f"[green]staged[/] remove {tid}")
+    _twarn_stuck()
+
+
 @task_app.command("node")
 def task_node(tid: str) -> None:
     """Everything known about one task."""
@@ -1407,6 +2310,13 @@ def task_node(tid: str) -> None:
         f"waiting on  {', '.join(tg.waiting_on(tid)) or '—'}",
         f"unblocks    {', '.join(tg.unblocks(tid)) or '—'}",
     ]
+    # Printed only when they hold. Provenance is genuinely absent for most
+    # work, and an "— " on every panel would train the eye to skip the line
+    # on the tasks where it says something.
+    if tg.discovered_during(tid):
+        lines.append(f"found doing {', '.join(tg.discovered_during(tid))}")
+    if tg.prompted(tid):
+        lines.append(f"turned up   {', '.join(tg.prompted(tid))}")
     if t.because:
         lines.append(f"because     {t.because}"
                      + ("  [yellow](undecided)[/]" if gate else ""))
@@ -1416,7 +2326,7 @@ def task_node(tid: str) -> None:
         lines.append(f"done        {t.done}")
     if t.outcome:
         lines += ["", "[bold]Outcome[/]", _x(t.outcome)]
-    if t.why:
+    if t.why and t.status == "DROPPED":
         lines += ["", "[bold]Not being done[/]", _x(t.why)]
     if t.note:
         lines += ["", "[bold]Note[/]", _x(t.note)]
@@ -1432,33 +2342,50 @@ def task_pending_cmd() -> None:
         con.print("[dim]nothing staged[/]")
         return
     t = Table(header_style="bold", title="Staged tasks")
-    for c in ("#", "Op", "Task", "Detail"):
+    for c in ("#", "id", "Op", "Task", "Detail"):
         t.add_column(c)
     for i, o in enumerate(ops):
-        detail = {
-            "add_task": lambda o: _x(o.get("title", "")),
-            "add_dep": lambda o: "→ " + ", ".join(o.get("to", [])),
-            "remove_dep": lambda o: "✗ " + ", ".join(o.get("to", [])),
-            "set_link": lambda o: ", ".join(
-                [f"{f} {o[f]}" for f in ("because", "evidence_for") if o.get(f)]
-                + [f"clear {f}" for f in o.get("clear", ())]),
-            "set_status": lambda o: f"→ {o['status']}",
-        }.get(o["op"], lambda o: _x(json.dumps(o)))(o)
-        t.add_row(str(i), o["op"], o.get("task") or o.get("from") or o.get("id"),
-                  detail)
+        # `.get` on the kind *and* on every field it reads: a known kind
+        # missing a required field is the same unlistable tray as an unknown
+        # kind, and both are what a hand-edit looks like. See `pending_cmd`.
+        detail = _TASK_DETAIL.get(o.get("op"), _raw_op)(o)
+        t.add_row(str(i), o.get("ref") or "—", _x(o.get("op") or "?"),
+                  _op_subject(o, "task"), detail)
     con.print(t)
-    con.print("[dim]`dg apply` to write, `dg task drop-op N` to unstage[/]")
+    con.print("[dim]`dg apply` to write, `dg task drop-op <id>` to unstage[/]")
+
+
+_TASK_DETAIL = {
+    "add_task": lambda o: _x(o.get("title", "")),
+    # The kind is named, not implied: the whole point of storing it is that a
+    # reader never has to know which relation an absence stands for, and a
+    # review screen is where that matters most. Not bracketed — square brackets
+    # are console markup here, and rich ate the first version of this line.
+    "add_dep": lambda o: f"{_x(o.get('kind', '?'))} → {', '.join(o.get('to', []))}",
+    "remove_dep": lambda o: f"✗ {_x(o.get('kind', '?'))} → {', '.join(o.get('to', []))}",
+    "set_link": lambda o: ", ".join(
+        [f"{f} {_x(o[f])}" for f in ("because", "evidence_for") if o.get(f)]
+        + [f"clear {_x(f)}" for f in o.get("clear", ())]),
+    "set_status": lambda o: f"→ {_x(o.get('status', '?'))}",
+    "remove_task": lambda o: f"✗ removed ({_x(o.get('mode', 'sever'))}"
+                            + (f" → {_x(o['into'])}" if o.get("into") else "")
+                            + ")",
+}
 
 
 @task_app.command("drop-op")
-def task_drop_op(i: int) -> None:
-    """Unstage one staged task op."""
+def task_drop_op(
+    ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
+                              help="the op's id, or its position"),
+) -> None:
+    """Unstage one staged task op, by id or position. See `dg drop`."""
     try:
-        pending.drop(i, task_pending.path())
-    except IndexError as exc:
+        gone = pending.drop(ref, task_pending.path())
+    except LookupError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    con.print(f"[green]dropped[/] task op {i}")
+    con.print(f"[green]dropped[/] task op {_x(ref)}: "
+              f"{_op_summary(gone, _TASK_DETAIL, 'task')}")
 
 
 @task_app.command("clear")
@@ -1491,6 +2418,20 @@ def init(
     g.save(proj.store)
     render.write(g, proj.view)
     con.print(f"[green]✓[/] created {proj.store} and {proj.view.name}")
+    _report_ignored(proj)
+
+
+def _report_ignored(proj: project.Project) -> None:
+    """Say what `init` added to `.gitignore`, if anything.
+
+    Done here rather than left to the reader: the staging trays, the locks and
+    the temp files are all scratch, and the commit gate's own advice ("it is
+    gitignored, so committing now drops them from the record") is only true if
+    they actually are.
+    """
+    added = project.ensure_ignored(proj.root)
+    if added:
+        con.print(f"[dim]added to .gitignore: {', '.join(added)}[/]")
 
 
 @app.command(name="import-md")
@@ -1531,10 +2472,67 @@ def import_md(
 
 
 @app.command()
-def serve(port: int = typer.Option(8765, "--port", "-p")) -> None:
-    """Launch the local web app."""
-    from dgraph.server import run
-    run(port)
+def serve(
+    port: int = typer.Option(8765, "--port", "-p"),
+    detach: bool = typer.Option(False, "--detach", "-d",
+                                help="Start it in the background and return."),
+    stop: bool = typer.Option(False, "--stop", help="Stop the detached server."),
+    status: bool = typer.Option(False, "--status",
+                                help="Say whether one is running."),
+) -> None:
+    """Browse and edit both graphs in a local web app.
+
+    Blocks by default, which is right for a terminal. `--detach` starts it in
+    its own session, prints the URL and returns — so a coding-agent session can
+    open the app without giving up its own prompt. It is idempotent: run twice,
+    the second run reports the first one's URL.
+    """
+    from dgraph import server
+    if sum([detach, stop, status]) > 1:
+        con.print("[red]--detach, --stop and --status are three different "
+                  "questions; ask one[/]")
+        raise typer.Exit(2)
+
+    if status:
+        st = server.status()
+        if st["state"] == "running":
+            con.print(f"[green]running[/] · pid {st['pid']} · {st['url']}")
+        elif st["state"] == "stale":
+            con.print(f"[yellow]not running[/] — {server.SERVE_NAME} describes "
+                      f"a server that no longer answers\n"
+                      f"[dim]`dg serve --stop` clears the record[/]")
+            raise typer.Exit(1)
+        else:
+            con.print("[dim]not running[/]")
+            raise typer.Exit(1)
+        return
+
+    if stop:
+        st = server.stop()
+        if st["state"] == "stopped":
+            con.print(f"[green]stopped[/] pid {st['pid']} (port {st['port']})")
+        elif st.get("error"):
+            con.print(f"[red]could not stop pid {st['pid']}[/]\n{_x(st['error'])}")
+            raise typer.Exit(1)
+        elif st.get("cleared"):
+            con.print(f"[yellow]nothing was running[/] — cleared a stale "
+                      f"{server.SERVE_NAME}")
+        else:
+            con.print("[dim]nothing to stop[/]")
+        return
+
+    if detach:
+        try:
+            st = server.detach(port)
+        except RuntimeError as exc:
+            con.print(f"[red]{_x(exc)}[/]")
+            raise typer.Exit(1) from None
+        con.print(f"[green]{'already running' if st['already'] else 'started'}[/]"
+                  f" · pid {st['pid']} · {st['url']}\n"
+                  f"[dim]`dg serve --stop` when you are done[/]")
+        return
+
+    server.run(port=port)
 
 
 def main() -> None:

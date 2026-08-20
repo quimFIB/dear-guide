@@ -8,7 +8,7 @@ starts contradicting itself.
 From your checkout of this repository:
 
 ```sh
-cd /path/to/decision-graph-assistant
+cd /path/to/development-graph-assistant
 pip install -e .
 ```
 
@@ -23,18 +23,28 @@ use ones you declared here.
 
 ```sh
 cd my-project
-dg init --areas "Infra,Backend,Product"
+dg init --areas "Search,Serving,Index"
 ```
 
 Two files appear: `decisions.json` (the store — source of truth) and
 `decision-graph.md` (a generated view — **never hand-edit it**).
 
-Add the staging files to `.gitignore` now:
+`dg init` also adds the tool's scratch files to `.gitignore` — the staging
+trays, the compose buffer, the lock files beside them, and the temp file an
+interrupted write leaves behind:
 
 ```
-.dgraph-pending.json
-.dgraph-edit.org
+# development-graph: staging, locks and temp files
+.dgraph-*
+*.dg-tmp
+decisions.json.lock
+tasks.json.lock
 ```
+
+It says so when it does. If you are adding the tool to a project that already
+has a store, paste that block in yourself: several of the tool's own messages —
+"`.dgraph-pending.json` is gitignored, so committing now drops them from the
+record" — are only true once it is there.
 
 ## 2. Add the questions
 
@@ -43,13 +53,15 @@ A vertex is a **decision the project must make** — a question, not a task.
 [how it works](how-it-works.md#tracking-the-work-as-well).)
 
 ```sh
-dg add --id D01 --title "Where does the app run?" --area Infra
-dg add --id D02 --title "Which database?" --area Backend --after D01
+dg add --id D01 --title "Exact or approximate search?" --area Search
+dg add --id D02 --title "Which distance metric?" --area Search --after D01
 ```
 
-`--after D01` says D02 depends on D01 — you cannot sensibly pick a database
-before you know where the thing runs. Dependency is the graph structure, never
-a stored field, so this is the only place it is written down.
+`--after D01` says D02 depends on D01 — you cannot pick a metric before you know
+whether you are scoring exhaustively or walking a graph, because a scan can
+normalise at query time and an HNSW graph bakes the metric into its edges at
+build time. Dependency is the graph structure, never a stored field, so this is
+the only place it is written down.
 
 ## 3. Staging: nothing is written until you say so
 
@@ -66,7 +78,7 @@ dg apply            # validate a copy, then write both files
 ```
 
 `apply` mutates a copy, validates it, and refuses to write at all if the result
-would be invalid — so a bad batch costs you nothing. `dg drop N` unstages one
+would be invalid — so a bad batch costs you nothing. `dg drop <id>` unstages one
 op, `dg clear` all of them.
 
 Staged work lives in `.dgraph-pending.json`, which is gitignored — so **apply
@@ -80,9 +92,9 @@ fine for a human and a hung command for a script.
 
 ```sh
 dg decide D01 \
-  --answer "A managed platform. Nobody here wants to be on call for servers." \
-  --source "notes/hosting-options.md" \
-  --falsifier "the monthly bill passes what a small VM cluster would cost" \
+  --answer "Exact: one brute-force scan over the 2.1M-vector array, 8 ms a query across eight cores." \
+  --source "bench/scan-latency.md" \
+  --falsifier "the corpus passes ~10M vectors, where a full scan stops holding p99 under the 50 ms budget" \
   --opens D02
 dg apply
 ```
@@ -91,9 +103,10 @@ Three fields carry the weight:
 
 - **`--source`** — where the evidence lives: a path, a script, or `discussion`.
 - **`--falsifier`** — what evidence would overturn this, written *before* that
-  evidence arrives. Required whenever the decision opens something. If nothing
-  could overturn it, say so explicitly: `"ANALYTIC — follows from the
-  platform choice"`.
+  evidence arrives. Required whenever the decision opens something. The good
+  ones are thresholds on a number somebody already watches. If nothing could
+  overturn it, say so explicitly: `"ANALYTIC — cosine and inner product rank
+  identically on L2-normalised vectors"`.
 - **`--opens`** — the decisions this one now makes answerable. Leave it off for
   a terminal decision.
 
@@ -106,6 +119,7 @@ afterwards it is rationalisation; written first it is a commitment.
 dg                  # the frontier: everything still open or blocked
 dg brief            # ...plus provisional work, staging, validity
 dg node D01         # one decision in full, with its superseded history
+dg context D04      # ...and every premise it rests on, with their falsifiers
 dg path D01 D04     # the chain of evidence between two decisions
 dg tree             # the DAG
 dg areas            # counts by area and status
@@ -114,22 +128,69 @@ dg areas            # counts by area and status
 `dg node D01` after the decision above:
 
 ```
-╭──────────────────────── D01 ─────────────────────────╮
-│ Where does the app run?                              │
-│                                                      │
-│ status      DECIDED                                  │
-│ area        Infra                                    │
-│ depends on  —                                        │
-│ opens       D02                                      │
-│ falsifier   the monthly bill passes what a small VM  │
-│ cluster would cost                                   │
-│ source      notes/hosting-options.md   (2026-04-02)  │
-│                                                      │
-│ Answer                                               │
-│ A managed platform. Nobody here wants to be on call  │
-│ for servers.                                         │
-╰──────────────────────────────────────────────────────╯
+╭──────────────────────────────── D01 ─────────────────────────────────╮
+│ Exact or approximate search?                                         │
+│                                                                      │
+│ status      DECIDED                                                  │
+│ area        Search                                                   │
+│ depends on  —                                                        │
+│ opens       D02                                                      │
+│ falsifier   the corpus passes ~10M vectors, where a full scan stops  │
+│ holding p99 under the 50 ms budget                                   │
+│ source      bench/scan-latency.md   (2026-04-02)                     │
+│                                                                      │
+│ Answer                                                               │
+│ Exact: one brute-force scan over the 2.1M-vector array, 8 ms a query │
+│ across eight cores.                                                  │
+╰──────────────────────────────────────────────────────────────────────╯
 ```
+
+### `dg context` — why a node is where it is
+
+`dg node` says what a decision holds. `dg context` says what it **stands on**:
+every premise underneath it, nearest last, each with the answer it reached, the
+evidence that reached it and the falsifier that would overturn it.
+
+```
+$ dg context D04
+D04  OPEN  efSearch for the recall target  [Serving]
+  rests on D02 · opens D05
+
+RESTS ON (2) — nearest premise last
+  D01  DECIDED     Exact or approximate search?
+       Approximate. A brute-force scan over 48M x 768 fp32 reads
+       140 GB a query and lands at 400 ms, eight times the latency budget.
+       falsifier:
+         a brute-force scan lands under the 50 ms budget at this corpus size
+       source: bench/scan-latency.md  ·  2026-02-03
+       also opened: D03
+  D02  DECIDED     Which index structure?
+       *HNSW*, M=32, efConstruction=200.
+       falsifier: recall@10 against exact search falls below 0.95
+       source: bench/ann-sweep.md  ·  2026-02-14
+```
+
+It takes a task id too, and then it does the thing that makes it worth having:
+the work, then the whole chain behind the decision that work exists *because*
+of, and a closing line saying whether any of it is still under review.
+
+```
+$ dg context T04
+T04  TODO  Wire the shard fan-out and the merge path  [Serving]
+  after T03
+  waiting on T03
+
+BECAUSE  D05  BLOCKED  How many shards, and how are results merged?
+
+WHICH RESTS ON (3) — nearest premise last
+  …
+→ this work waits on D05 (BLOCKED), which is not settled — starting it now is
+  a bet on the answer
+```
+
+Output is plain and pipe-safe, because the point of it is to be pasted
+somewhere — an issue, a handover note, or a subagent's prompt. `--json` gives
+the same walk as data.
 
 ## 6. Reverse one
 
@@ -137,19 +198,18 @@ This is what the graph is really for. Reversals are kept forever, never
 deleted.
 
 ```sh
-dg reopen D01 --why "a customer contract requires our own hardware" --yes
+dg reopen D01 --why "the crawl finished at 48M vectors" --yes
 ```
 
 ```
-╭───────────────────── reopen D01 ──────────────────────╮
-│ Where does the app run?                               │
-│                                                       │
-│ Its answer becomes superseded; its dependencies stay. │
-│                                                       │
-│ 1 decided descendant(s) rest on it and become         │
-│ PROVISIONAL:                                          │
-│   D02                                                 │
-╰───────────────────────────────────────────────────────╯
+╭───────────────────────────── reopen D01 ─────────────────────────────╮
+│ Exact or approximate search?                                         │
+│                                                                      │
+│ Its answer becomes superseded; its dependencies stay.                │
+│                                                                      │
+│ 1 decided descendant(s) rest on it and become PROVISIONAL:           │
+│   D02                                                                │
+╰──────────────────────────────────────────────────────────────────────╯
 ```
 
 **That list is the point of the command.** Every decided descendant of a
@@ -171,6 +231,22 @@ dg confirm D02      # re-read it; it still holds
 `reopen` to escape a status — a reversal that never happened is a lie in the
 record.
 
+**The way in has one too.** `PROVISIONAL` is derived: `dg reopen` stages it for
+every decided descendant, and nothing else produces it. A merge, a rebase or a
+partial checkout can land the reopened premise *without* the ops it implies, and
+then `dg check` reports a decision resting on an unsettled premise with no op to
+derive the remedy from:
+
+```
+✗ [propagation] D02 is DECIDED but rests on D01 (REOPENED) — `dg repair` marks
+  it PROVISIONAL, or settle the premise with `dg decide D01`
+```
+
+`dg repair` stages exactly what the reopen would have staged. Reach for it
+rather than `dg decide D01`, unless you have genuinely settled D01 — recording
+an answer nobody reached to escape a blocking check is the same lie in the same
+record. It repairs that one rule and only where the checker is reporting it.
+
 Until you do one or the other, `dg check` says so:
 
 ```
@@ -191,7 +267,7 @@ For CI, one file is enough — the tool supplies the tests, so your project neve
 restates the invariants:
 
 ```python
-# tests/test_decision_graph.py
+# tests/test_development_graph.py
 from dgraph.testing import *  # noqa: F401,F403
 ```
 

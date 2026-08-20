@@ -1,4 +1,4 @@
-# Demo: composing a decision in emacs, from the browser
+# Demo: a development graph you can drive
 
 `dg serve` gives you the graph in a browser; `dg decide --edit` gives you an org
 buffer in emacs. This demo connects the two: click a decision in the browser and
@@ -13,16 +13,31 @@ stages the answer. Nothing is written to `decisions.json` until you press Apply.
 ./demo/demo.sh          # copies the graph to /tmp/dg-demo and serves it
 ```
 
-Then open <http://127.0.0.1:8765>. The demo graph is six decisions from an
-imaginary training run:
+Then open <http://127.0.0.1:8765>. The demo is six decisions and six tasks from
+an imaginary nearest-neighbour search service:
 
 ```
-D01 corpus ──┬── D02 tokenizer ── D04 parameter count ── D05 lr schedule
-             └── D03 dedup                (OPEN)          (BLOCKED:D04)
-D06 eval harness
+D01 exact/approx ──┬── D02 index structure ── D04 efSearch ── D05 sharding
+                   └── D03 distance metric        (OPEN)      (BLOCKED:D04)
+D06 recall oracle
 ```
 
 `D04` is the open one — red and dashed. `D05` is blocked on it.
+
+The work hangs off those decisions, in both directions:
+
+```
+T01 build the index      because D02      DONE
+T02 normalise at write   because D03      DONE
+T05 recall harness       because D06      DONE
+T06 CI gate on recall    because D02      TODO   ← startable
+T03 sweep efSearch       evidence for D04 DOING  ← will settle D04
+T04 shard fan-out        because D05      TODO   ← premise not settled
+```
+
+`T03` is the interesting one: it is not waiting on D04, D04 is waiting on
+**it**. The **joined** tab draws that, and `dg -C /tmp/dg-demo context T04`
+prints the same reading as text.
 
 ## The walkthrough
 
@@ -39,8 +54,9 @@ D06 eval harness
      read-only, and it is not parsed either way, so mangling it cannot change
      what gets staged.
 4. **Write a real answer.** Full org: tables, `=verbatim=`, `#+BEGIN_SRC`,
-   footnotes, whatever you use. It is stored as typed; the browser and
-   `decision-graph.md` convert it for display.
+   footnotes, whatever you use — D02's answer is already a sweep table, so
+   there is a worked example one click away. It is stored as typed; the browser
+   and `decision-graph.md` convert it for display.
 5. **`C-c C-o` on a `dg:` link** opens that decision, fetched live through
    `dg export`. Under Doom the popup takes focus; `q` comes back.
    `C-c C-p` is the parent, `C-c C-a` the ancestor chain.
@@ -72,6 +88,14 @@ D06 eval harness
 - **Reopen a decided one.** Click D02, then Compose in emacs. The buffer leads
   with what reopening drags into `PROVISIONAL` — D04 here — because that set is
   the reason to interrupt someone.
+- **Switch to "tasks" and click T04.** It is dashed, and the panel says why:
+  not a missing prerequisite but an unsettled premise, D05. Its **Mark done**
+  refuses without an outcome.
+- **Switch to "joined".** Click T06 and watch the highlight cross the seam —
+  its prerequisites T01 and T02 in one store, its premise D02 in the other.
+- **Stage a decision and a task, then Apply once.** Both stores and both
+  generated views are written, and `dg pending` / `dg task pending` in a
+  terminal show the same two trays the footer does.
 
 ## Notes
 

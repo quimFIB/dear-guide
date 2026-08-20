@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Start the demo: a throwaway copy of demo/decisions.json, served locally.
+# Start the demo: a throwaway copy of demo/decisions.json and demo/tasks.json,
+# served locally.
 #
 # The graph is copied to a work directory rather than served in place, so the
 # demo can be run repeatedly and anything staged or applied is discarded on the
@@ -13,10 +14,13 @@ port=${DG_DEMO_PORT:-8765}
 
 mkdir -p "$work"
 command cp -f "$here/decisions.json" "$work/decisions.json"
-rm -f "$work/.dgraph-pending.json" "$work/.dgraph-edit.org"
+command cp -f "$here/tasks.json"     "$work/tasks.json"
+rm -f "$work/.dgraph-pending.json" "$work/.dgraph-task-pending.json" \
+      "$work/.dgraph-edit.org" "$work/.dgraph-serve.json"
 
 cd "$work"
 dg render >/dev/null
+dg task render >/dev/null
 dg check
 
 cat <<TXT
@@ -33,6 +37,17 @@ cat <<TXT
     - fill in Answer / Source / Falsifier, tick what D04 opens
     - C-c C-c stages it and the browser updates; C-c C-k cancels
     - then press Apply in the browser
+
+  Or try the other two tabs:
+
+    - "tasks"  : T04 is dashed because its premise D05 is not settled.
+                 T06 is startable. Mark it done with an outcome.
+    - "joined" : the whole chain across both stores, D06 -> T05 -> T03 ->
+                 D04 -> D05 -> T04. The dotted cyan edges are the links.
+
+  From a terminal, the same reading as text:
+
+    dg -C $work context T04
 
 TXT
 exec dg serve --port "$port"

@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 from dgraph import pending, project, task_pending, task_render
 from dgraph.check import CHECKS, run
 from dgraph.cli import app
-from dgraph.tasks import TaskGraph
+from dgraph.tasks import TaskEdge, TaskGraph
 
 runner = CliRunner()
 
@@ -82,7 +82,7 @@ def test_multiple_edges_from_one_task_union(tg):
     """A task edge carries no payload, so two edges out of one task mean their
     union — unlike a decision, where two active edges is a contradiction."""
     from dgraph.tasks import TaskEdge
-    tg.edges.append(TaskEdge(src="T01", to=["T04"]))
+    tg.edges.append(TaskEdge(src="T01", to=["T04"], kind="precedes"))
     assert tg.unblocks("T01") == ["T02", "T04"]
     assert tg.validate() == []
 
@@ -124,13 +124,13 @@ def test_detects_illegal_status(tg):
 
 def test_detects_dangling_and_self_edges(tg):
     from dgraph.tasks import TaskEdge
-    tg.edges.append(TaskEdge(src="T04", to=["T99", "T04"]))
+    tg.edges.append(TaskEdge(src="T04", to=["T99", "T04"], kind="precedes"))
     assert len(_check(tg, "task_no_dangling_refs")) == 2
 
 
 def test_detects_a_cycle(tg):
     from dgraph.tasks import TaskEdge
-    tg.edges.append(TaskEdge(src="T03", to=["T01"]))
+    tg.edges.append(TaskEdge(src="T03", to=["T01"], kind="precedes"))
     assert _check(tg, "task_acyclic")
 
 
@@ -143,7 +143,7 @@ def test_a_deep_chain_does_not_recurse(tmp_path):
     for tid in ids:
         tg.tasks[tid] = Task(id=tid, title="w", area="A")
     for a, b in zip(ids, ids[1:]):
-        tg.edges.append(TaskEdge(src=a, to=[b]))
+        tg.edges.append(TaskEdge(src=a, to=[b], kind="precedes"))
     assert not _check(tg, "task_acyclic")
 
 
@@ -172,7 +172,7 @@ def test_a_dropped_prerequisite_does_not_make_done_a_contradiction(tg):
 def test_every_task_check_is_declared(tg):
     from dgraph.tasks import Task, TaskEdge
     tg.tasks["X9"] = Task(id="X9", title="bad", area="Nope", status="WOBBLY")
-    tg.edges.append(TaskEdge(src="T04", to=["T99"]))
+    tg.edges.append(TaskEdge(src="T04", to=["T99"], kind="precedes"))
     assert {v.check for v in tg.validate()} <= set(CHECKS)
 
 
@@ -255,10 +255,21 @@ def test_done_records_an_outcome(run_cli, task_store):
     assert t.status == "DONE" and t.outcome == "PR #7" and t.done
 
 
-def test_drop_reports_what_it_releases(run_cli):
+def test_drop_refuses_until_its_fallout_has_a_verdict(run_cli):
+    """Dropping is the one status change that acts on other work. Both defaults
+    are wrong somewhere — assuming "keep" leaves work whose whole purpose died
+    with the drop sitting in the backlog, assuming "drop" throws away work that
+    was only incidentally connected — so neither is taken."""
     res = run_cli("task", "drop", "T02", "-w", "not needed")
+    assert res.exit_code == 2
+    assert "T03" in res.output and "need a verdict" in res.output
+    assert "--keep" in res.output and "--drop-too" in res.output
+
+
+def test_drop_reports_what_it_releases(run_cli):
+    res = run_cli("task", "drop", "T02", "-w", "not needed", "--keep", "T03")
     assert res.exit_code == 0
-    assert "T03" in res.output and "released" in res.output
+    assert "T03" in res.output and "kept" in res.output
 
 
 def test_task_list_names_only_ready_work(run_cli):
@@ -323,7 +334,7 @@ def test_removing_a_dependency_that_is_not_there_is_refused(run_cli):
 
 def test_a_task_cannot_be_made_to_wait_on_itself(run_cli):
     res = run_cli("task", "dep", "T02", "--after", "T02")
-    assert res.exit_code == 1 and "cannot come before itself" in res.output
+    assert res.exit_code == 1 and "cannot come after itself" in res.output
 
 
 def test_a_link_can_be_removed(run_cli, task_store):
@@ -380,6 +391,67 @@ def test_completion_data_under_unfinished_work_is_a_violation(tg):
     assert hits and "T02" in str(hits[0])
 
 
+# ---- audit F24: the other thing this store keeps -------------------------
+#
+# `why` had the completion data's problem and not its fix. Leaving DONE cleared
+# `done` and `outcome`; leaving DROPPED cleared nothing, so the reason work was
+# abandoned outlived the abandonment — and every view printed it anyway.
+
+
+@pytest.mark.parametrize("resume", [("start", "DOING"), ("done", "DONE")])
+def test_leaving_dropped_clears_the_reason(run_cli, task_store, resume):
+    """The mirror of `test_leaving_done_clears_the_completion_data`, which is
+    the whole finding: the rule existed for one of the two fields this store
+    keeps, and the other one rotted."""
+    verb, want = resume
+    # T04 on purpose: unconnected, so the drop leaves nothing standing and this
+    # test is about the reason rather than about the fallout prompts.
+    assert run_cli("task", "drop", "T04", "--why",
+                   "superseded by the rewrite").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(task_store / "tasks.json").tasks["T04"].why
+
+    args = ["task", verb, "T04"] + (["-o", "PR #9"] if verb == "done" else [])
+    assert run_cli(*args).exit_code == 0
+    assert run_cli("apply").exit_code == 0
+
+    t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
+    assert t.status == want and t.why is None
+    assert "Not being done" not in (task_store / "tasks.md").read_text()
+    assert "superseded by the rewrite" not in (task_store / "tasks.md").read_text()
+
+
+def test_a_reason_under_work_being_done_is_a_violation(tg):
+    """Its own check name, because `dgraph/testing.py` gives a project one test
+    per rule and filing this under `task_done_complete` would lose it. Only
+    reachable by hand-edit now, or by a store written before the clearing
+    existed — so the message names both exits."""
+    tg.tasks["T04"].why = "left over"          # T04 is DOING
+    hits = _check(tg, "task_drop_complete")
+    assert hits and hits[0].blocking and "T04" in str(hits[0])
+    assert "dg task drop T04" in str(hits[0])
+    assert not _check(tg, "task_done_complete")     # not the same rule
+
+
+def test_a_reason_under_dropped_work_is_fine(tg):
+    """The point of the field. It is only stale where the status contradicts
+    it, and a DROPPED task is exactly where it belongs."""
+    tg.tasks["T04"].status = "DROPPED"
+    tg.tasks["T04"].why = "the vendor tool does it"
+    assert _check(tg, "task_drop_complete") == []
+
+
+def test_no_view_prints_a_reason_the_status_contradicts(tg):
+    """Belt and braces: the store cannot hold this any more, but every view is
+    generated from broken stores too, on the way to reporting them. `dg check`
+    renders `tasks.md` to compare it, so the view has to be drawable from a
+    graph it is about to condemn without repeating the false claim."""
+    from dgraph import context, task_render
+    tg.tasks["T04"].why = "abandoned, allegedly"        # DOING
+    assert "abandoned, allegedly" not in task_render.render(tg)
+    assert "abandoned, allegedly" not in context.text(context.task(tg, "T04"))
+
+
 def test_the_stage_time_warning_names_the_stuck_batch(run_cli):
     """Audit D3: `_warn_stuck` for the task tray. Staging a finish ahead of its
     prerequisite was accepted with a note, and `apply` then refused the whole
@@ -415,3 +487,527 @@ def test_the_view_does_not_claim_readiness_it_cannot_judge(task_store):
     text = task_render.render(tg)
     assert "nothing outstanding *in this graph* before them" in text
     assert "cannot see the decision store" in text
+
+
+def test_a_task_cycle_finding_names_only_the_cycle(tg):
+    """Audit F7, the task store's half. Three validators found cycles the same
+    way and all three reported the route into the loop as part of it; the
+    canonical form now lives once, in `violation.cycle_from`."""
+    from dgraph.tasks import TaskEdge
+
+    tg.tasks["T05"] = type(tg.tasks["T01"])(
+        id="T05", title="fifth", area="Alpha")
+    tg.tasks["T06"] = type(tg.tasks["T01"])(
+        id="T06", title="sixth", area="Alpha")
+    # T02 feeds the loop without being in it
+    tg.edges = [TaskEdge("T02", ["T05"], "precedes"),
+                TaskEdge("T05", ["T06"], "precedes"),
+                TaskEdge("T06", ["T05"], "precedes")]
+
+    # The kind is named because each is walked as its own subgraph, so a bare
+    # "cycle:" would not say which relation is the cyclic one.
+    found = [v.message for v in tg.validate() if v.check == "task_acyclic"]
+    assert found == ["precedes cycle: T05 -> T06 -> T05"]
+
+
+# ---- edge kinds: precedes, and prompted -----------------------------------
+#
+# The fixture's T01 -> T02 -> T03 chain is all `precedes`. What is pinned here
+# is the second relation and, mostly, the ways it is *not* the first: it makes
+# nothing wait, it is walked as its own subgraph, and it may run the opposite
+# way between the same pair without that being a cycle.
+
+
+def test_kind_is_required_and_never_defaulted(task_store):
+    """A store written before kinds existed is refused, not silently read as
+    prerequisites. The default would be right, and applying it quietly is still
+    wrong: the file would then read one way and behave another."""
+    raw = json.loads((task_store / "tasks.json").read_text())
+    del raw["edges"][0]["kind"]
+    (task_store / "tasks.json").write_text(json.dumps(raw))
+    with pytest.raises(ValueError) as exc:
+        TaskGraph.load(task_store / "tasks.json")
+    assert "kind" in str(exc.value) and '"precedes"' in str(exc.value)
+
+
+def test_kind_survives_a_round_trip(tg, task_store):
+    tg.edges.append(TaskEdge(src="T02", to=["T04"], kind="prompted"))
+    tg.save(task_store / "tasks.json")
+    written = json.loads((task_store / "tasks.json").read_text())
+    assert all("kind" in e for e in written["edges"])
+    assert TaskGraph.load(task_store / "tasks.json").prompted("T02") == ["T04"]
+
+
+def test_an_unknown_kind_is_a_violation(tg):
+    tg.edges.append(TaskEdge(src="T02", to=["T04"], kind="causes"))
+    found = [v for v in tg.validate() if v.check == "task_edge_kind"]
+    assert len(found) == 1 and "causes" in found[0].message
+
+
+def test_an_unknown_kind_does_not_suppress_the_id_checks(tg):
+    """One bad field should not hide every other finding about the same edge."""
+    tg.edges.append(TaskEdge(src="T02", to=["T99"], kind="causes"))
+    checks = {v.check for v in tg.validate()}
+    assert {"task_edge_kind", "task_no_dangling_refs"} <= checks
+
+
+def test_prompted_makes_nothing_wait(tg):
+    """The property the whole kind exists for. A chore noticed while doing T01
+    is startable at once; treating provenance as an ordering asserts otherwise."""
+    tg.edges.append(TaskEdge(src="T01", to=["T04"], kind="prompted"))
+    assert tg.prerequisites("T04") == [] and tg.waiting_on("T04") == []
+    assert tg.unblocks("T01") == ["T02"]          # unchanged by the new edge
+    assert tg.prompted("T01") == ["T04"]
+    assert tg.discovered_during("T04") == ["T01"]
+
+
+def test_the_two_kinds_may_run_opposite_ways_between_one_pair(tg):
+    """The ordinary case, and the one an untyped edge list cannot hold: doing
+    T02 turned up a cleanup that has to land before T02 can be finished. As one
+    relation this is a cycle, and one of two true facts would have to go."""
+    tg.edges.append(TaskEdge(src="T02", to=["T04"], kind="prompted"))
+    tg.edges.append(TaskEdge(src="T04", to=["T02"], kind="precedes"))
+    assert [v for v in tg.validate() if v.check == "task_acyclic"] == []
+    assert tg.discovered_during("T04") == ["T02"]
+    assert tg.waiting_on("T02") == ["T04"]        # T04 is DOING, so unresolved
+    assert tg.ready("T04") is False               # T04 is DOING, not TODO
+    assert tg.prerequisites("T04") == []          # ...but it waits on nothing
+
+
+def test_a_prompted_cycle_is_caught_and_names_its_kind(tg):
+    tg.edges.append(TaskEdge(src="T02", to=["T04"], kind="prompted"))
+    tg.edges.append(TaskEdge(src="T04", to=["T02"], kind="prompted"))
+    found = [v.message for v in tg.validate() if v.check == "task_acyclic"]
+    assert found == ["prompted cycle: T02 -> T04 -> T02"]
+
+
+def test_two_kinds_out_of_one_task_are_not_unioned(tg):
+    """Grouping by `src` alone would fold the two relations together and make
+    every provenance edge assert an ordering nobody claimed."""
+    tg.edges.append(TaskEdge(src="T01", to=["T04"], kind="prompted"))
+    assert tg.unblocks("T01") == ["T02"]
+    assert tg.prompted("T01") == ["T04"]
+
+
+# ---- staging and the CLI --------------------------------------------------
+
+
+def test_add_dep_merges_within_a_kind_only(tg):
+    """`add_dep` used to find an edge by `src`; with two kinds that would widen
+    a precedes edge with a prompted target and silently order the work."""
+    task_pending._apply_one(tg, {"op": "add_dep", "from": "T01",
+                                 "to": ["T04"], "kind": "prompted"})
+    assert tg.unblocks("T01") == ["T02"] and tg.prompted("T01") == ["T04"]
+    assert len([e for e in tg.edges if e.src == "T01"]) == 2
+
+
+def test_a_staged_edge_op_must_name_its_kind(tg):
+    """A tray staged before kinds existed fails here rather than defaulting —
+    `dg task pending` is read by a person, and an op that does not say which
+    relation it edits cannot be reviewed."""
+    with pytest.raises(KeyError):
+        task_pending._apply_one(tg, {"op": "add_dep", "from": "T01",
+                                     "to": ["T04"]})
+
+
+def test_a_staged_edge_op_rejects_an_unknown_kind(tg):
+    with pytest.raises(pending.ApplyError):
+        task_pending._apply_one(tg, {"op": "add_dep", "from": "T01",
+                                     "to": ["T04"], "kind": "causes"})
+
+
+def test_a_new_task_can_record_what_turned_it_up(run_cli, task_store):
+    res = run_cli("task", "add", "--id", "T07", "--title", "Fix the fixture",
+                  "--area", "Alpha", "--discovered-during", "T04")
+    assert res.exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    tg = TaskGraph.load(task_store / "tasks.json")
+    assert tg.discovered_during("T07") == ["T04"]
+    # T04 is DOING and unresolved; provenance still leaves the work startable.
+    assert tg.ready("T07") and tg.waiting_on("T07") == []
+
+
+def test_provenance_can_be_recorded_after_the_fact(run_cli, task_store):
+    assert run_cli("task", "dep", "T04", "--discovered-during",
+                   "T01").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    tg = TaskGraph.load(task_store / "tasks.json")
+    assert tg.discovered_during("T04") == ["T01"] and tg.prerequisites("T04") == []
+
+
+def test_removing_provenance_names_the_kind(run_cli, task_store):
+    """Both kinds can hold between one pair, so `undep` cannot infer which was
+    meant: removing the ordering when the correction was to the provenance is
+    exactly the silent wrong answer the kinds exist to prevent."""
+    run_cli("task", "dep", "T04", "--discovered-during", "T01")
+    run_cli("task", "dep", "T04", "--after", "T01")
+    assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "undep", "T04", "--discovered-during",
+                   "T01").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    tg = TaskGraph.load(task_store / "tasks.json")
+    assert tg.discovered_during("T04") == [] and tg.prerequisites("T04") == ["T01"]
+
+
+def test_undep_refuses_a_relation_that_is_not_there(run_cli):
+    res = run_cli("task", "undep", "T03", "--discovered-during", "T01")
+    assert res.exit_code == 1 and "was not discovered during" in res.output
+
+
+def test_dep_with_no_relation_is_refused(run_cli):
+    res = run_cli("task", "dep", "T04")
+    assert res.exit_code == 2 and "--discovered-during" in res.output
+
+
+def test_a_bad_second_spec_leaves_nothing_staged(run_cli):
+    """Both specs are checked before either is written, so a typo in the second
+    does not leave the new task sitting in the tray on its own."""
+    res = run_cli("task", "add", "--id", "T07", "--title", "x", "--area",
+                  "Alpha", "--after", "T01", "--discovered-during", "T99")
+    assert res.exit_code == 1
+    assert "T07" not in run_cli("task", "pending").output
+
+
+def test_the_view_names_both_relations(tg):
+    tg.edges.append(TaskEdge(src="T01", to=["T04"], kind="prompted"))
+    out = task_render.render(tg)
+    assert "**Discovered during:** T01" in out and "**Turned up:** T04" in out
+
+
+def test_the_review_table_names_the_kind_of_each_staged_edge(run_cli):
+    """A tray is read by a person before it is applied, so an op that does not
+    say which relation it edits cannot be reviewed — which is half the reason
+    the kind is stored at all."""
+    run_cli("task", "dep", "T04", "--discovered-during", "T01")
+    run_cli("task", "dep", "T04", "--after", "T02")
+    out = run_cli("task", "pending").output
+    assert "prompted" in out and "precedes" in out
+
+
+# ---- what abandoning work leaves behind ----------------------------------
+#
+# `RESOLVED` covers DONE and DROPPED alike, so a release is indistinguishable
+# from a completion in every derived value. That is the right default and it is
+# also a silence; these pin the two places it is now broken.
+
+
+def _drop(tg, tid):
+    tg.tasks[tid].status = "DROPPED"
+    tg.tasks[tid].done = tg.tasks[tid].outcome = None
+    tg.tasks[tid].why = "abandoned"
+
+
+def test_work_released_by_a_drop_is_flagged(tg):
+    _drop(tg, "T01")                              # T02 waited only on T01
+    hits = [v for v in tg.validate() if v.check == "released_by_drop"]
+    assert len(hits) == 1 and "T02" in hits[0].message
+    assert not hits[0].blocking                   # never denies a commit
+
+
+def test_work_released_by_a_completion_is_not_flagged(tg):
+    """T01 is DONE in the fixture, so T02 is startable for the ordinary reason
+    and nothing should say otherwise."""
+    assert not [v for v in tg.validate() if v.check == "released_by_drop"]
+
+
+def test_starting_the_work_clears_the_release_warning(tg):
+    """The acknowledgement path, and the reason there is no `dg task confirm`:
+    a task has no stored status to flip the way `dg confirm` flips a decision's,
+    so the check asks only of work nobody has looked at yet."""
+    _drop(tg, "T01")
+    tg.tasks["T02"].status = "DOING"
+    assert not [v for v in tg.validate() if v.check == "released_by_drop"]
+
+
+def test_work_orphaned_by_a_drop_is_flagged(tg):
+    tg.edges.append(TaskEdge(src="T04", to=["T02"], kind="prompted"))
+    _drop(tg, "T04")
+    hits = [v for v in tg.validate() if v.check == "orphaned_by_drop"]
+    assert len(hits) == 1 and "T02" in hits[0].message
+    assert not hits[0].blocking
+
+
+def test_a_surviving_origin_is_not_a_silence(tg):
+    """One origin left still says why the work exists, so there is nothing to
+    break — the check fires only when *every* origin was abandoned."""
+    tg.edges.append(TaskEdge(src="T04", to=["T02"], kind="prompted"))
+    tg.edges.append(TaskEdge(src="T03", to=["T02"], kind="prompted"))
+    _drop(tg, "T04")
+    assert not [v for v in tg.validate() if v.check == "orphaned_by_drop"]
+
+
+def test_drop_can_abandon_the_work_it_orphans(run_cli, task_store):
+    run_cli("task", "dep", "T04", "--discovered-during", "T02")
+    assert run_cli("apply").exit_code == 0
+    res = run_cli("task", "drop", "T02", "-w", "not needed",
+                  "--keep", "T03", "--drop-too", "T04")
+    assert res.exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    tg = TaskGraph.load(task_store / "tasks.json")
+    assert tg.tasks["T04"].status == "DROPPED"
+    assert "T02" in tg.tasks["T04"].why
+    assert tg.tasks["T03"].status == "TODO"
+
+
+def test_drop_refuses_a_verdict_on_unaffected_work(run_cli):
+    res = run_cli("task", "drop", "T02", "--keep", "T01")
+    assert res.exit_code == 1 and "not affected" in res.output
+
+
+def test_drop_refuses_a_task_named_both_ways(run_cli):
+    res = run_cli("task", "drop", "T02", "--keep", "T03", "--drop-too", "T03")
+    assert res.exit_code == 1 and "both" in res.output
+
+
+def test_drop_asks_when_there_is_someone_to_ask(run_cli, tty):
+    res = run_cli("task", "drop", "T02", "-w", "no", input="y\n")
+    assert res.exit_code == 0 and "still worth doing" in res.output
+    assert "kept" in res.output
+
+
+def test_a_drop_with_no_fallout_needs_no_verdict(run_cli):
+    """T04 is unconnected, which is ordinary for tasks. Nothing to ask."""
+    assert run_cli("task", "drop", "T04", "-w", "no").exit_code == 0
+
+
+def test_an_independently_justified_orphan_is_quiet(tg):
+    """`--keep` at drop time says the work is still wanted; this is where that
+    verdict is recorded durably. A task carrying its own `because` has
+    something other than its origin explaining why it exists, so its origin
+    being abandoned is no more a silence than one surviving origin is."""
+    tg.edges.append(TaskEdge(src="T04", to=["T02"], kind="prompted"))
+    _drop(tg, "T04")
+    assert [v for v in tg.validate() if v.check == "orphaned_by_drop"]
+    tg.tasks["T02"].because = "D01"
+    assert not [v for v in tg.validate() if v.check == "orphaned_by_drop"]
+
+
+# ---- removing a task -----------------------------------------------------
+#
+# `dg task drop` keeps the task, the reason, and a verdict on its fallout.
+# Removal keeps none of that, so it is for a record made in error — a task
+# filed twice, or one that turned out to restate another.
+
+
+@pytest.fixture
+def archived(monkeypatch):
+    from dgraph import cli
+    monkeypatch.setattr(cli, "_archived", lambda store: None)
+
+
+def test_task_removal_refuses_where_git_would_not_record_it(run_cli):
+    res = run_cli("task", "rm", "T04", "--yes")
+    assert res.exit_code == 1 and "not a git repository" in res.output
+
+
+def test_severing_removes_the_task_and_its_edges(run_cli, task_store, archived):
+    assert run_cli("task", "rm", "T02", "--yes").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    tg = TaskGraph.load(task_store / "tasks.json")
+    assert "T02" not in tg.tasks
+    assert not [e for e in tg.edges if "T02" in e.to or e.src == "T02"]
+    assert tg.prerequisites("T03") == []          # severed, not spliced
+
+
+def test_splicing_a_task_joins_what_it_sat_between(run_cli, task_store, archived):
+    """T01 → T02 → T03. Fold T02 away and the ordering it carried survives."""
+    assert run_cli("task", "rm", "T02", "--splice", "--yes").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(task_store / "tasks.json").prerequisites("T03") == ["T01"]
+
+
+def test_a_task_splice_never_crosses_the_kinds(run_cli, task_store, archived):
+    """T01 *precedes* T02, and T02 *prompted* T04. Splicing T02 must join
+    neither to the other: T01 did not turn T04 up, and it does not have to come
+    before it. A chain exists only within a kind, so there is nothing to join."""
+    run_cli("task", "dep", "T04", "--discovered-during", "T02")
+    assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "rm", "T02", "--splice", "--yes").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    tg = TaskGraph.load(task_store / "tasks.json")
+    assert tg.prerequisites("T03") == ["T01"]      # precedes joined to precedes
+    assert tg.prerequisites("T04") == []           # not ordered behind T01
+    assert tg.discovered_during("T04") == []       # and not attributed to it
+
+
+def test_a_prompted_chain_joins_within_its_kind(run_cli, task_store, archived):
+    """The mirror: T01 prompted T02 prompted T04, so folding T02 away leaves
+    T01 as what turned T04 up. Provenance is spliced like any other relation —
+    just never into a different one."""
+    run_cli("task", "dep", "T02", "--discovered-during", "T01")
+    run_cli("task", "dep", "T04", "--discovered-during", "T02")
+    assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "rm", "T02", "--splice", "--yes").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    tg = TaskGraph.load(task_store / "tasks.json")
+    assert tg.discovered_during("T04") == ["T01"]
+    assert tg.prerequisites("T04") == []
+
+
+def test_merging_a_task_moves_its_edges(run_cli, task_store, archived):
+    assert run_cli("task", "rm", "T02", "--into", "T04", "--yes").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    tg = TaskGraph.load(task_store / "tasks.json")
+    assert "T02" not in tg.tasks
+    assert tg.prerequisites("T04") == ["T01"] and tg.unblocks("T04") == ["T03"]
+
+
+def test_task_removal_says_what_it_would_lose(run_cli, task_store, archived):
+    """T01 is DONE with an outcome. Nothing keeps that once it is gone."""
+    res = run_cli("task", "rm", "T01", "--yes")
+    assert "loses" in res.output and "PR #1" in res.output
+
+
+def test_task_removal_refuses_without_a_human_or_a_flag(run_cli):
+    from dgraph import pending, task_pending
+    res = run_cli("task", "rm", "T04")
+    assert res.exit_code in (1, 2)
+    assert pending.load(task_pending.path()) == []
+
+
+def test_a_task_collision_reads_as_another_writer(tg):
+    """The same split as the decision store, through the same helper — a rule
+    applied in one store and not its twin is the shape most of this tool's
+    audit findings took."""
+    op = {"op": "add_task", "id": "T09", "title": "New", "area": "Alpha"}
+    landed = task_pending.apply_all(tg, [op])
+    with pytest.raises(pending.Collision) as exc:
+        task_pending.apply_all(landed, [op])
+    assert "another writer applied it" in str(exc.value)
+
+
+def test_a_task_that_differs_only_in_its_premise_is_a_clash(tg):
+    """The direction that matters. Two writers creating the same title under
+    different premises have *not* created the same task, so a comparison that
+    skipped the link fields would tell the loser its work landed when something
+    else did — and `tasks.matches` exists where it does so those fields can be
+    read at all."""
+    landed = task_pending.apply_all(tg, [{"op": "add_task", "id": "T09",
+                                          "title": "New", "area": "Alpha",
+                                          "because": "D01"}])
+    with pytest.raises(pending.ApplyError) as exc:
+        task_pending.apply_all(landed, [{"op": "add_task", "id": "T09",
+                                         "title": "New", "area": "Alpha",
+                                         "because": "D02"}])
+    assert not isinstance(exc.value, pending.Collision)
+    assert "pick another id" in str(exc.value)
+
+
+def test_task_drop_op_names_the_op_it_removed(run_cli):
+    """The task store's half of audit F29. Same hazard, same shared tray, and
+    the kind is named because that is the whole reason an edge stores one."""
+    run_cli("task", "add", "--id", "T09", "--title", "Ninth", "--area", "Alpha")
+    run_cli("task", "dep", "T09", "--after", "T02")
+    ops = pending.load(task_pending.path())
+    assert [o["op"] for o in ops] == ["add_task", "add_dep"]
+
+    res = run_cli("task", "drop-op", "1")
+    assert res.exit_code == 0
+    assert "add_dep" in res.output and "precedes" in res.output
+    assert [o["op"] for o in pending.load(task_pending.path())] == ["add_task"]
+
+    res = run_cli("task", "drop-op", "0")
+    assert "add_task T09" in res.output and "Ninth" in res.output
+    assert pending.load(task_pending.path()) == []
+
+
+# ---- a group is one write (audit F28) ------------------------------------
+#
+# `tests/test_staging_atomicity.py` counts the writes; these say what the tray
+# is allowed to *contain* while a group is being staged, which is the property
+# the count is a proxy for. Both fail against the one-op-at-a-time code: the
+# spy sees a tray holding half a group.
+
+
+def _tray_states(monkeypatch):
+    """Every list `pending.save` is asked to write, in order."""
+    seen: list[list[dict]] = []
+    real = pending.save
+
+    def save(ops, path=None):
+        seen.append(list(ops))
+        return real(ops, path)
+
+    monkeypatch.setattr(pending, "save", save)
+    return seen
+
+
+def test_the_drop_cascade_never_sits_in_the_tray_half_staged(run_cli,
+                                                             monkeypatch):
+    """The operator was asked about T03 and answered. A tray holding only the
+    first half says the opposite of what they answered — and the task store has
+    no invariant that would refuse an apply landing on it."""
+    seen = _tray_states(monkeypatch)
+    assert run_cli("task", "drop", "T02", "-w", "gone",
+                   "--drop-too", "T03").exit_code == 0
+    assert [len(s) for s in seen] == [2], seen
+    assert [(o["task"], o["status"]) for o in seen[-1]] == [
+        ("T02", "DROPPED"), ("T03", "DROPPED")]
+
+
+def test_a_new_task_and_its_edges_never_sit_in_the_tray_half_staged(run_cli,
+                                                                    monkeypatch):
+    """A task landing without its prerequisites is not a partial batch that
+    something refuses — it is a task that reads as startable."""
+    seen = _tray_states(monkeypatch)
+    assert run_cli("task", "add", "--id", "T09", "--title", "Ninth",
+                   "--area", "Alpha", "--after", "T01,T02").exit_code == 0
+    assert [len(s) for s in seen] == [3], seen
+
+
+def test_both_relation_kinds_are_staged_in_one_step(run_cli, monkeypatch):
+    """`--after X --discovered-during Y` is one statement about how this task
+    relates to the others, and half of it is a different statement."""
+    seen = _tray_states(monkeypatch)
+    assert run_cli("task", "dep", "T04", "--after", "T01",
+                   "--discovered-during", "T02").exit_code == 0
+    assert [len(s) for s in seen] == [2], seen
+    assert [(o["from"], o["kind"]) for o in seen[-1]] == [
+        ("T01", "precedes"), ("T02", "prompted")]
+
+
+def test_a_group_is_vetted_against_what_the_ops_before_it_produce(tg):
+    """`add_task T09` then `add_dep … → T09` is legal only in that order.
+    Vetting each op against the unchanged graph would refuse the second half of
+    a group the first half makes legal."""
+    ops = [{"op": "add_task", "id": "T09", "title": "Ninth", "area": "Alpha"},
+           {"op": "add_dep", "from": "T01", "to": ["T09"], "kind": "precedes"}]
+    task_pending.vet_all(tg, ops)                     # does not raise
+    with pytest.raises(pending.ApplyError):
+        task_pending.vet(tg, ops[1])                  # ...but alone it would
+
+
+def test_vet_all_checks_without_staging_or_mutating(tg):
+    task_pending.vet_all(tg, [{"op": "add_task", "id": "T09", "title": "x",
+                               "area": "Alpha"}])
+    assert "T09" not in tg.tasks
+    assert pending.load(task_pending.path()) == []
+
+
+def test_a_group_that_will_not_vet_stages_none_of_itself(task_store,
+                                                         monkeypatch):
+    """`_tstage_all` vets the whole group before writing any of it, so a
+    refusal leaves the tray as it was — rather than holding the first half of
+    something the command then gave up on."""
+    import typer
+    from dgraph import cli
+
+    with pytest.raises(typer.Exit):
+        cli._tstage_all([
+            {"op": "add_task", "id": "T09", "title": "Ninth", "area": "Alpha"},
+            {"op": "add_dep", "from": "T99", "to": ["T09"], "kind": "precedes"},
+        ])
+    assert pending.load(task_pending.path()) == []
+
+
+def test_a_task_op_is_addressable_by_id(run_cli):
+    """The task store's half of audit F29 route 1. Same tray, same hazard, same
+    two vocabularies."""
+    run_cli("task", "add", "--id", "T09", "--title", "Ninth", "--area", "Alpha")
+    run_cli("task", "add", "--id", "T10", "--title", "Tenth", "--area", "Alpha")
+    ops = pending.load(task_pending.path())
+    res = run_cli("task", "drop-op", ops[1]["ref"])
+    assert res.exit_code == 0 and "Tenth" in res.output
+    assert [o["id"] for o in pending.load(task_pending.path())] == ["T09"]
+    res = run_cli("task", "drop-op", "zzzz")
+    assert res.exit_code == 1 and "zzzz" in res.output

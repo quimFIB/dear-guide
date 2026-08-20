@@ -109,7 +109,7 @@ def test_advisory_findings_warn_but_never_fail(store, g):
 
     with pytest.warns(UserWarning, match="no_orphans"):
         testing.test_decision_graph_advisory_warnings(
-            [Violation("no_orphans", "D01 is connected to nothing", "warn")])
+            [Violation("no_orphans", "D01 is connected to nothing", "warning")])
     # a clean graph: no warning, and — the point — never an assertion
     testing.test_decision_graph_advisory_warnings([])
 
@@ -188,3 +188,46 @@ def test_provisional_under_a_reopened_premise_is_not_reported(store, g):
     g.save()
     write(Graph.load())
     assert not [v for v in run() if v.check == "stale_provisional"]
+
+
+# ---- audit F14: the option `dgraph.testing` documents ----------------------
+
+
+def test_the_pytest_plugin_registers_its_option():
+    """Audit F14. `dgraph/testing.py` is the module projects are told to
+    `import *` from, so its docstring is the interface — and it documented
+    `--decision-graph PATH` "if the plugin is registered" when there was no
+    `pytest_addoption` anywhere in the package and no `pytest11` entry point to
+    register one with. The flag was an `unrecognized arguments` error.
+    """
+    import tomllib
+    from pathlib import Path
+
+    from dgraph import testing
+
+    assert hasattr(testing, "pytest_addoption")
+
+    root = Path(__file__).resolve().parent.parent
+    meta = tomllib.loads((root / "pyproject.toml").read_text())
+    points = meta["project"]["entry-points"]["pytest11"]
+    assert "dgraph.testing" in points.values()
+
+
+def test_the_option_chooses_the_project(tmp_path, monkeypatch):
+    """What the option is for: `$DG_PROJECT` is process-wide, so it cannot say
+    "this test run, this project" without leaking into everything else the
+    shell goes on to do. A repository holding more than one graph needs that.
+    """
+    from dgraph import testing
+
+    monkeypatch.delenv("DG_PROJECT", raising=False)
+    (tmp_path / "decisions.json").write_text(
+        '{"areas": [], "vertices": [], "edges": []}\n')
+
+    class _Config:
+        rootpath = tmp_path.parent          # deliberately not the project
+        def getoption(self, name, default=None):
+            return str(tmp_path)
+
+    proj = testing.decision_project.__wrapped__(_Config())
+    assert proj.root == tmp_path.resolve()

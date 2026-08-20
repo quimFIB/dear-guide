@@ -1,0 +1,91 @@
+{
+  "areas": [
+    "Search",
+    "Serving",
+    "Eval"
+  ],
+  "tasks": [
+    {
+      "id": "T01",
+      "title": "Build the HNSW index over the 48M-vector corpus",
+      "area": "Search",
+      "status": "DONE",
+      "done": "2026-02-21",
+      "outcome": "index/build_hnsw.py; 61G resident, 4h12m on the batch box",
+      "because": "D02"
+    },
+    {
+      "id": "T02",
+      "title": "Normalise embeddings at write time",
+      "area": "Search",
+      "status": "DONE",
+      "note": "Cosine over unnormalised vectors is a silent wrong answer rather\nthan an error, so this is enforced in the writer and asserted in CI.",
+      "done": "2026-02-24",
+      "outcome": "PR #218 — normalisation moved into the writer",
+      "because": "D03"
+    },
+    {
+      "id": "T03",
+      "title": "Sweep efSearch against the held-out queries",
+      "area": "Serving",
+      "status": "DOING",
+      "note": "The spike behind D04. Sweep 32/64/128/256 and record recall@10\nand p99 for each, against the exact-search baseline from T01.",
+      "evidence_for": "D04"
+    },
+    {
+      "id": "T04",
+      "title": "Wire the shard fan-out and the merge path",
+      "area": "Serving",
+      "status": "TODO",
+      "because": "D05"
+    },
+    {
+      "id": "T05",
+      "title": "Stand up the recall harness on the held-out set",
+      "area": "Eval",
+      "status": "DONE",
+      "done": "2026-02-10",
+      "outcome": "eval/recall.py — the baseline every sweep is scored against",
+      "because": "D06"
+    },
+    {
+      "id": "T06",
+      "title": "Add a CI gate on recall@10 >= 0.95",
+      "area": "Eval",
+      "status": "TODO",
+      "note": "The falsifier on D02 is only real if something checks it.",
+      "because": "D02"
+    }
+  ],
+  "edges": [
+    {
+      "from": "T01",
+      "to": [
+        "T03",
+        "T06"
+      ],
+      "kind": "precedes"
+    },
+    {
+      "from": "T02",
+      "to": [
+        "T06"
+      ],
+      "kind": "precedes"
+    },
+    {
+      "from": "T03",
+      "to": [
+        "T04"
+      ],
+      "kind": "precedes"
+    },
+    {
+      "from": "T05",
+      "to": [
+        "T03"
+      ],
+      "kind": "precedes"
+    }
+  ]
+}

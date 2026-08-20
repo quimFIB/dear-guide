@@ -24,11 +24,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dgraph import project
-from dgraph.pending import ApplyError
-from dgraph.tasks import STATUSES, Task, TaskEdge, TaskGraph
+from dgraph.pending import ApplyError, already
+from dgraph.tasks import (KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES, Task,
+                          TaskEdge, TaskGraph, matches)
 from dgraph.violation import Violation
 
-OPS = {"add_task", "add_dep", "remove_dep", "set_status", "set_link"}
+OPS = {"add_task", "add_dep", "remove_dep", "remove_task", "set_status",
+       "set_link"}
 
 #: An extra validator over a proposed task graph — see `apply_all`.
 Checker = Callable[[TaskGraph], list[Violation]]
@@ -45,7 +47,13 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
 
     if kind == "add_task":
         if op["id"] in tg.tasks:
-            raise ApplyError(f"{op['id']} already exists")
+            # The same two readings the decision store tells apart, through the
+            # same helper: an id taken by *this* task means another writer
+            # applied it and nothing was lost, while an id taken by something
+            # else is a clash and re-staging under a fresh id is right. Shared
+            # rather than reimplemented, because a rule applied in one store and
+            # not its twin is the shape most of this tool's audit findings took.
+            raise already(op["id"], matches(tg.tasks[op["id"]], op), "task")
         tg.tasks[op["id"]] = Task(
             id=op["id"], title=op["title"], area=op["area"],
             status=op.get("status", "TODO"), note=op.get("note"),
@@ -54,33 +62,90 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
         )
         return
 
-    if kind == "add_dep":
+    if kind in ("add_dep", "remove_dep"):
+        # `kind` is required in the op as it is in the store, and for the same
+        # reason: a tray is read by a person running `dg task pending` before
+        # it is read by this function, and an op that omits which relation it
+        # edits cannot be reviewed. A tray staged before kinds existed fails
+        # here, and `preview` turns that into "missing required field 'kind'".
+        edge_kind = op["kind"]
+        if edge_kind not in KINDS:
+            raise ApplyError(
+                f"unknown edge kind {edge_kind!r} — one of {', '.join(KINDS)}"
+            )
         src = op["from"]
         if src not in tg.tasks:
             raise ApplyError(f"unknown task {src!r}")
-        targets = sorted(set(op["to"]))
-        for e in tg.edges:
-            if e.src == src:
-                e.to = sorted(set(e.to) | set(targets))
-                return
-        tg.edges.append(TaskEdge(src=src, to=targets))
-        return
 
-    if kind == "remove_dep":
+        if kind == "add_dep":
+            targets = sorted(set(op["to"]))
+            # Merged into an edge of the *same* kind. Matching on `src` alone
+            # would fold a prompted edge into a precedes one and silently
+            # assert an ordering nobody claimed.
+            for e in tg.edges:
+                if e.src == src and e.kind == edge_kind:
+                    e.to = sorted(set(e.to) | set(targets))
+                    return
+            tg.edges.append(TaskEdge(src=src, to=targets, kind=edge_kind))
+            return
+
         # The undo `add_dep` never had. Without it the only editable structure
         # in the task graph is what was declared when a task was created, and
         # every later correction is a hand-edit of tasks.json.
-        src = op["from"]
         targets = set(op["to"])
-        hit = [e for e in tg.edges if e.src == src and set(e.to) & targets]
+        hit = [e for e in tg.edges
+               if e.src == src and e.kind == edge_kind and set(e.to) & targets]
         if not hit:
             raise ApplyError(
-                f"{src} is not a prerequisite of "
-                f"{', '.join(sorted(targets))} — nothing to remove"
+                MISSING_EDGE[edge_kind].format(
+                    src=src, other=", ".join(sorted(targets))
+                ) + " — nothing to remove"
             )
         for e in hit:
             e.to = sorted(set(e.to) - targets)
         tg.edges = [e for e in tg.edges if e.to]
+        return
+
+    if kind == "remove_task":
+        # The decision store's `remove_vertex`, with two differences that both
+        # come from tasks not being decisions. No edge carries a payload, so
+        # nothing here can rewrite an answer and there is no reopen-first
+        # refusal. And nothing outside this store names a task — `because` and
+        # `evidence_for` point *at* decisions, never back — so a removal has no
+        # cross-store fallout to check, which the decision side cannot say.
+        tid = op["task"]
+        if tid not in tg.tasks:
+            raise ApplyError(f"unknown task {tid!r}")
+        mode = op.get("mode", "sever")
+        if mode not in REMOVAL_MODES:
+            raise ApplyError(
+                f"unknown removal mode {mode!r} — one of "
+                f"{', '.join(REMOVAL_MODES)}"
+            )
+        into = op.get("into")
+        if mode == "into" and (into == tid or into not in tg.tasks):
+            raise ApplyError(f"cannot merge {tid} into {into!r}")
+        # Reconnected per kind, never across one. Splicing a prerequisite into
+        # a provenance edge would assert an ordering nobody claimed, which is
+        # the distinction the kinds exist to keep.
+        for k in KINDS:
+            before, after = tg._in(tid, k), tg._out(tid, k)
+            if mode == "splice":
+                pairs = [(p, c) for p in before for c in after]
+            elif mode == "into":
+                pairs = ([(p, into) for p in before]
+                         + [(into, c) for c in after])
+            else:
+                pairs = []
+            for src, dst in pairs:
+                if src != dst:
+                    _apply_one(tg, {"op": "add_dep", "from": src,
+                                    "to": [dst], "kind": k})
+
+        for e in tg.edges:
+            e.to = [t for t in e.to if t != tid]
+        tg.edges = [e for e in tg.edges if e.src != tid and e.to]
+        del tg.tasks[tid]
         return
 
     if kind == "set_link":
@@ -113,6 +178,21 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             # one thing the task store does keep, so it is cleared here rather
             # than left to rot.
             t.done = t.outcome = None
+        if was == "DROPPED" and t.status != "DROPPED":
+            # The same rule for the other thing this store keeps, and it was
+            # missing: `why` says why the work is *not being done*, so work
+            # that is being done again must not carry one. Without this,
+            # `dg task drop T --why …` followed by `dg task start T` left the
+            # reason standing and the generated view printed "Not being done"
+            # under a DOING task, with `dg check` vouching for it — the drift
+            # this tool exists to prevent, in its own view.
+            #
+            # Cleared rather than kept-and-ignored because `why` is the record
+            # of an abandonment that has been undone; the abandonment that
+            # matters is in git, and a field that contradicts the status is
+            # worth less than an absent one. Ordered before the writes below so
+            # `dg task drop T --why x` on a DONE task still records its reason.
+            t.why = None
         for fld in ("done", "outcome", "note", "why"):
             if op.get(fld) is not None:
                 setattr(t, fld, op[fld])
@@ -162,6 +242,26 @@ def vet(tg: TaskGraph, op: dict) -> None:
         # A no-op that reads like progress. Refused with the current status
         # named, since the caller is often an agent that has lost track.
         raise ApplyError(f"{op['task']} is already {status}")
+
+
+def vet_all(tg: TaskGraph, ops: list[dict]) -> None:
+    """Raise if these ops could not be staged **as a group**.
+
+    The plural of `vet`, and the shape every group-building task command needs:
+    each op is vetted against the graph the ones before it produce, never
+    against the unchanged one. A group routinely builds on itself — `dg task
+    add --after X` stages the task and then an edge *to* it — and vetting the
+    edge against a graph without the task would refuse a group the first half
+    makes legal.
+
+    Nothing is written here. It exists so that a command can check a whole group
+    before staging any of it, which is what lets the staging be a single write:
+    see `pending.stage_all`, and audit F28 for what one-op-at-a-time cost.
+    """
+    probe = copy.deepcopy(tg)
+    for op in ops:
+        vet(probe, op)
+        _apply_one(probe, op)
 
 
 def apply_all(tg: TaskGraph, ops: list[dict],

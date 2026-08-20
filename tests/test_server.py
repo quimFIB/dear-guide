@@ -389,3 +389,280 @@ def test_apply_refuses_a_batch_that_closes_a_cross_cycle(srv, store):
     assert code == 400 and "link_acyclic" in body["error"]
     assert Graph.load(store / "decisions.json").vertices["D01"].status == "OPEN"
     assert pending.load()          # still staged, nothing written
+
+
+# ---- the task graph, and the join ----------------------------------------
+#
+# The decision routes above are mirrored one-for-one, so what is pinned here is
+# what is *different*: a project may have one store and not the other, the
+# readings that join them may not be reinvented outside `cross`, and the two
+# staging trays stay independent all the way through apply.
+
+
+@pytest.fixture
+def dual(store, task_store, g):
+    """One project with both stores, tasks pointing at real decisions."""
+    from dgraph import render, task_render
+    from dgraph.tasks import TaskGraph
+    render.write(g, store / "decision-graph.md")
+    tg = TaskGraph.load(task_store / "tasks.json")
+    tg.tasks["T01"].because = "D01"      # DONE, premise settled
+    tg.tasks["T03"].because = "D05"      # TODO, premise OPEN — gated
+    tg.tasks["T04"].evidence_for = "D05"
+    tg.save(task_store / "tasks.json")
+    task_render.write(tg, task_store / "tasks.md")
+    return task_store
+
+
+def test_tasks_is_null_when_the_project_has_no_task_store(srv, store):
+    """`null`, not a 500 and not an empty graph. "This project does not track
+    work" and "this project has no work outstanding" are different facts, and
+    the tab has to be able to say which."""
+    code, body = jreq(srv, "/api/tasks")
+    assert code == 200 and body is None
+
+
+def test_tasks_carries_the_derived_readings_the_view_would_recompute(srv, dual):
+    code, body = jreq(srv, "/api/tasks")
+    assert code == 200
+    d = body["derived"]["T03"]
+    assert d["prerequisites"] == ["T02"]
+    assert d["waiting_on"] == ["T02"]
+    assert body["frontier"] == ["T02", "T03", "T04"]
+    assert body["counts"]["DONE"] == 1
+
+
+def test_readiness_in_the_payload_accounts_for_the_premise(srv, dual):
+    """T03's prerequisites and its premise are two different obstacles, and the
+    panel has to name the right one. The task store alone cannot: `cross` is
+    the only module that may look at both."""
+    _, body = jreq(srv, "/api/tasks")
+    c = body["derived"]["T03"]["cross"]
+    assert c["premise"] == "D05" and c["gated_by"] == "D05"
+    assert c["premise_status"] == "OPEN" and c["ready"] is False
+
+
+def test_the_joined_route_reports_both_link_directions(srv, dual):
+    code, body = jreq(srv, "/api/joined")
+    assert code == 200
+    assert body["by_decision"]["D01"]["rests_on"] == ["T01"]
+    assert body["by_decision"]["D05"]["evidence"] == ["T04"]
+    assert body["by_decision"]["D05"]["pending_evidence"] == ["T04"]
+
+
+def test_the_joined_route_is_empty_without_both_stores(srv, store):
+    _, body = jreq(srv, "/api/joined")
+    assert body == {"by_decision": {}}
+
+
+def test_task_depth_ranks_by_longest_prerequisite_path(srv, dual):
+    _, body = jreq(srv, "/api/tasks")
+    d = body["derived"]
+    assert (d["T01"]["depth"], d["T02"]["depth"], d["T03"]["depth"]) == (0, 1, 2)
+    assert d["T04"]["depth"] == 0          # unconnected, which is ordinary
+
+
+def test_staging_a_task_op_needs_the_token(srv, dual):
+    code, _ = jreq(srv, "/api/task-pending", "POST",
+                   {"op": "set_status", "task": "T02", "status": "DOING"},
+                   token=False)
+    assert code == 403
+
+
+def test_a_task_op_staged_in_the_browser_is_the_tray_the_cli_reads(srv, dual):
+    """One tray, two front ends. If they were separate files, `dg apply` in a
+    terminal would silently drop what the browser staged."""
+    from dgraph import task_pending
+    code, body = jreq(srv, "/api/task-pending", "POST",
+                      {"op": "set_status", "task": "T02", "status": "DOING"})
+    assert code == 200 and body["staged"]
+    assert pending.load(task_pending.path()) == body["pending"]
+
+
+def test_a_task_op_is_vetted_before_it_is_staged(srv, dual):
+    """The CLI's stage-time guard, server side: an op for a task that does not
+    exist is refused here rather than staged as a batch-poisoning op that
+    `apply` rejects later."""
+    code, body = jreq(srv, "/api/task-pending", "POST",
+                      {"op": "set_status", "task": "T99", "status": "DOING"})
+    assert code == 400 and "T99" in body["error"]
+
+
+def test_staging_a_task_op_without_a_task_store_says_so(srv, store):
+    code, body = jreq(srv, "/api/task-pending", "POST",
+                      {"op": "set_status", "task": "T02", "status": "DOING"})
+    assert code == 400 and "tasks.json" in body["error"]
+
+
+def test_one_apply_writes_both_stores(srv, dual):
+    from dgraph import task_pending
+    from dgraph.model import Graph
+    from dgraph.tasks import TaskGraph
+    jreq(srv, "/api/pending", "POST",
+         dict(CLOSE, answer="a", source="s", falsifier="f", to=[]))
+    jreq(srv, "/api/task-pending", "POST",
+         {"op": "set_status", "task": "T02", "status": "DOING"})
+    code, body = jreq(srv, "/api/apply", "POST")
+    assert code == 200, body
+    # 2 decision ops: closing D05 also unstacks D06, which was BLOCKED:D05.
+    assert (body["applied"], body["applied_tasks"]) == (2, 1)
+    assert Graph.load(dual / "decisions.json").vertices["D05"].status == "DECIDED"
+    assert TaskGraph.load(dual / "tasks.json").tasks["T02"].status == "DOING"
+    assert pending.load() == [] and pending.load(task_pending.path()) == []
+    assert "DOING" in (dual / "tasks.md").read_text()
+
+
+def test_a_refused_task_batch_does_not_stop_a_decision_batch(srv, dual):
+    """Two independent batches, exactly as `dg apply` treats them. A task op
+    that will not apply must not take a clean decision batch down with it."""
+    from dgraph import task_pending
+    from dgraph.model import Graph
+    from dgraph.tasks import TaskGraph
+    jreq(srv, "/api/pending", "POST",
+         dict(CLOSE, answer="a", source="s", falsifier="f", to=[]))
+    # Staged past the vet, by writing the tray directly: T02 done with no
+    # outcome is exactly what `apply` refuses.
+    pending.stage({"op": "set_status", "task": "T02", "status": "DONE"},
+                  task_pending.path())
+    code, body = jreq(srv, "/api/apply", "POST")
+    assert code == 500 and body["applied"] == 2 and body["applied_tasks"] == 0
+    assert "task batch refused" in body["error"]
+    assert Graph.load(dual / "decisions.json").vertices["D05"].status == "DECIDED"
+    assert TaskGraph.load(dual / "tasks.json").tasks["T02"].status == "TODO"
+    # The refused ops stay staged; the applied ones do not.
+    assert pending.load() == [] and pending.load(task_pending.path())
+
+
+def test_dropping_a_task_op_touches_only_the_task_tray(srv, dual):
+    from dgraph import task_pending
+    jreq(srv, "/api/pending", "POST",
+         dict(CLOSE, answer="a", source="s", falsifier="f", to=[]))
+    jreq(srv, "/api/task-pending", "POST",
+         {"op": "set_status", "task": "T02", "status": "DOING"})
+    before = len(pending.load())
+    code, body = jreq(srv, "/api/task-pending/0", "DELETE")
+    assert code == 200 and body == []
+    assert before and len(pending.load()) == before
+
+
+# ---- health, and the detached run ----------------------------------------
+
+
+def test_health_identifies_the_tool_and_the_project(srv, store):
+    """`--status` and `--stop` believe this and nothing else. A pidfile cannot
+    tell a live server from a recycled pid, so the port has to answer for
+    itself."""
+    import os
+
+    import dgraph
+    code, body = jreq(srv, "/api/health")
+    assert code == 200
+    assert body["tool"] == "dg" and body["version"] == dgraph.version()
+    assert body["pid"] == os.getpid() and body["project"] == str(store)
+
+
+def test_health_needs_no_token_but_still_checks_the_host(srv, store):
+    code, _ = jreq(srv, "/api/health", token=False)
+    assert code == 200
+    r = urllib.request.Request(srv + "/api/health")
+    r.add_header("Host", "attacker.example")
+    try:
+        with urllib.request.urlopen(r, timeout=10) as resp:
+            code = resp.status
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+    assert code == 403
+
+
+def test_probe_rejects_a_port_that_is_not_ours(srv, store):
+    """The whole reason `/api/health` exists. Something else on the port must
+    not be mistaken for this server and signalled."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Other(BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"tool": "something-else"}')
+
+    s = ThreadingHTTPServer(("127.0.0.1", 0), Other)
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    try:
+        assert server.probe(s.server_port) is None
+    finally:
+        s.shutdown(); s.server_close()
+
+
+def test_probe_survives_a_port_with_nothing_on_it(store):
+    assert server.probe(1, timeout=0.3) is None
+
+
+def test_status_reports_a_record_whose_port_answers_to_nobody_as_stale(store):
+    """A stale record is reported, never silently deleted: somebody who asked
+    to stop a server deserves to be told there was nothing to stop."""
+    (store / server.SERVE_NAME).write_text(
+        json.dumps({"pid": 999999, "port": 1}), encoding="utf-8")
+    assert server.status()["state"] == "stale"
+
+
+def test_stop_refuses_to_signal_anything_that_is_not_ours(store, monkeypatch):
+    """The failure this guards is killing whatever inherited a recycled pid."""
+    killed = []
+    monkeypatch.setattr("os.kill", lambda *a: killed.append(a))
+    (store / server.SERVE_NAME).write_text(
+        json.dumps({"pid": 999999, "port": 1}), encoding="utf-8")
+    out = server.stop()
+    assert killed == [] and out["cleared"] is True
+    assert not (store / server.SERVE_NAME).exists()
+
+
+def test_status_is_none_with_no_record(store):
+    assert server.status() == {"state": "none"}
+
+
+def test_detach_starts_a_server_and_is_idempotent(store, g):
+    """The property a slash command needs: it returns, and running it twice
+    does not fight for the port."""
+    from dgraph import render
+    render.write(g, store / "decision-graph.md")
+    first = server.detach(port=0 or _free_port())
+    try:
+        assert first["already"] is False
+        assert server.probe(first["port"])["project"] == str(store)
+        again = server.detach(port=first["port"])
+        assert again["already"] is True and again["pid"] == first["pid"]
+        assert server.status()["state"] == "running"
+    finally:
+        server.stop()
+    assert server.status()["state"] == "none"
+    assert server.probe(first["port"], timeout=0.5) is None
+
+
+def _free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_the_delete_route_takes_an_op_id(srv, store):
+    """The browser sends the id when the op has one. Audit F29: the tray is
+    shared, and a terminal applying between the page's last refresh and the
+    click shifts every position past what it removed."""
+    from dgraph import pending
+
+    for n in (7, 8, 9):
+        pending.stage({"op": "add_vertex", "id": f"D{n:02d}", "title": f"n{n}",
+                       "area": "Alpha", "status": "OPEN"})
+    ops = pending.load()
+    code, left = jreq(srv, "/api/pending/" + ops[2]["ref"], "DELETE")
+    assert code == 200 and [o["id"] for o in left] == ["D07", "D08"]
+
+    # an index still resolves, and an id nothing carries is a 400 that says so
+    code, left = jreq(srv, "/api/pending/0", "DELETE")
+    assert code == 200 and [o["id"] for o in left] == ["D08"]
+    code, bad = jreq(srv, "/api/pending/zzzz", "DELETE")
+    assert code == 400 and "zzzz" in bad["error"]
+    assert len(pending.load()) == 1

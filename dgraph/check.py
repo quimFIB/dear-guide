@@ -26,6 +26,7 @@ CHECKS: tuple[str, ...] = (
     "propagation",
     "stale_provisional",
     "stale_block",
+    "block_is_a_premise",
     "no_orphans",
     "acyclic",
     "stale_view",
@@ -34,15 +35,20 @@ CHECKS: tuple[str, ...] = (
     "task_area_known",
     "task_status_legal",
     "task_no_dangling_refs",
+    "task_edge_kind",
     "task_acyclic",
     "task_done_complete",
+    "task_drop_complete",
     "task_done_before_prerequisite",
+    "released_by_drop",
+    "orphaned_by_drop",
     "stale_task_view",
     # the relation between the two stores; checked only when both exist
     "link_resolves",
     "link_premise_under_review",
     "link_acyclic",
     "evidence_unharvested",
+    "evidence_dropped",
 )
 
 
@@ -62,10 +68,18 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
             f"no {proj.store.name} or {proj.tasks.name} under {proj.root}",
         )]
 
-    problems = _decisions(proj) if proj.has_decisions else []
-    problems += _tasks(proj) if proj.has_tasks else []
-    if proj.has_decisions and proj.has_tasks:
-        problems += _link(proj)
+    # Both stores read under one lock, because the link between them is judged
+    # here and a link is only meaningful across a matched pair. Without it this
+    # can read one store from before an apply and the other from after, and
+    # report a `link_resolves` that never existed in any state anyone approved —
+    # which the commit gate turns into a denial for every agent in the
+    # repository. `project.stores` never refuses to run the body, so a lock that
+    # cannot be taken costs the coherence and not the answer. Audit F27.
+    with _project.stores(proj):
+        problems = _decisions(proj) if proj.has_decisions else []
+        problems += _tasks(proj) if proj.has_tasks else []
+        if proj.has_decisions and proj.has_tasks:
+            problems += _link(proj)
 
     unknown = sorted({p.check for p in problems} - set(CHECKS))
     if unknown:
@@ -136,17 +150,21 @@ def _tasks(proj: _project.Project) -> list[Violation]:
         from dgraph import cross
         problems += cross.validate(tg, Graph())
 
+    # A warning, for the reason `_decisions` gives at length below.
     if not proj.task_view.exists():
         problems.append(Violation(
             "stale_task_view",
             f"{proj.task_view.name} is missing — run `dg task render`",
+            "warning",
         ))
     else:
         try:
             current = proj.task_view.read_text(encoding="utf-8")
         except OSError as exc:
             problems.append(Violation(
-                "stale_task_view", f"{proj.task_view.name} could not be read: {exc}"
+                "stale_task_view",
+                f"{proj.task_view.name} could not be read: {exc}",
+                "warning",
             ))
         else:
             if current != task_render.render(tg):
@@ -154,6 +172,7 @@ def _tasks(proj: _project.Project) -> list[Violation]:
                     "stale_task_view",
                     f"{proj.task_view.name} does not match {proj.tasks.name}. It "
                     f"is generated — run `dg task render` rather than editing it.",
+                    "warning",
                 ))
     return problems
 
@@ -176,9 +195,34 @@ def _decisions(proj: _project.Project) -> list[Violation]:
             f"({exc!r}) — the graph cannot be judged valid",
         )]
 
+    # **A warning, not an error**, and the severity is the whole argument.
+    #
+    # The view is generated. Nothing is lost when it lags: `dg render` rebuilds
+    # it from the store, and every `dg apply` already does, before it writes the
+    # store at all. So a stale view is transient by construction — it survives
+    # until the next apply, at which point the corrected file is sitting in the
+    # worktree waiting to be committed with everything else.
+    #
+    # Blocking made that transient state deny **every commit in the repository**,
+    # since `check.run` is repo-global: a commit touching only `src/` was refused
+    # over a generated file it had nothing to do with, and frequently the person
+    # refused was not the one who caused it — a merge or a checkout moves the
+    # store and the view independently. Disproportionate for something one
+    # mechanical command fixes and the next apply fixes by itself.
+    #
+    # It stays *reported*, which is the part worth keeping: `dg check` lists it,
+    # `dg brief` carries it into every session, the pytest plugin raises it in
+    # the warning summary, and the commit gate says so — as a `warn`, which
+    # `dgraph/gate.py` added for exactly this. What changed is that none of them
+    # refuses any more.
+    #
+    # Safe to demote because this is not a store invariant: it lives here and
+    # never in `Graph.validate`, so no write path consults it and `apply_all`
+    # cannot be relaxed by this change.
     if not proj.view.exists():
         problems.append(Violation(
-            "stale_view", f"{proj.view.name} is missing — run `dg render`"
+            "stale_view", f"{proj.view.name} is missing — run `dg render`",
+            "warning",
         ))
     else:
         try:
@@ -189,13 +233,15 @@ def _decisions(proj: _project.Project) -> list[Violation]:
             # crash — `dg brief` and the session hook chief among them.
             current = None
             problems.append(Violation(
-                "stale_view", f"{proj.view.name} could not be read: {exc}"
+                "stale_view", f"{proj.view.name} could not be read: {exc}",
+                "warning",
             ))
         if current is not None and current != render.render(g):
             problems.append(Violation(
                 "stale_view",
                 f"{proj.view.name} does not match {proj.store.name}. It is "
                 f"generated — run `dg render` rather than editing it.",
+                "warning",
             ))
     return problems
 

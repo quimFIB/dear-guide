@@ -37,6 +37,13 @@ def fill(text: str, **fields: str) -> str:
     return text
 
 
+def _status(text: str, value: str) -> str:
+    """Replace the Status body. The add template ships a pre-filled `OPEN`, and
+    `fill` types *above* what is there rather than over it."""
+    assert "\nOPEN\n" in text
+    return text.replace("\nOPEN\n", f"\n{value}\n", 1)
+
+
 def complete(text: str) -> str:
     return fill(text, answer="Settle on 32k.", source="discussion",
                 falsifier="the corpus changes")
@@ -161,6 +168,26 @@ def test_add_round_trips_into_two_ops(g, store, fake_emacs):
     ops = editor.compose(g, "add_vertex")
     assert ops[0]["op"] == "add_vertex" and ops[0]["area"] == "Beta"
     assert ops[1] == {"op": "add_edge", "from": "D05", "to": [ops[0]["id"]]}
+
+
+def test_a_composed_block_records_its_dependency(g, store, fake_emacs):
+    """A block is a dependency, and the buffer must produce a batch that reads
+    as what it does — `_apply_one` adds the edge anyway, so a batch missing it
+    would gain structure the composer never saw."""
+    fake_emacs(lambda t: _status(fill(t, title="Blocked on D05", area="Beta"),
+                                 "BLOCKED:D05"))
+    ops = editor.compose(g, "add_vertex")
+    assert ops[0]["status"] == "BLOCKED:D05"
+    assert ops[1] == {"op": "add_edge", "from": "D05", "to": [ops[0]["id"]]}
+
+
+def test_a_composed_block_does_not_duplicate_an_explicit_parent(g, store,
+                                                                fake_emacs):
+    fake_emacs(lambda t: _status(
+        fill(t, title="Blocked on D05", area="Beta", after="D05"),
+        "BLOCKED:D05"))
+    ops = editor.compose(g, "add_vertex")
+    assert len(ops) == 2 and ops[1]["from"] == "D05"
 
 
 def test_comments_and_org_escapes_are_stripped(g, store, fake_emacs):
@@ -578,3 +605,31 @@ def test_the_write_ban_refuses_at_runtime(buffer_in):
       (princ (condition-case e (dgraph--dg "apply") (error (cadr e))))''')
     assert r.returncode == 0, r.stderr
     assert "refuses to run" in r.stdout and "read-only" in r.stdout
+
+
+def test_the_buffer_refuses_a_status_no_other_route_accepts(g, store):
+    """Audit F30. `dg add --edit` was the one staging route with no stage-time
+    guard, so a buffer could stage an op that could never apply — in a tray
+    every other writer shares, refusing their batches until somebody dropped
+    it. The message names `Status`, the field that was typed."""
+    buf = ("""":PROPERTIES:
+:DGRAPH_OP: add_vertex
+:END:
+* Input
+** Id
+D07
+** Title
+whatever
+** Area
+Alpha
+** Status
+{}
+""")
+    for bad, says in (("DONE", "illegal status 'DONE'"),
+                      ("BLOCKED", "BLOCKED must name a blocker"),
+                      ("BLOCKED:D99", "blocked by unknown vertex D99"),
+                      ("BLOCKED:D07", "blocked by itself")):
+        with pytest.raises(editor.EditorError) as exc:
+            editor.parse(buf.format(bad), g=g, expect_kind="add_vertex")
+        assert says in str(exc.value)
+        assert "Status" in str(exc.value)

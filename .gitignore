@@ -4,11 +4,32 @@ __pycache__/
 .dgraph-pending.json
 .dgraph-task-pending.json
 .dgraph-edit.org
+
+# Locks beside the two staging trays and the compose buffer, and the temp file
+# `project.write_atomic` swaps in. All three are removed on the way out; what
+# is ignored here is the one a `kill -9` leaves behind, which would otherwise
+# be untracked and swept up by `git add -A`.
+#
+# Named one by one rather than swept up by `*.lock`, which is the rule this
+# tool's own `project.IGNORE` states and this file was breaking: `*.lock` was
+# quietly ignoring our `uv.lock`, so the lockfile had never been committed.
+decisions.json.lock
+tasks.json.lock
+.dgraph-pending.json.lock
+.dgraph-task-pending.json.lock
+.dgraph-edit.org.lock
+*.dg-tmp*
 *.egg-info/
 build/
 dist/
 .venv/
+.pytest_cache/
 
 # the demo renders into a work directory, but `dg render` inside demo/ would
 # drop these here
 demo/decision-graph.md
+demo/tasks.md
+
+# the detached web app: a run record and its output
+.dgraph-serve.json
+.dgraph-serve.log

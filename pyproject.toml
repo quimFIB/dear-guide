@@ -3,20 +3,28 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "decision-graph-assistant"
+name = "development-graph-assistant"
 version = "0.1.0"
-description = "Track a project's decisions as a graph: what is settled, what it rests on, and what would reopen it."
+description = "Track a project's development as two linked graphs: the decisions it has settled, and the work that follows from them."
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["typer>=0.9", "rich>=13"]
 
-# The tool supplies a project's decision-graph tests (dgraph.testing), so
+# The tool supplies a project's development-graph tests (dgraph.testing), so
 # pytest is part of what it offers, not just how it is developed.
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 
 [project.scripts]
 dg = "dgraph.cli:main"
+
+# `dgraph.testing` is a pytest plugin as well as a module to import from: the
+# entry point is what lets it register `--decision-graph`, since a plugin hook
+# in a file that is merely imported by a test module is never called.
+[project.entry-points.pytest11]
+development-graph = "dgraph.testing"
 
 [tool.setuptools]
 packages = ["dgraph"]

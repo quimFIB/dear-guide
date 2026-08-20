@@ -11,12 +11,12 @@ from dataclasses import replace
 import pytest
 from typer.testing import CliRunner
 
-from dgraph import cross, gate, project
+from dgraph import cross, gate, pending, project
 from dgraph.check import run
 from dgraph.cli import app
 from dgraph.model import Graph
 from dgraph.render import write
-from dgraph.tasks import TaskGraph
+from dgraph.tasks import Task, TaskGraph
 
 runner = CliRunner()
 
@@ -204,6 +204,46 @@ def test_unharvested_evidence_warns(both):
     assert "dg decide D05" in str(hits[0])
 
 
+def test_dropped_evidence_warns(both):
+    """The sharper sibling of `unharvested`, and a silence neither store can
+    break alone. `pending_evidence` filters on `unfinished`, which DROPPED is
+    not, so the decision reports waiting on nothing the moment the spike is
+    abandoned — while `unharvested` stays quiet too, firing only on DONE."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D05"        # D05 is OPEN
+    tg.tasks["T04"].status = "DROPPED"
+    tg.tasks["T04"].why = "the vendor tool does it"
+    tg.save(both / "tasks.json")
+    g = Graph.load(both / "decisions.json")
+    # the two readings that used to be the whole story, both silent
+    assert cross.pending_evidence(tg, "D05") == []
+    assert not [v for v in run() if v.check == "evidence_unharvested"]
+    hits = [v for v in run() if v.check == "evidence_dropped"]
+    assert len(hits) == 1 and not hits[0].blocking
+    assert "dg decide D05" in str(hits[0]) and "T04" in str(hits[0])
+    assert cross.dropped_evidence(tg, g)[0]["id"] == "D05"
+
+
+def test_one_surviving_spike_is_not_a_dropped_silence(both):
+    """A decision still visibly waiting on something is not a silence."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D05"
+    tg.tasks["T04"].status = "DROPPED"
+    tg.tasks["T04"].why = "no"
+    tg.tasks["T02"].evidence_for = "D05"        # still unfinished
+    tg.save(both / "tasks.json")
+    assert not [v for v in run() if v.check == "evidence_dropped"]
+
+
+def test_dropped_evidence_for_a_settled_decision_is_quiet(both):
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D01"        # D01 is DECIDED
+    tg.tasks["T04"].status = "DROPPED"
+    tg.tasks["T04"].why = "no"
+    tg.save(both / "tasks.json")
+    assert not [v for v in run() if v.check == "evidence_dropped"]
+
+
 def test_evidence_for_a_settled_decision_is_quiet(both):
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T01"].evidence_for = "D01"        # D01 is DECIDED
@@ -249,13 +289,30 @@ def test_a_cycle_across_the_graphs_is_caught(both):
     from dgraph.tasks import TaskEdge
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T04"].evidence_for = "D01"        # T04 -> D01
-    tg.edges.append(TaskEdge(src="T02", to=["T04"]))   # T02 -> T04, T02 because D01
+    tg.edges.append(TaskEdge(src="T02", to=["T04"], kind="precedes"))   # T02 -> T04, T02 because D01
     tg.save(both / "tasks.json")
     assert tg.validate() == []                  # the task graph alone is clean
     g = Graph.load(both / "decisions.json")
     assert not [v for v in g.validate() if v.check == "acyclic"]
     hits = [v for v in cross.validate(tg, g) if v.check == "link_acyclic"]
     assert hits and hits[0].blocking
+
+
+def test_a_prompted_edge_cannot_make_a_cross_cycle(both):
+    """The union is "the head waits on the tail", and provenance is not that.
+
+    Feeding `prompted` edges in would manufacture a deadlock out of the
+    ordinary case: T04 informs D01, T02 exists because of D01, and doing T02
+    turned T04 up. Nothing in that waits on anything in a loop — but as one
+    untyped relation it reads exactly like the deadlock the test above pins.
+    """
+    from dgraph.tasks import TaskEdge
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D01"
+    tg.edges.append(TaskEdge(src="T02", to=["T04"], kind="prompted"))
+    g = Graph.load(both / "decisions.json")
+    assert tg.validate() == []
+    assert not [v for v in cross.validate(tg, g) if v.check == "link_acyclic"]
 
 
 def test_because_alone_cannot_make_a_cross_cycle(both):
@@ -521,7 +578,7 @@ def test_a_pre_existing_violation_does_not_freeze_either_store(run_cli, both):
     from dgraph.tasks import TaskEdge
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T04"].evidence_for = "D01"                # T04 -> D01
-    tg.edges.append(TaskEdge(src="T02", to=["T04"]))    # T02 -> T04, because D01
+    tg.edges.append(TaskEdge(src="T02", to=["T04"], kind="precedes"))    # T02 -> T04, because D01
     tg.save(both / "tasks.json")
     task_render.write(tg, both / "tasks.md")
     assert [v for v in run() if v.check == "link_acyclic"]
@@ -555,7 +612,7 @@ def test_a_cycle_reads_the_same_way_twice(both):
     from dgraph.tasks import TaskEdge
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T04"].evidence_for = "D01"
-    tg.edges.append(TaskEdge(src="T02", to=["T04"]))
+    tg.edges.append(TaskEdge(src="T02", to=["T04"], kind="precedes"))
     g = Graph.load(both / "decisions.json")
     first = [str(v) for v in cross.validate(tg, g) if v.check == "link_acyclic"]
     tg.edges.reverse()
@@ -597,3 +654,241 @@ def test_the_task_list_says_when_premise_information_is_missing(run_cli, both):
     (both / "decisions.json").write_text("{not json")
     res = run_cli("task")
     assert "premise information is missing" in res.output
+
+
+def test_a_cross_graph_deadlock_names_only_the_loop(tg, g):
+    """Audit F7's third site. `cross._cycles` already rotated to the smallest
+    id and said why — the apply guard tells an introduced finding from a
+    pre-existing one **by its text** — while the two store validators reported
+    the route into the loop as part of it. The rule lives once now, in
+    `violation.cycle_from`, and this pins the property the guard rests on.
+    """
+    from dgraph.violation import cycle_from
+
+    # the same loop, met at each of its three nodes, reads identically
+    walks = [(["D02", "T01", "D05"], "D02"),
+             (["T01", "D05", "D02"], "T01"),
+             (["D05", "D02", "T01"], "D05")]
+    assert {tuple(cycle_from(trail, node)) for trail, node in walks} == {
+        ("D02", "T01", "D05", "D02")}
+
+    # and a node merely feeding the loop is not part of the finding
+    assert cycle_from(["D01", "D02", "T01", "D05"], "D02") \
+        == ["D02", "T01", "D05", "D02"]
+
+
+# ---- audit F9: the guards and the batch that never lands -------------------
+#
+# Each guard judges its batch against the *other* store's staged state, on the
+# grounds that `dg apply` writes both. Either batch can be refused, though, and
+# then the one that landed was validated against a state that never existed.
+# The store is left holding a blocking `link_resolves` or `link_acyclic` that
+# no `dg` command produced: `dg check` reports it and the commit gate denies
+# every commit in the repository until somebody hand-edits a store.
+#
+# Both directions, because the shape of this bug is "one half was reasoned
+# about and its mirror was not".
+
+
+def _stage(root, name, ops):
+    (root / name).write_text(json.dumps(ops), encoding="utf-8")
+
+
+def _render(root):
+    """Both views, so `check.run` has nothing stale to say about them."""
+    from dgraph import task_render
+    write(Graph.load(root / "decisions.json"), root / "decision-graph.md")
+    task_render.write(TaskGraph.load(root / "tasks.json"), root / "tasks.md")
+
+
+def _apply_both(root):
+    """`dg apply`'s sequence: decisions, then tasks, each on its own."""
+    from dgraph import applying, pending, task_pending
+    out = {}
+    for label, path, fn in (
+        ("decisions", root / ".dgraph-pending.json", applying.apply_decisions),
+        ("tasks", root / ".dgraph-task-pending.json", applying.apply_tasks),
+    ):
+        ops = pending.load(path)
+        if not ops:
+            continue
+        try:
+            out[label] = fn(ops).applied
+        except Exception as exc:                       # noqa: BLE001
+            out[label] = f"refused: {exc}"
+    return out
+
+
+@pytest.mark.parametrize("direction", ["decision", "task"])
+def test_a_batch_is_never_judged_against_one_that_will_not_apply(both, direction):
+    """Audit F9, both directions. The batch that lands must have been judged
+    against a state that actually comes about.
+
+    *decision*: the decision batch closes a loop through the task store, and
+    the task batch that would have broken the loop fails its own validation.
+    *task*: the task batch links to a decision the decision batch was supposed
+    to create, and that batch is refused.
+
+    Before the fix each of these wrote a store whose blocking violation the
+    gate then denied every commit over.
+    """
+    if direction == "decision":
+        # Two open decisions and a task between them, so the only loop the
+        # batch can close runs *through* the task store — a decision-store
+        # cycle would be caught by `acyclic` and prove nothing about the guard.
+        raw = json.loads((both / "decisions.json").read_text())
+        raw["vertices"] += [
+            {"id": "D07", "title": "one end", "area": "Beta", "status": "OPEN"},
+            {"id": "D08", "title": "the other", "area": "Beta", "status": "OPEN"},
+        ]
+        (both / "decisions.json").write_text(json.dumps(raw, indent=2))
+        tg = TaskGraph.load(both / "tasks.json")
+        tg.tasks["T05"] = Task(id="T05", title="the spike", area="Beta",
+                               status="TODO", because="D07",
+                               evidence_for="D08")   # D07 -> T05 -> D08
+        tg.save(both / "tasks.json")
+        _render(both)
+        # D08 opens D07 closes the loop. The clear would break it, but the
+        # batch carrying it will not apply — DONE with no outcome.
+        _stage(both, ".dgraph-pending.json",
+               [{"op": "add_edge", "from": "D08", "to": ["D07"]}])
+        _stage(both, ".dgraph-task-pending.json",
+               [{"op": "set_link", "task": "T05", "clear": ["evidence_for"]},
+                {"op": "set_status", "task": "T02", "status": "DONE"}])
+    else:
+        _stage(both, ".dgraph-pending.json",
+               [{"op": "add_vertex", "id": "D09", "title": "new",
+                 "area": "nowhere"}])          # unknown area: refused
+        _stage(both, ".dgraph-task-pending.json",
+               [{"op": "set_link", "task": "T04", "because": "D09"}])
+
+    _apply_both(both)
+
+    from dgraph import check
+    blocking = [str(v) for v in check.run() if v.blocking]
+    assert blocking == [], "the apply left the project invalid"
+
+
+def test_a_batch_that_needs_the_other_one_still_applies(both):
+    """The property the staged-state judging exists for, and which the fix
+    above must not cost: when the other batch *will* land, a batch that is only
+    legal alongside it is still allowed through.
+
+    Here the task op links to a decision that does not exist yet and is created
+    by the decision batch in the same `dg apply`.
+    """
+    _stage(both, ".dgraph-pending.json",
+           [{"op": "add_vertex", "id": "D09", "title": "new", "area": "Beta"}])
+    _stage(both, ".dgraph-task-pending.json",
+           [{"op": "set_link", "task": "T04", "because": "D09"}])
+
+    assert _apply_both(both) == {"decisions": 1, "tasks": 1}
+    assert TaskGraph.load(both / "tasks.json").tasks["T04"].because == "D09"
+    from dgraph import check
+    assert [str(v) for v in check.run() if v.blocking] == []
+
+
+def test_a_refused_decision_batch_does_not_stop_the_task_batch(run_cli, both):
+    """`dg apply`'s own docstring: "a task batch that will not apply can never
+    stop a decision batch that would". The reverse was not true — a refused
+    decision batch exited before the task batch was reached — which is why the
+    two hosts needed different reproductions of the bug above. The server
+    always continued; the CLI now does too.
+    """
+    _stage(both, ".dgraph-pending.json",
+           [{"op": "add_vertex", "id": "D09", "title": "new",
+             "area": "nowhere"}])                      # refused
+    _stage(both, ".dgraph-task-pending.json",
+           [{"op": "set_status", "task": "T02", "status": "DOING"}])
+
+    res = run_cli("apply")
+    assert res.exit_code == 1                          # something was refused
+    assert "aborted, nothing written" in res.output    # the decision batch
+    assert TaskGraph.load(both / "tasks.json").tasks["T02"].status == "DOING"
+
+
+@pytest.mark.parametrize("missing", ["decisions.json", "tasks.json"])
+def test_a_missing_store_does_not_stop_the_other_batch(run_cli, both, missing):
+    """Audit F22. The independence above held for a *refusal* and not for a
+    missing store, which is a different way for a batch to be unapplicable and
+    reached the same helpers by a different door.
+
+    `_apply_decisions` and `_apply_tasks` are written to return rather than
+    exit, so `apply` can give both batches their turn — but they loaded the
+    store through `_g()`/`_tg()`, which print and `raise typer.Exit`, and those
+    were evaluated as arguments. A project with no `decisions.json` therefore
+    exited before the task batch was reached, losing nothing but applying
+    nothing either, with exit code 2.
+
+    Not a hand-edited state: both trays are gitignored, so they outlive a
+    `git checkout` of a branch on which one of the stores does not exist yet.
+    """
+    survivor = "tasks.json" if missing == "decisions.json" else "decisions.json"
+    _stage(both, ".dgraph-pending.json",
+           [{"op": "add_vertex", "id": "D09", "title": "new", "area": "Beta"}])
+    _stage(both, ".dgraph-task-pending.json",
+           [{"op": "set_status", "task": "T02", "status": "DOING"}])
+    (both / missing).unlink()
+
+    res = run_cli("apply")
+    assert res.exit_code == 1, res.output          # a batch did not apply...
+    assert missing in res.output                   # ...and it says which store
+
+    if survivor == "tasks.json":
+        assert TaskGraph.load(both / "tasks.json").tasks["T02"].status == "DOING"
+        assert pending.load(both / ".dgraph-task-pending.json") == []
+        # The batch that could not run keeps its ops: nothing was applied, so
+        # nothing may be discarded.
+        assert len(pending.load(both / ".dgraph-pending.json")) == 1
+    else:
+        assert "D09" in (both / "decisions.json").read_text()
+        assert pending.load(both / ".dgraph-pending.json") == []
+        assert len(pending.load(both / ".dgraph-task-pending.json")) == 1
+
+
+def test_an_unreadable_store_does_not_stop_the_other_batch(run_cli, both):
+    """The same, for a store that is present and will not parse. `Graph.load`
+    raises where `has_decisions` is happy, and an exception out of one helper
+    takes the other batch with it exactly as an exit did."""
+    _stage(both, ".dgraph-pending.json",
+           [{"op": "add_vertex", "id": "D09", "title": "new", "area": "Beta"}])
+    _stage(both, ".dgraph-task-pending.json",
+           [{"op": "set_status", "task": "T02", "status": "DOING"}])
+    (both / "decisions.json").write_text("{ not json", encoding="utf-8")
+
+    res = run_cli("apply")
+    assert res.exit_code == 1, res.output
+    assert "could not be read" in res.output
+    assert TaskGraph.load(both / "tasks.json").tasks["T02"].status == "DOING"
+    assert len(pending.load(both / ".dgraph-pending.json")) == 1
+
+
+def test_the_stage_time_warning_does_not_cry_over_a_decision_being_staged(run_cli, both):
+    """The regression the F9 fix could have introduced, and the reason
+    `decisions_after` exists.
+
+    The apply-time guard reads the decision *store*, which is right there:
+    decisions are written first, so the file already holds a batch that landed.
+    The stage-time warning asks the same question before either batch has run,
+    and against the file alone it announces that a link is dangling when the
+    very next command is about to create the decision it names — a message
+    `dg apply` then disproves.
+    """
+    run_cli("add", "--id", "D09", "--title", "a new question", "--area", "Beta")
+    res = run_cli("task", "link", "T04", "--because", "D09")
+
+    assert res.exit_code == 0
+    assert "would currently refuse" not in res.output
+    assert _apply_both(both) == {"decisions": 1, "tasks": 1}
+    assert TaskGraph.load(both / "tasks.json").tasks["T04"].because == "D09"
+
+
+def test_the_stage_time_warning_still_fires_when_nothing_will_fix_it(run_cli, both):
+    """The other side of it: a task batch that no staged decision rescues must
+    still be called out at staging time rather than several commands later."""
+    _stage(both, ".dgraph-task-pending.json",
+           [{"op": "set_link", "task": "T04", "because": "D77"}])
+    res = run_cli("task", "start", "T02")     # any command that re-warns
+
+    assert "would currently refuse" in res.output
+    assert "D77" in res.output

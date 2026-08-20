@@ -1,9 +1,9 @@
 {
-  "name": "decision-graph",
-  "description": "Track a project's decisions as a graph: what is settled, what it rests on, and what evidence would reopen it. Injects the open frontier at session start, teaches the recording discipline, and refuses a commit that would leave the graph contradicting itself.",
+  "name": "development-graph",
+  "description": "Track a project's development as two linked graphs: the decisions — what is settled, what it rests on, what evidence would reopen it — and the work that follows from them. Injects the open frontier at session start, teaches the recording discipline, and refuses a commit that would leave the graphs contradicting themselves.",
   "version": "0.1.0",
   "author": {
-    "name": "Quim Casals"
+    "name": "quimFIB"
   },
-  "keywords": ["decisions", "architecture", "adr", "provenance"]
+  "keywords": ["decisions", "tasks", "architecture", "adr", "provenance"]
 }

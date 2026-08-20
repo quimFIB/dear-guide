@@ -135,5 +135,5 @@ def render(g: Graph) -> str:
 
 def write(g: Graph, path: Path | None = None) -> Path:
     target = path or project.find().view
-    target.write_text(render(g), encoding="utf-8")
+    project.write_atomic(target, render(g))
     return target

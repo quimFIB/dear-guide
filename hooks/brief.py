@@ -60,8 +60,8 @@ def main() -> int:
         # ordinary, and its only other symptom would be this hook going quiet
         # forever.
         if "No such command" in (r.stderr or ""):
-            print("The decision-graph plugin needs a newer `dg`: "
-                  "`pip install -U -e <the decision-graph-assistant checkout>`.")
+            print("The development-graph plugin needs a newer `dg`: "
+                  "`pip install -U -e <the development-graph-assistant checkout>`.")
         return 0
 
     brief = r.stdout.strip()

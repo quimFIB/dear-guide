@@ -6,7 +6,10 @@
      which is what keeps another tab from driving this API. -->
 <meta name="dg-token" content="__DG_TOKEN__">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Decision graph</title>
+<title>Development graph</title>
+<!-- assets/logo.svg, inline: this server answers `/` and `/api/*` and
+     nothing else, so a linked file would 404. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IgogICAgIHJvbGU9ImltZyIgYXJpYS1sYWJlbGxlZGJ5PSJkZy10aXRsZSI+CiAgPHRpdGxlIGlkPSJkZy10aXRsZSI+ZGV2ZWxvcG1lbnQtZ3JhcGgg4oCUIHR3byBsaW5rZWQgZ3JhcGhzLCBqb2luZWQgYXQgb25lIHNlYW08L3RpdGxlPgogIDwhLS0gVGhlIGRyYXdpbmcgaXMgNTF4NDU7IHRoaXMgY2VudHJlcyBpdCBpbiB0aGUgc3F1YXJlIGJveCBhbmQgc2NhbGVzIGl0IHRvCiAgICAgICBmaWxsLCBzbyB0aGUgbWFyayB3b3JrcyBhcyBhbiBhdmF0YXIgYW5kIGEgZmF2aWNvbiB3aXRob3V0IGEgc2Vjb25kIGZpbGUuIC0tPgogIDxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDMyIDMyKSBzY2FsZSgxLjE1KSB0cmFuc2xhdGUoLTI4IC0yOSkiPgoKICA8IS0tIERlY2lzaW9uczogYSBxdWVzdGlvbiBhbmQgdGhlIHR3byBpdCBvcGVucy4gRmlsbGVkIGNpcmNsZXM7IGRlcGVuZGVuY3kgaXMKICAgICAgIHRoZSBzdHJ1Y3R1cmUsIHNvIHRoZSBlZGdlcyBhcmUgdGhlIHdob2xlIG9mIHdoYXQgYSB2ZXJ0ZXggImhhcyIuIC0tPgogIDxnIHN0cm9rZT0iIzRjOGZkNiIgc3Ryb2tlLXdpZHRoPSIzLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+CiAgICA8bGluZSB4MT0iMTMuNiIgeTE9IjE4LjYiIHgyPSIxMC40IiB5Mj0iMjcuNCIvPgogICAgPGxpbmUgeDE9IjE4LjQiIHkxPSIxOC42IiB4Mj0iMjEuNiIgeTI9IjI3LjQiLz4KICA8L2c+CiAgPGcgZmlsbD0iIzRjOGZkNiI+CiAgICA8Y2lyY2xlIGN4PSIxNiIgY3k9IjEyIiByPSI1LjUiLz4KICAgIDxjaXJjbGUgY3g9IjgiICBjeT0iMzQiIHI9IjUuNSIvPgogICAgPGNpcmNsZSBjeD0iMjQiIGN5PSIzNCIgcj0iNS41Ii8+CiAgPC9nPgoKICA8IS0tIFdvcms6IGEgZGlmZmVyZW50IHNoYXBlLCBiZWNhdXNlIGl0IGlzIGEgZGlmZmVyZW50IHN0b3JlLiAtLT4KICA8ZyBzdHJva2U9IiM3ZDg1OTAiIHN0cm9rZS13aWR0aD0iMy41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIGZpbGw9Im5vbmUiPgogICAgPGxpbmUgeDE9IjQ4IiB5MT0iMjkuNSIgeDI9IjQ4IiB5Mj0iMzguNSIvPgogICAgPHJlY3QgeD0iNDIuNSIgeT0iMTYuNSIgd2lkdGg9IjExIiBoZWlnaHQ9IjExIiByeD0iMi41Ii8+CiAgICA8cmVjdCB4PSI0Mi41IiB5PSI0MC41IiB3aWR0aD0iMTEiIGhlaWdodD0iMTEiIHJ4PSIyLjUiLz4KICA8L2c+CgogIDwhLS0gVGhlIHNlYW06IHRoZSBvbmUgbGluayB0aGF0IGNyb3NzZXMsIGFuZCB0aGUgb25seSBkYXNoZWQgbGluZSBoZXJlLiAtLT4KICA8bGluZSB4MT0iMzAuNyIgeTE9IjMwLjYiIHgyPSI0MC43IiB5Mj0iMjUuNiIgc3Ryb2tlPSIjYTM3MWY3IgogICAgICAgIHN0cm9rZS13aWR0aD0iMy41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1kYXNoYXJyYXk9IjAuMSA2LjUiLz4KICA8L2c+Cjwvc3ZnPgo=">
 <style>
   :root{
     --bg:#0f1216; --panel:#161b22; --line:#2a323d; --ink:#e6edf3; --dim:#8b98a5;
@@ -32,6 +35,8 @@
   button.ghost:disabled{opacity:.45;cursor:default}
   .note{font-size:12px;margin-top:8px;white-space:pre-wrap}
   .note.wait{color:var(--prov)}
+  /* markup, not a message: no pre-wrap, so it may be written across lines */
+  p.wait{color:var(--prov);font-size:12px;margin:8px 0}
   .note.ok{color:var(--ok)}
   .note.bad{color:var(--bad)}
   .keys{color:var(--dim);font-size:11px;margin-top:6px}
@@ -74,8 +79,21 @@
   th{color:var(--dim);font-weight:600}
   .x{background:none;border:0;color:var(--bad);cursor:pointer;font-size:14px}
   .err{color:var(--bad);white-space:pre-wrap;font-size:12px;margin-top:8px}
+  /* An advisory, not a failure: what moved under a batch that applied. */
+  .warn{color:var(--warn);font-size:12px;margin-top:10px;margin-bottom:2px}
   .pill{display:inline-block;border-radius:99px;padding:0 7px;font-size:10.5px;
     font-weight:700;letter-spacing:.3px}
+  .tab{border:1px solid var(--line);background:transparent;color:var(--dim);
+    border-radius:6px;padding:2px 10px;cursor:pointer;font-size:12px;font-weight:600}
+  .tab.on{color:#04121f;background:var(--accent);border-color:var(--accent)}
+  /* the join, drawn as an edge between the two stores: never solid, so it can
+     never be mistaken for a dependency inside either graph */
+  .edge.cross{stroke:var(--prov);stroke-dasharray:2 5;opacity:.85}
+  .edge.evidence{stroke:var(--reop)}
+  .tray-split{display:flex;gap:18px;align-items:flex-start}
+  .tray-split>div{flex:1;min-width:0}
+  .tray-split h3{font-size:11px;margin:0 0 4px;color:var(--dim);
+    font-weight:600;letter-spacing:.3px;text-transform:uppercase}
   .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--dim)}
   .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;
     margin-right:4px;vertical-align:middle}
@@ -84,7 +102,8 @@
 <body>
 <div id="app">
   <header>
-    <h1>Decision graph</h1>
+    <h1>Development graph</h1>
+    <span id="tabs"></span>
     <span class="muted" id="counts"></span>
     <span id="statusChips"></span>
     <button class="chip" id="frontierOnly">frontier only</button>
@@ -94,7 +113,7 @@
   </header>
   <main>
     <div id="canvas"><svg id="svg"><g id="viewport"></g></svg></div>
-    <aside id="side"><p class="muted">Click a decision to inspect or decide it.</p></aside>
+    <aside id="side"><p class="muted">Click a node to inspect it.</p></aside>
   </main>
   <footer id="tray"></footer>
 </div>
@@ -105,6 +124,13 @@ const PALETTE = ["#1f6feb","#8957e5","#238636","#9e6a03","#1f7a8c","#bd561d"];
 const STATUS_COLOR = {DECIDED:"var(--ok)",OPEN:"var(--bad)",BLOCKED:"var(--warn)",
                       PROVISIONAL:"var(--prov)",REOPENED:"var(--reop)"};
 let G=null, PEND=[], sel=null, ED=null;
+/* The second store, and the reading that joins them. `T` is null in a project
+   with no tasks.json — which is not the same as a project whose backlog is
+   empty, and the tab says which. */
+let T=null, TPEND=[], JOIN=null, tsel=null;
+let tab="decisions";
+const TASK_COLOR = {TODO:"var(--warn)", DOING:"var(--accent)",
+                    DONE:"var(--ok)", DROPPED:"var(--dim)"};
 /* Transient, per-decision, never persisted: the panel is rebuilt from scratch on
    every navigation, so anything the user has not committed yet has to live out
    here or it dies with the old DOM.
@@ -142,13 +168,40 @@ async function api(path, opts){
 
 async function boot(){
   G = await api("/api/graph");
-  G.areas.forEach((a,i)=>AREA_COLOR[a]=PALETTE[i%PALETTE.length]);
+  T = await api("/api/tasks").catch(()=>null);
+  JOIN = await api("/api/joined").catch(()=>({by_decision:{}}));
+  /* One palette across both stores, so an area is the same colour whichever
+     graph you are looking at — that is most of what makes the joined view
+     readable. Task-only areas are appended rather than recoloured. */
+  const areas=[...new Set([...G.areas, ...(T?T.areas:[])])];
+  areas.forEach((a,i)=>AREA_COLOR[a]=PALETTE[i%PALETTE.length]);
+  ALL_AREAS = areas;
   PEND = await api("/api/pending");
+  TPEND = T ? await api("/api/task-pending").catch(()=>[]) : [];
   ED = ED || await api("/api/editor").catch(()=>({available:false}));
-  chips(); legend(); layout(); draw(); tray();
+  if(tab!=="decisions" && !T) tab="decisions";
+  tabs(); chips(); legend(); layout(); draw(); tray();
+}
+let ALL_AREAS=[];
+
+/* The three readings. `joined` is the one neither store can produce alone: it
+   is the whole reason the two are linked rather than merged. */
+function tabs(){
+  const names=[["decisions","decisions"],["tasks","tasks"],["joined","joined"]];
+  $("#tabs").innerHTML=names.map(([k,label])=>{
+    const off = k!=="decisions" && !T;
+    return `<button class="tab${k===tab?" on":""}" data-t="${k}"${off?" disabled title=\"this project has no tasks.json\"":""}>${label}</button>`;
+  }).join(" ");
+  $("#tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{
+    if(b.disabled) return;
+    tab=b.dataset.t; sel=null; tsel=null;
+    tabs(); chips(); layout(); fit(); draw();
+    $("#side").innerHTML=`<p class="muted">Click a node to inspect it.</p>`;
+  });
 }
 
 function chips(){
+  if(tab==="tasks"){ taskChips(); return; }
   const seen = [...new Set(G.vertices.map(v=>base(v.status)))].sort();
   $("#statusChips").innerHTML = seen.map(s=>
     `<button class="chip" data-s="${esc(s)}">${esc(s)}</button>`).join(" ");
@@ -162,8 +215,28 @@ function chips(){
     $("#frontierOnly").classList.toggle("on"); draw();
   };
   const c={}; G.vertices.forEach(v=>c[base(v.status)]=(c[base(v.status)]||0)+1);
-  $("#counts").textContent = G.vertices.length+" decisions · "+
+  let txt = G.vertices.length+" decisions · "+
     Object.entries(c).map(([k,n])=>`${n} ${k.toLowerCase()}`).join(", ");
+  if(tab==="joined" && T) txt += `  ·  ${T.tasks.length} tasks`;
+  $("#counts").textContent = txt;
+}
+
+function taskChips(){
+  const seen=[...new Set(T.tasks.map(x=>x.status))].sort();
+  $("#statusChips").innerHTML = seen.map(s=>
+    `<button class="chip${filter.status.has(s)?" on":""}" data-s="${esc(s)}">${esc(s)}</button>`).join(" ");
+  $("#statusChips").querySelectorAll("button").forEach(b=>b.onclick=()=>{
+    const s=b.dataset.s;
+    filter.status.has(s)?filter.status.delete(s):filter.status.add(s);
+    b.classList.toggle("on"); draw();
+  });
+  /* `ready` here is the cross-graph one: prerequisites resolved *and* the
+     premise settled. Reporting the task store's own narrower answer would
+     promise work that `dg task start` is about to say is blocked. */
+  const ready=T.frontier.filter(id=>T.derived[id].cross.ready).length;
+  $("#counts").textContent = T.tasks.length+" tasks · "+
+    Object.entries(T.counts).map(([k,n])=>`${n} ${k.toLowerCase()}`).join(", ")+
+    `  ·  ${ready} ready`;
 }
 
 function legend(){
@@ -171,26 +244,29 @@ function legend(){
     `<span><i style="background:${AREA_COLOR[a]}"></i>${esc(a)}</span>`).join("");
 }
 
-/* ---- layered DAG layout: rank by longest path, barycentre within rank ---- */
+/* ---- layered DAG layout: rank by longest path, barycentre within rank ----
+   One implementation for all three views. It knows nothing about decisions or
+   tasks: give it ids, a rank per id, and the two neighbour functions, and it
+   gives back positions. The joined view is only possible because of that — it
+   ranks over the union of both graphs plus the links between them. */
 const NW=168, NH=46, GAPX=26, GAPY=64;
-function layout(){
+
+function layerLayout(ids, rankOf, upOf, downOf){
   const layers={};
-  G.vertices.forEach(v=>{
-    const r=G.derived[v.id].depth;
-    (layers[r]=layers[r]||[]).push(v.id);
-  });
+  ids.forEach(id=>{ const r=rankOf(id); (layers[r]=layers[r]||[]).push(id); });
   const ranks=Object.keys(layers).map(Number).sort((a,b)=>a-b);
   ranks.forEach(r=>layers[r].sort());
   const pos={};
   const index=()=>ranks.forEach(r=>layers[r].forEach((id,i)=>pos[id]=i));
   index();
-  const mean=(ids)=>ids.length?ids.reduce((s,i)=>s+pos[i],0)/ids.length:null;
+  const mean=(list)=>{ const k=list.filter(i=>i in pos);
+    return k.length?k.reduce((s,i)=>s+pos[i],0)/k.length:null; };
   for(let sweep=0;sweep<4;sweep++){
     const down = sweep%2===0;
     (down?ranks:[...ranks].reverse()).forEach(r=>{
       layers[r].sort((a,b)=>{
-        const ka=mean(down?G.derived[a].depends:G.derived[a].children);
-        const kb=mean(down?G.derived[b].depends:G.derived[b].children);
+        const ka=mean(down?upOf(a):downOf(a));
+        const kb=mean(down?upOf(b):downOf(b));
         if(ka===null&&kb===null) return a<b?-1:1;
         if(ka===null) return 1; if(kb===null) return -1;
         return ka-kb || (a<b?-1:1);
@@ -198,16 +274,88 @@ function layout(){
       index();
     });
   }
-  const widest=Math.max(...ranks.map(r=>layers[r].length));
+  const widest=Math.max(...ranks.map(r=>layers[r].length), 1);
   const W=widest*(NW+GAPX);
-  G.xy={};
+  const xy={};
   ranks.forEach(r=>{
     const row=layers[r], span=row.length*(NW+GAPX);
-    row.forEach((id,i)=>{
-      G.xy[id]={x:(W-span)/2 + i*(NW+GAPX), y:r*(NH+GAPY)};
-    });
+    row.forEach((id,i)=>{ xy[id]={x:(W-span)/2 + i*(NW+GAPX), y:r*(NH+GAPY)}; });
   });
-  G.extent={w:W+GAPX, h:(Math.max(...ranks)+1)*(NH+GAPY)};
+  return {xy, extent:{w:W+GAPX, h:(Math.max(...ranks,0)+1)*(NH+GAPY)}};
+}
+
+/* Longest path from a root, over an arbitrary parent map. Iterative and
+   cycle-guarded for the reason the Python side is: a graph deep enough to
+   blow the stack, or one with a cycle the validator is about to report, must
+   still render something to look at rather than a blank canvas. */
+function longestPath(ids, parentsOf){
+  const depth={}, state={};
+  ids.forEach(root=>{
+    const stack=[[root,false]];
+    while(stack.length){
+      const [cur,done]=stack.pop();
+      if(done){
+        const ps=parentsOf(cur).filter(p=>p in depth);
+        depth[cur]=ps.length?Math.max(...ps.map(p=>depth[p]))+1:0;
+        state[cur]=2; continue;
+      }
+      if(state[cur]) continue;      /* done, or on the stack: a cycle */
+      state[cur]=1;
+      stack.push([cur,true]);
+      parentsOf(cur).forEach(p=>{ if(!state[p]) stack.push([p,false]); });
+    }
+  });
+  return depth;
+}
+
+/* The union of both graphs, as the joined view ranks it: a decision's
+   dependencies, a task's prerequisites, and the two link directions —
+   `because` puts the task below its premise, `evidence_for` puts the decision
+   below the work that will settle it. Exactly the digraph `dgraph/cross.py`
+   walks to prove there is no cycle across the two stores. */
+function unionParents(){
+  const up={};
+  const add=(node,parent)=>{ (up[node]=up[node]||[]).push(parent); };
+  G.vertices.forEach(v=>G.derived[v.id].depends.forEach(d=>add(v.id,d)));
+  if(T){
+    T.tasks.forEach(x=>T.derived[x.id].prerequisites.forEach(pq=>add(x.id,pq)));
+    T.tasks.forEach(x=>{
+      const c=T.derived[x.id].cross;
+      if(c.premise && !c.dangling) add(x.id, c.premise);
+      if(c.evidence_for && G.derived[c.evidence_for]) add(c.evidence_for, x.id);
+    });
+  }
+  return up;
+}
+
+function layout(){
+  if(tab==="tasks"){
+    const ids=T.tasks.map(x=>x.id);
+    const r=layerLayout(ids, id=>T.derived[id].depth,
+                        id=>T.derived[id].prerequisites,
+                        id=>T.derived[id].unblocks);
+    T.xy=r.xy; T.extent=r.extent; return;
+  }
+  if(tab==="joined" && T){
+    const up=unionParents();
+    const ids=[...G.vertices.map(v=>v.id), ...T.tasks.map(x=>x.id)];
+    const par=id=>up[id]||[];
+    const depth=longestPath(ids, par);
+    const kids={}; ids.forEach(i=>par(i).forEach(p=>(kids[p]=kids[p]||[]).push(i)));
+    const r=layerLayout(ids, id=>depth[id]||0, par, id=>kids[id]||[]);
+    JOIN.xy=r.xy; JOIN.extent=r.extent; return;
+  }
+  const r=layerLayout(G.vertices.map(v=>v.id), id=>G.derived[id].depth,
+                      id=>G.derived[id].depends, id=>G.derived[id].children);
+  G.xy=r.xy; G.extent=r.extent;
+}
+
+/* Whichever view is showing owns the canvas extent. */
+function extent(){
+  return tab==="tasks" ? T.extent : tab==="joined" ? JOIN.extent : G.extent;
+}
+function xyOf(id){
+  return (tab==="tasks" ? T.xy : tab==="joined" ? JOIN.xy : G.xy)[id];
 }
 
 function visible(v){
@@ -216,43 +364,138 @@ function visible(v){
   return true;
 }
 
-function draw(){
-  const vp=$("#viewport");
-  const related = sel ? new Set([sel,...G.derived[sel].depends,...G.derived[sel].children]) : null;
-  let edges="", nodes="";
-  G.edges.filter(e=>e.active).forEach(e=>{
-    const a=G.xy[e.from]; if(!a) return;
-    e.to.forEach(t=>{
-      const b=G.xy[t]; if(!b) return;
-      const x1=a.x+NW/2, y1=a.y+NH, x2=b.x+NW/2, y2=b.y;
-      const my=(y1+y2)/2;
-      const cls=["edge"];
-      if(!e.answer) cls.push("pending-dep");
-      if(related){ cls.push(related.has(e.from)&&related.has(t)?"hot":"dim"); }
-      edges+=`<path class="${cls.join(' ')}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`;
-    });
-  });
-  G.vertices.forEach(v=>{
-    const p=G.xy[v.id]; if(!p) return;
-    const show=visible(v);
-    const st=base(v.status);
-    const stroke=STATUS_COLOR[st]||"var(--line)";
-    const dash = st==="OPEN"?'stroke-dasharray="5 4"':(st==="PROVISIONAL"?'stroke-dasharray="1 3"':"");
-    const t=v.title.length>46?v.title.slice(0,44)+"…":v.title;
-    const half = t.length>26 ? t.slice(0,t.lastIndexOf(" ",26)||26) : t;
-    const rest = t.length>26 ? t.slice((t.lastIndexOf(" ",26)||26)+1) : "";
-    nodes+=`<g class="node${show?"":" dim"}" data-id="${esc(v.id)}" transform="translate(${p.x},${p.y})">
-      <rect width="${NW}" height="${NH}" rx="7" fill="${AREA_COLOR[v.area]}22"
+function tvisible(x){
+  if(filter.frontier && !T.frontier.includes(x.id)) return false;
+  if(filter.status.size && !filter.status.has(x.status)) return false;
+  return true;
+}
+
+/* One node renderer for both stores: same box, same two wrapped title lines,
+   so a decision and a task read as the same kind of thing in the joined view
+   and only their outline says which. */
+function nodeSvg(id, title, status, area, stroke, dash, dim){
+  const p=xyOf(id); if(!p) return "";
+  const s=title.length>46?title.slice(0,44)+"…":title;
+  const cut = s.length>26 ? (s.lastIndexOf(" ",26)||26) : -1;
+  const half = cut<0 ? s : s.slice(0,cut);
+  const rest = cut<0 ? "" : s.slice(cut+1);
+  return `<g class="node${dim?" dim":""}" data-id="${esc(id)}" transform="translate(${p.x},${p.y})">
+      <rect width="${NW}" height="${NH}" rx="7" fill="${AREA_COLOR[area]||"#888"}22"
             stroke="${stroke}" ${dash}/>
-      <text class="vid" x="8" y="15">${esc(v.id)}</text>
-      <text x="34" y="15" fill="${stroke}" font-size="9.5">${esc(v.status)}</text>
+      <text class="vid" x="8" y="15">${esc(id)}</text>
+      <text x="34" y="15" fill="${stroke}" font-size="9.5">${esc(status)}</text>
       <text x="8" y="29">${esc(half)}</text><text x="8" y="41">${esc(rest)}</text>
     </g>`;
-  });
-  vp.innerHTML=edges+nodes;
+}
+
+function edgeSvg(from, to, cls){
+  const a=xyOf(from), b=xyOf(to);
+  if(!a||!b) return "";
+  const x1=a.x+NW/2, y1=a.y+NH, x2=b.x+NW/2, y2=b.y;
+  const my=(y1+y2)/2;
+  return `<path class="${cls}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`;
+}
+
+function decisionNode(v, related){
+  const st=base(v.status);
+  const stroke=STATUS_COLOR[st]||"var(--line)";
+  const dash = st==="OPEN"?'stroke-dasharray="5 4"'
+             : st==="PROVISIONAL"?'stroke-dasharray="1 3"':"";
+  const dim = related ? !related.has(v.id) : !visible(v);
+  return nodeSvg(v.id, v.title, v.status, v.area, stroke, dash, dim);
+}
+
+function taskNode(x, related){
+  const d=T.derived[x.id];
+  const stroke=TASK_COLOR[x.status]||"var(--line)";
+  /* Blocked is derived here, never stored — so the dashes mean "waiting",
+     computed, and a task whose only obstacle is an unsettled premise gets them
+     too. That is the reading `dg task` prints as "waiting on D05". */
+  const waiting = x.status==="TODO" && (d.waiting_on.length || d.cross.gated_by);
+  const dash = waiting?'stroke-dasharray="5 4"':"";
+  const dim = related ? !related.has(x.id) : !tvisible(x);
+  return nodeSvg(x.id, x.title, x.status, x.area, stroke, dash, dim);
+}
+
+function draw(){
+  const vp=$("#viewport");
+  vp.innerHTML = tab==="tasks" ? drawTasks()
+               : tab==="joined" ? drawJoined() : drawDecisions();
   $("#svg").setAttribute("viewBox",view.join(" "));
   vp.querySelectorAll(".node").forEach(n=>n.onclick=()=>select(n.dataset.id));
 }
+
+function drawDecisions(){
+  const related = sel ? new Set([sel,...G.derived[sel].depends,...G.derived[sel].children]) : null;
+  let edges="", nodes="";
+  G.edges.filter(e=>e.active).forEach(e=>{
+    e.to.forEach(to=>{
+      const cls=["edge"];
+      if(!e.answer) cls.push("pending-dep");
+      if(related) cls.push(related.has(e.from)&&related.has(to)?"hot":"dim");
+      edges+=edgeSvg(e.from,to,cls.join(" "));
+    });
+  });
+  G.vertices.forEach(v=>{ nodes+=decisionNode(v, related); });
+  return edges+nodes;
+}
+
+function drawTasks(){
+  const related = tsel
+    ? new Set([tsel,...T.derived[tsel].prerequisites,...T.derived[tsel].unblocks])
+    : null;
+  let edges="", nodes="";
+  T.tasks.forEach(x=>T.derived[x.id].prerequisites.forEach(pq=>{
+    const cls=["edge"];
+    /* An unresolved prerequisite is the thing actually holding this up; a
+       resolved one is history. Same faint-dash convention the decision view
+       uses for a premise that is not settled yet. */
+    if(T.derived[x.id].waiting_on.includes(pq)) cls.push("pending-dep");
+    if(related) cls.push(related.has(pq)&&related.has(x.id)?"hot":"dim");
+    edges+=edgeSvg(pq,x.id,cls.join(" "));
+  }));
+  T.tasks.forEach(x=>{ nodes+=taskNode(x, related); });
+  return edges+nodes;
+}
+
+function drawJoined(){
+  const cur = sel || tsel;
+  let related=null;
+  if(sel){
+    const j=(JOIN.by_decision[sel]||{rests_on:[],evidence:[]});
+    related=new Set([sel,...G.derived[sel].depends,...G.derived[sel].children,
+                     ...j.rests_on,...j.evidence]);
+  }else if(tsel){
+    const d=T.derived[tsel];
+    related=new Set([tsel,...d.prerequisites,...d.unblocks]);
+    if(d.cross.premise) related.add(d.cross.premise);
+    if(d.cross.evidence_for) related.add(d.cross.evidence_for);
+  }
+  const rel=(a,b)=>related?(related.has(a)&&related.has(b)?"hot":"dim"):"";
+  let edges="", nodes="";
+  G.edges.filter(e=>e.active).forEach(e=>e.to.forEach(to=>{
+    edges+=edgeSvg(e.from,to,["edge",e.answer?"":"pending-dep",rel(e.from,to)].join(" "));
+  }));
+  T.tasks.forEach(x=>T.derived[x.id].prerequisites.forEach(pq=>{
+    edges+=edgeSvg(pq,x.id,["edge",
+      T.derived[x.id].waiting_on.includes(pq)?"pending-dep":"",rel(pq,x.id)].join(" "));
+  }));
+  /* The join itself. Two directions, two colours: a decision justifying work,
+     and work that will settle a decision. Never solid — it is a link between
+     the stores, not a dependency inside either. */
+  T.tasks.forEach(x=>{
+    const c=T.derived[x.id].cross;
+    if(c.premise && !c.dangling)
+      edges+=edgeSvg(c.premise,x.id,["edge","cross",rel(c.premise,x.id)].join(" "));
+    if(c.evidence_for && G.derived[c.evidence_for])
+      edges+=edgeSvg(x.id,c.evidence_for,
+                     ["edge","cross","evidence",rel(x.id,c.evidence_for)].join(" "));
+  });
+  G.vertices.forEach(v=>{ nodes+=decisionNode(v, related); });
+  T.tasks.forEach(x=>{ nodes+=taskNode(x, related); });
+  return edges+nodes;
+}
+
 /* --- prose rendering: shared with dgraph/orgmd.py --- */
 /* Stored prose comes in whichever dialect it was composed in: org (from
    `dg decide --edit`) or markdown (from the textarea below, md_import.py, or a
@@ -332,7 +575,7 @@ function md(s, fmt){
 
 /* ---- pan & zoom ---- */
 let view=[0,0,1600,1000];
-function fit(){ view=[-30,-30,G.extent.w+60,G.extent.h+60]; }
+function fit(){ const e=extent(); view=[-30,-30,e.w+60,e.h+60]; }
 (function pz(){
   const svg=$("#svg"); let drag=null;
   svg.addEventListener("mousedown",e=>{ if(e.target.closest(".node"))return;
@@ -352,12 +595,25 @@ function fit(){ view=[-30,-30,G.extent.w+60,G.extent.h+60]; }
 })();
 
 /* ---- side panel ---- */
-function select(id){ captureDraft(); sel=id; draw(); panel(); }
+/* One click handler for both stores: the id says which. In the joined view
+   both kinds are on screen at once, so this is not a formality. */
+function select(id){
+  captureDraft();
+  const isTask = T && T.tasks.some(x=>x.id===id);
+  if(isTask){ tsel=id; sel=null; } else { sel=id; tsel=null; }
+  draw();
+  isTask ? taskPanel() : panel();
+}
 
 /* Keyed by element id, so this works for both the decide and the reopen form
    without either having to declare its fields. */
+/* Whichever node the panel is showing. Drafts and notes are keyed by node id
+   across both stores, so a half-written outcome survives a trip through the
+   decision it is `because` of. */
+function cur(){ return sel || tsel; }
+
 function captureDraft(){
-  if(!sel || !$("#side")) return;
+  if(!cur() || !$("#side")) return;
   const d={};
   let any=false;
   $("#side").querySelectorAll("input[id],textarea[id],select[id]").forEach(el=>{
@@ -367,11 +623,11 @@ function captureDraft(){
   });
   /* An empty form is not a draft. Storing it would make the "opens" list
      remember a deselection the user never made. */
-  if(any) DRAFTS[sel]=d; else delete DRAFTS[sel];
+  if(any) DRAFTS[cur()]=d; else delete DRAFTS[cur()];
 }
 
 function restoreDraft(){
-  const d=DRAFTS[sel]; if(!d) return;
+  const d=DRAFTS[cur()]; if(!d) return;
   Object.entries(d).forEach(([id,val])=>{
     const el=document.getElementById(id); if(!el) return;
     if(el.multiple) [...el.options].forEach(o=>o.selected=val.includes(o.value));
@@ -399,6 +655,117 @@ const editKeys = () => !(ED && ED.available) ? ""
        <kbd>C-c C-c</kbd> stage · <kbd>C-c C-k</kbd> cancel ·
        <kbd>C-c C-o</kbd> follow a <code>dg:</code> link</div>`
     : `<div class="keys">${esc(ED.editor)} opens on the buffer; save and exit to stage.</div>`;
+/* ---- the task panel ------------------------------------------------------
+   Start, Done and Drop, which is the whole of what can be done to a task from
+   here. Structural edits — a prerequisite discovered later, a link recorded
+   against the wrong decision — stay in the CLI: they are corrections, they are
+   rare, and each one wants a sentence of explanation the form has nowhere to
+   put. */
+function taskPanel(){
+  const x=T.tasks.find(y=>y.id===tsel), d=T.derived[tsel], c=d.cross;
+  let h=`<h2>${esc(x.id)} — ${esc(x.title)}</h2>
+    <span class="pill" style="background:${TASK_COLOR[x.status]};color:#04121f">${esc(x.status)}</span>
+    <span class="muted"> ${esc(x.area)}</span>
+    <div class="kv">
+      <div>after</div><div>${esc(d.prerequisites.join(", "))||"—"}</div>
+      <div>unblocks</div><div>${esc(d.unblocks.join(", "))||"—"}</div>`;
+  /* Provenance, printed only where it holds — unlike the two rows above, which
+     are always shown. Most work has no origin recorded, and a dash on every
+     panel teaches the eye past the line on the tasks where it says something.
+     Not drawn in the graph: the layout ranks by prerequisite depth, and an
+     edge that orders nothing has no rank to sit at. */
+  if(d.discovered_during.length)
+    h+=`<div>found doing</div><div>${esc(d.discovered_during.join(", "))}</div>`;
+  if(d.prompted.length)
+    h+=`<div>turned up</div><div>${esc(d.prompted.join(", "))}</div>`;
+  if(d.waiting_on.length)
+    h+=`<div>waiting on</div><div style="color:var(--warn)">${esc(d.waiting_on.join(", "))}</div>`;
+  if(c.premise)
+    h+=`<div>because</div><div>${dgLink(c.premise, c.dangling)}${
+      c.premise_status?` <span class="muted">${esc(c.premise_status)}</span>`:""}</div>`;
+  if(c.evidence_for)
+    h+=`<div>evidence for</div><div>${dgLink(c.evidence_for)}</div>`;
+  if(x.done) h+=`<div>done</div><div>${esc(x.done)}</div>`;
+  h+=`</div>`;
+  if(x.note) h+=`<div class="answer muted">${md(x.note, x.format)}</div>`;
+  if(x.outcome) h+=`<div class="answer"><b>outcome</b> — ${md(x.outcome, x.format)}</div>`;
+  /* Only where the status supports it — see `task_render._section`. A store
+     cannot hold a `why` under work in progress any more, but a view is drawn
+     from broken stores too. */
+  if(x.why && x.status==="DROPPED")
+    h+=`<div class="answer muted"><b>dropped</b> — ${md(x.why, x.format)}</div>`;
+
+  /* Say why it is not startable before offering the buttons: the gate is the
+     cross-graph one, and "blocked" without a reason is what sends people to
+     the CLI to find out. */
+  if(c.gated_by)
+    h+=`<p class="wait">Waiting on ${dgLink(c.gated_by)}, which is not settled — starting now is a bet on the answer.</p>`;
+  else if(d.waiting_on.length)
+    h+=`<p class="wait">Waiting on ${esc(d.waiting_on.join(", "))}.</p>`;
+
+  h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">`;
+  if(x.status==="TODO" || x.status==="DOING"){
+    if(x.status==="TODO")
+      h+=`<p style="margin:0 0 10px"><button class="ghost" id="doStart">Start it</button></p>`;
+    h+=`<label>Outcome — what this work produced</label>
+      <input id="outcome" placeholder="a path, a PR, a measurement">
+      <p style="margin:10px 0"><button class="primary" id="doDone">Mark done</button></p>
+      <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+      <label>Or drop it — why is it not being done?</label>
+      <input id="dwhy" placeholder="what made this unnecessary">
+      <p style="margin:10px 0"><button class="ghost" id="doDrop">Drop it</button></p>`;
+  }else{
+    h+=`<p class="muted">${x.status==="DONE"?"Finished":"Dropped"}. Reopening finished work is a correction, and corrections live in <code>dg task</code>.</p>`;
+  }
+  h+=`<div class="note" id="note"></div>`;
+  $("#side").innerHTML=h;
+  $("#side").querySelectorAll("a[data-dg]").forEach(a=>a.onclick=ev=>{
+    ev.preventDefault(); jump(a.dataset.dg);
+  });
+  restoreDraft();
+  const n=NOTES[tsel]; if(n) say(n.msg, n.cls);
+  $("#doStart")&&($("#doStart").onclick=()=>
+    postTask({op:"set_status",task:tsel,status:"DOING"}));
+  $("#doDrop")&&($("#doDrop").onclick=()=>{
+    const w=$("#dwhy").value.trim();
+    if(!w){ say("Say why it is not being done — the record is the point.","bad"); return; }
+    postTask({op:"set_status",task:tsel,status:"DROPPED",why:w});
+  });
+  $("#doDone")&&($("#doDone").onclick=()=>{
+    const o=$("#outcome").value.trim();
+    /* `dg task done` requires it, so the form does too — a DONE task with no
+       outcome is a record of nothing. */
+    if(!o){ say("An outcome is required: what did this produce?","bad"); return; }
+    const dt=new Date(), pad=n=>String(n).padStart(2,"0");
+    postTask({op:"set_status",task:tsel,status:"DONE",outcome:o,
+              done:`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`});
+  });
+  $("#side").addEventListener("input", captureDraft);
+  $("#side").addEventListener("change", captureDraft);
+}
+
+/* A reference to a node in either store, clickable when it resolves. A
+   dangling one is shown as what it is rather than hidden — `dg check` reports
+   it and the panel should not disagree. */
+function dgLink(id, dangling){
+  if(dangling) return `${esc(id)} <span class="muted">(not in the store)</span>`;
+  return `<a href="#" data-dg="${esc(id)}">${esc(id)}</a>`;
+}
+
+/* Follow a reference across the two stores. In the decisions or tasks tab a
+   link into the *other* store switches tab first, rather than selecting
+   something the current view cannot show. */
+function jump(id){
+  const isTask = T && T.tasks.some(x=>x.id===id);
+  const known = isTask || G.vertices.some(v=>v.id===id);
+  if(!known) return;
+  const need = isTask ? "tasks" : "decisions";
+  if(tab!=="joined" && tab!==need){
+    tab=need; tabs(); chips(); layout(); fit();
+  }
+  select(id);
+}
+
 function panel(){
   const v=G.vertices.find(x=>x.id===sel), d=G.derived[sel];
   const e=G.edges.find(x=>x.from===sel&&x.active);
@@ -414,6 +781,16 @@ function panel(){
   h+=`</div>`;
   if(e&&e.answer) h+=`<div class="answer">${md(e.answer, e.format)}</div>`;
   else if(v.note) h+=`<div class="answer muted">${md(v.note, v.format)}</div>`;
+  const j = (JOIN && JOIN.by_decision[sel]) || null;
+  if(j && (j.rests_on.length || j.evidence.length)){
+    const pend=new Set(j.pending_evidence);
+    h+=`<div class="kv">`;
+    if(j.rests_on.length) h+=`<div>work because</div><div>${
+      j.rests_on.map(id=>dgLink(id)).join(", ")}</div>`;
+    if(j.evidence.length) h+=`<div>evidence from</div><div>${
+      j.evidence.map(id=>dgLink(id)+(pend.has(id)?' <span class="muted">(open)</span>':"")).join(", ")}</div>`;
+    h+=`</div>`;
+  }
   if(d.history.length){
     h+=`<p class="muted" style="margin-bottom:4px">Superseded here</p>`;
     d.history.forEach(x=>h+=`<div class="answer" style="font-size:12px">
@@ -458,8 +835,7 @@ function panel(){
   /* dg: links inside stored prose select that decision, the same jump C-c C-o
      makes in emacs. */
   $("#side").querySelectorAll("a[data-dg]").forEach(a=>a.onclick=ev=>{
-    ev.preventDefault();
-    if(G.vertices.some(v=>v.id===a.dataset.dg)) select(a.dataset.dg);
+    ev.preventDefault(); jump(a.dataset.dg);
   });
   const already=new Set(d.children);
   const holdLinked=()=>$("#opens")&&[...$("#opens").options].forEach(o=>{
@@ -493,9 +869,9 @@ function panel(){
    successful stage look like nothing at all. Remembered per decision, and
    painted only when that decision is showing. */
 function say(msg, cls, vid){
-  vid = vid || sel;
+  vid = vid || cur();
   if(msg) NOTES[vid]={msg, cls}; else delete NOTES[vid];
-  if(vid!==sel) return;
+  if(vid!==cur()) return;
   const n=$("#note"); if(!n) return;
   n.className = "note" + (cls ? " "+cls : ""); n.textContent = msg;
 }
@@ -511,6 +887,18 @@ async function post(op){
     if(vid===sel) panel();
   }catch(err){ say(err.message, "bad", vid); }
 }
+async function postTask(op){
+  const tid=op.task;        /* pinned: the user may navigate before this returns */
+  try{
+    await api("/api/task-pending",{method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify(op)});
+    TPEND=await api("/api/task-pending"); tray();
+    delete DRAFTS[tid];
+    say(`Staged ${op.status} for ${tid}.`, "ok", tid);
+    if(tid===tsel) taskPanel();
+  }catch(err){ say(err.message, "bad", tid); }
+}
+
 function stageClose(){
   const a=$("#answer").value.trim(), s=$("#source").value.trim(),
         f=$("#fals").value.trim(),
@@ -572,42 +960,87 @@ async function composeIn(kind){
   }
 }
 
-/* ---- pending tray ---- */
+/* ---- pending tray ----
+   Two batches, side by side and labelled, because `apply` treats them as two:
+   a task batch that will not apply cannot stop a decision batch that would,
+   and a tray that merged them would imply otherwise. */
+function opRow(o, i, kind){
+  const det = o.op==="close"?esc((o.answer||"").slice(0,90))
+    : o.op==="reopen"?esc(o.why||"")
+    : o.op==="set_status"?`→ ${esc(o.status)}`
+        + (o.outcome?` <span class="muted">${esc(o.outcome.slice(0,50))}</span>`:"")
+        + (o.why?` <span class="muted">${esc(o.why.slice(0,50))}</span>`:"")
+        + (o.derived_from?` <span class="muted">(from ${esc(o.derived_from)})</span>`:"")
+    : o.op==="add_dep"||o.op==="remove_dep"?esc((o.after||[]).join(", "))
+    : esc(JSON.stringify(o));
+  const node = o.vertex||o.task||o.from||o.id||"";
+  return `<tr><td>${i}</td><td>${esc(o.op)}</td><td>${esc(node)}</td>
+    <td>${det}</td><td><button class="x" data-i="${i}" data-k="${kind}">✕</button></td></tr>`;
+}
+
+function trayTable(ops, kind){
+  return `<table><tr><th>#</th><th>op</th><th>node</th><th>detail</th><th></th></tr>`
+    + ops.map((o,i)=>opRow(o,i,kind)).join("") + `</table>`;
+}
+
 function tray(){
+  const total = PEND.length + TPEND.length;
   /* Applying while an editor is open would move the graph out from under a
      compose that was validated against the old one. Cheaper to refuse than to
      explain the error afterwards. */
-  $("#applyBtn").disabled = PEND.length===0 || EDITING!==null;
+  $("#applyBtn").disabled = total===0 || EDITING!==null;
   $("#applyBtn").title = EDITING ? `an editor is open for ${EDITING.vertex}` : "";
-  $("#applyBtn").textContent = PEND.length ? `Apply ${PEND.length}` : "Apply";
-  if(!PEND.length){ $("#tray").innerHTML=`<span class="muted">Nothing staged.</span>`; return; }
-  $("#tray").innerHTML=`<table><tr><th>#</th><th>op</th><th>vertex</th><th>detail</th><th></th></tr>`+
-    PEND.map((o,i)=>{
-      const det = o.op==="close"?esc((o.answer||"").slice(0,90))
-        : o.op==="reopen"?esc(o.why||"")
-        : o.op==="set_status"?`→ ${esc(o.status)}`+(o.derived_from?` <span class="muted">(from ${esc(o.derived_from)})</span>`:"")
-        : esc(JSON.stringify(o));
-      return `<tr><td>${i}</td><td>${esc(o.op)}</td><td>${esc(o.vertex||o.from||o.id||"")}</td>
-        <td>${det}</td><td><button class="x" data-i="${i}">✕</button></td></tr>`;
-    }).join("")+`</table>`;
+  $("#applyBtn").textContent = total ? `Apply ${total}` : "Apply";
+  if(!total){ $("#tray").innerHTML=`<span class="muted">Nothing staged.</span>`; return; }
+  let h=`<div class="tray-split">`;
+  if(PEND.length) h+=`<div><h3>decisions (${PEND.length})</h3>${trayTable(PEND,"d")}</div>`;
+  if(TPEND.length) h+=`<div><h3>tasks (${TPEND.length})</h3>${trayTable(TPEND,"t")}</div>`;
+  h+=`</div>`;
+  $("#tray").innerHTML=h;
   $("#tray").querySelectorAll(".x").forEach(b=>b.onclick=async()=>{
-    const gone=PEND[b.dataset.i];
-    await api("/api/pending/"+b.dataset.i,{method:"DELETE"});
-    PEND=await api("/api/pending"); tray();
-    /* "Staged 2 op(s)" is no longer true of a decision whose op was just
-       dropped. */
-    if(gone && gone.vertex) say("", "", gone.vertex);
-    if(gone && gone.vertex===sel) panel();
+    const task = b.dataset.k==="t";
+    const list = task?TPEND:PEND;
+    const gone = list[b.dataset.i];
+    /* The op's id when it has one, its position otherwise. The tray is shared
+       and a terminal applying between this page's last refresh and this click
+       shifts every position past what it removed, so a position can address a
+       different op by the time it arrives. An id does not move. Audit F29. */
+    const ref = (gone && gone.ref) || b.dataset.i;
+    await api((task?"/api/task-pending/":"/api/pending/")+encodeURIComponent(ref),{method:"DELETE"});
+    if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
+    tray();
+    /* "Staged …" is no longer true of a node whose op was just dropped. */
+    const node = gone && (gone.vertex||gone.task);
+    if(node) say("", "", node);
+    if(node && node===cur()) cur()===sel?panel():taskPanel();
   });
 }
+
 $("#applyBtn").onclick=async()=>{
   try{
-    await api("/api/apply",{method:"POST"});
+    const r = await api("/api/apply",{method:"POST"});
     /* Every note describes a staging area that no longer exists. */
     Object.keys(NOTES).forEach(k=>delete NOTES[k]);
-    sel=null; await boot(); fit(); draw();
-    $("#side").innerHTML=`<p class="muted">Applied. decisions.json and decision-graph.md updated.</p>`;
-  }catch(err){ $("#tray").innerHTML=`<div class="err">${esc(err.message)}</div>`+$("#tray").innerHTML; }
+    sel=null; tsel=null; await boot(); fit(); draw();
+    const bits=[];
+    if(r.applied) bits.push(`${r.applied} decision op(s)`);
+    if(r.applied_tasks) bits.push(`${r.applied_tasks} task op(s)`);
+    /* What moved under the batch while it was staged. Said, never refused —
+       the invariants already refuse the dangerous case, so what reaches here
+       applied cleanly and rests on something that changed quietly. */
+    const moved = (r.drift||[]).map(d=>`<li>${esc(d)}</li>`).join("");
+    $("#side").innerHTML=`<p class="muted">Applied ${bits.join(" and ")}. Both
+      stores and their generated views are up to date.</p>`
+      + (moved?`<p class="warn">Moved while this batch was staged:</p>
+         <ul class="muted">${moved}</ul>`:"");
+  }catch(err){
+    /* A refusal leaves everything staged; a partial write does not, and the
+       message says which. Reload the trays either way rather than assuming. */
+    PEND=await api("/api/pending").catch(()=>PEND);
+    TPEND=T?await api("/api/task-pending").catch(()=>TPEND):[];
+    tray();
+    $("#tray").innerHTML=`<div class="err">${esc(err.message)}</div>`+$("#tray").innerHTML;
+  }
 };
 
 boot().then(()=>{ fit(); draw(); });

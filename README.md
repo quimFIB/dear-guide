@@ -1,13 +1,24 @@
-# decision-graph-assistant
+<img src="assets/logo.svg" width="76" alt="">
 
-Track a project's decisions as a graph: what is settled, what it rests on, and
-what evidence would reopen it.
+# development-graph-assistant
+
+Track a project's development as two linked graphs: the **decisions** it has
+settled — what each rests on and what evidence would reopen it — and the
+**work** that follows from them.
 
 A long-running project accumulates decisions in prose — plans, notes, memory
 files — and prose drifts. Two documents disagree about whether something was
 settled; a decision gets quietly reversed and the three conclusions built on it
-stay standing. This keeps decisions in one structured store, renders a readable
-view of it, and makes the drift a test failure.
+stay standing, along with the work already underway on top of them. This keeps
+both in structured stores, renders readable views of them, and makes the drift
+a test failure — the drift between what is settled and what rests on it, which
+is the kind no amount of proofreading catches. A view that has merely fallen
+behind its store is a warning: it is generated, and `dg render` rebuilds it.
+
+The two are deliberately separate stores joined at one seam: a task records the
+decision it exists `because` of, or the decision its outcome is `evidence_for`.
+Nothing else crosses. That is what lets `dg` answer the question neither store
+can answer alone — *is this work still resting on something we believe?*
 
 ## Model
 
@@ -41,18 +52,30 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 | `decisions.json` | the store — source of truth |
 | `decision-graph.md` | generated view; **never hand-edit** |
 | `tasks.json` · `tasks.md` | the task graph and its view — a separate store, optional |
-| `.dgraph-pending.json` | staging area; gitignore it |
-| `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG`; gitignore it |
+| `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
+| `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG` |
 | `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
-| `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) |
-| `skills/decisions/` | the recording discipline, as a skill both agent hosts load |
+| `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md) |
+| `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
+| `skills/development-graph/` | the recording discipline, as a skill both agent hosts load |
+| `commands/` | the slash commands, one set of files for both hosts |
 | `hooks/`, `.claude-plugin/` | the Claude Code plugin |
-| `opencode/` | the same two mechanisms for opencode |
+| `opencode/` | the same mechanisms for opencode |
+
+Everything the tool writes beyond the two stores and their views is scratch —
+the trays, the compose buffer, the `.lock` files beside them, and the `.dg-tmp`
+sibling an interrupted write leaves. `dg init` adds all of it to `.gitignore`,
+which several of the tool's own messages depend on being true.
+
+**Reading the source.** Comments cite findings by number — `audit F29`, `F18` —
+from an internal audit log kept while the tool was built. The numbers are
+bookmarks, not required reading: each comment states the defect and the argument
+in full, so nothing is missing without the log.
 
 ## Install
 
 ```sh
-cd /path/to/decision-graph-assistant
+cd /path/to/development-graph-assistant
 pip install -e .
 ```
 
@@ -61,46 +84,60 @@ found by walking up from the cwd, or set explicitly with `--project PATH` or
 `$DG_PROJECT`.
 
 New here? [**How it works, and why**](docs/how-it-works.md) walks one project's
-decisions from first question to first reversal. Then the quick starts: the
+decisions — a nearest-neighbour search service — from first question to first
+reversal. Then the quick starts: the
 [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the
 [agent plugin](docs/quickstart-agents.md) for Claude Code and opencode.
 
 ## Use
 
 ```sh
-dg init --areas "Data,Modelling,Infra"   # start a graph
+dg init --areas "Search,Serving,Index"   # start a graph
 dg import-md old-decisions.md            # or bootstrap from markdown
 dg                                       # the frontier: what is still open
 dg brief                                 # ...plus provisional work, staging, validity
 dg node D06                              # one decision in full
+dg context D06                           # ...and every premise underneath it
+dg context T14                           # the same for a piece of work
 dg path D01 D09                          # the chain of evidence between two
 dg tree                                  # the DAG
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
+dg repair                                # a store a merge broke: stage the missing propagation
 dg pending                               # review
 dg apply                                 # validate, then write both files
 dg check                                 # every invariant
 dg serve                                 # web app on 127.0.0.1:8765
-dg edit 0                                # revise a staged op
+dg edit <id>                             # revise a staged op
+dg drop <id>                             # unstage one op
 dg export                                # the graph as JSON
 ```
+
+A staged op is addressed by the short id `dg pending` shows beside it, or by its
+position. Prefer the id whenever anything else might be writing: applying a
+batch takes its ops out of the tray wherever they sit, so every position after
+them shifts, and an id does not.
 
 Work gets its own graph, if you want one — separate store, separate ids, so a
 task can never be mistaken for a decision:
 
 ```sh
-dg task init --areas "Infra,Backend"
-dg task add --id T02 --title "Migrate the database" --after T01 --because D01
-dg task done T02 --outcome "PR #241"
+dg task init --areas "Search,Serving,Index"
+dg task add --id T02 --title "Build the HNSW index" --after T01 --because D01
 dg task                                  # outstanding work, and what is startable
+dg task node T02                         # one task in full, with its premise
+dg task start T02                        # ...pick it up
+dg task done T02 --outcome "PR #241"
+dg task drop T02 --why "the index ships with the library"
+dg task pending                          # the task tray; `dg task clear` empties it
 ```
 
 `--because D01` is what makes the two worth keeping together: reopening a
 decision reports the unfinished work resting on it, which neither a decision log
 nor a task tracker can do alone. `--evidence-for D05` points the other way — a
-spike whose result settles a question — and `dg check` says so when the spike
+benchmark whose result settles a question — and `dg check` says so when it
 finished and the conclusion was never recorded. See
 [how it works](docs/how-it-works.md#tracking-the-work-as-well).
 
@@ -110,9 +147,33 @@ validates a copy and aborts without writing if the result would be invalid.
 ## The web app
 
 `dg serve` gives a layered-DAG view — colour by area, outline by status, faint
-edges for dependencies awaiting a decision. Click a vertex to inspect it, or to
-fill in a decision; staged ops collect in a tray and apply together. It shares
-the CLI's apply path, so there is one implementation of it.
+edges for dependencies awaiting a decision. Click a node to inspect it, decide
+it, or move a piece of work along; staged ops collect in a tray and apply
+together. It shares the CLI's apply path, so there is one implementation of it.
+
+Three views behind the tabs in the header:
+
+| | |
+|---|---|
+| **decisions** | the decision DAG: decide an open question, reopen a settled one |
+| **tasks** | the work, ranked by prerequisite depth. Start it, finish it with an outcome, or drop it with a reason |
+| **joined** | both graphs at once, with the `because` and `evidence_for` links drawn between them — the reading neither store gives on its own |
+
+The two staging trays stay separate all the way through **Apply**, exactly as
+`dg apply` treats them: a task batch that will not apply cannot stop a decision
+batch that would.
+
+```sh
+dg serve                # blocks, as a terminal wants
+dg serve --detach       # ...or start it in the background and get the URL back
+dg serve --status
+dg serve --stop
+```
+
+`--detach` exists so a coding-agent session can open the app without giving up
+its prompt. It is idempotent — run it twice and the second run reports the
+first one's URL — and `--status`/`--stop` verify the server on the port is
+actually this one before believing, or signalling, anything.
 
 Unstaged work is per-decision and survives navigation: type half an answer,
 go read the premise it depends on, come back, and it is still there. The same
@@ -206,7 +267,7 @@ tool supplies the tests, so a project never restates the invariants and there
 is no list to keep in sync:
 
 ```python
-# tests/test_decision_graph.py
+# tests/test_development_graph.py
 from dgraph.testing import *  # noqa: F401,F403
 ```
 
@@ -234,8 +295,13 @@ Code** and **opencode**, which turns three of the four habits into mechanisms:
 | | how |
 |---|---|
 | **read the frontier first** | the brief is injected at the start of every session, and again after a compaction — no rule in an instructions file, no "read this first" |
-| **know the discipline** | the `decisions` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
+| **know the discipline** | the `development-graph` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it. Work staged and never applied asks the human instead — `.dgraph-pending.json` is gitignored, so committing over it loses the record silently |
+
+Plus five slash commands, one set of files for both hosts: `/dg-brief`,
+`/dg-frontier`, `/dg-tasks`, `/dg-context <id>` and `/dg-serve`. `/dg-context` is the one that
+matters most for delegation — it prints every premise a decision or a task rests
+on, which is exactly what a subagent's fresh context is missing.
 
 What stays a habit is **recording a decision at the moment it is made**. Nothing
 a host can observe reveals that something was settled — it is a property of the
@@ -250,20 +316,25 @@ actually about to be lost.
 ### Install
 
 ```sh
-pip install -e /path/to/decision-graph-assistant   # the CLI
+pip install -e /path/to/development-graph-assistant   # the CLI
 
 # Claude Code
-/plugin marketplace add /path/to/decision-graph-assistant
-/plugin install decision-graph
+/plugin marketplace add /path/to/development-graph-assistant
+/plugin install development-graph
 ```
 
-For opencode it is three symlinks — see [`opencode/README.md`](opencode/README.md).
+For opencode it is symlinks — see [`opencode/README.md`](opencode/README.md).
 Two install steps rather than one because the hosts distribute plugins their own
 way and neither of them installs Python packages; `dg --version` exists so an
 adapter can tell when the two halves have drifted apart.
 
 Nothing happens in a directory with no `decisions.json`: no output, no error, no
 cost. `DG_HOOK_OFF=1` switches both mechanisms off.
+
+[**A session, start to finish**](docs/session-walkthrough.md) walks one whole
+Claude Code session — evidence arriving that falsifies a settled decision, the
+reversal propagating through the work in flight, and the commit gate refusing a
+half-staged diff — with the real output of every command.
 
 ### One implementation, two hosts
 
@@ -273,10 +344,10 @@ The interesting parts are in `dg`, not in either adapter:
   waits on and what deciding it releases, anything `PROVISIONAL`, the staging
   area, the validity check. `--json` for adapters.
 - `dg gate --command "<cmd>"` — is this shell command about to record a
-  contradiction? Out comes `allow`, `ask` or `deny` with a reason.
+  contradiction? Out comes `allow`, `warn`, `ask` or `deny` with a reason.
 
 So each adapter is a few dozen lines of translation with no policy of its own,
-and `skills/decisions/SKILL.md` is one file both hosts read — opencode uses the
+and `skills/development-graph/SKILL.md` is one file both hosts read — opencode uses the
 same `name`/`description` frontmatter and will even read `.claude/skills/`
 directly. A test asserts the adapters name no `dg` subcommand but those two, and
 that the skill's command table only names commands that exist.
@@ -289,9 +360,52 @@ that the skill's command table only names commands that exist.
   into a gitignored file and then committed over is unrecoverable. Staging for a
   human to confirm would also mean the commit gate stopped to ask on nearly every
   commit, which is how a gate stops being read.
+- **Whether two agents may work one graph.** Not yet, and the honest answer is
+  *one writer at a time* — though what a second writer can do to you is now
+  reported rather than silent. Each staged op records what the premises it names
+  looked like when it was composed, and `dg apply` says which of them moved
+  while the batch waited:
+
+  ```
+  · D01 moved since this batch was staged (DECIDED → REOPENED) — op 1
+    (add_edge D01) rests on it
+  ✓ applied 2 op(s) → decisions.json + decision-graph.md
+  ```
+
+  Never a refusal: the invariants already refuse the case that matters (a
+  decided answer on a reopened premise is a blocking `propagation` finding, and
+  that batch aborts naming the premise). This covers what is still *legal* after
+  the ground moves and would otherwise land in silence. What holds under contention has been tested and does
+  hold: the locks work across processes, the atomic writes hold, a collision is
+  always a refusal and never a corrupt store, and an op refused because somebody
+  else applied it says so rather than reading as "your work failed". What does
+  **not** hold is isolation — there is one staging tray per project with no
+  notion of whose ops are whose, so two agents apply each other's
+  half-composed batches and the graph that results can be wrong in a way no
+  mechanism is positioned to notice. One person in two terminals, or a browser
+  and a terminal, is fine and is what `commands/dg-serve.md` describes: that is
+  two writers with one intent. Two agents are two intents.
 - **Whether the store stays per-repo.** Probably: decisions are about a codebase.
   A cross-project view would need a different addressing scheme.
 - **Whether the falsifier can be checked rather than merely recorded.** A
   falsifier nobody revisits is a comment. Nothing here reads them back.
 - **Whether the unrecorded-decision nag is worth trying behind a flag**, and
   whether `decision-graph.md` should eventually be org rather than markdown.
+
+## Licence and provenance
+
+[MIT](LICENSE). Use it, change it, ship it; it comes with no warranty of any
+kind, which the licence says at more length and in capitals.
+
+**Written by Claude** — Anthropic's coding model — working from my direction
+over a long series of sessions: I set the scope and the constraints, made the
+calls the design turns on, and decided what got fixed and in what order. Claude
+wrote essentially all of the code, the tests and the prose, including this
+sentence. Saying so seems better than letting anyone guess, and better than
+implying a kind of authorship a model cannot hold: copyright vests in people, so
+whatever subsists here is mine, and the licence above is how I hand it on.
+
+The design is what it is because of that process, not in spite of it. The
+comments argue for themselves at unusual length because the argument is the part
+that was expensive; the invariants are strict because a model writing code
+against them is exactly the reader they were built for.

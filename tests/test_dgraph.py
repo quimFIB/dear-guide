@@ -1,12 +1,15 @@
 """Behaviour of the tool: model queries, rendering, staging, propagation, apply."""
 
 import json
+import os
+from dataclasses import replace
 
 import pytest
 
 from dgraph import pending, project
 from dgraph.model import Graph
 from dgraph.render import render, write
+from tests.conftest import bare
 
 # ---- model ---------------------------------------------------------------
 
@@ -129,6 +132,67 @@ def test_detects_stale_block(g):
     from dataclasses import replace
     g.vertices["D05"] = replace(g.vertices["D05"], status="DECIDED")
     assert _check(g, "stale_block")
+
+
+# ---- a block is a dependency ---------------------------------------------
+#
+# `BLOCKED:D05` asserts that this vertex rests on D05. Dependency is the graph
+# structure and never a second copy in a status field, so the two have to
+# agree — and before this check they could disagree in silence.
+
+
+def test_detects_a_block_that_rests_on_nothing(g):
+    """D06 is BLOCKED:D05 in the fixture. Sever the edge and the status is a
+    claim the graph does not hold."""
+    g.active_edge("D05").to.remove("D06")
+    hits = _check(g, "block_is_a_premise")
+    assert hits and "D06" in str(hits[0]) and "D05" in str(hits[0])
+    assert hits[0].blocking
+
+
+def test_a_backed_block_is_quiet(g):
+    assert not _check(g, "block_is_a_premise")
+
+
+def test_an_unbacked_block_is_reported_once_not_twice(g):
+    """A blocker that is both settled and not a premise is one contradiction,
+    not two: whether it has settled cannot matter if the block was never real,
+    so `stale_block` stays quiet and the more fundamental fault is named."""
+    from dataclasses import replace
+    g.active_edge("D05").to.remove("D06")
+    g.vertices["D05"] = replace(g.vertices["D05"], status="DECIDED")
+    assert _check(g, "block_is_a_premise")
+    assert not _check(g, "stale_block")
+
+
+def test_an_unknown_blocker_is_not_reported_as_unbacked(g):
+    """`status_legal` already names it, and a second finding about the same id
+    would send the reader looking for an edge that could never exist."""
+    from dataclasses import replace
+    g.vertices["D06"] = replace(g.vertices["D06"], status="BLOCKED:D99")
+    assert _check(g, "status_legal")
+    assert not _check(g, "block_is_a_premise")
+
+
+def test_adding_a_blocked_vertex_records_the_dependency(g, store):
+    """Every route in goes through this op, so the status and the structure
+    agree by construction rather than by each caller remembering."""
+    out = pending.apply_all(g, [{"op": "add_vertex", "id": "D07", "title": "x",
+                                 "area": "Alpha", "status": "BLOCKED:D05"}])
+    assert out.depends("D07") == ["D05"]
+    assert not [v for v in out.validate() if v.check == "block_is_a_premise"]
+
+
+def test_a_blocked_vertex_naming_an_unknown_blocker_invents_no_edge(g):
+    """The op must not manufacture an edge to an id that does not resolve —
+    that would turn a clear `status_legal` finding into a dangling reference."""
+    from dgraph.pending import _apply_one
+    import copy
+    out = copy.deepcopy(g)
+    _apply_one(out, {"op": "add_vertex", "id": "D07", "title": "x",
+                     "area": "Alpha", "status": "BLOCKED:D99"})
+    assert not [e for e in out.edges if "D07" in e.to]
+    assert _check(out, "status_legal")
 
 
 def test_detects_cycle(g):
@@ -271,10 +335,22 @@ def test_staging_round_trips(store):
     pending.stage({"op": "set_status", "vertex": "D05", "status": "OPEN"})
     pending.stage({"op": "set_status", "vertex": "D06", "status": "OPEN"})
     assert len(pending.load()) == 2
-    pending.drop(0)
+    assert pending.drop(0)["vertex"] == "D05"      # the op removed, not what is left
     assert [o["vertex"] for o in pending.load()] == ["D06"]
     pending.clear()
     assert pending.load() == [] and not project.find().pending.exists()
+
+
+def test_drop_returns_the_op_it_removed_not_the_remainder(store):
+    """The caller's job is to say what went, and it cannot re-read the tray to
+    find out — by then the op is gone. So `drop` hands it back from under the
+    lock. Audit F29."""
+    a = {"op": "set_status", "vertex": "D05", "status": "OPEN"}
+    b = {"op": "set_status", "vertex": "D06", "status": "OPEN"}
+    pending.stage(a)
+    pending.stage(b)
+    assert bare(pending.drop(1)) == b
+    assert bare(pending.load()) == [a]
 
 
 # ---- propagation ---------------------------------------------------------
@@ -440,3 +516,638 @@ def test_env_var_wins_over_cwd(store, monkeypatch, tmp_path):
     monkeypatch.setattr(project, "_override", None)
     monkeypatch.setenv("DG_PROJECT", str(store))
     assert project.find(tmp_path).root == store
+
+
+# ---- audit 2026-08: traversals, atomicity, the tray ----------------------
+
+
+@pytest.fixture
+def dangling(store):
+    """The fixture graph with one edge target naming no vertex.
+
+    A state `dg check` reports (`no_dangling_refs`) and therefore a state the
+    tool has to survive reading: a store nobody can *look at* cannot be
+    repaired, and the report is the only thing telling anyone it is broken.
+    """
+    raw = json.loads((store / "decisions.json").read_text())
+    raw["edges"].append({"from": "D05", "to": ["D99"], "active": True})
+    # D05 already has an active edge; replace it rather than break one_active_edge
+    raw["edges"] = [e for e in raw["edges"]
+                    if not (e["from"] == "D05" and e.get("to") == ["D06"])]
+    raw["edges"].append({"from": "D05", "to": ["D06", "D99"], "active": True})
+    raw["edges"] = [e for e in raw["edges"] if e.get("to") != ["D99"]]
+    (store / "decisions.json").write_text(json.dumps(raw, indent=2))
+    return store
+
+
+def test_a_dangling_target_is_reported_not_traversed(dangling):
+    """Audit F1. `depends` documented why a traversal helper must not return an
+    id naming no vertex — a caller that dereferences it crashes the validator
+    that was about to report the dangling edge — and `children` did it anyway.
+    """
+    g = Graph.load(dangling / "decisions.json")
+    assert "D99" not in g.children("D05")
+    assert "D99" not in g.descendants("D01")
+    # the finding still fires: filtering the walk must not hide the fault
+    assert any(v.check == "no_dangling_refs" and "D99" in v.message
+               for v in g.validate())
+    # and the edge keeps it, so nothing is dropped from the store
+    assert "D99" in g.active_edge("D05").to
+
+
+@pytest.mark.parametrize("read", ["brief", "rows", "tree", "expand", "context"])
+def test_every_read_survives_a_dangling_target(dangling, read):
+    """Parametrised over the readers rather than testing one, because the bug
+    was "one traversal was hardened and its twin was not" — a single-command
+    test would have missed it in exactly the same way.
+
+    `dg brief` matters most: `hooks/brief.py` reads a non-zero exit as "no
+    graph here" and stays silent, so a crash here makes the session-start
+    brief go quiet permanently, at the moment the graph most needs attention.
+    """
+    from dgraph import brief as _brief
+    from dgraph import context as _context
+    from dgraph.model import Graph as _G
+
+    g = _G.load(dangling / "decisions.json")
+    if read == "brief":
+        assert "D05" in _brief.text(project.find())
+    elif read == "rows":
+        assert _brief.rows(g)
+    elif read == "tree":
+        assert g.depths("D06")
+    elif read == "expand":
+        # the write side: reopening walks descendants and dereferences each
+        assert pending.expand(g, {"op": "reopen", "vertex": "D01", "why": "x"})
+    else:
+        assert _context.decision(g, "D05")["id"] == "D05"
+
+
+def test_a_store_write_is_all_or_nothing(store, monkeypatch):
+    """Audit F3. Ordering the four writes covers a failure *between* them and
+    says nothing about one *inside* a write. A truncated `decisions.json` has
+    no exit from inside the tool: check reports `store_loads`, every command
+    that could repair it refuses to load, and the gate denies every commit.
+
+    The failure is injected where a real one lands — after some bytes are down
+    and before the file is in place — which under a bare `write_text` is
+    exactly the moment the store is half its old contents and half its new.
+    """
+    g = Graph.load()
+    before = (store / "decisions.json").read_text(encoding="utf-8")
+    g.vertices["D05"] = replace(g.vertices["D05"], title="A much longer title")
+
+    monkeypatch.setattr("os.fsync",
+                        lambda fd: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        g.save()
+
+    assert (store / "decisions.json").read_text(encoding="utf-8") == before
+    assert Graph.load().vertices["D05"].title == "Still open"
+
+
+def test_an_interrupted_write_leaves_no_temp_file(store, monkeypatch):
+    """The temp file is a sibling of the target — `os.replace` is only atomic
+    within a filesystem — so a leftover would sit untracked in the user's repo
+    and be swept up by `git add -A`. It is cleaned on the way out of *any*
+    exception, `KeyboardInterrupt` included, that being the case the helper
+    most exists for.
+    """
+    def interrupt(fd):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("os.fsync", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        project.write_atomic(store / "decisions.json", "x")
+    assert not list(store.glob(".*dg-tmp*"))
+
+
+def test_apply_keeps_what_was_staged_while_it_ran(store, g):
+    """Audit F4. `apply` reads the tray, validates, renders and writes; an op
+    staged during that window belongs to the next batch. Clearing the file
+    dropped it with no error and nothing in any diff — the same silent loss the
+    gate's `ask` verdict exists to prevent from `git`.
+
+    The race made deterministic: apply a snapshot taken before the second op
+    was staged, which is exactly what a threaded `dg serve` does when a
+    terminal stages alongside it.
+    """
+    from dgraph import applying
+
+    write(g)
+    first = {"op": "add_vertex", "id": "D10", "title": "First",
+             "area": "Alpha", "status": "OPEN"}
+    pending.stage(first)
+    batch = pending.load()                    # what apply is about to write
+    second = {"op": "add_vertex", "id": "D11", "title": "Staged meanwhile",
+              "area": "Alpha", "status": "OPEN"}
+    pending.stage(second)
+
+    applying.apply_decisions(batch)
+
+    assert bare(pending.load()) == [second]
+    assert "D10" in Graph.load().vertices     # the batch landed
+    assert "D11" not in Graph.load().vertices  # and the next one did not
+
+
+def test_discard_tolerates_an_op_dropped_meanwhile(store):
+    """Removal is by value, one occurrence each, not a prefix strip: a
+    concurrent `dg drop` means the op is already gone and there is nothing to
+    do, rather than a mismatch that strands the whole tray."""
+    a = {"op": "add_edge", "from": "D01", "to": ["D05"]}
+    b = {"op": "add_edge", "from": "D02", "to": ["D05"]}
+    pending.save([b])                          # `a` was dropped meanwhile
+    assert pending.discard([a, b]) == []
+
+
+def test_discard_leaves_a_second_identical_op_staged(store):
+    """Two equal ops, one applied: the tool cannot tell which, and leaving one
+    staged is the safe direction — a re-applied op is refused loudly by
+    `_apply_one`, while a dropped one is silent."""
+    op = {"op": "add_edge", "from": "D01", "to": ["D05"]}
+    pending.save([op, dict(op)])
+    assert pending.discard([op]) == [op]
+
+
+def test_an_unknown_severity_is_refused(store):
+    """Audit F6. `blocking` is `severity == "error"` and the field was a free
+    string, so a mistyped `"error"` silently demoted a blocking invariant —
+    `apply_all` stops refusing, the gate stops denying, the pytest plugin goes
+    green, and nothing anywhere says so.
+
+    Every other fail-open in this tool is guarded on purpose; this is the same
+    guard for the one that was not. The drift it closes was already in the
+    store: `no_orphans` said `"warn"` where everything else said `"warning"`.
+    """
+    from dgraph.violation import Violation
+
+    with pytest.raises(ValueError, match="unknown severity"):
+        Violation("no_orphans", "…", "warn")
+    assert not Violation("x", "…", "warning").blocking
+    assert Violation("x", "…").blocking
+
+
+def test_a_cycle_finding_names_only_the_cycle(store):
+    """Audit F7. The message used to be `trail + [node]` — the route *into* the
+    loop, then the loop — so a vertex merely feeding a cycle appeared in it,
+    and breaking the graph there fixes nothing. The message is read by a model
+    that will act on it.
+    """
+    raw = json.loads((store / "decisions.json").read_text())
+    raw["vertices"] = [v for v in raw["vertices"] if v["id"] in ("D01", "D02")]
+    raw["vertices"] += [{"id": f"D0{n}", "title": f"c{n}", "area": "Alpha",
+                         "status": "OPEN"} for n in (7, 8, 9)]
+    raw["edges"] = [
+        {"from": "D01", "to": ["D07"], "active": True},   # feeds in, not in it
+        {"from": "D07", "to": ["D08"], "active": True},
+        {"from": "D08", "to": ["D09"], "active": True},
+        {"from": "D09", "to": ["D07"], "active": True},
+    ]
+    (store / "decisions.json").write_text(json.dumps(raw, indent=2))
+    g = Graph.load()
+
+    found = [v.message for v in g.validate() if v.check == "acyclic"]
+    assert found == ["cycle: D07 -> D08 -> D09 -> D07"]
+    assert "D01" not in found[0]
+
+
+def test_a_cycle_reads_the_same_however_the_rows_are_ordered(store):
+    """The second reason the loop is rotated to its smallest id, and the reason
+    it lives beside `Violation` rather than beside any one walk:
+    `cross.guard_decisions` tells an introduced finding from a pre-existing one
+    **by its text**. A cycle that read differently on two runs would look new,
+    and the guard would refuse a write it should have allowed."""
+    raw = json.loads((store / "decisions.json").read_text())
+    raw["vertices"] = [{"id": f"D0{n}", "title": f"c{n}", "area": "Alpha",
+                        "status": "OPEN"} for n in (7, 8, 9)]
+    edges = [{"from": "D07", "to": ["D08"], "active": True},
+             {"from": "D08", "to": ["D09"], "active": True},
+             {"from": "D09", "to": ["D07"], "active": True}]
+
+    seen = set()
+    for order in ([0, 1, 2], [2, 0, 1], [1, 2, 0]):
+        raw["edges"] = [edges[i] for i in order]
+        (store / "decisions.json").write_text(json.dumps(raw, indent=2))
+        seen.update(v.message for v in Graph.load().validate()
+                    if v.check == "acyclic")
+    assert seen == {"cycle: D07 -> D08 -> D09 -> D07"}
+
+
+def test_concurrent_staging_loses_nothing(store):
+    """Audit F4's other half. Every tray mutation is load-then-save, so two
+    interleaving means the second writes a list built before the first one's op
+    existed. Threads rather than a contrived interleave because that is the
+    real shape: `dg serve` is a `ThreadingHTTPServer` and `commands/dg-serve.md`
+    tells the user to work in the browser and a terminal at once.
+
+    Without `pending.held` this loses roughly three quarters of the batch.
+    """
+    import concurrent.futures as cf
+
+    ops = [{"op": "add_edge", "from": "D01", "to": [f"D{i:02d}"]}
+           for i in range(10, 50)]
+    with cf.ThreadPoolExecutor(8) as ex:
+        list(ex.map(pending.stage, ops))
+    assert len(pending.load()) == len(ops)
+
+
+def test_concurrent_writers_to_one_file_do_not_collide(store, g):
+    """The temp name comes from `mkstemp`, not the pid: two threads share a
+    pid, so a pid-named temp gives them one path — the first `os.replace`
+    consumes it and the second raises `FileNotFoundError` on a file that is no
+    longer there. Concurrent writers should merely race to be last."""
+    import concurrent.futures as cf
+
+    with cf.ThreadPoolExecutor(8) as ex:
+        for r in [ex.submit(g.save) for _ in range(40)]:
+            r.result()                       # re-raises whatever a thread hit
+    assert Graph.load().to_dict() == g.to_dict()
+    assert not list(store.glob("*dg-tmp*"))
+
+
+def test_an_atomic_write_keeps_the_file_s_mode(store):
+    """`mkstemp` opens 0600. A store that silently became unreadable to the
+    group on its first atomic write would be a surprise nobody asked for."""
+    target = store / "decisions.json"
+    target.chmod(0o664)
+    project.write_atomic(target, "{}\n")
+    assert target.stat().st_mode & 0o777 == 0o664
+
+
+# ---- audit F10 and F12: the store's lock, and whose lock it is -------------
+
+
+def test_an_apply_does_not_overwrite_a_batch_applied_meanwhile(store):
+    """Audit F10. The tray got a lock; the store it feeds did not, and `apply`
+    is a read-modify-write of the store: load, apply a batch to a copy, save.
+
+    Two hosts sharing a project — which `commands/dg-serve.md` tells the user to
+    do — could each load the store and each write their own result, and the
+    later write erased the earlier one's decisions while `discard` took its ops
+    out of the tray. An *applied* batch, reported as applied, gone with no error
+    and nothing in any diff.
+
+    No threads needed: a caller that hands over a graph it loaded earlier is the
+    same stale read, made deterministic.
+    """
+    from dgraph import applying
+
+    stale = Graph.load()                     # host A reads the store...
+    applying.apply_decisions(               # ...host B applies and writes
+        [{"op": "add_vertex", "id": "D20", "title": "B's decision",
+          "area": "Alpha"}])
+    assert "D20" in Graph.load().vertices
+
+    with pytest.raises(pending.ApplyError):
+        # Host A resumes against the graph it read before B wrote. The op it
+        # carries no longer applies to the store as it now stands, and being
+        # told so is the whole point: silence here meant losing D20.
+        applying.apply_decisions(
+            [{"op": "add_vertex", "id": "D21", "title": "A's decision",
+              "area": "Alpha"}, {"op": "add_vertex", "id": "D20",
+                                 "title": "clash", "area": "Alpha"}],
+            g=stale)
+    assert "D20" in Graph.load().vertices    # B's work is still there
+
+
+def test_a_lock_is_taken_from_a_dead_holder_and_not_from_a_live_one(store, monkeypatch):
+    """Audit F12. The tray lock stole from any holder that outlasted a timeout,
+    on the reasoning that it must have crashed. A holder that is merely slow has
+    not — and stealing from it left two writers inside the block at once, since
+    the victim's release then deleted the thief's lock file and admitted a
+    third. Liveness is the question the lock was already recording the pid to
+    answer.
+    """
+    lock = store / "decisions.json.lock"
+
+    lock.write_text("999999999")             # a pid nothing can be running as
+    with project.held(store / "decisions.json", wait=0.05):
+        assert int(lock.read_text()) == os.getpid()      # taken over
+    assert not lock.exists()
+
+    lock.write_text(str(os.getpid()))        # a holder that is demonstrably alive
+    with project.held(store / "decisions.json", wait=0.05):
+        assert lock.read_text() == str(os.getpid())
+    # not ours to remove: we degraded rather than stealing, so the file the
+    # other holder is relying on is still there
+    assert lock.exists()
+    lock.unlink()
+
+
+def test_releasing_never_removes_another_holder_s_lock(store):
+    """The second half of F12, and the one that let a third writer in. A process
+    that has been stolen from must not delete the file its thief now holds."""
+    path = store / "decisions.json"
+    lock = path.with_name(path.name + ".lock")
+    with project.held(path, wait=0.05):
+        lock.write_text("999999999")         # somebody else's lock, in our place
+    assert lock.read_text() == "999999999"   # left alone
+    lock.unlink()
+
+
+def test_two_threads_never_hold_one_store_at_once(store):
+    """Not an old bug — a regression the F12 fix would otherwise have caused.
+
+    Deciding whether to steal a lock by asking whether its holder is alive is
+    the right question between processes and a useless one between threads:
+    they share a pid, so each reads the other's lock as "held by something
+    alive", waits out the timeout and proceeds unlocked. `dg serve` is a
+    `ThreadingHTTPServer` and two Apply clicks are two threads, so that is the
+    common case rather than the exotic one, and the in-process lock is what
+    separates them.
+    """
+    import concurrent.futures as cf
+    import time
+
+    path = store / "decisions.json"
+    inside, overlaps = [], []
+
+    def body(_):
+        with project.held(path, wait=5):
+            inside.append(1)
+            if len(inside) > 1:
+                overlaps.append(1)
+            time.sleep(0.005)
+            inside.pop()
+
+    with cf.ThreadPoolExecutor(8) as ex:
+        list(ex.map(body, range(24)))
+    assert overlaps == []
+
+
+# ---- audit F23: repairing a propagation the tool never derived -------------
+#
+# `pending.expand` marks decided descendants PROVISIONAL from a **reopen op**,
+# and is the only producer of that status. A merge, a rebase or a second clone
+# can land the reopened premise without the ops it implies, and then the rule is
+# broken with nothing to derive the remedy from.
+
+
+def _merged(g):
+    """The damage a merge does: the reopen landed, its propagation did not."""
+    g.vertices["D01"] = replace(g.vertices["D01"], status="REOPENED")
+    e = g.active_edge("D01")
+    e.answer = e.falsifier = e.source = e.date = None
+    return g
+
+
+def test_repairs_is_what_the_reopen_would_have_staged(g):
+    """The property the whole command rests on: a repair produces the batch the
+    reopen would have produced had it gone through the tool.
+
+    Compared against `expand` itself rather than against a hand-written list, so
+    the two cannot drift — if `expand` learns to mark something else, this fails
+    until `repairs` learns it too.
+    """
+    expected = [o for o in pending.expand(g, {"op": "reopen", "vertex": "D01",
+                                              "why": "x"})
+                if o["op"] == "set_status"]
+    assert expected, "the fixture must have decided descendants to propagate to"
+    assert pending.repairs(_merged(g)) == sorted(expected,
+                                                 key=lambda o: o["vertex"])
+
+
+def test_repairs_reaches_past_what_propagation_reports(g):
+    """`propagation` fires only on a *direct* parent, so a decided vertex two
+    levels under the reopened one is invisible to it — the vertex between them
+    is DECIDED and therefore counts as settled. The reopen would have marked it
+    all the same, and leaving it DECIDED is the same untruth one level down."""
+    broken = _merged(g)
+    reported = {vid for vid, _ in broken.unpropagated()}
+    repaired = {o["vertex"] for o in pending.repairs(broken)}
+    assert reported < repaired, "a repair that only fixed what is reported"
+    assert "D04" in repaired and "D04" not in reported
+
+
+def test_repairs_clears_the_finding_and_nothing_else(g):
+    """Applying the batch leaves a valid graph, and touches only what it must."""
+    broken = _merged(g)
+    out = pending.apply_all(broken, pending.repairs(broken))
+    assert not [v for v in out.validate() if v.check == "propagation"]
+    assert not [v for v in out.validate() if v.blocking]
+    assert out.vertices["D05"].status == "OPEN"      # untouched: never DECIDED
+    assert out.vertices["D06"].status == "BLOCKED:D05"
+
+
+def test_repairs_is_empty_on_a_graph_the_checker_is_happy_with(g):
+    """Derived from the finding, so it cannot invent a status where the
+    validator is not complaining — the property that keeps `set_status` an op
+    the tool derives rather than one a caller may write."""
+    assert pending.repairs(g) == []
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    assert pending.repairs(g) == []                  # already provisional
+
+
+# ---- audit F17: what the loser of a race is told ---------------------------
+
+
+def test_a_collision_with_an_identical_op_names_the_other_writer(g):
+    """The F16 sequence, asserting on the message rather than the store: two
+    writers load one tray, both apply, and the loser's op is refused.
+
+    "D01 already exists" is true and its plain reading is false — the op is in
+    the store, applied by somebody else. An agent reading it as "my work failed"
+    re-stages under a fresh id and puts two vertices behind one question.
+    """
+    op = {"op": "add_vertex", "id": "D09", "title": "New", "area": "Alpha"}
+    landed = pending.apply_all(g, [op])              # the other writer wins
+    with pytest.raises(pending.ApplyError) as exc:
+        pending.apply_all(landed, [op])              # ...and we apply second
+    assert "another writer applied it" in str(exc.value)
+    assert "Nothing of yours was lost" in str(exc.value)
+
+
+def test_a_genuine_id_clash_keeps_its_own_words(g):
+    """The other reading, and it must not be softened: D09 is taken by something
+    else entirely, nothing of this op landed, and re-staging under a fresh id is
+    exactly the right response."""
+    landed = pending.apply_all(g, [{"op": "add_vertex", "id": "D09",
+                                    "title": "Something else", "area": "Alpha"}])
+    with pytest.raises(pending.ApplyError) as exc:
+        pending.apply_all(landed, [{"op": "add_vertex", "id": "D09",
+                                    "title": "New", "area": "Alpha"}])
+    assert "another writer" not in str(exc.value)
+    assert "pick another id" in str(exc.value)
+
+
+def test_a_collision_with_an_identical_close_names_the_other_writer(g):
+    """The same for a decision: `dg decide D05` twice, once from each of two
+    terminals, used to read as "reopen it first" — advice that would file a
+    reversal of an answer that had just been recorded correctly."""
+    # Through `expand`, as both hosts stage it: closing D05 releases D06, which
+    # is BLOCKED on it, and a close without that is refused for `stale_block`
+    # rather than for the collision this is about.
+    ops = pending.expand(g, {"op": "close", "vertex": "D05",
+                             "answer": "Because.", "source": "discussion",
+                             "falsifier": "new evidence", "to": []})
+    landed = pending.apply_all(g, ops)
+    with pytest.raises(pending.ApplyError) as exc:
+        pending.apply_all(landed, ops)
+    assert "another writer applied it" in str(exc.value)
+
+
+def test_a_different_answer_to_a_decided_question_still_says_reopen(g):
+    """Not a concurrency message: somebody is answering a settled question with
+    something new, and reopening really is the way through."""
+    pending.apply_all(g, [])                          # D01 is already decided
+    with pytest.raises(pending.ApplyError) as exc:
+        pending.apply_all(g, [{"op": "close", "vertex": "D01",
+                               "answer": "A different answer.",
+                               "source": "discussion", "to": []}])
+    assert "reopen it first" in str(exc.value)
+    assert "another writer" not in str(exc.value)
+
+
+def test_a_collision_is_its_own_exception_type(g):
+    """Audit F17, the part the message alone did not fix.
+
+    Both hosts head an `ApplyError` with "aborted, nothing written" — true of
+    the apply, false of the work, and the headline is what a model acts on. A
+    subclass lets the caller say something else without every existing
+    `except ApplyError` having to learn about it.
+    """
+    op = {"op": "add_vertex", "id": "D09", "title": "New", "area": "Alpha"}
+    landed = pending.apply_all(g, [op])
+    with pytest.raises(pending.Collision):
+        pending.apply_all(landed, [op])
+    # ...and still an ApplyError, so nothing that catches the base class breaks
+    assert issubclass(pending.Collision, pending.ApplyError)
+
+
+def test_a_genuine_clash_is_not_a_collision(g):
+    """The distinction has to hold in the type as well as the words, or a caller
+    keying off the type re-reads a real clash as somebody else's write."""
+    landed = pending.apply_all(g, [{"op": "add_vertex", "id": "D09",
+                                    "title": "Something else", "area": "Alpha"}])
+    with pytest.raises(pending.ApplyError) as exc:
+        pending.apply_all(landed, [{"op": "add_vertex", "id": "D09",
+                                    "title": "New", "area": "Alpha"}])
+    assert not isinstance(exc.value, pending.Collision)
+
+
+# ---- what moved underneath a staged batch ----------------------------------
+#
+# The invariants already refuse the dangerous case — a decided answer on a
+# reopened premise is a blocking `propagation` finding, so that batch aborts and
+# names the premise. What these cover is the *quiet* case: a batch that applies
+# cleanly while resting on something that changed while it sat in the tray.
+
+
+def test_a_stamped_op_records_what_its_premises_looked_like(g):
+    op = pending.stamp(g, {"op": "close", "vertex": "D05", "answer": "a",
+                           "source": "s", "to": []})
+    assert set(op["saw"]) == {"D05", "D04"}          # itself, and its premise
+    assert op["saw"]["D04"].startswith("DECIDED|")
+
+
+def test_an_op_that_leans_on_nothing_is_not_stamped(g):
+    """`add_vertex` invents a vertex and rests on nothing; `set_status` is
+    derived from an op in the same batch, which carries the stamp already. A
+    `saw` on either would be noise in a tray a person reads."""
+    for op in ({"op": "add_vertex", "id": "D09", "title": "x", "area": "Alpha"},
+               {"op": "set_status", "vertex": "D05", "status": "OPEN"}):
+        assert "saw" not in pending.stamp(g, op)
+
+
+def test_drift_is_silent_when_nothing_moved(g):
+    ops = [pending.stamp(g, {"op": "add_edge", "from": "D01", "to": ["D05"]})]
+    assert pending.drift(g, ops) == []
+
+
+def test_drift_names_the_premise_that_was_reopened(g):
+    ops = [pending.stamp(g, {"op": "add_edge", "from": "D01", "to": ["D05"]})]
+    moved = pending.apply_all(g, pending.expand(g, {"op": "reopen",
+                                                    "vertex": "D01",
+                                                    "why": "x"}))
+    d = pending.drift(moved, ops)
+    assert len(d) == 1 and d[0]["premise"] == "D01"
+    assert d[0]["was"] == "DECIDED" and d[0]["now"] == "REOPENED"
+    assert "DECIDED → REOPENED" in pending.describe(d[0])
+
+
+def test_drift_catches_a_re_decision_that_left_the_status_alone(g):
+    """The case a status-only stamp misses entirely, and the reason the
+    fingerprint digests the answer: DECIDED → REOPENED → DECIDED reads as no
+    change at all, while the answer underneath is a different one."""
+    ops = [pending.stamp(g, {"op": "add_edge", "from": "D01", "to": ["D05"]})]
+    moved = pending.apply_all(g, pending.expand(g, {"op": "reopen",
+                                                    "vertex": "D01",
+                                                    "why": "x"}))
+    moved = pending.apply_all(moved, [{"op": "close", "vertex": "D01",
+                                       "answer": "A different answer.",
+                                       "falsifier": "f", "source": "s",
+                                       "to": ["D02", "D03"]}])
+    assert moved.vertices["D01"].status == "DECIDED"     # ...same as before
+    d = pending.drift(moved, ops)
+    assert len(d) == 1 and d[0]["answer_changed"]
+    assert "its answer changed" in pending.describe(d[0])
+
+
+def test_drift_skips_an_id_the_batch_is_about_to_create(g):
+    """Stamped against the *effective* graph, so `saw` can name a vertex that
+    exists only in the tray. Reporting it as moved would be a warning about a
+    premise nobody has touched."""
+    ops = [{"op": "add_edge", "from": "D99", "to": ["D05"],
+            "saw": {"D99": "OPEN|-"}}]
+    assert pending.drift(g, ops) == []
+
+
+# ---- one status rule, four callers (audit F30) ---------------------------
+#
+# `status_fault` replaced three copies — `Graph.validate`, `cli._status_legal`
+# and an inline one in `pending.vet` — plus a fourth route that had none.
+
+
+@pytest.mark.parametrize("status,fault", [
+    ("OPEN", None), ("DECIDED", None), ("REOPENED", None), ("PROVISIONAL", None),
+    ("BLOCKED:D02", None),
+    ("DONE", "illegal status 'DONE'"),
+    ("", "illegal status ''"),
+    ("open", "illegal status 'open'"),
+    ("BLOCKED", "BLOCKED must name a blocker"),
+    ("BLOCKED:", "BLOCKED must name a blocker"),
+    ("BLOCKED:D01", "blocked by itself"),
+    ("BLOCKED:D99", "blocked by unknown vertex D99"),
+    # The drift the extraction found: `validate` read only `base_status`, so a
+    # blocker smuggled onto a non-BLOCKED status went unread while
+    # `Vertex.blocker` went on reporting it.
+    ("OPEN:D02", "illegal status 'OPEN:D02'"),
+    ("DECIDED:D02", "illegal status 'DECIDED:D02'"),
+])
+def test_status_fault_is_the_whole_rule(status, fault):
+    from dgraph.model import status_fault
+    assert status_fault(status, {"D01", "D02"}, of="D01") == fault
+
+
+def test_a_blocker_on_a_non_blocked_status_is_refused_by_the_validator(g, store):
+    """It used to pass, and `Vertex.blocker` reported `D99` regardless — a
+    dependency asserted in a field nothing reads as one."""
+    from dataclasses import replace as _r
+    g.vertices["D05"] = _r(g.vertices["D05"], status="OPEN:D99")
+    assert g.vertices["D05"].blocker == "D99"
+    hits = [str(v) for v in g.validate() if v.check == "status_legal"]
+    assert hits == ["[status_legal] D05: illegal status 'OPEN:D99'"]
+
+
+def test_every_route_refuses_the_same_status(g, store):
+    """The point of one implementation. `vet` is the staging floor the web app
+    and the editor both go through; `validate` is the store's authority."""
+    from dataclasses import replace as _r
+    for bad in ("DONE", "BLOCKED", "OPEN:D02"):
+        with pytest.raises(pending.ApplyError):
+            pending.vet(g, {"op": "set_status", "vertex": "D05", "status": bad})
+        broken = Graph.load()
+        broken.vertices["D05"] = _r(broken.vertices["D05"], status=bad)
+        assert [v for v in broken.validate() if v.check == "status_legal"], bad
+
+
+def test_vet_all_lets_a_group_build_on_itself(g, store):
+    """`add_vertex D07` then an edge *to* D07: legal only in that order, which
+    is why the editor path needs the plural rather than `vet` per op."""
+    ops = [{"op": "add_vertex", "id": "D07", "title": "x", "area": "Alpha",
+            "status": "OPEN"},
+           {"op": "add_edge", "from": "D01", "to": ["D07"]}]
+    pending.vet_all(g, ops)                       # does not raise
+    with pytest.raises(pending.ApplyError):
+        pending.vet(g, ops[1])                    # ...but alone it would
+    assert pending.load() == [], "vet_all stages nothing"

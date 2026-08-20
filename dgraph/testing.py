@@ -24,6 +24,10 @@ import pytest
 from dgraph import project as _project
 from dgraph.check import CHECKS, run
 
+#: The option's own name, and the attribute pytest derives from it.
+OPTION = "--decision-graph"
+_DEST = "decision_graph"
+
 __all__ = [
     "decision_project",
     "decision_violations",
@@ -32,12 +36,38 @@ __all__ = [
 ]
 
 
+def pytest_addoption(parser) -> None:
+    """Register ``--decision-graph``.
+
+    Only reached when pytest loads this module as a plugin, which the
+    ``pytest11`` entry point arranges. A project that merely does
+    ``from dgraph.testing import *`` still gets the fixtures and the tests —
+    that import is what runs them — and gets the option too, because the entry
+    point is part of the same installation.
+    """
+    parser.addoption(
+        OPTION, action="store", default=None, metavar="PATH",
+        help="the project whose development graph to check (default: "
+             "$DG_PROJECT, else pytest's rootdir)",
+    )
+
+
 @pytest.fixture(scope="session")
 def decision_project(pytestconfig):
-    proj = _project.find(Path(pytestconfig.rootpath))
+    """Which project these tests judge.
+
+    The explicit option wins, then `$DG_PROJECT` (via `project.find`), then
+    rootdir. A repository holding more than one project needs the first of
+    those: `$DG_PROJECT` is process-wide, so it cannot say "this test run, this
+    project" without leaking into everything else the shell goes on to do.
+    """
+    chosen = pytestconfig.getoption(_DEST, default=None)
+    start = Path(chosen).expanduser() if chosen else Path(pytestconfig.rootpath)
+    proj = _project.Project(start.resolve()) if chosen else _project.find(start)
     if not proj.exists:
-        pytest.skip(f"no {_project.STORE_NAME} or {_project.TASKS_NAME} at or "
-                    f"above {pytestconfig.rootpath}")
+        where = f"{OPTION} {chosen}" if chosen else f"at or above {start}"
+        pytest.skip(f"no {_project.STORE_NAME} or {_project.TASKS_NAME} "
+                    f"{where}")
     return proj
 
 

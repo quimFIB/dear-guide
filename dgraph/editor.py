@@ -31,7 +31,7 @@ from datetime import date as _date
 from pathlib import Path
 
 from dgraph import project
-from dgraph.model import Graph
+from dgraph.model import Graph, status_fault
 
 ELISP = Path(__file__).resolve().parent / "elisp" / "dgraph.el"
 
@@ -124,9 +124,15 @@ def _context(g: Graph, vid: str) -> str:
 
     Baked in rather than fetched, so it is there for any editor. The elisp can
     reach the rest of the graph on demand.
+
+    The *walk* — which ancestors, in what order, carrying which fields —
+    belongs to `dgraph.context`, which `dg context` renders as plain text and
+    the web app reads as JSON. This function only renders it as org. Three
+    consumers cannot disagree about what a decision rests on when only one of
+    them traverses.
     """
+    from dgraph import context as _ctx
     v = g.vertices[vid]
-    e = g.active_edge(vid)
     out = ["* Context", "** This decision",
            f"   {vid} — {v.title}",
            f"   area {v.area} · status {v.status} · depth {g.depth(vid)}"]
@@ -136,30 +142,29 @@ def _context(g: Graph, vid: str) -> str:
     if v.note:
         out.append(_quote(v.note))
 
-    for parent in deps:
-        pe = g.active_edge(parent)
-        pv = g.vertices[parent]
-        out.append(f"** {pv.status.split(':')[0]} {_node_line(g, parent)}")
-        if pe is not None and pe.decided:
-            out.append("   :PROPERTIES:")
-            out.append(f"   :FALSIFIER: {pe.falsifier or '—'}")
-            out.append(f"   :SOURCE:    {pe.source or '—'}")
-            out.append(f"   :DATE:      {pe.date or '—'}")
-            out.append("   :END:")
-            out.append(_quote(pe.answer))
-        sibs = [s for s in g.children(parent) if s != vid]
-        if sibs:
-            out.append(f"   also opened: {', '.join(sibs)}")
+    chain = _ctx.chain(g, vid)
+    by_id = {p.id: p for p in chain}
 
-    chain = sorted(g.ancestors(vid), key=lambda a: (g.depth(a), a))
+    for parent in deps:
+        p = by_id[parent]
+        out.append(f"** {p.status.split(':')[0]} {_node_line(g, parent)}")
+        if p.answer is not None:
+            out.append("   :PROPERTIES:")
+            out.append(f"   :FALSIFIER: {p.falsifier or '—'}")
+            out.append(f"   :SOURCE:    {p.source or '—'}")
+            out.append(f"   :DATE:      {p.date or '—'}")
+            out.append("   :END:")
+            out.append(_quote(p.answer))
+        if p.also_opened:
+            out.append(f"   also opened: {', '.join(p.also_opened)}")
+
     if chain:
         out.append("** Ancestor chain")
         out.append("   | depth | node | status | date |")
         out.append("   |-------+------+--------+------|")
-        for a in chain:
-            ae = g.active_edge(a)
-            out.append(f"   | {g.depth(a)} | {_node_line(g, a)} "
-                       f"| {g.vertices[a].status} | {(ae.date if ae else None) or '—'} |")
+        for p in chain:
+            out.append(f"   | {p.depth} | {_node_line(g, p.id)} "
+                       f"| {p.status} | {p.date or '—'} |")
 
     hist = g.history(vid)
     if hist:
@@ -270,6 +275,18 @@ def render_op(g: Graph, i: int, op: dict) -> str:
             f"use `dg drop {i}`"
         )
     seed = dict(op)
+    if kind == "add_vertex":
+        # The parents come from the *graph*, not from the op: an `add_vertex`
+        # carries no `after`, because a dependency is an edge and edges are
+        # staged as their own ops beside it. `g` here is the effective graph
+        # without this op (`cli._eff(g, skip=i)`), so the vertex is absent but
+        # every staged edge pointing at it still applies — which is precisely
+        # the set the batch attaches.
+        #
+        # Seeded rather than left blank because a blank field on a vertex that
+        # *is* attached is a buffer lying about the thing it is editing: the
+        # obvious reading is "no parents", and saving it meant them. Audit F26.
+        seed.setdefault("after", g.depends(seed.get("id") or ""))
     text = (render_add(g, seed) if kind == "add_vertex"
             else RENDERERS[kind](g, op["vertex"], seed))
     return text.replace(":END:", f":DGRAPH_INDEX: {i}\n:END:", 1)
@@ -449,13 +466,29 @@ def _parse_add(g: Graph, f: dict) -> list[dict]:
     area = _need(f, "area")
     if area not in g.areas:
         raise EditorError(f"unknown area {area!r} — one of: {', '.join(g.areas)}")
+    status = f.get("status", "").strip() or "OPEN"
+    # Checked here as well as by the `vet_all` the caller runs, because this
+    # message names the field the user typed — `** Status` — where a refusal
+    # from the staging layer names an op they never wrote. The same reason the
+    # id and the area are checked here rather than left to `vet`.
+    fault = status_fault(status, g.vertices, of=vid)
+    if fault:
+        raise EditorError(f"Status: {fault} — one of {', '.join(STATUSES)}")
     op = {"op": "add_vertex", "id": vid, "title": _need(f, "title"),
-          "area": area, "status": f.get("status", "").strip() or "OPEN"}
+          "area": area, "status": status}
     if f.get("note", "").strip():
         op["note"] = f["note"].strip()
         op["format"] = "org"
     ops = [op]
-    for parent in [p.strip() for p in f.get("after", "").split(",") if p.strip()]:
+    parents = [p.strip() for p in f.get("after", "").split(",") if p.strip()]
+    # A block is a dependency; see the same addition in `cli.add`. Staged here
+    # too so the composed batch reads as what it does, rather than gaining an
+    # edge at apply time that the buffer never mentioned.
+    if op["status"].startswith("BLOCKED:"):
+        blocker = op["status"].split(":", 1)[1]
+        if blocker and blocker not in parents:
+            parents.append(blocker)
+    for parent in parents:
         if parent not in g.vertices:
             raise EditorError(f"unknown parent {parent!r} in After")
         ops.append({"op": "add_edge", "from": parent, "to": [vid]})
@@ -586,14 +619,10 @@ def _acquire_buffer(path: Path) -> Path:
     raise EditorError(f"could not take {lock} — try again")
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except (PermissionError, OverflowError, ValueError):
-        pass  # not ours to signal, but something is there — assume alive
-    return True
+#: One implementation, shared with the tray lock in `dgraph/project.py`: both
+#: locks decide whether to steal by asking whether the holder still exists, and
+#: two answers to that question is how two locks come to disagree.
+_alive = project.alive
 
 
 def compose(

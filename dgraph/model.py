@@ -22,9 +22,47 @@ from pathlib import Path
 
 from dgraph import project
 from dgraph.violation import Violation  # re-exported: callers import it from here
+from dgraph.violation import cycle_from
 
 SIMPLE_STATUSES = {"DECIDED", "OPEN", "REOPENED", "PROVISIONAL"}
 UNSETTLED = {"OPEN", "BLOCKED", "REOPENED"}
+
+
+def status_fault(status: str, ids, of: str | None = None) -> str | None:
+    """Why `status` is not a legal status, or None if it is.
+
+    **The one implementation, and there were three.** `Graph.validate`'s
+    `status_legal` branch, `cli._status_legal` before staging, and an inline
+    copy in `pending.vet` — and a fourth route, `dg add --edit`, with no copy at
+    all, which was audit F30. Predictably they had drifted:
+
+    - neither stage-time copy noticed a vertex blocked by itself, which
+      `validate` refuses;
+    - `validate` accepted `OPEN:D99` — it tested `base_status`, so a colon on a
+      status that is not `BLOCKED` went unread, while `Vertex.blocker` went on
+      reporting `D99` as a blocker nothing checks. Both stage-time copies
+      refused it. Folding them together tightens the validator to match, which
+      is the right direction: that state is unreachable through the tool and can
+      only arrive by hand-edit or merge, which is what `validate` is for.
+
+    Returns the *reason*, without a vertex id in front of it, so `validate` can
+    prefix `D07: ` and a stage-time caller can say it plainly. `ids` is what a
+    blocker may name; `of` is the vertex the status belongs to, when there is
+    one, so `BLOCKED:<itself>` can be told from `BLOCKED:<other>`.
+    """
+    base, sep, blocker = status.partition(":")
+    if base != "BLOCKED":
+        # A blocker on anything else is a dependency asserted by a field that
+        # is not read as one — the second copy this model exists to refuse.
+        return None if base in SIMPLE_STATUSES and not sep \
+            else f"illegal status {status!r}"
+    if not blocker:
+        return "BLOCKED must name a blocker"
+    if of is not None and blocker == of:
+        return "blocked by itself"
+    if blocker not in ids:
+        return f"blocked by unknown vertex {blocker}"
+    return None
 
 
 @dataclass
@@ -153,7 +191,7 @@ class Graph:
 
     def save(self, path: Path | None = None) -> None:
         text = json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n"
-        (path or project.find().store).write_text(text, encoding="utf-8")
+        project.write_atomic(path or project.find().store, text)
 
     # ---- queries ---------------------------------------------------------
 
@@ -171,8 +209,16 @@ class Graph:
         )
 
     def children(self, vid: str) -> list[str]:
+        """The vertices this decision opens.
+
+        A target naming no vertex is skipped, for the reason `depends` gives
+        below — the two directions of the same walk, so they filter the same
+        way. Only the traversal is filtered: the edge keeps the id, `validate`
+        reports it, and every write path unions against `Edge.to` rather than
+        against this, so a dangling target is never dropped from the store.
+        """
         e = self.active_edge(vid)
-        return list(e.to) if e else []
+        return [t for t in e.to if t in self.vertices] if e else []
 
     def depends(self, vid: str) -> list[str]:
         """Derived, never stored: the parents that point at this vertex.
@@ -235,6 +281,18 @@ class Graph:
             a for a in self.ancestors(vid) if not self.vertices[a].settled
         )
 
+    def unpropagated(self) -> list[tuple[str, str]]:
+        """DECIDED vertices resting on an unsettled premise, each with it.
+
+        The `propagation` rule as data. `validate` turns each pair into a
+        finding and `pending.repairs` turns each into the op that clears it, so
+        the rule has one implementation and the two cannot disagree about which
+        vertices are affected — the same reason `waiting_on` has one
+        implementation and three callers.
+        """
+        return [(vid, p) for vid, v in sorted(self.vertices.items())
+                if v.base_status == "DECIDED" for p in self.waiting_on(vid)]
+
     def roots(self) -> list[str]:
         return sorted(v for v in self.vertices if not self.depends(v))
 
@@ -244,7 +302,16 @@ class Graph:
         )
 
     def depth(self, vid: str) -> int:
-        """Longest path from any root — the rank used for graph layout.
+        """Longest path from any root — the rank used for graph layout."""
+        return self.depths(vid)[vid]
+
+    def depths(self, vid: str) -> dict[str, int]:
+        """The depth of `vid` *and* of everything it rests on, in one walk.
+
+        The walk already computes every ancestor's depth on its way to `vid`
+        and used to throw them away, so a caller wanting the depth of a whole
+        chain paid for the traversal once per node — quadratic in the chain,
+        which on a deep graph is the difference between instant and hanging.
 
         Iterative on an explicit stack: a chain a few hundred decisions deep is
         a legitimate graph and must not hit the recursion limit.
@@ -269,7 +336,7 @@ class Graph:
             )
             on_path.discard(n)
             stack.pop()
-        return memo[vid]
+        return memo
 
     def path(self, a: str, b: str) -> list[str] | None:
         """Any decision path from a to b, following active edges."""
@@ -299,14 +366,28 @@ class Graph:
                 add("ids_wellformed", f"malformed id {vid!r}")
             if vert.area not in self.areas:
                 add("ids_wellformed", f"{vid}: unknown area {vert.area!r}")
-            if vert.base_status == "BLOCKED":
+            fault = status_fault(vert.status, ids, of=vid)
+            if fault:
+                add("status_legal", f"{vid}: {fault}")
+            elif vert.base_status == "BLOCKED":
+                # Legal and resolving, so what is left are the two rules about
+                # what the block *means* — that it is backed by an edge, and
+                # that the blocker has not since settled.
                 tgt = vert.blocker
-                if not tgt:
-                    add("status_legal", f"{vid}: BLOCKED must name a blocker")
-                elif tgt not in ids:
-                    add("status_legal", f"{vid}: blocked by unknown vertex {tgt}")
-                elif tgt == vid:
-                    add("status_legal", f"{vid}: blocked by itself")
+                if tgt not in self.depends(vid):
+                    # Before the staleness check below, because it is the more
+                    # fundamental fault: if the block is not backed by an edge,
+                    # whether the blocker has settled does not matter — the
+                    # status is wrong either way, and reporting both would
+                    # describe one contradiction twice.
+                    add(
+                        "block_is_a_premise",
+                        f"{vid} is BLOCKED:{tgt} but does not rest on {tgt} — "
+                        f"a block *is* a dependency, and dependency lives in "
+                        f"the edge list, never in a second copy in a status "
+                        f"field. `dg dep {vid} --after {tgt}` records it; "
+                        f"otherwise {vid} should be OPEN",
+                    )
                 elif self.vertices[tgt].settled:
                     add(
                         "stale_block",
@@ -314,8 +395,6 @@ class Graph:
                         f"{self.vertices[tgt].status} — nothing is blocking it, "
                         f"so it should be OPEN",
                     )
-            elif vert.base_status not in SIMPLE_STATUSES:
-                add("status_legal", f"{vid}: illegal status {vert.status!r}")
 
         seen_active: set[str] = set()
         for e in self.edges:
@@ -323,7 +402,16 @@ class Graph:
                 add("no_dangling_refs", f"edge from unknown vertex {e.src}")
                 continue
             for t in e.to:
-                if t not in ids:
+                # Targets are only checked on an *active* edge. A superseded one
+                # records what an answer opened at the time, and `dg rm` deletes
+                # vertices that a past answer may perfectly well have opened —
+                # so a target naming nothing is a historical fact there, not a
+                # broken reference, and reporting it forever would be a blocking
+                # finding with no repair. Nothing can introduce a *new* dangling
+                # target into an inactive edge: `reopen` copies `to` from an
+                # active edge that has already been validated, and
+                # `remove_vertex` leaves inactive edges alone.
+                if t not in ids and e.active:
                     add("no_dangling_refs", f"edge {e.src} -> unknown vertex {t}")
                 if t == e.src:
                     add("no_dangling_refs", f"{e.src}: edge to itself")
@@ -369,22 +457,19 @@ class Graph:
                     "warning",
                 )
 
-        for vid, vert in self.vertices.items():
-            if vert.base_status != "DECIDED":
-                continue
-            for p in self.waiting_on(vid):
-                add(
-                    "propagation",
-                    f"{vid} is DECIDED but rests on {p} "
-                    f"({self.vertices[p].status}) — mark it PROVISIONAL or "
-                    f"settle the premise",
-                )
+        for vid, p in self.unpropagated():
+            add(
+                "propagation",
+                f"{vid} is DECIDED but rests on {p} "
+                f"({self.vertices[p].status}) — `dg repair` marks it "
+                f"PROVISIONAL, or settle the premise with `dg decide {p}`",
+            )
 
         touched = {e.src for e in self.edges} | {
             t for e in self.edges for t in e.to
         }
         for vid in sorted(ids - touched):
-            add("no_orphans", f"{vid} is connected to nothing", "warn")
+            add("no_orphans", f"{vid} is connected to nothing", "warning")
 
         # Iterative DFS colouring, for the same reason `depth` is iterative: a
         # deep chain is a legal graph, and the validator crashing on one would
@@ -398,11 +483,10 @@ class Graph:
             trail = [vid]
             while stack:
                 n, kids = stack[-1]
-                for c in kids:
-                    if c not in self.vertices:
-                        continue
-                    if colour.get(c) == 1:
-                        add("acyclic", f"cycle: {' -> '.join(trail + [c])}")
+                for c in kids:          # `children` has already dropped ids
+                    if colour.get(c) == 1:   # naming no vertex
+                        add("acyclic",
+                            f"cycle: {' -> '.join(cycle_from(trail, c))}")
                         continue
                     if colour.get(c) == 2:
                         continue

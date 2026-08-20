@@ -4,11 +4,15 @@ The markdown is a generated view. Never hand-edit it: run `dg task render` (or
 any command that applies tasks) and the file is rebuilt from the store.
 
 Deliberately a separate document from `decision-graph.md`, and nothing about
-tasks is ever rendered into that one. `decision-graph.md` is checked in and
-guarded by `stale_view`, which is a blocking violation and a commit-gate denial
-— so a task count in the decision view would mean *filing a chore makes the
-decision view stale and denies the commit*. That is tasks drowning decisions,
-implemented in code.
+tasks is ever rendered into that one. A task count in the decision view would
+mean *filing a chore makes the decision view stale* — the decision record
+churning on work that has nothing to do with it, which is tasks drowning
+decisions, implemented in code.
+
+That argument used to rest on `stale_view` being a blocking violation and a
+commit-gate denial, which it no longer is (see `check._decisions`). It does not
+need to: the point is that the two documents move for their own reasons, and a
+generated file that churns is one nobody reads a diff of.
 """
 
 from __future__ import annotations
@@ -27,11 +31,18 @@ PREAMBLE = """# Tasks
 truth; this file is the readable view of it. `dg check` enforces the invariants.
 
 - A **task** is a unit of work, with an explicit status.
-- An **edge** is a prerequisite: the task it points from has to be resolved
-  before the tasks it points to can start.
+- An **edge** relates two tasks, and says which of two things it means. A
+  `precedes` edge is a prerequisite: the task it points from has to be resolved
+  before the tasks it points to can start. A `prompted` edge is provenance:
+  doing the task it points from turned the others up. Provenance makes nothing
+  wait — a chore noticed mid-task is usually startable at once, and often has
+  to land before the task that revealed it can be finished.
 - **Blocked is derived, never stored.** A task is ready when everything before
   it is resolved, so there is no blocked status to keep up to date and none to
-  go stale. Abandoning a prerequisite releases what waited on it.
+  go stale. Abandoning a prerequisite releases what waited on it — and says so:
+  a release is a guess, since work that *produced* what another task consumes
+  does not release it but undermines it, so `dg check` asks about anything left
+  standing by a drop until somebody acts on it.
 - A task may name the **decision** it exists because of, and the one its
   outcome will inform. Those live in `decisions.json`; this view names the id
   and nothing more, because it is generated from `tasks.json` alone.
@@ -75,6 +86,14 @@ def _section(tg: TaskGraph, tid: str) -> str:
     out.append(f"- **Status:** {status}")
     out.append(f"- **Waiting on:** {', '.join(tg.waiting_on(tid)) or NONE}")
     out.append(f"- **Unblocks:** {', '.join(tg.unblocks(tid)) or NONE}")
+    # Only where they hold, unlike the two lines above. Provenance is absent
+    # for most work, and an em dash on every section would train the eye past
+    # the line on the tasks where it says something.
+    if tg.discovered_during(tid):
+        out.append(f"- **Discovered during:** "
+                   f"{', '.join(tg.discovered_during(tid))}")
+    if tg.prompted(tid):
+        out.append(f"- **Turned up:** {', '.join(tg.prompted(tid))}")
     # The link the whole cross-graph design exists for. Stored on the task, so
     # printing it needs nothing from the decision store and keeps this view's
     # staleness independent of `decisions.json` — leaving it out only hid it.
@@ -87,7 +106,13 @@ def _section(tg: TaskGraph, tid: str) -> str:
     if t.note:
         out.append(orgmd.to_markdown(t.note, fmt=t.format).strip())
         out.append("")
-    if t.why:
+    # Only where the status supports the claim. `why` is cleared when work
+    # stops being DROPPED, so a store this view can read should never hold a
+    # stale one — but `task_drop_complete` is a *finding*, and a view is
+    # generated from broken stores too, on the way to reporting them. Printing
+    # "Not being done" under a DOING task is the drift itself, so the belt is
+    # here as well as in the store.
+    if t.why and t.status == "DROPPED":
         out.append(f"*Not being done:* {orgmd.to_markdown(t.why, fmt=t.format)}")
         out.append("")
     if t.outcome:
@@ -109,5 +134,5 @@ def render(tg: TaskGraph) -> str:
 
 def write(tg: TaskGraph, path: Path | None = None) -> Path:
     target = path or project.find().task_view
-    target.write_text(render(tg), encoding="utf-8")
+    project.write_atomic(target, render(tg))
     return target

@@ -141,8 +141,28 @@ def test_brief_points_at_the_skill(run, store, g):
 
 
 def test_brief_reports_a_broken_graph(run, store, g):
-    assert "error(s)" in run("brief").output     # no view rendered yet
-    assert "stale_view" in run("brief").output
+    """A blocking finding, counted as an error. The view being unrendered is no
+    longer one of those — it is a warning now — so this breaks the store."""
+    from dataclasses import replace as _replace
+    write(g)
+    g.vertices["D02"] = _replace(g.vertices["D02"], status="WOBBLY")
+    g.save(store / "decisions.json")
+    assert "error(s)" in run("brief").output
+    assert "status_legal" in run("brief").output
+
+
+def test_brief_counts_an_unrendered_view_without_demanding_a_fix(run, store, g):
+    """A lagging view is a warning now, so the brief counts it with the other
+    advisories rather than printing "fix before committing".
+
+    Deliberately not named here. Naming one warning and not the others would be
+    special-casing a check inside a payload that is paid for in tokens on every
+    session start; `dg check` names it, and the commit gate says so at the
+    moment it would go into history.
+    """
+    out = run("brief").output
+    assert "warning(s)" in out
+    assert "error(s)" not in out and "fix before committing" not in out
 
 
 def test_brief_survives_a_corrupt_store(run, store, g):
