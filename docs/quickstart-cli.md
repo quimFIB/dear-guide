@@ -37,7 +37,9 @@ Two files appear: `decisions.json` (the store — source of truth) and
 **Already have a graph?** `decisions.json` is the input format, so there is no
 conversion step — write it, then `dg import prepared.json` checks it and makes
 it the store, naming the record and field of anything wrong and refusing a graph
-that breaks an invariant. `dg task import` does the same for `tasks.json`.
+that breaks an invariant. `dg task import` does the same for `tasks.json`, and
+`dg export` / `dg task export` print payloads those two read back unchanged, so
+copying a graph between projects is a pipe.
 (`dg import-md` is *not* the general markdown importer its name suggests: it
 rebuilds a store from a `decision-graph.md` this tool generated, and nothing
 else. To start from a prose document of your own, have an agent read it and

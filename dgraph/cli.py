@@ -2561,6 +2561,37 @@ def task_clear() -> None:
     con.print("[green]cleared[/]")
 
 
+@task_app.command("export")
+def task_export(
+    tid: str = typer.Argument(None, help="Scope to one task"),
+) -> None:
+    """Dump the task graph as JSON. `dg export`'s twin, for the other store.
+
+    Round-trips: what this prints is accepted by `dg task import`, which drops
+    the derived blocks and rebuilds them. Scoping to one task narrows the store
+    to that task and its edges, so the result is a fragment — importable, but
+    only into an empty project and usually not valid on its own.
+    """
+    from dgraph.server import task_payload
+    tg = _tg()
+    payload = task_payload(tg, _decisions_or_none())
+    if tid:
+        if tid not in tg.tasks:
+            con.print(f"[red]unknown task {tid}[/]")
+            raise typer.Exit(1)
+        payload = {
+            "areas": payload["areas"],
+            "tasks": [t for t in payload["tasks"] if t["id"] == tid],
+            "edges": [e for e in payload["edges"]
+                      if e["from"] == tid or tid in e.get("to", [])],
+            "derived": {tid: payload["derived"][tid]},
+            "frontier": payload["frontier"],
+        }
+    # plain print, never con.print: rich soft-wraps at $COLUMNS and would
+    # corrupt the JSON for whatever is parsing it. The `dg export` rule.
+    print(json.dumps(payload, ensure_ascii=False))
+
+
 @task_app.command("import")
 def task_import(
     path: str = typer.Argument(..., help="a tasks.json prepared elsewhere"),
@@ -2583,10 +2614,11 @@ def task_import(
     proj = project.find()
     _refuse_overwrite(proj.has_tasks, proj.tasks)
     try:
-        tg = json_import.read(pathlib.Path(path), "tasks")
+        tg, recomputed = json_import.read(pathlib.Path(path), "tasks")
     except (OSError, json_import.ShapeError) as exc:
         con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
+    _say_recomputed(recomputed)
     _adopt(tg, proj.tasks, proj.task_view, task_render.write, force,
            f"{len(tg.tasks)} tasks, {len(tg.edges)} edges", "the file")
 
@@ -2660,6 +2692,18 @@ def _adopt(graph, store: pathlib.Path, view: pathlib.Path, write_view,
     _report_ignored(project.find())
 
 
+def _say_recomputed(blocks: list[str]) -> None:
+    """Name the derived blocks an export payload carried and this import threw.
+
+    Said out loud rather than passed over: everything else this importer meets
+    that is not in the schema is refused, and a reader who is not told which
+    rule applied here has to go and find out whether their data survived.
+    """
+    if blocks:
+        con.print(f"[dim]recomputed from the edges, not read: "
+                  f"{', '.join(blocks)}[/]")
+
+
 def _refuse_overwrite(exists: bool, store: pathlib.Path) -> None:
     """A bootstrap never lands on top of a store that is already there.
 
@@ -2696,10 +2740,11 @@ def import_json(
     proj = project.find()
     _refuse_overwrite(proj.has_decisions, proj.store)
     try:
-        g = json_import.read(pathlib.Path(path), "decisions")
+        g, recomputed = json_import.read(pathlib.Path(path), "decisions")
     except (OSError, json_import.ShapeError) as exc:
         con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
+    _say_recomputed(recomputed)
     _adopt(g, proj.store, proj.view, render.write, force,
            f"{len(g.vertices)} vertices, {len(g.edges)} edges", "the file")
 

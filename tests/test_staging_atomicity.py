@@ -160,7 +160,7 @@ def test_every_staging_command_is_covered():
         ("drop",), ("clear",), ("edit",), ("repair",), ("confirm",),
         ("task", "init"), ("task", "pending"), ("task", "render"),
         ("task", "node"), ("task", "drop-op"), ("task", "clear"),
-        ("task", "import"),
+        ("task", "import"), ("task", "export"),
     }
     covered = {tuple(a for a in argv if not a.startswith("-"))[:2]
                for _, argv in CASES}

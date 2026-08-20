@@ -166,7 +166,7 @@ dg check                                 # every invariant
 dg serve                                 # web app on 127.0.0.1:8765
 dg edit <id>                             # revise a staged op
 dg drop <id>                             # unstage one op
-dg export                                # the graph as JSON
+dg export                                # the graph as JSON; `dg import` reads it back
 ```
 
 ### Starting from something you already have
@@ -194,6 +194,24 @@ The fields are: id, title, area, status (required), note, format.
 The schema is the Model section above; `dg export` prints a real one. `--force`
 adopts a graph that breaks invariants so you can repair it with `dg`; it does
 **not** overwrite a store that is already there, which is refused outright.
+
+**`dg export` round-trips.** Its payload is the store plus blocks the browser
+would otherwise recompute, and the import recognises those by name, drops them
+and rebuilds them from the edges — so a copied graph comes back byte-identical:
+
+```sh
+dg -C old export      > graph.json
+dg -C new import        graph.json    # recomputed from the edges: derived, frontier
+dg -C old task export > work.json
+dg -C new task import   work.json
+```
+
+That is the *only* thing accepted outside the schema, and it is narrow on
+purpose: a named derived block has a known meaning and can be reproduced, which
+is exactly what an unrecognised field cannot. The import says which blocks it
+recomputed rather than passing over them in silence. Scoping an export
+(`dg export D04`) gives a fragment whose edges reach vertices it left behind —
+importable, but reported as the broken graph it is.
 
 `dg import-md` is a different and much narrower thing: it rebuilds a store from
 a `decision-graph.md` **this tool generated**, reconciling the two directions
@@ -235,6 +253,7 @@ dg task start T02                        # ...pick it up
 dg task done T02 --outcome "PR #241"
 dg task drop T02 --why "the index ships with the library"
 dg task pending                          # the task tray; `dg task clear` empties it
+dg task export                           # the backlog as JSON
 dg task import backlog.json              # adopt a backlog prepared elsewhere
 ```
 

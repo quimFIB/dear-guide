@@ -92,7 +92,7 @@ def test_what_it_accepts_is_what_the_store_accepts(empty):
     """Built through `Graph.from_dict`, the path `load` uses. Two construction
     paths would be two schemas, and the one nobody ran would drift."""
     path = write(empty, GOOD)
-    assert json_import.read(path, "decisions").to_dict() == \
+    assert json_import.read(path, "decisions").graph.to_dict() == \
         Graph.from_dict(GOOD).to_dict()
 
 
@@ -289,3 +289,99 @@ def test_an_import_ignores_the_scratch_files_the_way_init_does(empty, monkeypatc
     dg(empty, "import", str(write(empty, GOOD)))
     assert ".dgraph-*" in (empty / ".gitignore").read_text()
 
+
+# ---- `dg export` round-trips into `dg import` ----------------------------
+
+
+@pytest.fixture
+def filled(empty):
+    """A project holding both stores, so a round trip has something to lose."""
+    dg(empty, "import", str(write(empty, GOOD)))
+    dg(empty, "task", "import", str(write(empty, GOOD_TASKS, "t.json")))
+    return empty
+
+
+def roundtrip(src, dest, *cmd):
+    """Export from one project, import into another, return both payloads."""
+    out = dg(src, *cmd)
+    assert out.exit_code == 0, out.output
+    doc = dest / "exported.json"
+    doc.write_text(out.stdout, encoding="utf-8")
+    verb = ("import",) if cmd == ("export",) else ("task", "import")
+    res = dg(dest, *verb, str(doc))
+    assert res.exit_code == 0, res.output
+    return json.loads(out.stdout), res
+
+
+def test_an_exported_graph_imports_unchanged(filled, tmp_path_factory, monkeypatch):
+    """`dg export` prints the store plus blocks the browser would recompute.
+    They are recognised, dropped and rebuilt, so the trip is lossless."""
+    dest = tmp_path_factory.mktemp("dest")
+    monkeypatch.setattr(project, "_override", None)
+    roundtrip(filled, dest, "export")
+    assert json.loads((dest / "decisions.json").read_text()) == \
+        json.loads((filled / "decisions.json").read_text())
+
+
+def test_an_exported_backlog_imports_unchanged(filled, tmp_path_factory,
+                                               monkeypatch):
+    dest = tmp_path_factory.mktemp("dest")
+    monkeypatch.setattr(project, "_override", None)
+    roundtrip(filled, dest, "task", "export")
+    assert json.loads((dest / "tasks.json").read_text()) == \
+        json.loads((filled / "tasks.json").read_text())
+
+
+def test_exporting_the_imported_copy_gives_the_same_payload(filled,
+                                                            tmp_path_factory,
+                                                            monkeypatch):
+    """The stronger property: not just the store but the whole payload, so the
+    derived blocks were genuinely rebuilt rather than approximated."""
+    dest = tmp_path_factory.mktemp("dest")
+    monkeypatch.setattr(project, "_override", None)
+    before, _ = roundtrip(filled, dest, "export")
+    assert json.loads(dg(dest, "export").stdout) == before
+
+
+def test_the_derived_blocks_are_named_not_passed_over(filled, tmp_path_factory,
+                                                      monkeypatch):
+    """Everything else outside the schema is refused, so a reader who is not
+    told which rule applied here has to go and check their data survived."""
+    dest = tmp_path_factory.mktemp("dest")
+    monkeypatch.setattr(project, "_override", None)
+    _, res = roundtrip(filled, dest, "export")
+    assert "recomputed from the edges" in res.output
+    assert "derived" in res.output and "frontier" in res.output
+
+
+def test_a_scoped_export_fails_on_invariants_not_on_shape(filled,
+                                                          tmp_path_factory,
+                                                          monkeypatch):
+    """`dg export D02` is a fragment: its edges reach vertices it left behind.
+    That must be reported as the broken graph it is, not as a bad document."""
+    dest = tmp_path_factory.mktemp("dest")
+    monkeypatch.setattr(project, "_override", None)
+    doc = dest / "scoped.json"
+    doc.write_text(dg(filled, "export", "D02").stdout, encoding="utf-8")
+    res = dg(dest, "import", str(doc))
+    assert res.exit_code == 1
+    assert "unknown vertex" in res.output          # an invariant, named
+    assert "not valid JSON" not in res.output
+    assert "does not have" not in res.output       # not a shape complaint
+
+
+def test_ancestors_is_recognised_as_derived_too(filled, tmp_path_factory,
+                                                monkeypatch):
+    """Only the scoped export carries it, which is exactly how a derived block
+    gets forgotten."""
+    dest = tmp_path_factory.mktemp("dest")
+    monkeypatch.setattr(project, "_override", None)
+    doc = dest / "scoped.json"
+    doc.write_text(dg(filled, "export", "D02").stdout, encoding="utf-8")
+    assert "ancestors" in dg(dest, "import", str(doc)).output
+
+
+def test_task_export_scopes_and_refuses_an_unknown_id(filled):
+    assert dg(filled, "task", "export", "T99").exit_code == 1
+    scoped = json.loads(dg(filled, "task", "export", "T01").stdout)
+    assert [t["id"] for t in scoped["tasks"]] == ["T01"]

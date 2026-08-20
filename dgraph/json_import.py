@@ -22,12 +22,22 @@ meant by it.
 `md_import` is the neighbouring door and a different job: it reads one legacy
 markdown dialect and *reconciles* two disagreeing representations of the same
 relation. Nothing here reconciles anything.
+
+**`dg export` output is accepted.** Its payload is the store plus blocks the
+browser would otherwise recompute — `derived`, `frontier`, and on a scoped
+export `ancestors` and `counts`. Those are outputs, not inputs: they are
+recognised by name, dropped, and recomputed from the edges. That is the one
+exception to refusing what is not in the schema, and it is narrow on purpose —
+a *named* derived block is a thing whose meaning is known and reproducible,
+which is exactly what an unrecognised field is not. The import says which
+blocks it recomputed rather than passing over them in silence.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import NamedTuple
 
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
@@ -35,6 +45,27 @@ from dgraph.tasks import TaskGraph
 
 class ShapeError(ValueError):
     """The document is not a store of this kind. Carries what to fix."""
+
+
+class Loaded(NamedTuple):
+    """A graph, and what was thrown away to build it.
+
+    `recomputed` names the derived blocks a `dg export` payload carried. It is
+    returned rather than printed here — this module has no console — and the
+    caller says so, because a document silently losing part of itself is the
+    thing the rest of this module exists to prevent.
+    """
+
+    graph: Graph | TaskGraph
+    recomputed: list[str]
+
+
+#: Blocks `dg export` and the web app add on top of the store: everything the
+#: browser would otherwise compute for itself. Dropped on import and rebuilt
+#: from the edges, which is what makes `dg export | dg import` a round trip.
+#: Listed rather than pattern-matched, so a new derived block has to be added
+#: here deliberately instead of being tolerated by accident.
+DERIVED = ("derived", "frontier", "counts", "ancestors")
 
 
 #: What each store holds, and what a record in it may say. The required fields
@@ -68,12 +99,16 @@ SCHEMA = {
 }
 
 
-def read(path: Path, kind: str) -> Graph | TaskGraph:
+def read(path: Path, kind: str) -> Loaded:
     """One prepared document, checked and built, or `ShapeError` saying why not.
 
     `kind` is `"decisions"` or `"tasks"`. The caller validates the *invariants*
     afterwards; everything refused here is a document that could not be loaded
     at all, which is a different failure and deserves a different message.
+
+    A `dg export` payload is accepted: its derived blocks are stripped first
+    and named in the result, so the round trip works and does not pretend the
+    file was already a bare store.
     """
     spec = SCHEMA[kind]
     text = path.read_text(encoding="utf-8")
@@ -86,10 +121,15 @@ def read(path: Path, kind: str) -> Graph | TaskGraph:
             f"column {exc.colno}"
         ) from None
 
+    recomputed: list[str] = []
+    if isinstance(raw, dict):
+        recomputed = [k for k in DERIVED if k in raw]
+        raw = {k: v for k, v in raw.items() if k not in DERIVED}
+
     _check(raw, spec, path.name)
     builder = Graph if kind == "decisions" else TaskGraph
     try:
-        return builder.from_dict(raw)
+        return Loaded(builder.from_dict(raw), recomputed)
     except ValueError as exc:
         # The loaders' own refusals — duplicate ids, a task edge with no kind.
         # They are already written for a person, so they are passed through
