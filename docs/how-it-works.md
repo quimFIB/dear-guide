@@ -4,6 +4,12 @@ An orientation, not a manual. If you want the commands, start with the
 [CLI quick start](quickstart-cli.md); this is the shape of the thing they
 operate on, told as one project's story.
 
+**There are two graphs**, and this page tells the story of the first one before
+it gets to the second. Decisions come first because the task graph is built to
+lean on them — but the two are separate stores and either works alone. If you
+came for work tracking, [Tracking the work as well](#tracking-the-work-as-well)
+is self-contained, and `dg task init` needs no `decisions.json` beside it.
+
 ## The problem
 
 A long-running project accumulates decisions in prose — plans, notes, design
@@ -353,6 +359,10 @@ then the work it implies, and link them.
 See [tracking the work as well](#tracking-the-work-as-well) below.
 
 ## Tracking the work as well
+
+*A second graph, and it stands on its own: everything below works in a
+project that has never recorded a decision. The link to the decision graph is
+the last part, and it is optional.*
 
 `tasks.json` is a second, independent graph: tasks, and edges saying what has to
 be done before what. Separate store, separate view (`tasks.md`), separate ids

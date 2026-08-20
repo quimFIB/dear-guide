@@ -12,9 +12,14 @@ cd /path/to/dear-guide
 pip install -e .
 ```
 
-`dg` then works in any project directory containing `decisions.json`. The
-project is found by walking up from the cwd, or named explicitly with
-`--project PATH` (`-C`) or `$DG_PROJECT`.
+`dg` then works in any project directory holding **either** store —
+`decisions.json`, `tasks.json`, or both. The project is found by walking up from
+the cwd, or named explicitly with `--project PATH` (`-C`) or `$DG_PROJECT`.
+
+This quick start walks the decision graph. If you came for the task graph, it
+works the same way with `dg task` in front of each verb — `dg task init`,
+`dg task add`, `dg apply` — and needs no `decisions.json` beside it. See
+[Tracking the work](how-it-works.md#tracking-the-work-as-well).
 
 ## 1. Start a graph
 

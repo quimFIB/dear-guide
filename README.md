@@ -32,7 +32,12 @@ can answer alone — *is this work still resting on something we believe?*
 
 ## Model
 
-Vertices and edges, nothing else.
+**Two graphs**, each a plain store of vertices and edges, and one link between
+them. They are separate stores on purpose — `dg init` and `dg task init` are
+independent, and **either works without the other**. Track only decisions, only
+work, or both.
+
+### The decision graph — `decisions.json`
 
 - A **vertex** is a decision the project must make, with an explicit status:
   `DECIDED` · `OPEN` · `BLOCKED:<id>` · `REOPENED` · `PROVISIONAL`.
@@ -55,13 +60,49 @@ out-degree, because a decision can have consequences and still be reopened. And
 **every closed decision records a falsifier**: what evidence would overturn it,
 written *before* that evidence arrives. Afterwards it is rationalisation.
 
+### The task graph — `tasks.json`
+
+- A **task** is a unit of work, with an explicit status: `TODO` · `DOING` ·
+  `DONE` · `DROPPED`. Finishing one records an **outcome** — a path, a PR, a
+  note — and abandoning one records **why**.
+- An **edge** says which of two things it means. `precedes` is a prerequisite:
+  the task it points from must be resolved first. `prompted` is provenance:
+  doing that task turned this one up. Provenance makes nothing wait — a chore
+  noticed mid-task is usually startable at once, and often has to land *before*
+  the task that revealed it can finish.
+
+It is deliberately **not** a copy of the decision graph, and every difference is
+the point:
+
+- **Blocked is derived, never stored.** A task is ready when its prerequisites
+  are resolved, so there is no status to keep up to date and none to go stale.
+  Decisions keep status explicit because a decision can have consequences and
+  still be under review; readiness genuinely *is* a function of dependencies.
+- **No supersession, and no falsifier.** Work that is abandoned is `DROPPED` and
+  that is the whole record. An outcome is a record of what happened, not a claim
+  about the world, so nothing can falsify it.
+- **An unconnected task is ordinary.** An unconnected decision is a smell.
+
+### The one seam
+
+A task may name the decision it exists **`because`** of, and the decision its
+outcome will be **`evidence_for`**. Opposite polarity: the first makes the work
+wait on the answer, the second makes the answer wait on the work. Nothing else
+crosses — `decisions.json` never mentions a task, so a change to it always means
+a decision changed.
+
+That one link is what lets `dg` answer the question neither store can answer
+alone: *is this work still resting on something we believe?* Reopen a decision
+and it reports the unfinished work now standing on a premise under review; finish
+a spike and forget to record what it showed, and `dg check` says so.
+
 ## Files
 
 | File | Role |
 |---|---|
 | `decisions.json` | the store — source of truth |
 | `decision-graph.md` | generated view; **never hand-edit** |
-| `tasks.json` · `tasks.md` | the task graph and its view — a separate store, optional |
+| `tasks.json` · `tasks.md` | the task graph and its view — its own store, and usable on its own |
 | `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG` |
 | `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
@@ -89,9 +130,9 @@ cd /path/to/dear-guide
 pip install -e .
 ```
 
-`dg` then works in any project directory containing `decisions.json`. It is
-found by walking up from the cwd, or set explicitly with `--project PATH` or
-`$DG_PROJECT`.
+`dg` then works in any project directory holding **either** store —
+`decisions.json`, `tasks.json`, or both. It is found by walking up from the cwd,
+or set explicitly with `--project PATH` or `$DG_PROJECT`.
 
 New here? [**How it works, and why**](docs/how-it-works.md) walks one project's
 decisions — a nearest-neighbour search service — from first question to first
@@ -131,8 +172,10 @@ position. Prefer the id whenever anything else might be writing: applying a
 batch takes its ops out of the tray wherever they sit, so every position after
 them shifts, and an id does not.
 
-Work gets its own graph, if you want one — separate store, separate ids, so a
-task can never be mistaken for a decision:
+Work has its own graph — separate store, separate ids, so a task can never be
+mistaken for a decision. Start it with or without a decision graph beside it;
+`dg task init` needs nothing else, and a project that tracks only work is an
+ordinary one:
 
 ```sh
 dg task init --areas "Search,Serving,Index"
