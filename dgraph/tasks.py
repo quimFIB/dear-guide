@@ -197,6 +197,13 @@ class TaskGraph:
     @classmethod
     def load(cls, path: Path | None = None) -> TaskGraph:
         raw = json.loads((path or project.find().tasks).read_text(encoding="utf-8"))
+        return cls.from_dict(raw)
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> TaskGraph:
+        """Build a task graph from the parsed store. `Graph.from_dict`'s twin,
+        and split out for the same reason: one construction path, so a document
+        `dg task import` accepts is one `TaskGraph.load` would have accepted."""
         # Refused here rather than in validate(), for the reason the decision
         # store gives: building the dict collapses duplicates silently, so by
         # the time validate() runs the discarded task is already invisible.

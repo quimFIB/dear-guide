@@ -127,6 +127,16 @@ class Graph:
     @classmethod
     def load(cls, path: Path | None = None) -> Graph:
         raw = json.loads((path or project.find().store).read_text(encoding="utf-8"))
+        return cls.from_dict(raw)
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> Graph:
+        """Build a graph from the parsed store, without reading a file.
+
+        Split out of `load` so `dgraph.json_import` can shape-check a candidate
+        document and then build it through this exact path. Two construction
+        paths would be two schemas, and the one nobody ran would drift.
+        """
         # Refused here, not in validate(): building the vertex dict collapses
         # duplicates (last one wins), so by the time validate() runs, the
         # discarded decision is invisible and "unique ids" can never fire.

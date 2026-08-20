@@ -144,7 +144,7 @@ reversal. Then the quick starts: the
 
 ```sh
 dg init --areas "Search,Serving,Index"   # start a graph
-dg import-md old-decisions.md            # or bootstrap from markdown
+dg import prepared.json                  # or adopt one prepared elsewhere
 dg                                       # the frontier: what is still open
 dg show --full                           # ...as a table, with nothing clipped
 dg brief                                 # ...plus provisional work, staging, validity
@@ -168,6 +168,38 @@ dg edit <id>                             # revise a staged op
 dg drop <id>                             # unstage one op
 dg export                                # the graph as JSON
 ```
+
+### Starting from something you already have
+
+`decisions.json` and `tasks.json` **are** the input format — there is no
+conversion step. Write the store (by hand, from a script, or by having an agent
+read the notes you already keep), then adopt it:
+
+```sh
+dg import prepared.json                  # checks it, then makes it the store
+dg task import backlog.json              # the same for the work
+```
+
+Adopting is not a formality. It refuses a store that would break an invariant,
+rather than writing one and letting `dg check` find out later — a bootstrap that
+plants a contradiction on day one is the thing this tool exists to prevent. And
+it names what is wrong in the file:
+
+```
+✗ not imported
+decisions.json: decision D01 has "owner", which a decision does not have.
+The fields are: id, title, area, status (required), note, format.
+```
+
+The schema is the Model section above; `dg export` prints a real one. `--force`
+adopts a graph that breaks invariants so you can repair it with `dg`; it does
+**not** overwrite a store that is already there, which is refused outright.
+
+`dg import-md` is a different and much narrower thing: it rebuilds a store from
+a `decision-graph.md` **this tool generated**, reconciling the two directions
+such a document records dependencies in. It is a migration, not a markdown
+parser — a decisions document of your own will not parse, and the fix is to
+write the JSON or to drive `dg add` and `dg decide` from your document.
 
 ### How much each command says
 
@@ -203,6 +235,7 @@ dg task start T02                        # ...pick it up
 dg task done T02 --outcome "PR #241"
 dg task drop T02 --why "the index ships with the library"
 dg task pending                          # the task tray; `dg task clear` empties it
+dg task import backlog.json              # adopt a backlog prepared elsewhere
 ```
 
 `--because D01` is what makes the two worth keeping together: reopening a
@@ -327,7 +360,7 @@ That last conversion is possible because the store records **provenance**:
 `*single asterisks*` mean bold in org and italic in markdown — the same syntax
 with two meanings — so anything composed through the editor is tagged
 `format: "org"` and converted with org's meaning, while prose from the web
-form, `dg import-md`, or an agent stays markdown and keeps markdown's meaning,
+form, an import, or an agent stays markdown and keeps markdown's meaning,
 untouched. Which door you type into is the only thing that decides, and the
 stored bytes are never rewritten either way.
 

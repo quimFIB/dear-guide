@@ -77,6 +77,7 @@ Vertices and edges, nothing else.
 | `dg areas` | counts by area and status |
 | `dg export ID` | the same data as JSON, for machine reading |
 | `dg check` | every invariant, and it names the rule that broke |
+| `dg import FILE` | adopt a `decisions.json` prepared elsewhere, refusing one that breaks invariants |
 
 ### Before building on something, or handing it off
 

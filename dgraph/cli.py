@@ -2561,6 +2561,36 @@ def task_clear() -> None:
     con.print("[green]cleared[/]")
 
 
+@task_app.command("import")
+def task_import(
+    path: str = typer.Argument(..., help="a tasks.json prepared elsewhere"),
+    force: bool = typer.Option(False, "--force",
+                               help="Write the store even if the graph breaks "
+                                    "invariants."),
+) -> None:
+    """Adopt a `tasks.json` written by hand or generated elsewhere.
+
+    `dg import`'s twin, and it exists because the two stores are peers: a
+    project may start from a prepared backlog exactly as it may start from a
+    prepared decision graph, and one store having a checked front door while
+    the other does not is the asymmetry this tool keeps refusing to have.
+
+    Links to decisions (`because`, `evidence_for`) are carried through as
+    written and checked here only for shape. Whether they name a decision that
+    exists is a cross-store question, which is `dg check`'s.
+    """
+    from dgraph import json_import
+    proj = project.find()
+    _refuse_overwrite(proj.has_tasks, proj.tasks)
+    try:
+        tg = json_import.read(pathlib.Path(path), "tasks")
+    except (OSError, json_import.ShapeError) as exc:
+        con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
+    _adopt(tg, proj.tasks, proj.task_view, task_render.write, force,
+           f"{len(tg.tasks)} tasks, {len(tg.edges)} edges", "the file")
+
+
 @task_app.command("render")
 def task_render_cmd() -> None:
     """Regenerate tasks.md from the store."""
@@ -2600,41 +2630,111 @@ def _report_ignored(proj: project.Project) -> None:
         con.print(f"[dim]added to .gitignore: {', '.join(added)}[/]")
 
 
-@app.command(name="import-md")
-def import_md(
-    path: str = typer.Argument(..., help="a decision-graph.md in the legacy format"),
-    force: bool = typer.Option(False, "--force",
-                               help="Write the store even if the imported graph "
-                                    "breaks invariants."),
-) -> None:
-    """Bootstrap a store from a hand-written markdown decision document."""
-    from dgraph.md_import import import_markdown
-    proj = project.find()
-    if proj.has_decisions:
-        con.print(f"[red]{proj.store} already exists — refusing to overwrite[/]")
-        raise typer.Exit(1)
-    try:
-        g = import_markdown(pathlib.Path(path))
-    except (OSError, ValueError) as exc:
-        con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
-        raise typer.Exit(1) from None
-    problems = g.validate()
+def _adopt(graph, store: pathlib.Path, view: pathlib.Path, write_view,
+           force: bool, counted: str, source: str) -> None:
+    """Validate a prepared graph, refuse it if invalid, then make it the store.
+
+    Shared by every bootstrap door — `dg import`, `dg task import`,
+    `dg import-md` — because the rule they must agree on is the one that
+    matters: **a bootstrap never writes a store `dg apply` would refuse.** That
+    would plant, on day one, the contradiction the tool exists to prevent. One
+    implementation, so a new door cannot arrive without it.
+    """
+    problems = graph.validate()
     for v in problems:
         con.print(f"[{'red' if v.blocking else 'yellow'}]"
                   f"{'✗' if v.blocking else '!'}[/] {_x(v)}")
     blocking = [v for v in problems if v.blocking]
     if blocking and not force:
-        # A bootstrap that writes a store `dg apply` would refuse plants the
-        # contradiction this tool exists to prevent, on day one.
         con.print(f"[red]✗ not imported: the result breaks {len(blocking)} "
                   f"invariant(s)[/]\n"
-                  f"[dim]fix the source document, or `--force` to write it "
-                  f"anyway and repair with `dg` afterwards[/]")
+                  f"[dim]fix {source}, or `--force` to write it anyway and "
+                  f"repair with `dg` afterwards[/]")
         raise typer.Exit(1)
-    g.save(proj.store)
-    render.write(g, proj.view)
-    con.print(f"[green]✓[/] imported {len(g.vertices)} vertices, "
-              f"{len(g.edges)} edges → {proj.store}")
+    graph.save(store)
+    write_view(graph, view)
+    con.print(f"[green]✓[/] imported {counted} → {store}")
+    # Same as `init`: a store has just appeared, and the trays, locks and temp
+    # files beside it are scratch. The commit gate's advice ("it is gitignored,
+    # so committing now drops it") is only true if they actually are.
+    _report_ignored(project.find())
+
+
+def _refuse_overwrite(exists: bool, store: pathlib.Path) -> None:
+    """A bootstrap never lands on top of a store that is already there.
+
+    Not `--force`-able, deliberately: `--force` means "I accept a graph that
+    breaks invariants", and letting it also mean "discard the store I have"
+    puts an irreversible act behind a flag reached for routinely.
+    """
+    if exists:
+        con.print(f"[red]{store} already exists — refusing to overwrite[/]\n"
+                  f"[dim]import into an empty directory and merge by hand, or "
+                  f"move the existing store aside first[/]")
+        raise typer.Exit(1)
+
+
+@app.command(name="import")
+def import_json(
+    path: str = typer.Argument(..., help="a decisions.json prepared elsewhere"),
+    force: bool = typer.Option(False, "--force",
+                               help="Write the store even if the graph breaks "
+                                    "invariants."),
+) -> None:
+    """Adopt a `decisions.json` written by hand or generated elsewhere.
+
+    `decisions.json` is the input format, so this command is not a conversion —
+    it is the check. It says which record and which field is wrong before
+    anything is written, and refuses a graph `dg apply` would refuse, rather
+    than leaving you to find out at the next `dg check`.
+
+    See the Model section of the README for the schema; `dg export` shows a
+    real one. To start from a prose document instead, have an agent read it and
+    write the store, or drive `dg add` and `dg decide` from it.
+    """
+    from dgraph import json_import
+    proj = project.find()
+    _refuse_overwrite(proj.has_decisions, proj.store)
+    try:
+        g = json_import.read(pathlib.Path(path), "decisions")
+    except (OSError, json_import.ShapeError) as exc:
+        con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
+    _adopt(g, proj.store, proj.view, render.write, force,
+           f"{len(g.vertices)} vertices, {len(g.edges)} edges", "the file")
+
+
+@app.command(name="import-md")
+def import_md(
+    path: str = typer.Argument(..., metavar="DECISION_GRAPH_MD",
+                               help="a decision-graph.md that `dg render` wrote"),
+    force: bool = typer.Option(False, "--force",
+                               help="Write the store even if the imported graph "
+                                    "breaks invariants."),
+) -> None:
+    """Rebuild a store from a `decision-graph.md` this tool generated.
+
+    A migration, not a markdown parser. It reads exactly the dialect
+    `dg render` emits — `### D01 — Title` sections with `- **Status:**`,
+    `- **Depends on:**` and a `**Resolves to → …**` block — and reconciles the
+    two directions such a document records the dependency relation in. Anything
+    else is refused, naming the section that did not parse.
+
+    **To start from a document of your own, this is not the command.** Write
+    `decisions.json` and adopt it with `dg import`, or have an agent read your
+    document and drive `dg add` / `dg decide` from it.
+    """
+    from dgraph.md_import import import_markdown
+    proj = project.find()
+    _refuse_overwrite(proj.has_decisions, proj.store)
+    try:
+        g = import_markdown(pathlib.Path(path))
+    except (OSError, ValueError) as exc:
+        con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
+    _adopt(g, proj.store, proj.view, render.write, force,
+           f"{len(g.vertices)} vertices, {len(g.edges)} edges",
+           "the source document")
 
 
 @app.command()

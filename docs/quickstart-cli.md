@@ -34,6 +34,15 @@ dg init --areas "Search,Serving,Index"
 Two files appear: `decisions.json` (the store — source of truth) and
 `decision-graph.md` (a generated view — **never hand-edit it**).
 
+**Already have a graph?** `decisions.json` is the input format, so there is no
+conversion step — write it, then `dg import prepared.json` checks it and makes
+it the store, naming the record and field of anything wrong and refusing a graph
+that breaks an invariant. `dg task import` does the same for `tasks.json`.
+(`dg import-md` is *not* the general markdown importer its name suggests: it
+rebuilds a store from a `decision-graph.md` this tool generated, and nothing
+else. To start from a prose document of your own, have an agent read it and
+write the JSON, or drive `dg add` and `dg decide` from it.)
+
 `dg init` also adds the tool's scratch files to `.gitignore` — the staging
 trays, the compose buffer, the lock files beside them, and the temp file an
 interrupted write leaves behind:
