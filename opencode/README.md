@@ -9,13 +9,13 @@ commit that would leave the graph contradicting itself is refused.
 `dg` itself first:
 
 ```sh
-pip install -e /path/to/development-graph-assistant
+pip install -e /path/to/dear-guide
 ```
 
 Then symlinks, since opencode has no plugin marketplace:
 
 ```sh
-repo=/path/to/development-graph-assistant
+repo=/path/to/dear-guide
 ln -s "$repo/skills/development-graph"      ~/.config/opencode/skills/development-graph
 ln -s "$repo/opencode/development-graph.ts" ~/.config/opencode/plugins/development-graph.ts
 for c in "$repo"/commands/*.md; do

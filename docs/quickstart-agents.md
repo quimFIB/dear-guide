@@ -21,20 +21,20 @@ a command file is three lines around a `dg` invocation.
 Two steps, always. The hosts distribute plugins their own way and neither
 installs Python packages.
 
-Throughout, `/path/to/development-graph-assistant` is your checkout of this
+Throughout, `/path/to/dear-guide` is your checkout of this
 repository.
 
 ### 1. The CLI (both hosts)
 
 ```sh
-pip install -e /path/to/development-graph-assistant
+pip install -e /path/to/dear-guide
 dg --version        # so an adapter can tell when the two halves have drifted
 ```
 
 ### 2a. Claude Code
 
 ```
-/plugin marketplace add /path/to/development-graph-assistant
+/plugin marketplace add /path/to/dear-guide
 /plugin install development-graph
 ```
 
@@ -43,7 +43,7 @@ dg --version        # so an adapter can tell when the two halves have drifted
 Symlinks, since opencode has no marketplace:
 
 ```sh
-repo=/path/to/development-graph-assistant
+repo=/path/to/dear-guide
 ln -s "$repo/skills/development-graph"      ~/.config/opencode/skills/development-graph
 ln -s "$repo/opencode/development-graph.ts" ~/.config/opencode/plugins/development-graph.ts
 for c in "$repo"/commands/*.md; do

@@ -152,7 +152,8 @@ def test_every_staging_command_is_covered():
     #: Commands that touch no tray: reads, renders, the gate, and the two
     #: `clear`s (which empty a tray in one write by definition).
     NO_TRAY = {
-        ("show",), ("tree",), ("node",), ("path",), ("context",), ("areas",),
+        ("show",), ("tree",), ("node",), ("path",), ("context",), ("why",),
+        ("areas",),
         ("brief",), ("gate",), ("check",), ("pending",), ("export",),
         ("apply",), ("render",), ("init",), ("import-md",), ("serve",),
         ("drop",), ("clear",), ("edit",), ("repair",), ("confirm",),

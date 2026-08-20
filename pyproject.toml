@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "development-graph-assistant"
+name = "dear-guide"
 version = "0.1.0"
 description = "Track a project's development as two linked graphs: the decisions it has settled, and the work that follows from them."
 readme = "README.md"

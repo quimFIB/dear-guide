@@ -8,7 +8,7 @@ starts contradicting itself.
 From your checkout of this repository:
 
 ```sh
-cd /path/to/development-graph-assistant
+cd /path/to/dear-guide
 pip install -e .
 ```
 

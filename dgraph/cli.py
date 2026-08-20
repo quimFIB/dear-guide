@@ -295,6 +295,9 @@ def context(
 ) -> None:
     """Why this node is where it is: every premise it rests on.
 
+    Also spelled `dg why`, which is the question this answers and the one the
+    tool is named for.
+
     `dg node` shows one decision; this shows the reasoning behind it — each
     ancestor's answer, the evidence that reached it, and the falsifier that
     would overturn it. A task id pulls in the chain behind the decision it
@@ -316,6 +319,18 @@ def context(
     # rich soft-wraps at $COLUMNS, which would move the ids onto wrong lines.
     print(json.dumps(d, indent=2, ensure_ascii=False) if as_json
           else _context.text(d), end="" if not as_json else "\n")
+
+
+#: `dg why D06` and `dg context D06` are the same command under two names.
+#: Registered against the one callback rather than wrapped, so they cannot
+#: drift in their options, their help, or what they print — the failure this
+#: codebase spends most of its comments avoiding.
+#:
+#: `why` is the question `dgraph/context.py` opens by naming ("why is this
+#: settled, and what would unsettle it?") and the one `dear-guide` is named
+#: for. `context` stays because it is what the thing *is*, and because scripts
+#: and docs already say it.
+app.command(name="why")(context)
 
 
 @app.command()

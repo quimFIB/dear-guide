@@ -235,3 +235,25 @@ def test_the_org_context_names_the_same_ancestors(g):
     org = editor._context(g, "D04")
     for p in context.chain(g, "D04"):
         assert p.id in org
+
+
+def test_why_is_the_same_command_as_context(store, g):
+    """`dg why` is the question the tool is named for. Registered against the
+    one callback, so the two cannot drift in options, help or output."""
+    write(g)
+    a, b = dg(store, "why", "D02"), dg(store, "context", "D02")
+    assert a.exit_code == 0 and a.output == b.output
+    assert "RESTS ON" in a.output
+
+
+def test_why_takes_the_same_options(store, g):
+    write(g)
+    res = dg(store, "why", "D02", "--json")
+    assert res.exit_code == 0
+    assert json.loads(res.output)["id"] == "D02"
+
+
+def test_why_reports_an_unknown_id_like_context_does(store, g):
+    write(g)
+    a, b = dg(store, "why", "D99"), dg(store, "context", "D99")
+    assert a.exit_code == 1 and a.output == b.output

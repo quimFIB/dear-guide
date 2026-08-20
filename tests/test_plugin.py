@@ -590,3 +590,16 @@ def test_the_hook_budget_outlasts_the_gate_it_calls(project_dir):
     pre = [h for entry in hooks["hooks"]["PreToolUse"] for h in entry["hooks"]
            if "precommit" in h["command"]]
     assert pre and all(h["timeout"] > budget for h in pre)
+
+
+def test_dist_matches_the_packaging_name():
+    """`dgraph.DIST` is how `dg --version` finds itself. A stale copy reports
+    "unknown", which both host adapters read as "too old to have the command I
+    want" — so they go quiet instead of saying anything. It has drifted through
+    two renames; this stops a third."""
+    import tomllib
+
+    import dgraph
+    root = Path(__file__).resolve().parent.parent
+    meta = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    assert dgraph.DIST == meta["project"]["name"]

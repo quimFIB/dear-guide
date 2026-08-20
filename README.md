@@ -1,10 +1,20 @@
 <img src="assets/logo.svg" width="76" alt="">
 
-# development-graph-assistant
+# dear-guide
+
+> *Dear guide, why did we make this decision?*
+>
+> ```sh
+> dg why D06
+> ```
 
 Track a project's development as two linked graphs: the **decisions** it has
 settled — what each rests on and what evidence would reopen it — and the
 **work** that follows from them.
+
+Six months on, that question has an answer: the premise the decision rested on,
+the evidence that reached it, the falsifier that would overturn it, and whether
+any of it still holds. `dg` is the guide; you are the one who writes it.
 
 A long-running project accumulates decisions in prose — plans, notes, memory
 files — and prose drifts. Two documents disagree about whether something was
@@ -75,7 +85,7 @@ in full, so nothing is missing without the log.
 ## Install
 
 ```sh
-cd /path/to/development-graph-assistant
+cd /path/to/dear-guide
 pip install -e .
 ```
 
@@ -97,7 +107,8 @@ dg import-md old-decisions.md            # or bootstrap from markdown
 dg                                       # the frontier: what is still open
 dg brief                                 # ...plus provisional work, staging, validity
 dg node D06                              # one decision in full
-dg context D06                           # ...and every premise underneath it
+dg why D06                               # ...and every premise underneath it
+dg context D06                           # the same command, its other name
 dg context T14                           # the same for a piece of work
 dg path D01 D09                          # the chain of evidence between two
 dg tree                                  # the DAG
@@ -316,10 +327,10 @@ actually about to be lost.
 ### Install
 
 ```sh
-pip install -e /path/to/development-graph-assistant   # the CLI
+pip install -e /path/to/dear-guide   # the CLI
 
 # Claude Code
-/plugin marketplace add /path/to/development-graph-assistant
+/plugin marketplace add /path/to/dear-guide
 /plugin install development-graph
 ```
 

@@ -61,7 +61,7 @@ def main() -> int:
         # forever.
         if "No such command" in (r.stderr or ""):
             print("The development-graph plugin needs a newer `dg`: "
-                  "`pip install -U -e <the development-graph-assistant checkout>`.")
+                  "`pip install -U -e <the dear-guide checkout>`.")
         return 0
 
     brief = r.stdout.strip()

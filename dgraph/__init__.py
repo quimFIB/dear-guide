@@ -8,10 +8,11 @@ module, `dgraph.cross`, and nowhere else.
 
 from __future__ import annotations
 
-#: The distribution name, in one place. It has been renamed once already, and
+#: The distribution name, in one place. It has been renamed twice already, and
 #: the symptom of a stale copy is `dg --version` reporting "unknown" — which an
-#: adapter reads as "too old to have the command I want".
-DIST = "development-graph-assistant"
+#: adapter reads as "too old to have the command I want". Must equal the
+#: `name` in `pyproject.toml`; a test asserts it does.
+DIST = "dear-guide"
 TOOL = "dg"
 
 
