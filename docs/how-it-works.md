@@ -513,18 +513,27 @@ prints the same thing as text, from one node's point of view:
 ```
 $ dg context T04
 T04  TODO  Wire the shard fan-out and the merge path  [Serving]
+  after T03 · waiting on T03
+
+CHAIN  D01 → D02 → D04! → D05! → T04    ! = not settled
+  ...
 
 BECAUSE  D05  BLOCKED  How many shards, and how are results merged?
+         not settled
 
-WHICH RESTS ON (3) — nearest premise last
-  ...
 → this work waits on D05 (BLOCKED), which is not settled — starting it now is
   a bet on the answer
 ```
 
-That last line is the whole graph collapsed into the one sentence somebody
-about to start work needs. It is also what you hand a fresh context — a
-colleague, or a subagent — that knows the task and nothing about why it exists.
+The `CHAIN` line is the joined tab's ranking, flattened: the same walk over the
+union of the two stores, from this node's point of view. And that last line is
+the whole graph collapsed into the one sentence somebody about to start work
+needs.
+
+It is also what you hand a fresh context — a colleague, or a subagent — that
+knows the task and nothing about why it exists, and for that `--full` is the
+form to send: the short one clips each premise's answer to a sentence, and a
+clipped answer is exactly the constraint a fresh context will get wrong.
 
 ## Keeping it honest
 

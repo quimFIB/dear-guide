@@ -124,11 +124,19 @@ afterwards it is rationalisation; written first it is a commitment.
 dg                  # the frontier: everything still open or blocked
 dg brief            # ...plus provisional work, staging, validity
 dg node D01         # one decision in full, with its superseded history
-dg context D04      # ...and every premise it rests on, with their falsifiers
+dg context D04      # ...and the chain of premises it rests on
+dg context D04 --full   # ...with every answer, source and falsifier
 dg path D01 D04     # the chain of evidence between two decisions
 dg tree             # the DAG
 dg areas            # counts by area and status
 ```
+
+`dg`, `dg task` and `dg context` are **short by default**: one line per thing,
+with titles clipped and answers reduced to their first sentence, sized to the
+terminal you are in. `--full` gives the long form of each — the tables with
+nothing clipped, and for `dg context` the whole chain with its evidence. Ids are
+never clipped either way, so anything a short view names can be looked up from
+it.
 
 `dg node D01` after the decision above:
 
@@ -153,11 +161,39 @@ dg areas            # counts by area and status
 ### `dg context` — why a node is where it is
 
 `dg node` says what a decision holds. `dg context` says what it **stands on**:
-every premise underneath it, nearest last, each with the answer it reached, the
-evidence that reached it and the falsifier that would overturn it.
+every premise underneath it, oldest first, and a closing line saying whether any
+of it is still under review.
+
+By default that is schematic. The `CHAIN` line is the shape of the reasoning on
+one line, `!` marking any link that is not settled; below it, one line per
+premise saying what it answered.
 
 ```
-$ dg context D04
+$ dg context T04
+T04  TODO  Wire the shard fan-out and the merge path  [Serving]
+  after T03 · waiting on T03
+
+CHAIN  D01 → D02 → D04! → D05! → T04    ! = not settled
+  D01  DECIDED  Exact or approximate sear…  ·  Approximate. A brute-force scan…
+  D02  DECIDED  Which index structure?      ·  HNSW, M=32, efConstruction=200.
+  D04  OPEN     efSearch for the recall t…  ·  not settled
+
+BECAUSE  D05  BLOCKED  How many shards, and how are results merged?
+         not settled
+
+→ this work waits on D05 (BLOCKED), which is not settled — starting it now is
+  a bet on the answer
+  `dg context T04 --full` for each answer, its evidence and its falsifier
+```
+
+That is the thing a task id makes worth having: the work, then the whole chain
+behind the decision that work exists *because* of.
+
+`--full` prints the same walk at full length — each answer as written, the
+evidence that reached it, the falsifier that would overturn it.
+
+```
+$ dg context D04 --full
 D04  OPEN  efSearch for the recall target  [Serving]
   rests on D02 · opens D05
 
@@ -175,27 +211,11 @@ RESTS ON (2) — nearest premise last
        source: bench/ann-sweep.md  ·  2026-02-14
 ```
 
-It takes a task id too, and then it does the thing that makes it worth having:
-the work, then the whole chain behind the decision that work exists *because*
-of, and a closing line saying whether any of it is still under review.
-
-```
-$ dg context T04
-T04  TODO  Wire the shard fan-out and the merge path  [Serving]
-  after T03
-  waiting on T03
-
-BECAUSE  D05  BLOCKED  How many shards, and how are results merged?
-
-WHICH RESTS ON (3) — nearest premise last
-  …
-→ this work waits on D05 (BLOCKED), which is not settled — starting it now is
-  a bet on the answer
-```
-
-Output is plain and pipe-safe, because the point of it is to be pasted
-somewhere — an issue, a handover note, or a subagent's prompt. `--json` gives
-the same walk as data.
+Use the short one when you are the one asking, and `--full` when the output is
+going somewhere that cannot ask a follow-up question — an issue, a handover
+note, or a subagent's prompt. Both are plain and pipe-safe for that reason, and
+fixed at 80 columns rather than sized to the terminal, so two readers cannot be
+shown different shapes. `--json` gives the same walk as data.
 
 ## 6. Reverse one
 

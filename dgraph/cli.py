@@ -19,6 +19,7 @@ from rich.tree import Tree
 from dgraph import applying
 from dgraph import brief as _brief
 from dgraph import check as _check
+from dgraph import compact
 from dgraph import cross, editor, pending, project, render, task_pending, task_render
 from dgraph import model
 from dgraph.model import SIMPLE_STATUSES, Graph
@@ -164,9 +165,98 @@ def _tag(v) -> str:
 
 
 @app.command()
-def show() -> None:
-    """The frontier: everything still open or blocked, and anything provisional."""
+def show(
+    full: bool = typer.Option(False, "--full",
+                              help="The table, with no title clipped."),
+) -> None:
+    """The frontier: everything still open or blocked, and anything provisional.
+
+    One line each by default — id, status, title, and what the item waits on or
+    releases. `--full` gives the table instead, which clips nothing and is the
+    one to reach for when two titles read the same at the width above.
+    """
     g = _g()
+    att = _brief.attention(g)
+    if full:
+        _show_table(g, att)
+    else:
+        _show_listing(g, att)
+
+
+def _width() -> int:
+    """The line budget for a listing: the terminal, within reason.
+
+    Rich reports 80 when there is no terminal, which is the right conservative
+    default for the pipe this output usually goes down. A real terminal gets
+    its real width up to `compact.MAX_WIDTH`, past which a line stops being one
+    thing the eye takes in and the columns drift too far apart to associate.
+    """
+    return max(60, min(compact.MAX_WIDTH, con.width))
+
+
+def _say(lines: list[str]) -> None:
+    """Print listing lines with their markup but without Rich's wrapping.
+
+    `soft_wrap=True` is the whole point: `con.print` folds at `$COLUMNS`, and a
+    folded listing is one with the ids on the wrong lines — the same failure
+    `brief` and `context` avoid by not using Rich at all. Here the colour is
+    worth keeping, so the wrapping is turned off instead.
+    """
+    for line in lines:
+        con.print(line, soft_wrap=True, highlight=False)
+
+
+def _show_listing(g: Graph, att: list[dict]) -> None:
+    """The frontier as one line per decision — the default, and the piped one."""
+    rows = _brief.rows(g)
+    ev = _brief.evidence_map(project.find())
+    con.print(f"[bold]FRONTIER[/]  {len(rows)} not settled of "
+              f"{len(g.vertices)}   " + "  ".join(
+                  f"[{_style(k)}]{k} {n}[/]"
+                  for k, n in sorted(_brief.counts(g).items())))
+    entries: list[tuple[str, str, str, str]] = []
+    areas: list[str] = []
+    for r in rows:
+        aside = []
+        if r.waiting_on:
+            aside.append("waits " + ", ".join(r.waiting_on))
+        if ev.get(r.id):
+            # An open decision with a spike still running is not decidable now.
+            aside.append("evidence " + ", ".join(ev[r.id]))
+        if r.unblocks:
+            aside.append("unblocks " + ", ".join(r.unblocks))
+        if not aside:
+            aside.append("decidable now")
+        # The base status, not the stored one: `BLOCKED:D04` says the blocker
+        # twice, once here and once in `waits D04` above. Dropping it from the
+        # column gives four characters back to every title in the listing.
+        base = g.vertices[r.id].base_status
+        entries.append((r.id, f"[{_style(base)}]{base}[/]", _x(r.title),
+                        "[dim]" + _x(" · ".join(aside)) + "[/]"))
+        areas.append(f"[dim]{_x(r.area)}[/]")
+    _say(compact.listing(entries, width=_width(), markup=True, tails=areas))
+    if not entries:
+        con.print("  [dim]nothing open — every question here is settled[/]")
+
+    # A PROVISIONAL vertex is settled, so it is not in the frontier — but its
+    # answer rests on a premise under review, which is the thing most worth
+    # knowing before building on it. It was missing from this view entirely.
+    if att:
+        con.print(f"\n[bold]RESTING ON A PREMISE UNDER REVIEW[/]  {len(att)}")
+        _say(compact.listing(
+            [(a["id"], f"[{_style('PROVISIONAL')}]PROVISIONAL[/]",
+              _x(a["title"]),
+              "[dim]" + _x(", ".join(a["because"]) if a["because"]
+                           else f"premises settled again — "
+                                f"`dg confirm {a['id']}`") + "[/]")
+             for a in att],
+            width=_width(), markup=True,
+            tails=[f"[dim]{_x(a['area'])}[/]" for a in att]))
+    con.print(compact.hint("dg show --full", "the table, nothing clipped"))
+
+
+def _show_table(g: Graph, att: list[dict]) -> None:
+    """The detailed frontier: every title in full, every relation its own column."""
     t = Table(title="Frontier", header_style="bold")
     for c in ("ID", "Decision", "Status", "Waiting on", "Unblocks", "Area"):
         t.add_column(c)
@@ -176,10 +266,6 @@ def show() -> None:
                   ", ".join(r.unblocks) or "—", _x(r.area))
     con.print(t)
 
-    # A PROVISIONAL vertex is settled, so it is not in the frontier — but its
-    # answer rests on a premise under review, which is the thing most worth
-    # knowing before building on it. It was missing from this view entirely.
-    att = _brief.attention(g)
     if att:
         p = Table(title="Resting on a premise under review", header_style="bold")
         for c in ("ID", "Decision", "Because", "Area"):
@@ -292,17 +378,22 @@ def path(a: str, b: str) -> None:
 def context(
     vid: str = typer.Argument(..., help="A decision id (D..) or a task id (T..)"),
     as_json: bool = typer.Option(False, "--json", help="The same as data."),
+    full: bool = typer.Option(False, "--full",
+                              help="Every answer, source and falsifier in full."),
 ) -> None:
     """Why this node is where it is: every premise it rests on.
 
     Also spelled `dg why`, which is the question this answers and the one the
     tool is named for.
 
-    `dg node` shows one decision; this shows the reasoning behind it — each
-    ancestor's answer, the evidence that reached it, and the falsifier that
-    would overturn it. A task id pulls in the chain behind the decision it
-    exists `because` of, which is the context a dispatched agent is otherwise
-    missing.
+    `dg node` shows one decision; this shows the reasoning behind it. By
+    default that is the chain schematically — the shape on one line, then one
+    line per premise saying what it answered. `--full` prints each answer, the
+    evidence that reached it and the falsifier that would overturn it, which is
+    the form to paste into a subagent's prompt.
+
+    A task id pulls in the chain behind the decision it exists `because` of,
+    which is the context a dispatched agent is otherwise missing.
     """
     from dgraph import context as _context
     proj = project.find()
@@ -317,8 +408,10 @@ def context(
         raise typer.Exit(1) from None
     # plain print, never con.print: this is piped into a subagent's prompt and
     # rich soft-wraps at $COLUMNS, which would move the ids onto wrong lines.
-    print(json.dumps(d, indent=2, ensure_ascii=False) if as_json
-          else _context.text(d), end="" if not as_json else "\n")
+    if as_json:
+        print(json.dumps(d, indent=2, ensure_ascii=False))
+        return
+    print(_context.text(d) if full else _context.compact(d), end="")
 
 
 #: `dg why D06` and `dg context D06` are the same command under two names.
@@ -2208,24 +2301,89 @@ def _require_task(tid: str, tg: TaskGraph | None = None) -> None:
 
 
 @task_app.callback(invoke_without_command=True)
-def task_show(ctx: typer.Context) -> None:
-    """What is outstanding, and what can be picked up now."""
+def task_show(
+    ctx: typer.Context,
+    full: bool = typer.Option(False, "--full",
+                              help="The table, with no title clipped."),
+) -> None:
+    """What is outstanding, and what can be picked up now.
+
+    One line each by default. `--full` gives the table instead, which clips
+    nothing.
+    """
     if ctx.invoked_subcommand is not None:
         return
     tg = _tg()
     g = _decisions_or_none()
+
+    def waiting_for(tid: str) -> tuple[list[str], str | None]:
+        """What holds this task up, from both stores.
+
+        Two waiting-on lists, kept apart in the data and joined only here: a
+        mixed list of T- and D-ids would eventually be fed to a task lookup and
+        crash, which is the class of bug audit item A1 fixed.
+        """
+        gate = _gated_by(tg, g, tid)
+        waiting = list(tg.waiting_on(tid))
+        if gate:
+            waiting.append(f"{gate} (undecided)")
+        return waiting, gate
+
+    if full:
+        _task_table(tg, waiting_for)
+    else:
+        _task_listing(tg, waiting_for)
+
+    ready = [tid for tid in sorted(tg.tasks)
+             if tg.ready(tid) and not _gated_by(tg, g, tid)]
+    con.print(f"[green]ready[/] {', '.join(ready) or '—'}")
+    if not full:
+        con.print(compact.hint("dg task --full", "the table, nothing clipped"))
+
+
+def _task_listing(tg: TaskGraph, waiting_for) -> None:
+    """Outstanding work as one line per task — the default, and the piped one."""
+    frontier = tg.frontier()
+    con.print(f"[bold]TASKS[/]  {len(frontier)} outstanding of "
+              f"{len(tg.tasks)}   " + "  ".join(
+                  f"[{TASK_STYLE.get(k, 'white')}]{k} {n}[/]"
+                  for k, n in sorted(tg.counts().items())))
+    entries, areas = [], []
+    for tid in frontier:
+        task = tg.tasks[tid]
+        waiting, gate = waiting_for(tid)
+        aside = []
+        if waiting:
+            aside.append("waits " + ", ".join(waiting))
+        if tg.unblocks(tid):
+            aside.append("unblocks " + ", ".join(tg.unblocks(tid)))
+        if task.because:
+            aside.append(f"because {task.because}")
+        if task.evidence_for:
+            aside.append(f"evidence for {task.evidence_for}")
+        if not aside:
+            aside.append("startable")
+        # Yellow for the whole aside where a premise is undecided: the reason
+        # this task is not startable is in there, and the eye needs sending to
+        # the line before it reads which of the four bits says so.
+        style = "yellow" if gate else "dim"
+        entries.append((tid, f"[{TASK_STYLE.get(task.status, 'white')}]"
+                             f"{task.status}[/]", _x(task.title),
+                        f"[{style}]" + _x(" · ".join(aside)) + "[/]"))
+        areas.append(f"[dim]{_x(task.area)}[/]")
+    _say(compact.listing(entries, width=_width(), markup=True, tails=areas))
+    if not entries:
+        con.print("  [dim]nothing outstanding[/]")
+
+
+def _task_table(tg: TaskGraph, waiting_for) -> None:
+    """Outstanding work in full: every title whole, every relation its own column."""
     t = Table(title="Tasks", header_style="bold")
     for c in ("ID", "Task", "Status", "Waiting on", "Because", "Area"):
         t.add_column(c)
     for tid in tg.frontier():
         task = tg.tasks[tid]
-        # Two waiting-on lists, kept apart in the data and joined only here:
-        # a mixed list of T- and D-ids would eventually be fed to a task lookup
-        # and crash, which is the class of bug audit item A1 fixed.
-        waiting = list(tg.waiting_on(tid))
-        gate = _gated_by(tg, g, tid)
-        if gate:
-            waiting.append(f"{gate} (undecided)")
+        waiting, gate = waiting_for(tid)
         premise = task.because or "—"
         if gate:
             premise = f"[yellow]{premise}[/]"
@@ -2233,13 +2391,6 @@ def task_show(ctx: typer.Context) -> None:
                   f"[{TASK_STYLE.get(task.status, 'white')}]{task.status}[/]",
                   ", ".join(waiting) or "—", premise, _x(task.area))
     con.print(t)
-    ready = [tid for tid in sorted(tg.tasks)
-             if tg.ready(tid) and not _gated_by(tg, g, tid)]
-    con.print(f"[green]ready[/] {', '.join(ready) or '—'}")
-    con.print("  ".join(
-        f"[{TASK_STYLE.get(k, 'white')}]{k} {n}[/]"
-        for k, n in sorted(tg.counts().items())
-    ))
 
 
 @task_app.command("rm")

@@ -243,7 +243,10 @@ def test_why_is_the_same_command_as_context(store, g):
     write(g)
     a, b = dg(store, "why", "D02"), dg(store, "context", "D02")
     assert a.exit_code == 0 and a.output == b.output
-    assert "RESTS ON" in a.output
+    assert "CHAIN" in a.output
+    # ...including the flag, which is where a wrapper would have drifted first.
+    x, y = dg(store, "why", "D02", "--full"), dg(store, "context", "D02", "--full")
+    assert x.output == y.output and "RESTS ON" in x.output
 
 
 def test_why_takes_the_same_options(store, g):

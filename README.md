@@ -146,9 +146,11 @@ reversal. Then the quick starts: the
 dg init --areas "Search,Serving,Index"   # start a graph
 dg import-md old-decisions.md            # or bootstrap from markdown
 dg                                       # the frontier: what is still open
+dg show --full                           # ...as a table, with nothing clipped
 dg brief                                 # ...plus provisional work, staging, validity
 dg node D06                              # one decision in full
-dg why D06                               # ...and every premise underneath it
+dg why D06                               # ...and the chain of premises underneath it
+dg why D06 --full                        # ...with every answer, source and falsifier
 dg context D06                           # the same command, its other name
 dg context T14                           # the same for a piece of work
 dg path D01 D09                          # the chain of evidence between two
@@ -167,6 +169,20 @@ dg drop <id>                             # unstage one op
 dg export                                # the graph as JSON
 ```
 
+### How much each command says
+
+The reading commands are **short by default and long on request**. `dg show`,
+`dg task` and `dg context` give one line per thing — id, status, title, and what
+it waits on or releases, with the prose clipped — because that output is read in
+a terminal and paid for in tokens every time an agent runs it. `--full` restores
+the rest: the tables with nothing clipped, and for `dg context` every premise's
+answer, its evidence and the falsifier that would overturn it. Nothing is
+hidden, and every short view ends with the flag that expands it.
+
+Ids are the exception to the clipping. A title may be cut and an answer reduced
+to its first sentence, but an id never is — an id is what you follow up with,
+and a listing you cannot follow up is not a shorter listing, it is a worse one.
+
 A staged op is addressed by the short id `dg pending` shows beside it, or by its
 position. Prefer the id whenever anything else might be writing: applying a
 batch takes its ops out of the tray wherever they sit, so every position after
@@ -181,6 +197,7 @@ ordinary one:
 dg task init --areas "Search,Serving,Index"
 dg task add --id T02 --title "Build the HNSW index" --after T01 --because D01
 dg task                                  # outstanding work, and what is startable
+dg task --full                           # ...as a table, with nothing clipped
 dg task node T02                         # one task in full, with its premise
 dg task start T02                        # ...pick it up
 dg task done T02 --outcome "PR #241"

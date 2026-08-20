@@ -12,12 +12,23 @@ The rendering already existed once, inside the org compose buffer
 as JSON. Three consumers, one traversal, so they cannot disagree about what a
 decision rests on.
 
-Two properties are deliberate, both borrowed from `brief.py`:
+There are two renderings, and the default is the short one. `compact()` gives
+the chain schematically — the arrow line, then one clipped line per premise —
+because that is what a person asking a question in a terminal wants, and it is
+what `dg context` prints unless asked otherwise. `text()` gives every answer,
+falsifier and source, which is the form to paste into a subagent's prompt, and
+is what `--full` returns.
 
-- **`data()` and `text()` come from the same walk.** A host that parses JSON and
-  a human reading a terminal are told the same thing.
+Three properties are deliberate, the first two borrowed from `brief.py`:
+
+- **`data()`, `text()` and `compact()` come from the same walk.** A host that
+  parses JSON, an agent handed the full text and a human reading a terminal are
+  told the same thing at three lengths.
 - **Plain text, fixed width.** This is piped into a subagent's prompt. Rich
   soft-wraps at `$COLUMNS`, which would move the ids onto the wrong lines.
+- **The short form says it is short.** Every compact rendering ends with the
+  flag that expands it, so nobody has to guess whether the tool is summarising
+  or simply does not know.
 
 A task id is accepted too, and resolves through `dgraph.cross` — the only module
 allowed to see both stores. The chain behind a task is the chain behind the
@@ -30,10 +41,20 @@ from __future__ import annotations
 import textwrap
 from dataclasses import dataclass, field
 
+from dgraph import compact as _c
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
 
 WIDTH = 76
+
+#: The compact rendering's budget. Wider than `WIDTH`, because those are
+#: wrapped paragraphs and these are single lines that must not fold; and no
+#: wider than 80, because this is printed plain — nothing reflows it, so it has
+#: to fit the narrowest terminal anyone actually uses. Deliberately fixed
+#: rather than read from the terminal: `dg context` is piped into a subagent's
+#: prompt at least as often as it is read, and output that changes shape with
+#: `$COLUMNS` is output two readers can disagree about.
+COMPACT_WIDTH = 80
 
 
 class UnknownNode(LookupError):
@@ -323,7 +344,13 @@ def _premise_lines(p: dict) -> list[str]:
 
 
 def text(d: dict) -> str:
-    """The same information as `data()`, for a terminal or a prompt."""
+    """Everything `data()` holds, for a terminal or a prompt.
+
+    The form to hand a subagent: each premise's answer in full, its evidence
+    and its falsifier. `compact()` is what a person reading a terminal gets by
+    default; both walk the same chain, so neither can say something the other
+    denies.
+    """
     return _decision_text(d) if d["kind"] == "decision" else _task_text(d)
 
 
@@ -428,3 +455,191 @@ def _task_text(d: dict) -> str:
 
     out += ["", f"→ {d['verdict']}"]
     return "\n".join(out) + "\n"
+
+
+# ---- the compact rendering -----------------------------------------------
+
+
+def _chain_arrow(ids: list[str], shaky: set[str], last: str) -> str:
+    """`D01 → D02 → D04! → T04` — the whole chain on one line.
+
+    The schematic that makes the compact form worth reading: the shape of the
+    reasoning, in the order it was built, with `!` on every link that does not
+    hold. A reader who only takes one line from this command should take this
+    one.
+    """
+    return " → ".join([f"{i}!" if i in shaky else i for i in ids] + [last])
+
+
+def _fold(bits: list[str], prefix: str = "  ", blank: bool = False) -> list[str]:
+    """Short phrases joined with `·`, wrapped where too many of them fit.
+
+    The one place this module's two rules have to be reconciled: the width is
+    fixed and an id is never clipped, so a node with a dozen premises folds
+    onto a second line rather than running past the margin.
+
+    Returned as a list so a caller can splice it in without testing for empty,
+    which is where the stray blank lines came from.
+    """
+    if not bits:
+        return []
+    return ([""] if blank else []) + textwrap.wrap(
+        prefix + " · ".join(bits), COMPACT_WIDTH,
+        subsequent_indent=" " * len(prefix))
+
+
+def _chain_lines(ids: list[str], shaky: set[str], last: str) -> list[str]:
+    """The arrow line, folded to the margin, with its legend where it fits.
+
+    Ids are never clipped, so a chain seventeen deep folds rather than running
+    — and the legend is what moves, because it explains the marks rather than
+    carrying any.
+    """
+    lines = textwrap.wrap("CHAIN  " + _chain_arrow(ids, shaky, last),
+                          COMPACT_WIDTH, subsequent_indent=" " * 7,
+                          break_long_words=False, break_on_hyphens=False)
+    if not shaky:
+        return lines
+    if len(lines[-1]) + 19 <= COMPACT_WIDTH:
+        lines[-1] += "    ! = not settled"
+    else:
+        lines.append(" " * 7 + "! = not settled")
+    return lines
+
+
+def _premise_row(p: dict) -> tuple[str, str, str, str]:
+    """One premise as a listing row: what it answered, in one line."""
+    answer = _c.gist(p["answer"], p.get("format"))
+    if not answer:
+        # Two different facts, and collapsing them is the mistake: a premise
+        # with no answer *because it is still open* is the thing the chain
+        # exists to surface, while a settled one with an empty answer is a
+        # record someone left half-written.
+        answer = "not settled" if p["shaky"] else "no answer recorded"
+    return (p["id"], _base(p["status"]), p["title"], answer)
+
+
+def compact(d: dict) -> str:
+    """The chain schematically: one line per premise, prose clipped.
+
+    `text()` prints every answer, falsifier and source, which is right when the
+    output is going into a subagent's prompt and wrong when a person is asking
+    a question in a terminal. Same walk, same verdict, same ids — only the
+    prose is clipped, and the closing line says which flag brings it back.
+    """
+    # Only the title is clipped, never the assembled line: `clip` normalises
+    # whitespace, and running the head through it closed up the double spaces
+    # that separate the id from the status from the title.
+    lead = f"{d['id']}  {_base(d['status'])}  "
+    title = _c.clip(d["title"],
+                    COMPACT_WIDTH - len(lead) - len(d["area"]) - 4)
+    out = [f"{lead}{title}  [{d['area']}]"]
+    out += _fold(_relations(d))
+
+    # The node's own answer, or its note where it has no answer yet. One line,
+    # and the line a reader wants first: `dg context D02` that does not say
+    # what D02 decided is a command you have to follow with `dg node`.
+    own = _c.gist(d.get("answer"), d.get("answer_format")) or _c.gist(
+        d.get("note"), d.get("format"))
+    if own:
+        out.append("  " + _c.clip(own, COMPACT_WIDTH - 2))
+
+    chain_ids = [p["id"] for p in d["chain"]]
+    shaky = set(d["shaky_premises"])
+
+    premise = d["premise"] if d["kind"] == "task" else None
+    if premise:
+        chain_ids = chain_ids + [premise["id"]]
+        if _base(premise["status"]) in SHAKY:
+            shaky.add(premise["id"])
+
+    if chain_ids:
+        out += [""] + _chain_lines(chain_ids, shaky, d["id"])
+        out += _c.listing([_premise_row(p) for p in d["chain"]],
+                          width=COMPACT_WIDTH, prose_aside=True)
+    elif d["kind"] == "decision":
+        out += ["", "CHAIN  a root — it rests on nothing"]
+
+    # The premise is not one row among the others: it is the reason this work
+    # exists, and clipping it into the listing's aside column is how it stopped
+    # being visible. It gets its own two lines, as `text()` gives it its own
+    # section.
+    if premise:
+        lead = f"BECAUSE  {premise['id']}  {_base(premise['status'])}  "
+        out += ["", lead + _c.clip(premise["title"],
+                                   COMPACT_WIDTH - len(lead))]
+        # Not `_premise_row`: the premise arrives as a `decision()` dict, whose
+        # answer lives under different keys and which carries no `shaky` flag.
+        said = _c.gist(premise["answer"], premise.get("answer_format"))
+        out.append("         " + _c.clip(
+            said or ("not settled" if premise["id"] in shaky
+                     else "no answer recorded"), COMPACT_WIDTH - 9))
+    elif d["kind"] == "task" and d["because"]:
+        out += ["", f"BECAUSE  {d['because']} — not in the decision store"]
+    elif d["kind"] == "task":
+        out += ["", "BECAUSE  no premise is recorded for this work"]
+
+    if d["kind"] == "task" and d["evidence_for"]:
+        out += ["", f"EVIDENCE FOR  {d['evidence_for']} — that decision is "
+                    f"waiting on what this work finds"]
+
+    if d["kind"] == "decision":
+        out += _fold(_decision_work(d), prefix="WORK  ", blank=True)
+        if d["superseded"]:
+            out += ["", f"SUPERSEDED HERE ({len(d['superseded'])}) — "
+                        f"`dg node {d['id']}` for what was replaced"]
+
+    out += [""] + textwrap.wrap(f"→ {_reading(d)}", COMPACT_WIDTH,
+                                subsequent_indent="  ")
+    out.append(_c.plain_hint(f"dg context {d['id']} --full",
+                             "each answer, its evidence and its falsifier"))
+    return "\n".join(out) + "\n"
+
+
+def _relations(d: dict) -> list[str]:
+    """How this node sits among its neighbours, as short phrases."""
+    if d["kind"] == "decision":
+        return ([f"rests on {', '.join(d['depends_on'])}"] if d["depends_on"] else []) \
+             + ([f"opens {', '.join(d['opens'])}"] if d["opens"] else [])
+    bits = []
+    for label, key in (("after", "prerequisites"), ("waiting on", "waiting_on"),
+                       ("unblocks", "unblocks"),
+                       ("found doing", "discovered_during"),
+                       ("turned up", "prompted")):
+        if d.get(key):
+            bits.append(f"{label} {', '.join(d[key])}")
+    if d.get("outcome"):
+        bits.append("outcome recorded")
+    return bits
+
+
+def _decision_work(d: dict) -> list[str]:
+    """The work either side of a decision, as short phrases. `*` is unfinished."""
+    w = d.get("work") or {}
+    bits = []
+    if w.get("rests_on"):
+        bits.append("because of this: " + ", ".join(w["rests_on"]))
+    if w.get("evidence"):
+        pend = set(w.get("pending_evidence") or [])
+        bits.append("evidence for it: " + ", ".join(
+            f"{t}*" if t in pend else t for t in w["evidence"])
+            + (" (* outstanding)" if pend else ""))
+    return bits
+
+
+def _reading(d: dict) -> str:
+    """The closing sentence: whether any of this still holds.
+
+    A task's comes from `_verdict`, which `cross` gives the facts for. A
+    decision has never had one — `text()` printed a line only when a premise
+    was shaky — and silence there reads as "solid", which is the one reading
+    that must never be guessed at.
+    """
+    if d.get("verdict"):
+        return d["verdict"]
+    if d["shaky_premises"]:
+        return (f"this rests on {', '.join(d['shaky_premises'])}, which is not "
+                f"settled — treat the conclusion as provisional")
+    if _base(d["status"]) in SHAKY:
+        return f"this is {_base(d['status'])}; nothing below it is in doubt"
+    return "every premise under this is settled"

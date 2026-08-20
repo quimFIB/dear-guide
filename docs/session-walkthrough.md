@@ -314,20 +314,12 @@ dg task
 ```
 
 ```
-┏━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
-┃ ID  ┃ Task                 ┃ Status ┃ Waiting on ┃ Because ┃ Area    ┃
-┡━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
-│ T03 │ Check in CI that the │ TODO   │ —          │ D02     │ Search  │
-│     │ encoder still        │        │            │         │         │
-│     │ normalises           │        │            │         │         │
-│ T04 │ Build the HNSW index │ TODO   │ —          │ D01     │ Search  │
-│     │ and sweep efSearch   │        │            │         │         │
-│ T05 │ Split the corpus     │ TODO   │ —          │ D03     │ Serving │
-│     │ into four shards and │        │            │         │         │
-│     │ merge results        │        │            │         │         │
-└─────┴──────────────────────┴────────┴────────────┴─────────┴─────────┘
+TASKS  3 outstanding of 5   DONE 1  DROPPED 1  TODO 3
+  T03  TODO  Check in CI that the encoder still normalises        ·  because D02 · Search
+  T04  TODO  Build the HNSW index and sweep efSearch              ·  because D01 · Search
+  T05  TODO  Split the corpus into four shards and merge results  ·  because D03 · Serving
 ready T03, T04, T05
-DONE 1  DROPPED 1  TODO 3
+  `dg task --full` for the table, nothing clipped
 ```
 
 `--because` is the link that made turn 1 useful. Without it the reopen would have

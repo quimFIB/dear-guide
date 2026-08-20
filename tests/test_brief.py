@@ -259,7 +259,8 @@ def test_show_reports_provisional_too(run, store, g):
     told; `dg show` omitted it entirely."""
     write(g)
     _provisional(store, "D02", premise="D01")
-    assert "premise under review" in run("show").output
+    assert "premise under review" in run("show").output.lower()
+    assert "premise under review" in run("show", "--full").output.lower()
 
 
 # ---- a project that tracks work and no decisions yet (audit D1, D5) ------

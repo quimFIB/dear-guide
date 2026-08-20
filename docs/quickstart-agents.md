@@ -162,15 +162,17 @@ same reason the adapters have none.
 | `/dg-brief` | the whole situation: frontier, work under review, what is staged, whether the graph is valid |
 | `/dg-frontier` | what could be picked up now — unsettled questions beside startable work |
 | `/dg-tasks` | the backlog, with the cross-graph reading of what each piece waits on |
-| `/dg-context <id>` | every premise a decision or a task rests on |
+| `/dg-context <id> [--full]` | the chain of premises a decision or a task rests on |
 | `/dg-serve` | the graphs in a browser |
 
 Two of them are worth a note.
 
-**`/dg-context` is the one to run before dispatching a subagent.** A fresh context
-knows the task and nothing about why it exists; `dg context T14` prints the
-chain — each premise with the answer it reached, the source that reached it, and
-the falsifier that would overturn it — and ends with the reading:
+**`/dg-context` is the one to run before dispatching a subagent.** A fresh
+context knows the task and nothing about why it exists; `dg context T14` prints
+the chain and ends with the reading. Pass `--full` when the output is going into
+the dispatch — the default clips each premise's answer to a sentence, which is
+right for a question you are asking yourself and wrong for an agent that cannot
+ask a follow-up:
 
 ```
 → the premise D02 is PROVISIONAL: it rests on something under review, so this

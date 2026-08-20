@@ -69,9 +69,9 @@ Vertices and edges, nothing else.
 | Command | Gives |
 |---|---|
 | `dg brief` | what matters right now: the frontier, anything provisional, staged work, validity |
-| `dg show` | the frontier — everything still open or blocked |
+| `dg show` | the frontier — everything still open or blocked, one line each |
 | `dg node ID` | one decision in full, including its superseded history |
-| `dg context ID` | every premise it rests on — the answers, sources and falsifiers behind it. Takes a `T` id too |
+| `dg context ID` | the chain of premises it rests on. Takes a `T` id too; `--full` for the answers, sources and falsifiers |
 | `dg path A B` | the chain of evidence between two decisions |
 | `dg tree` | the graph as a tree |
 | `dg areas` | counts by area and status |
@@ -81,23 +81,37 @@ Vertices and edges, nothing else.
 ### Before building on something, or handing it off
 
 `dg node` tells you what a decision says. `dg context` tells you **why**, and
-what would make it stop being true: every premise underneath it, each with the
-answer it reached, the evidence that reached it, and the falsifier that would
-overturn it. It ends with the reading — whether anything in the chain is still
-under review.
+what would make it stop being true: every premise underneath it, ending with
+the reading — whether anything in the chain is still under review.
+
+It has two lengths, and which you want depends on who is reading:
+
+- **the default is schematic.** A `CHAIN` line showing the shape of the
+  reasoning, oldest premise first, with `!` on any link that is not settled;
+  then one line per premise, its answer clipped to a sentence. Use this when
+  *you* are the one asking.
+- **`--full` prints the chain in full** — each answer, the evidence that
+  reached it, the falsifier that would overturn it. Use this when the output is
+  going somewhere that cannot ask a follow-up question.
 
 Run it in two situations:
 
 - **before writing code that depends on a decision**, so you know which
   falsifiers you must not quietly trip;
-- **before dispatching a subagent**, and paste the output into the prompt. A
-  fresh context knows the task and nothing about why it exists; without the
-  chain it cannot tell a constraint from an implementation detail.
+- **before dispatching a subagent**, and paste the `--full` output into the
+  prompt. A fresh context knows the task and nothing about why it exists;
+  without the chain it cannot tell a constraint from an implementation detail,
+  and a clipped answer is exactly the detail it will get wrong.
 
 ```sh
-dg context D02        # a decision and its premises
-dg context T14        # the work, then the chain behind the decision it exists for
+dg context D02          # a decision and its premises, schematically
+dg context D02 --full   # ...with every answer, source and falsifier
+dg context T14          # the work, then the chain behind the decision it exists for
 ```
+
+The same split runs through `dg show` and `dg task`: one line each by default,
+`--full` for the table with nothing clipped. Titles get clipped; **ids never
+do**, so anything named in a short view can be looked up from it.
 
 ## Recording a decision
 
