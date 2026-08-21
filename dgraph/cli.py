@@ -75,7 +75,13 @@ LAYOUT = (
 #: that pairing rather than trusting it. `drop` is the one deliberate
 #: exception, and is named there.
 #:
-#: There is no `check` here because `dg check` judges both stores.
+#: Parallel in what the headings *mean*, not in how many commands sit under
+#: them. The task side has no `reopen`, `confirm` or `repair` because a task
+#: has no falsifier and nothing propagates out of one — a premise moving is
+#: handled from the decision side — and no `check` because `dg check` judges
+#: both stores. Those absences are the model being honest about what a task
+#: is, so closing them for symmetry alone would be adding verbs that assert
+#: something untrue about the record.
 T_READ = "Reading the work"
 T_HONEST = "Keeping it honest"
 T_RECORD = "Recording work"
