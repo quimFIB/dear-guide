@@ -1573,8 +1573,16 @@ def _op_subject(o: dict, first: str) -> str:
     `pending` tables and `_op_summary` below, which has to pick the same subject
     the table showed or a drop confirmation would describe an op differently
     from the row that named it.
+
+    Through `_x`, like every other field these views read out of the tray —
+    which also settles the type, since it renders whatever it is given. Every
+    caller is on the path a stuck tray sends the reader down, and what a
+    hand-edit puts in an id field is not always a string: a number reached rich
+    as an `int`, which it refuses to render, and took the whole listing with it
+    — leaving `dg clear` as the way out of a tray that could have been read and
+    fixed one op at a time.
     """
-    return o.get(first) or o.get("from") or o.get("id") or "—"
+    return _x(o.get(first) or o.get("from") or o.get("id") or "—")
 
 
 def _op_summary(o: dict, details: dict, subject: str) -> str:

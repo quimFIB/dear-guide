@@ -750,6 +750,37 @@ def test_pending_lists_an_op_kind_it_does_not_recognise(run, store, cmd, tray):
     assert "drop" in res.output          # the row is actionable
 
 
+@pytest.mark.parametrize("cmd,tray", [
+    (["pending"], ".dgraph-pending.json"),
+    (["task", "pending"], ".dgraph-task-pending.json"),
+])
+@pytest.mark.parametrize("full", [[], ["--full"]])
+def test_pending_lists_a_subject_that_is_not_a_string(run, store, cmd, tray,
+                                                      full):
+    """The same promise, one field further in. `_op_subject` handed the tray's
+    value straight through, and JSON has numbers: `{"vertex": 42}` reached rich,
+    which refuses to render an `int`, and took the listing down for the whole
+    tray — including the ops beside it that were perfectly readable."""
+    if tray.startswith(".dgraph-task"):
+        from dgraph import task_render
+        from dgraph.tasks import TaskGraph
+        (store / "tasks.json").write_text(
+            json.dumps({"areas": ["Alpha"], "tasks": [], "edges": []}))
+        task_render.write(TaskGraph.load(store / "tasks.json"),
+                          store / "tasks.md")
+    # Each tray's own subject key, or the op would fall through to the shared
+    # `from`/`id` lookup and never reach the value this is about.
+    key = "task" if tray.startswith(".dgraph-task") else "vertex"
+    (store / tray).write_text(json.dumps(
+        [{"op": "add_vertex", key: 42, "title": "typed by hand"},
+         {"op": "frobnicate", key: "D01"}]))
+
+    res = run(*cmd, *full)
+    assert res.exit_code == 0, res.output
+    assert "42" in res.output
+    assert "frobnicate" in res.output    # the readable op beside it survives
+
+
 # ---- audit F13: the ignore lines the tool's own docstrings assume ----------
 
 IGNORABLE = [
