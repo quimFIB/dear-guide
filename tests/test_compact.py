@@ -130,6 +130,25 @@ def test_an_escaped_bracket_is_not_read_as_markup():
     assert compact.visible("a \\[literal] one") == "a \\[literal] one"
 
 
+def test_clip_never_cuts_a_style_tag_in_half():
+    """Widths are visible characters, so a tag costs nothing and is never cut.
+    Slicing raw can end a line on `[di`, which Rich reads as the start of a tag
+    that never closes and swallows the rest of the row."""
+    cut = compact.clip("[dim]a detail long enough to be clipped[/]", 12)
+    assert compact.visible(cut) == "a detail lo…"
+    assert "[di" not in compact.visible(cut)
+    assert cut.startswith("[dim]")
+
+
+def test_clipping_measures_what_the_reader_sees():
+    """A styled string and its plain twin clip to the same visible text —
+    otherwise a coloured row says less than an uncoloured one at the same
+    width, for no reason the reader can see."""
+    plain = "→ PROVISIONAL (from D01)"
+    styled = "→ PROVISIONAL [dim](from D01)[/]"
+    assert compact.visible(compact.clip(styled, 18)) == compact.clip(plain, 18)
+
+
 def test_tails_are_shown_when_they_fit():
     lines = compact.listing(ROWS, width=100, tails=["Alpha", "Beta"])
     assert "Alpha" in lines[0] and "Beta" in lines[1]
@@ -305,3 +324,93 @@ def test_a_long_relation_line_folds_rather_than_running(both):
     assert all(len(line) <= context.COMPACT_WIDTH for line in out.splitlines())
     for n in range(7, 20):
         assert f"D{n:02d}" in out
+
+
+# ---- `dg pending` --------------------------------------------------------
+#
+# The tray is read in the same two places the other listings are — a terminal,
+# and an agent's context immediately before `dg apply` — and it is the longest
+# of them: one `dg reopen` stages the reopen plus a `set_status` per decided
+# descendant, so a tray of nine ops is an ordinary afternoon rather than a
+# pathological case.
+
+TRAY = [
+    {"op": "reopen", "vertex": "D01", "ref": "kfnq",
+     "why": "the crawl finished at 48M vectors, five times the ~10M threshold "
+            "named in the falsifier"},
+    {"op": "set_status", "vertex": "D02", "ref": "bwsp",
+     "status": "PROVISIONAL", "derived_from": "D01"},
+    {"op": "set_status", "vertex": "D03", "ref": "hjza",
+     "status": "PROVISIONAL", "derived_from": "D01"},
+]
+
+TASK_TRAY = [
+    {"op": "add_task", "task": "T09", "ref": "wqmb",
+     "title": "Re-run the recall sweep against the corpus as it now stands"},
+]
+
+#: The two trays, and the command that reads each.
+TRAYS = [(["pending"], ".dgraph-pending.json", TRAY),
+         (["task", "pending"], ".dgraph-task-pending.json", TASK_TRAY)]
+
+
+@pytest.fixture
+def staged(store, g):
+    """Both trays holding work, so either command has something to render."""
+    write(g)
+    for _, name, ops in TRAYS:
+        (store / name).write_text(json.dumps(ops), encoding="utf-8")
+    return store
+
+
+@pytest.mark.parametrize("cmd,_name,ops", TRAYS, ids=["dg", "dg task"])
+def test_the_tray_is_a_listing_by_default_and_a_table_under_full(
+        staged, cmd, _name, ops):
+    """Both trays or neither: one of them compact while the other is
+    box-drawn is the asymmetry the compact pass exists to remove."""
+    assert "┏" not in dg(staged, *cmd).output
+    assert "┏" in dg(staged, *cmd, "--full").output
+
+
+@pytest.mark.parametrize("cmd,_name,ops", TRAYS, ids=["dg", "dg task"])
+def test_a_staged_op_keeps_both_ways_of_addressing_it(staged, cmd, _name, ops):
+    """The id `dg drop` takes and the position every message names. A clipped
+    id is a row the review cannot act on, so neither is ever clipped — however
+    narrow the terminal."""
+    out = dg(staged, *cmd, cols="60").output
+    for i, o in enumerate(ops):
+        line = next(ln for ln in out.splitlines() if o["ref"] in ln)
+        assert line.split()[:2] == [str(i), o["ref"]]
+
+
+@pytest.mark.parametrize("cmd,_name,ops", TRAYS, ids=["dg", "dg task"])
+def test_the_tray_says_which_flag_expands_it(staged, cmd, _name, ops):
+    assert "--full" in dg(staged, *cmd).output
+
+
+@pytest.mark.parametrize("cmd,_name,ops", TRAYS, ids=["dg", "dg task"])
+def test_the_tray_keeps_saying_how_to_unstage_an_op(staged, cmd, _name, ops):
+    """The compact form is a shorter view, not a view with less to act on."""
+    out = dg(staged, *cmd).output
+    assert "dg apply" in out and "drop" in out
+
+
+def test_a_long_detail_is_clipped_rather_than_wrapped(staged):
+    """One op, one line. A detail wrapped across four rows is what made the
+    tray hard to read down in the first place."""
+    out = dg(staged, "pending", cols="76").output
+    body = [ln for ln in out.splitlines() if "kfnq" in ln]
+    assert len(body) == 1 and "…" in body[0]
+
+
+def test_the_derived_ops_still_name_what_derived_them(staged):
+    """`(from D01)` is the difference between an op somebody wrote and one the
+    tool propagated, which is the thing being reviewed."""
+    out = dg(staged, "pending").output
+    assert out.count("(from D01)") == 2
+
+
+def test_the_tray_listing_is_pipe_safe(staged):
+    """Read through a pipe into an agent's context before `dg apply`."""
+    out = dg(staged, "pending").output
+    assert "\x1b[" not in out and "[dim]" not in out

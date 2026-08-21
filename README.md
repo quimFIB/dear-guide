@@ -160,7 +160,7 @@ dg decide D37 --edit                     # ...in emacs, with context to hand
 dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
 dg repair                                # a store a merge broke: stage the missing propagation
-dg pending                               # review
+dg pending                               # review; `--full` for the table
 dg apply                                 # validate, then write both files
 dg check                                 # every invariant
 dg serve                                 # web app on 127.0.0.1:8765
@@ -224,10 +224,12 @@ write the JSON or to drive `dg add` and `dg decide` from your document.
 The reading commands are **short by default and long on request**. `dg show`,
 `dg task` and `dg context` give one line per thing — id, status, title, and what
 it waits on or releases, with the prose clipped — because that output is read in
-a terminal and paid for in tokens every time an agent runs it. `--full` restores
-the rest: the tables with nothing clipped, and for `dg context` every premise's
-answer, its evidence and the falsifier that would overturn it. Nothing is
-hidden, and every short view ends with the flag that expands it.
+a terminal and paid for in tokens every time an agent runs it. `dg pending` and
+`dg task pending` read the same way: one line per staged op, its position and
+its short id, the op, what it is about, and the detail clipped. `--full`
+restores the rest: the tables with nothing clipped, and for `dg context` every
+premise's answer, its evidence and the falsifier that would overturn it. Nothing
+is hidden, and every short view ends with the flag that expands it.
 
 Ids are the exception to the clipping. A title may be cut and an answer reduced
 to its first sentence, but an id never is — an id is what you follow up with,

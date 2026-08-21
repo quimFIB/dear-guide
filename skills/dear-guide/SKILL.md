@@ -110,9 +110,10 @@ dg context D02 --full   # ...with every answer, source and falsifier
 dg context T14          # the work, then the chain behind the decision it exists for
 ```
 
-The same split runs through `dg show` and `dg task`: one line each by default,
-`--full` for the table with nothing clipped. Titles get clipped; **ids never
-do**, so anything named in a short view can be looked up from it.
+The same split runs through `dg show`, `dg task` and both staging trays: one
+line each by default, `--full` for the table with nothing clipped. Titles and
+details get clipped; **ids never do**, so anything named in a short view can be
+looked up from it.
 
 ## Recording a decision
 
@@ -169,8 +170,8 @@ dg decide D42 --answer … --source … --falsifier …
 dg apply
 ```
 
-`dg pending` reviews staged work, `dg drop <id>` removes one op, `dg clear` all of
-it.
+`dg pending` reviews staged work — one line per op, `--full` for the table —
+`dg drop <id>` removes one op, `dg clear` all of it.
 
 ## Recording work
 

@@ -1,11 +1,11 @@
 """One line per thing: the schematic rendering the read commands default to.
 
-`dg show`, `dg task` and `dg context` all answer "what is the shape of this
-right now?", and all three used to answer it at length — two of them inside
-box-drawn tables that wrap a title across four rows, the third by printing
-every ancestor's full answer, evidence and falsifier. Both forms are read in a
-terminal *and* piped into an agent's context, where chrome and prose are paid
-for in tokens on every session.
+`dg show`, `dg task`, `dg context` and the two staging trays all answer "what
+is the shape of this right now?", and all of them used to answer it at length —
+most inside box-drawn tables that wrap a title across four rows, `dg context`
+by printing every ancestor's full answer, evidence and falsifier. Both forms
+are read in a terminal *and* piped into an agent's context, where chrome and
+prose are paid for in tokens on every session.
 
 So the default is a listing: **one line per item, columns that line up, prose
 reduced to its first sentence.** Nothing is dropped — `--full` on each command
@@ -65,13 +65,38 @@ def visible(s: str) -> str:
 
 
 def clip(s: str, n: int) -> str:
-    """`s` in at most `n` visible characters, with an ellipsis where it was cut."""
+    """`s` in at most `n` visible characters, with an ellipsis where it was cut.
+
+    Visible characters, so a style tag costs nothing and is never cut in half:
+    slicing raw where `s` carries markup can end a line on `[di`, which Rich
+    then reads as the start of a tag that never closes and swallows the rest of
+    the row. The details in the staging tray are the strings that carry tags
+    (`→ PROVISIONAL  [dim](from D01)[/]`), and they are the ones this is for.
+
+    A closing tag past the cut is dropped with the text it closed, so the style
+    runs to the end of that line. Every caller prints a line at a time, so it
+    can run no further than the row it belonged to.
+    """
     s = " ".join((s or "").split())
     if len(visible(s)) <= n:
         return s
-    # Never end on the backslash of an escaped bracket: Rich would then read
-    # the next character as part of an escape that is no longer there.
-    return s[: max(n - 1, 0)].rstrip().rstrip("\\") + "…"
+    budget, out, used = max(n - 1, 0), [], 0
+    for part in re.split(f"({_TAG.pattern})", s):
+        if not part:
+            continue
+        if _TAG.fullmatch(part):
+            out.append(part)
+            continue
+        if used + len(part) <= budget:
+            out.append(part)
+            used += len(part)
+        else:
+            # Never end on the backslash of an escaped bracket: Rich would then
+            # read the next character as part of an escape that is no longer
+            # there.
+            out.append(part[: budget - used].rstrip().rstrip("\\"))
+            break
+    return "".join(out) + "…"
 
 
 def pad(s: str, n: int) -> str:

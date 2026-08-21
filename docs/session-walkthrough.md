@@ -134,17 +134,18 @@ dg pending
 ```
 
 ```
-┏━━━┳━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ # ┃ id   ┃ Op         ┃ Vertex ┃ Detail                             ┃
-┡━━━╇━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ 0 │ kfnq │ reopen     │ D01    │ the crawl finished at 48M vectors, │
-│   │      │            │        │ five times the ~10M threshold in   │
-│   │      │            │        │ the falsifier                      │
-│ 1 │ bwsp │ set_status │ D02    │ → PROVISIONAL  (from D01)          │
-│ 2 │ hjza │ set_status │ D03    │ → PROVISIONAL  (from D01)          │
-└───┴──────┴────────────┴────────┴────────────────────────────────────┘
+STAGED  3 op(s)
+  0  kfnq  reopen      D01  the crawl finished at 48M vectors, five times the ~10M threshold in the…
+  1  bwsp  set_status  D02  → PROVISIONAL (from D01)
+  2  hjza  set_status  D03  → PROVISIONAL (from D01)
 `dg apply` to write, `dg drop <id>` to unstage
+  `dg pending --full` for the table, nothing clipped
 ```
+
+Two ways to name an op, and both are in the row: the position, which is what
+the tool's own messages say, and the short id, which survives another writer
+applying a batch out from under this one. `(from D01)` marks the ops the reopen
+derived rather than ones you wrote.
 
 ```sh
 dg apply

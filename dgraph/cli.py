@@ -1351,30 +1351,94 @@ def _tasks_naming(did: str) -> list[str]:
 
 
 @app.command(name="pending", rich_help_panel=STAGE)
-def pending_cmd() -> None:
-    """What is staged but not yet applied."""
-    ops = pending.load()
+def pending_cmd(
+    full: bool = typer.Option(False, "--full",
+                              help="The table, with no detail clipped."),
+) -> None:
+    """What is staged but not yet applied.
+
+    One line per op by default — its position, its short id, the op, what it is
+    about, and the detail clipped. `--full` gives the table instead, which is
+    the one to reach for when two answers read the same at the width above.
+    """
+    _tray(pending.load(), full, details=_PENDING_DETAIL, subject="vertex",
+          heading="STAGED", title="Staged", column="Vertex",
+          actions="`dg apply` to write, `dg drop <id>` to unstage",
+          expand="dg pending --full")
+
+
+def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
+          heading: str, title: str, column: str, actions: str,
+          expand: str) -> None:
+    """One staging tray, listed or tabulated. Both trays read through here.
+
+    The two used to be a table apiece, near-identical and free to drift; they
+    are peers, and one of them compact while the other is box-drawn is exactly
+    the asymmetry the rest of this file spends its comments removing. So the
+    shape lives here once and the callers pass only what genuinely differs:
+    which store's key names the subject, and which command unstages one op.
+    """
     if not ops:
         con.print("[dim]nothing staged[/]")
         return
-    t = Table(header_style="bold", title="Staged")
-    # `id` beside `#`, not instead of it: the index is what a single writer
-    # reasons about and what every message in the tool names, and the id is
-    # what survives another writer's apply. See `pending.resolve`.
-    for c in ("#", "id", "Op", "Vertex", "Detail"):
+    (_tray_table if full else _tray_listing)(
+        ops, details=details, subject=subject, heading=heading, title=title,
+        column=column)
+    con.print(f"[dim]{actions}[/]")
+    if not full:
+        con.print(compact.hint(expand, "the table, nothing clipped"))
+
+
+def _tray_detail(o: dict, details: dict) -> str:
+    """The detail cell for one staged op.
+
+    `.get` with a fallback, never a direct index: this is what every stuck-tray
+    message sends the reader to ("`dg pending` to review"), so it has to run on
+    a tray that is stuck. An op kind nothing recognises — a hand-edit, a file
+    from a newer `dg` — is exactly when somebody needs to see the row, and a
+    traceback here leaves `dg clear` as the only exit. The same holds for a
+    known kind missing a field, which is what a hand-edit also looks like.
+    """
+    return details.get(o.get("op"), _raw_op)(o)
+
+
+def _tray_listing(ops: list[dict], *, details: dict, subject: str,
+                  heading: str, title: str, column: str) -> None:
+    """A tray as one line per op — the default, and the piped one.
+
+    The position and the short id share the first column, and neither is ever
+    clipped: they are the two ways to address an op, and a row you cannot
+    `dg drop` is a row the review cannot act on. `id` beside `#`, not instead
+    of it — the index is what a single writer reasons about and what the tool's
+    own messages name, the id is what survives another writer's apply. See
+    `pending.resolve`.
+
+    The op kind and the subject share the second, padded so both read down.
+    What is left goes to the detail, which is the part worth clipping: an
+    answer or a title, whose first words say which op this is.
+    """
+    con.print(f"[bold]{heading}[/]  {len(ops)} op(s)")
+    kinds = [_x(o.get("op") or "?") for o in ops]
+    kw = max(len(compact.visible(k)) for k in kinds)
+    iw = len(str(len(ops) - 1))
+    _say(compact.listing(
+        [(f"{i:>{iw}}  {o.get('ref') or '—'}",
+          compact.pad(k, kw) + "  " + _op_subject(o, subject),
+          _tray_detail(o, details), "")
+         for i, (o, k) in enumerate(zip(ops, kinds))],
+        width=_width(), markup=True))
+
+
+def _tray_table(ops: list[dict], *, details: dict, subject: str,
+                heading: str, title: str, column: str) -> None:
+    """The detailed tray: every detail in full, every field its own column."""
+    t = Table(header_style="bold", title=title)
+    for c in ("#", "id", "Op", column, "Detail"):
         t.add_column(c)
     for i, o in enumerate(ops):
-        # `.get` with a fallback, never a direct index: this is the command
-        # every stuck-tray message sends the reader to ("`dg pending` to
-        # review"), so it has to run on a tray that is stuck. An op kind
-        # nothing recognises — a hand-edit, a file from a newer `dg` — is
-        # exactly when somebody needs to see the row, and a traceback here
-        # leaves `dg clear` as the only exit.
-        detail = _PENDING_DETAIL.get(o.get("op"), _raw_op)(o)
         t.add_row(str(i), o.get("ref") or "—", _x(o.get("op") or "?"),
-                  _op_subject(o, "vertex"), detail)
+                  _op_subject(o, subject), _tray_detail(o, details))
     con.print(t)
-    con.print("[dim]`dg apply` to write, `dg drop <id>` to unstage[/]")
 
 
 def _raw_op(o: dict) -> str:
@@ -2599,24 +2663,20 @@ def task_node(tid: str) -> None:
 
 
 @task_app.command("pending", rich_help_panel=T_STAGE)
-def task_pending_cmd() -> None:
-    """What is staged for the task store but not yet applied."""
-    ops = pending.load(task_pending.path())
-    if not ops:
-        con.print("[dim]nothing staged[/]")
-        return
-    t = Table(header_style="bold", title="Staged tasks")
-    for c in ("#", "id", "Op", "Task", "Detail"):
-        t.add_column(c)
-    for i, o in enumerate(ops):
-        # `.get` on the kind *and* on every field it reads: a known kind
-        # missing a required field is the same unlistable tray as an unknown
-        # kind, and both are what a hand-edit looks like. See `pending_cmd`.
-        detail = _TASK_DETAIL.get(o.get("op"), _raw_op)(o)
-        t.add_row(str(i), o.get("ref") or "—", _x(o.get("op") or "?"),
-                  _op_subject(o, "task"), detail)
-    con.print(t)
-    con.print("[dim]`dg apply` to write, `dg task drop-op <id>` to unstage[/]")
+def task_pending_cmd(
+    full: bool = typer.Option(False, "--full",
+                              help="The table, with no detail clipped."),
+) -> None:
+    """What is staged for the task store but not yet applied.
+
+    One line per op by default, the table under `--full` — `dg pending`'s twin,
+    through the same renderer, because the two trays are reviewed the same way.
+    """
+    _tray(pending.load(task_pending.path()), full, details=_TASK_DETAIL,
+          subject="task", heading="STAGED TASKS", title="Staged tasks",
+          column="Task",
+          actions="`dg apply` to write, `dg task drop-op <id>` to unstage",
+          expand="dg task pending --full")
 
 
 _TASK_DETAIL = {
