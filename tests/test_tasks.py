@@ -1070,6 +1070,59 @@ def test_the_tree_names_a_task_it_cannot_find(run_cli):
     assert res.exit_code == 1 and "T99" in res.output
 
 
+def _cycle_beside_the_work(task_store):
+    """Two tasks that precede each other, and nothing else touching them.
+
+    Hand-written, because `task_acyclic` refuses to apply a cycle — which is
+    the point: the store this draws is one that got here by being edited, and
+    the tree is where somebody would go to find out what is wrong with it.
+    """
+    raw = json.loads((task_store / "tasks.json").read_text())
+    raw["tasks"] += [{"id": "T08", "title": "Ring one", "area": "Alpha",
+                      "status": "TODO"},
+                     {"id": "T09", "title": "Ring two", "area": "Alpha",
+                      "status": "TODO"}]
+    raw["edges"] += [{"from": "T08", "to": ["T09"], "kind": "precedes"},
+                     {"from": "T09", "to": ["T08"], "kind": "precedes"}]
+    (task_store / "tasks.json").write_text(json.dumps(raw))
+
+
+def test_a_cycle_beside_the_work_is_named_not_dropped(run_cli, task_store):
+    """The roots still lead somewhere, so the tree draws — and everything
+    inside the ring is exactly what no root reaches. Drawing the rest and
+    saying nothing reports a whole region of the graph as absent."""
+    _cycle_beside_the_work(task_store)
+    out = run_cli("task", "tree").output
+    assert "T08" in out and "T09" in out
+    assert "no root reaches T08, T09" in out
+    assert "T01" in out                      # the reachable work still drawn
+    assert out.count("(above)") == 1         # the ring drawn once, not twice
+
+
+def test_a_store_that_is_all_cycle_still_says_so(run_cli, task_store):
+    """The case that already worked, kept: no roots at all is the other half
+    of the same failure, and closing one must not open the other."""
+    raw = {"areas": ["Alpha"],
+           "tasks": [{"id": "T08", "title": "Ring one", "area": "Alpha",
+                      "status": "TODO"},
+                     {"id": "T09", "title": "Ring two", "area": "Alpha",
+                      "status": "TODO"}],
+           "edges": [{"from": "T08", "to": ["T09"], "kind": "precedes"},
+                     {"from": "T09", "to": ["T08"], "kind": "precedes"}]}
+    (task_store / "tasks.json").write_text(json.dumps(raw))
+    out = run_cli("task", "tree").output
+    assert "has a cycle" in out and "T08" in out and "T09" in out
+
+
+def test_a_tree_rooted_by_hand_does_not_complain_about_the_rest(run_cli,
+                                                                task_store):
+    """`--root` is a request for one branch. Everything outside it is meant to
+    be absent, so the reachability check belongs to the rootless walk only."""
+    _cycle_beside_the_work(task_store)
+    out = run_cli("task", "tree", "T02").output
+    assert "no root reaches" not in out
+
+
 def test_areas_counts_the_work_where_there_is_only_work(run_cli):
     """`dg areas` used to exit 2 in a project that tracks only work — a
     decision command failing rather than degrading, which is the thing every

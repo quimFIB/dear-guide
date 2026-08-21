@@ -2890,6 +2890,12 @@ def task_tree(root: str = typer.Argument(None, help="Task to root at")) -> None:
 
     Roots are the tasks nothing precedes and nothing prompted. A task reached
     twice is drawn once and marked, as in `dg tree`.
+
+    Anything the walk cannot reach from a root is named rather than dropped.
+    A cycle is the only way that happens, `task_acyclic` refuses to apply one,
+    and a hand-edited store is where it comes from — but the tasks inside a
+    cycle are exactly the ones no root leads to, so drawing what is left and
+    saying nothing reports a whole region of the graph as absent.
     """
     tg = _tg()
     seen: set[str] = set()
@@ -2917,16 +2923,26 @@ def task_tree(root: str = typer.Argument(None, help="Task to root at")) -> None:
     else:
         roots = [t for t in sorted(tg.tasks)
                  if not tg.prerequisites(t) and not tg.discovered_during(t)]
-        # Only reachable from a hand-edited store — `task_acyclic` refuses to
-        # apply a cycle — but a tree that silently draws nothing is the worst
-        # way to report one, so every task becomes a root and the reason is
-        # said out loud.
+        # A cycle with no root outside it leaves nothing to draw from; one
+        # beside other work leaves the rest of the graph drawable and the cycle
+        # invisible. The second is the likelier shape and the easier to miss,
+        # so the reach is checked after the walk rather than guessed before it.
         if tg.tasks and not roots:
-            con.print("[yellow]every task has something before it — the "
-                      "ordering has a cycle; `dg check` names it[/]")
+            con.print("[yellow]every task has something before it — the graph "
+                      "has a cycle; `dg check` names it[/]")
             roots = sorted(tg.tasks)
         for r in roots:
             add(top, r)
+        stranded = sorted(set(tg.tasks) - seen)
+        if stranded:
+            con.print(f"[yellow]no root reaches {', '.join(stranded)} — they "
+                      f"are in a cycle; `dg check` names it[/]")
+            # One entry per cycle, not one per task in it: the first draws
+            # the ring, and the rest of the ring is `seen` by the time the
+            # loop reaches it.
+            for r in stranded:
+                if r not in seen:
+                    add(top, r)
     con.print(top)
 
 
