@@ -26,6 +26,13 @@ dg = "dgraph.cli:main"
 [project.entry-points.pytest11]
 dear-guide = "dgraph.testing"
 
+# The test modules import each other's helpers (`from tests.conftest import
+# bare`), which needs the repo root importable. `python -m pytest` puts it there
+# by accident of how `-m` works; the bare `pytest` console script does not, so
+# it is said here rather than left to depend on how the suite is invoked.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.setuptools]
 packages = ["dgraph"]
 
