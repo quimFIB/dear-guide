@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import os
 import pathlib
@@ -50,8 +51,12 @@ ELSEWHERE = "Beyond the decision graph"
 #: Panel, then the commands in it, both in the order `dg --help` shows them.
 #: Within a panel the sequence is the order you would meet them: what a person
 #: runs first, then the rarer neighbours, with anything destructive last.
+#:
+#: `"a/b"` is two names for one command, and reads as one line — two lines with
+#: the same description would leave a reader counting commands that do not
+#: exist, and looking for the difference between them.
 LAYOUT = (
-    (READ, ("show", "brief", "node", "context", "why", "tree", "path", "areas")),
+    (READ, ("show", "brief", "node", "why/context", "tree", "path", "areas")),
     (HONEST, ("check", "gate", "render")),
     (RECORD, ("add", "decide", "reopen", "confirm", "repair",
               "dep", "undep", "rm")),
@@ -89,13 +94,30 @@ def _ordered(layout) -> type[TyperGroup]:
     because somebody forgot to name it here would be a documentation bug that
     hides a feature, which is worse than an untidy tail. `test_cli.py` asserts
     the tail is empty, so the untidiness is caught rather than lived with.
+
+    A layout entry naming several commands with `/` collapses them into one
+    line, for aliases: Rich prints a row per name it is handed, so the way to
+    print one row for `why` and `context` is to hand it a single command
+    carrying both names. The first name wins the help text and, since the row
+    is only a label, any of them still runs.
     """
     order = [name for _, names in layout for name in names]
 
     class Ordered(TyperGroup):
         def list_commands(self, ctx):
-            known = [n for n in order if n in self.commands]
-            return known + sorted(set(self.commands) - set(known))
+            known = [n for n in order
+                     if all(a in self.commands for a in n.split("/"))]
+            listed = {a for n in known for a in n.split("/")}
+            return known + sorted(set(self.commands) - listed)
+
+        def get_command(self, ctx, name):
+            if "/" in name and name not in self.commands:
+                cmd = super().get_command(ctx, name.split("/")[0])
+                if cmd is not None:
+                    cmd = copy.copy(cmd)
+                    cmd.name = name
+                return cmd
+            return super().get_command(ctx, name)
 
     return Ordered
 
@@ -458,8 +480,8 @@ def context(
 ) -> None:
     """Why this node is where it is: every premise it rests on.
 
-    Also spelled `dg why`, which is the question this answers and the one the
-    tool is named for.
+    `dg why` and `dg context` are the same command: `why` is the question this
+    answers and the one the tool is named for, `context` is what it prints.
 
     `dg node` shows one decision; this shows the reasoning behind it. By
     default that is the chain schematically — the shape on one line, then one

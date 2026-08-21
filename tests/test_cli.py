@@ -1562,8 +1562,14 @@ def test_a_composed_add_never_reaches_the_tray_unvetted(run, store, g,
 
 
 def _panels(layout):
-    """`{command name: panel}` from a LAYOUT declaration."""
-    return {name: panel for panel, names in layout for name in names}
+    """`{command name: panel}` from a LAYOUT declaration.
+
+    An entry naming aliases (`"why/context"`) is one help line but several
+    commands, and each of them still has to exist and declare the panel.
+    """
+    return {alias: panel
+            for panel, names in layout for name in names
+            for alias in name.split("/")}
 
 
 @pytest.mark.parametrize(
@@ -1636,6 +1642,17 @@ def test_the_rendered_order_follows_the_layout_not_the_file(tmp_path):
     assert registered.index("export") < registered.index("init")
     assert at("add") < at("decide")
     assert at("init") < at("export")
+
+
+def test_aliases_read_as_one_line(tmp_path):
+    """`why` and `context` are one command, and two lines carrying the same
+    description would read as two — a reader would go looking for the
+    difference. Both still run."""
+    out = runner.invoke(app, ["--project", str(tmp_path), "--help"]).output
+    assert "│ why/context " in out
+    assert "│ why " not in out and "│ context " not in out
+    for name in ("why", "context"):
+        assert runner.invoke(app, [name, "--help"]).exit_code == 0
 
 
 def test_the_order_inside_a_panel_is_the_order_you_meet_them(tmp_path):
