@@ -46,7 +46,8 @@ HONEST = "Keeping it honest"
 RECORD = "Recording decisions"
 STAGE = "The staging area — nothing is written until `apply`"
 STORE = "Starting a graph, and moving one"
-ELSEWHERE = "Beyond the decision graph"
+WORK = "Tracking the work — its own graph, and its own help screen"
+WEB = "In a browser"
 
 #: Panel, then the commands in it, both in the order `dg --help` shows them.
 #: Within a panel the sequence is the order you would meet them: what a person
@@ -62,24 +63,40 @@ LAYOUT = (
               "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
     (STORE, ("init", "import", "import-md", "export")),
-    (ELSEWHERE, ("serve", "task")),
+    (WORK, ("task",)),
+    (WEB, ("serve",)),
 )
 
 #: The same for `dg task --help`, and deliberately parallel: the two stores are
 #: peers, and a reader who has learned one help screen should not have to learn
-#: the other. There is no `check` here because `dg check` judges both stores.
+#: the other. So a command that exists on both sides sits under the heading
+#: that means the same thing — `render` is honesty about a generated view in
+#: both, `export` is half of moving a store in both — and `test_cli.py` checks
+#: that pairing rather than trusting it. `drop` is the one deliberate
+#: exception, and is named there.
+#:
+#: There is no `check` here because `dg check` judges both stores.
 T_READ = "Reading the work"
+T_HONEST = "Keeping it honest"
 T_RECORD = "Recording work"
 T_STAGE = "The staging area — nothing is written until `apply`"
 T_STORE = "Starting a backlog, and moving one"
 
 TASK_LAYOUT = (
-    (T_READ, ("node", "export")),
+    (T_READ, ("node",)),
+    (T_HONEST, ("render",)),
     (T_RECORD, ("add", "start", "done", "drop", "link", "unlink",
                 "dep", "undep", "rm")),
     (T_STAGE, ("pending", "drop-op", "clear")),
-    (T_STORE, ("init", "import", "render")),
+    (T_STORE, ("init", "import", "export")),
 )
+
+#: What each panel is *for*, so the two screens can be checked against each
+#: other rather than read side by side by somebody who remembers to.
+ROLES = {READ: "read", HONEST: "honest", RECORD: "record", STAGE: "stage",
+         STORE: "store", WORK: "work", WEB: "web",
+         T_READ: "read", T_HONEST: "honest", T_RECORD: "record",
+         T_STAGE: "stage", T_STORE: "store"}
 
 
 def _ordered(layout) -> type[TyperGroup]:
@@ -1822,7 +1839,7 @@ task_app = typer.Typer(
     help="Track the work a project has to do. tasks.json is the source of "
          "truth; tasks.md is generated from it.",
 )
-app.add_typer(task_app, name="task", rich_help_panel=ELSEWHERE)
+app.add_typer(task_app, name="task", rich_help_panel=WORK)
 
 TASK_STYLE = {
     "TODO": "bold red",
@@ -2719,7 +2736,7 @@ def task_clear() -> None:
     con.print("[green]cleared[/]")
 
 
-@task_app.command("export", rich_help_panel=T_READ)
+@task_app.command("export", rich_help_panel=T_STORE)
 def task_export(
     tid: str = typer.Argument(None, help="Scope to one task"),
 ) -> None:
@@ -2781,7 +2798,7 @@ def task_import(
            f"{len(tg.tasks)} tasks, {len(tg.edges)} edges", "the file")
 
 
-@task_app.command("render", rich_help_panel=T_STORE)
+@task_app.command("render", rich_help_panel=T_HONEST)
 def task_render_cmd() -> None:
     """Regenerate tasks.md from the store."""
     task_render.write(_tg())
@@ -2940,7 +2957,7 @@ def import_md(
            "the source document")
 
 
-@app.command(rich_help_panel=ELSEWHERE)
+@app.command(rich_help_panel=WEB)
 def serve(
     port: int = typer.Option(8765, "--port", "-p"),
     detach: bool = typer.Option(False, "--detach", "-d",

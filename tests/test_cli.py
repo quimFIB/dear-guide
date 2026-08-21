@@ -1610,6 +1610,42 @@ def test_each_command_declares_the_panel_the_layout_puts_it_in(typer_app, layout
         assert g.rich_help_panel == want[g.name], g.name
 
 
+def test_the_two_help_screens_agree_on_what_a_heading_means():
+    """`dg task --help` is meant to be readable by someone who has read
+    `dg --help`, which only works if a command that exists on both sides sits
+    under the heading that means the same thing. It drifted once already:
+    `render` was honesty about a generated view on one screen and part of
+    starting a store on the other, and `export` was half of moving a store on
+    one and a reading command on the other.
+
+    Checked through `ROLES` rather than by comparing the headings themselves,
+    because the wording differs on purpose — "Reading the graph" and "Reading
+    the work" are the same heading about different stores.
+    """
+    dec = {n: cli.ROLES[p] for n, p in _panels(cli.LAYOUT).items()}
+    tsk = {n: cli.ROLES[p] for n, p in _panels(cli.TASK_LAYOUT).items()}
+    for name in sorted((set(dec) & set(tsk)) - set(DISAGREE)):
+        assert dec[name] == tsk[name], (
+            f"`dg {name}` and `dg task {name}` read under different headings: "
+            f"{dec[name]} vs {tsk[name]}")
+
+
+#: The one name the two screens disagree on, and why it is not a defect.
+DISAGREE = {
+    "drop": "`dg drop` unstages a staged op; `dg task drop` abandons a task. "
+            "The task tray's unstage is `drop-op` precisely because this name "
+            "was already taken by the more useful meaning.",
+}
+
+
+def test_the_one_heading_disagreement_is_the_deliberate_one():
+    """So that closing it reads as a decision rather than as tidying up."""
+    dec = {n: cli.ROLES[p] for n, p in _panels(cli.LAYOUT).items()}
+    tsk = {n: cli.ROLES[p] for n, p in _panels(cli.TASK_LAYOUT).items()}
+    for name in DISAGREE:
+        assert dec[name] != tsk[name], name
+
+
 def test_the_help_renders_the_panels_in_the_declared_order(tmp_path):
     """Rich builds a panel per heading in the order `list_commands` yields
     them, which is the property `_ordered` exists for."""
