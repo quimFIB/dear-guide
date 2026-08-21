@@ -74,7 +74,7 @@ Vertices and edges, nothing else.
 | `dg context ID` | the chain of premises it rests on. Takes a `T` id too; `--full` for the answers, sources and falsifiers |
 | `dg path A B` | the chain of evidence between two decisions |
 | `dg tree` | the graph as a tree |
-| `dg areas` | counts by area and status |
+| `dg areas` | counts by area and status, one table per store |
 | `dg export ID` | the same data as JSON, for machine reading. `dg import` reads it back unchanged |
 | `dg check` | every invariant, and it names the rule that broke |
 | `dg import FILE` | adopt a `decisions.json` prepared elsewhere or exported from another project, refusing one that breaks invariants |
@@ -184,6 +184,7 @@ question with a falsifier. They never share a store.
 
 ```sh
 dg task                                   # outstanding work, and what is startable
+dg task tree                              # the order of it: prerequisites, then what they release
 dg task add --id T14 --title "Build the HNSW index and sweep efSearch" --area Search \
             --after T09 --because D02
 dg task done T14 --outcome "PR #241"

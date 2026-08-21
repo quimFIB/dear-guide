@@ -140,7 +140,7 @@ dg context D04      # ...and the chain of premises it rests on
 dg context D04 --full   # ...with every answer, source and falsifier
 dg path D01 D04     # the chain of evidence between two decisions
 dg tree             # the DAG
-dg areas            # counts by area and status
+dg areas            # counts by area and status, one table per store
 ```
 
 `dg`, `dg task`, `dg context` and both `pending` trays are **short by

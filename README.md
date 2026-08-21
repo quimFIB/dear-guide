@@ -155,6 +155,7 @@ dg context D06                           # the same command, its other name
 dg context T14                           # the same for a piece of work
 dg path D01 D09                          # the chain of evidence between two
 dg tree                                  # the DAG
+dg areas                                 # counts by area, in both stores
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg reopen D06                            # stage a reopen + its propagation
@@ -251,6 +252,7 @@ dg task add --id T02 --title "Build the HNSW index" --after T01 --because D01
 dg task                                  # outstanding work, and what is startable
 dg task --full                           # ...as a table, with nothing clipped
 dg task node T02                         # one task in full, with its premise
+dg task tree                             # the order of the work, from what can start
 dg task start T02                        # ...pick it up
 dg task done T02 --outcome "PR #241"
 dg task drop T02 --why "the index ships with the library"

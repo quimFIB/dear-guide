@@ -424,6 +424,11 @@ Each kind is therefore walked as its own subgraph, and only `precedes` feeds
 readiness. What `prompted` is for is the question the ordering cannot answer:
 when work is abandoned, which chores existed only because of it.
 
+`dg task tree` draws that separation rather than flattening it: the spine is
+`precedes`, so reading down a branch is reading an order of work, and prompted
+work hangs off the task that turned it up marked as what it is. A tree that drew
+both alike would assert the ordering the second kind exists to avoid asserting.
+
 ### What linking the two graphs buys
 
 One optional field ties them: `--because D01` says *this work exists because of

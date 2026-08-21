@@ -83,7 +83,7 @@ T_STAGE = "The staging area — nothing is written until `apply`"
 T_STORE = "Starting a backlog, and moving one"
 
 TASK_LAYOUT = (
-    (T_READ, ("node",)),
+    (T_READ, ("node", "tree")),
     (T_HONEST, ("render",)),
     (T_RECORD, ("add", "start", "done", "drop", "link", "unlink",
                 "dep", "undep", "rm")),
@@ -542,18 +542,50 @@ app.command(name="why", rich_help_panel=READ)(context)
 
 @app.command(rich_help_panel=READ)
 def areas() -> None:
-    """Counts by area and status."""
-    g = _g()
-    statuses = sorted({v.base_status for v in g.vertices.values()})
-    t = Table(header_style="bold")
+    """Counts by area and status, in whichever stores this project has.
+
+    Two tables rather than one, because the two stores share their areas and
+    not their vocabularies: `OPEN` and `TODO` are not columns of the same
+    table, and a row summing across them would be counting questions and work
+    as if they were the same thing. Sharing the *areas* is the point — the same
+    corner of a project, seen as what is undecided and as what is outstanding.
+
+    A project with only one store gets only its table, and pays nothing for the
+    other.
+    """
+    proj = project.find()
+    g = _decisions_or_none()
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    if g is None and tg is None:
+        con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
+                  f"[dim]run `dg init` there, or pass --project PATH[/]")
+        raise typer.Exit(2)
+    if g is not None:
+        _area_counts("Decisions", g.areas, list(g.vertices.values()),
+                     lambda v: v.base_status, _style)
+    if tg is not None:
+        _area_counts("Tasks", tg.areas, list(tg.tasks.values()),
+                     lambda t: t.status,
+                     lambda s: TASK_STYLE.get(s, "white"))
+
+
+def _area_counts(title: str, areas, items: list, status_of, style) -> None:
+    """One store's areas against its own statuses.
+
+    Written once and called twice rather than duplicated per store: the two
+    tables are the same question asked of different records, and the way they
+    stop agreeing on what a count means is by being two pieces of code.
+    """
+    statuses = sorted({status_of(i) for i in items})
+    t = Table(header_style="bold", title=title)
     t.add_column("Area")
-    for s in statuses:
-        t.add_column(s, justify="right", style=_style(s))
+    for st in statuses:
+        t.add_column(st, justify="right", style=style(st))
     t.add_column("Total", justify="right")
-    for a in g.areas:
-        vs = [v for v in g.vertices.values() if v.area == a]
-        t.add_row(_x(a), *[str(sum(1 for v in vs if v.base_status == s))
-                           for s in statuses], str(len(vs)))
+    for a in areas:
+        rows = [i for i in items if i.area == a]
+        t.add_row(_x(a), *[str(sum(1 for i in rows if status_of(i) == st))
+                           for st in statuses], str(len(rows)))
     con.print(t)
 
 
@@ -2677,6 +2709,59 @@ def task_node(tid: str) -> None:
         lines += ["", "[bold]Note[/]", _x(t.note)]
     con.print(Panel("\n".join(lines), title=tid,
                     border_style=TASK_STYLE.get(t.status, "white")))
+
+
+@task_app.command("tree", rich_help_panel=T_READ)
+def task_tree(root: str = typer.Argument(None, help="Task to root at")) -> None:
+    """The work as a tree, from what can start first.
+
+    The spine is `precedes` — what must be resolved before what — so reading
+    down a branch is reading an order of work. `prompted` children hang off the
+    task whose doing turned them up and say so, because the two edges are
+    different claims: one asserts an ordering, the other only records where the
+    work came from, and drawing them alike would assert the ordering that
+    kind exists to avoid asserting.
+
+    Roots are the tasks nothing precedes and nothing prompted. A task reached
+    twice is drawn once and marked, as in `dg tree`.
+    """
+    tg = _tg()
+    seen: set[str] = set()
+
+    def add(parent: Tree, tid: str, note: str = "") -> None:
+        t = tg.tasks[tid]
+        label = (f"[bold]{tid}[/] {_x(t.title)} "
+                 f"[{TASK_STYLE.get(t.status, 'white')}]{t.status}[/]{note}")
+        if tid in seen:
+            parent.add(label + " [dim](above)[/]")
+            return
+        seen.add(tid)
+        node = parent.add(label)
+        for c in tg.unblocks(tid):
+            add(node, c)
+        for c in tg.prompted(tid):
+            add(node, c, " [dim]— turned up doing it[/]")
+
+    top = Tree("task graph")
+    if root:
+        if root not in tg.tasks:
+            con.print(f"[red]unknown task {_x(root)}[/]")
+            raise typer.Exit(1)
+        add(top, root)
+    else:
+        roots = [t for t in sorted(tg.tasks)
+                 if not tg.prerequisites(t) and not tg.discovered_during(t)]
+        # Only reachable from a hand-edited store — `task_acyclic` refuses to
+        # apply a cycle — but a tree that silently draws nothing is the worst
+        # way to report one, so every task becomes a root and the reason is
+        # said out loud.
+        if tg.tasks and not roots:
+            con.print("[yellow]every task has something before it — the "
+                      "ordering has a cycle; `dg check` names it[/]")
+            roots = sorted(tg.tasks)
+        for r in roots:
+            add(top, r)
+    con.print(top)
 
 
 @task_app.command("pending", rich_help_panel=T_STAGE)

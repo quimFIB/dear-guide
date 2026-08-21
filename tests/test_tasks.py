@@ -1011,3 +1011,81 @@ def test_a_task_op_is_addressable_by_id(run_cli):
     assert [o["id"] for o in pending.load(task_pending.path())] == ["T09"]
     res = run_cli("task", "drop-op", "zzzz")
     assert res.exit_code == 1 and "zzzz" in res.output
+
+
+# ---- the shape of the work ------------------------------------------------
+#
+# `dg task tree` and `dg areas`, the two readings the task store did not have.
+# Both are the decision side's commands asked of the other store, so what is
+# pinned here is mostly that they answer the *task* question rather than a
+# translated decision one: the spine is `precedes`, and the two stores' status
+# vocabularies never share a table.
+
+
+def test_the_tree_is_the_ordering_from_what_can_start_first(run_cli):
+    """T01 → T02 → T03 in the fixture, and T04 waits on nothing."""
+    out = run_cli("task", "tree").output
+    at = lambda t: out.index(t)
+    assert at("T01") < at("T02") < at("T03")
+    for tid in ("T01", "T02", "T03", "T04"):
+        assert tid in out
+    # Indented under its prerequisite, not beside it.
+    t01 = next(ln for ln in out.splitlines() if "T01" in ln)
+    t02 = next(ln for ln in out.splitlines() if "T02" in ln)
+    assert t02.index("T02") > t01.index("T01")
+
+
+def test_prompted_work_hangs_off_what_turned_it_up_and_says_so(run_cli):
+    """The two edge kinds are different claims. `prompted` records where work
+    came from and asserts no ordering, so it is drawn under its origin and
+    marked rather than shown as a prerequisite chain."""
+    run_cli("task", "dep", "T04", "--discovered-during", "T01")
+    assert run_cli("apply").exit_code == 0
+    out = run_cli("task", "tree").output
+    lines = out.splitlines()
+    t01 = next(ln for ln in lines if "T01" in ln)
+    t04 = next(ln for ln in lines if "T04" in ln)
+    assert "turned up doing it" in t04
+    # And it is no longer a root: it is indented under T01, below it.
+    assert lines.index(t04) > lines.index(t01)
+    assert t04.index("T04") > t01.index("T01")
+
+
+def test_a_task_reached_twice_is_drawn_once(run_cli):
+    """`dg tree`'s rule, because a DAG is not a tree and the second drawing is
+    the one that would be believed."""
+    run_cli("task", "dep", "T03", "--after", "T04")
+    assert run_cli("apply").exit_code == 0
+    out = run_cli("task", "tree").output
+    assert out.count("(above)") == 1
+
+
+def test_the_tree_can_be_rooted_at_one_task(run_cli):
+    out = run_cli("task", "tree", "T02").output
+    assert "T02" in out and "T03" in out and "T01" not in out
+
+
+def test_the_tree_names_a_task_it_cannot_find(run_cli):
+    res = run_cli("task", "tree", "T99")
+    assert res.exit_code == 1 and "T99" in res.output
+
+
+def test_areas_counts_the_work_where_there_is_only_work(run_cli):
+    """`dg areas` used to exit 2 in a project that tracks only work — a
+    decision command failing rather than degrading, which is the thing every
+    other cross-store reading avoids."""
+    res = run_cli("areas")
+    assert res.exit_code == 0
+    assert "Tasks" in res.output and "Decisions" not in res.output
+    assert "TODO" in res.output
+
+
+def test_areas_keeps_the_two_vocabularies_in_two_tables(run_cli, store):
+    """`OPEN` and `TODO` are not columns of the same table: a row summing
+    across them would be counting questions and work as one thing. The areas
+    are what the two stores share."""
+    out = run_cli("areas").output
+    assert "Decisions" in out and "Tasks" in out
+    assert out.index("Decisions") < out.index("Tasks")
+    for column in ("OPEN", "DECIDED", "TODO", "DONE"):
+        assert column in out
