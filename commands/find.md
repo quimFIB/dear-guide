@@ -18,8 +18,11 @@ alternates two.
 
 The aside on each row says *why* it matched, so a row can be judged without
 opening it. An empty result means nothing in the store contains that string —
-it is a fact, not a threshold, and worth trusting. A malformed query says so
-instead, and the two are different exit codes.
+it is a fact, not a threshold, and worth trusting. A query that cannot be
+answered says so instead, and the two are different exit codes: a misspelt
+field, an id that names no record, a predicate this project has no store for,
+and two terms no single store can satisfy all report themselves rather than
+coming back empty.
 
 `--ids` gives bare ids for a pipe: `dg find 'is:decidable' --ids` names every
 question that could be settled right now, and `dg context <id>` on each gives

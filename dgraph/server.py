@@ -8,13 +8,26 @@ implementation of the compose buffer.
 exits — the `git commit` model, driven from the browser instead of the terminal.
 Two consequences shape this module:
 
-- **Mutating routes require a token.** Any page in the user's browser can POST
-  to a localhost server; it just cannot read the response cross-origin. That was
-  tolerable while the API only moved data around, but a route that starts a
-  process is worth guarding properly, so the token is minted per run, embedded
-  in the served page, and demanded back on every non-GET. A cross-origin script
-  cannot read it, and the custom header alone forces a preflight this server
-  never answers.
+- **A route requires the token when the caller controls its effect or its
+  cost.** Any page in the user's browser can reach a localhost server; it just
+  cannot read the response cross-origin. That is tolerable for a route that
+  hands back a fixed payload — asking twice costs what asking once did — and it
+  is not tolerable for `/api/compose`, which starts a process, or for
+  `/api/find`, which runs a caller-supplied program against the store.
+
+  The line used to be drawn at GET versus POST, on the stated grounds that
+  "the API only moves data around". `/api/find` made that false: it is a read,
+  and its cost is chosen by whoever calls it. A regex of about twenty
+  characters buys unbounded CPU (see `query._may_blow_up` for how far input
+  validation gets, which is not far enough). GET/POST was always a proxy for
+  effect-and-cost, so the guard now names the thing it was standing in for, and
+  `GUARDED_READS` is the list of reads that qualify.
+
+  The token is minted per run, embedded in the served page, and demanded back.
+  Its secrecy is the smaller half of why this works: a `no-cors` request cannot
+  carry a custom header at all, and a `cors` one carrying `X-DG-Token` triggers
+  a preflight this server never answers. *Any* required custom header would
+  close the cross-origin path; the token also closes the same-origin one.
 - **One editor at a time.** There is a single buffer per project, the same
   property `COMMIT_EDITMSG` has, so a second request is refused rather than
   allowed to overwrite a buffer someone is typing in.
@@ -41,6 +54,18 @@ STATIC = Path(__file__).resolve().parent / "static"
 TOKEN = secrets.token_urlsafe(24)
 TOKEN_HEADER = "X-DG-Token"
 TOKEN_MARK = "__DG_TOKEN__"
+
+#: Reads that require the token anyway, because the caller chooses what they
+#: cost. Exactly one so far: `/api/find` runs a caller-supplied regex over every
+#: prose field of every record, and no cap on the query text bounds that —
+#: `(.|.|.){20}ZZZZ` is eighteen characters and does not finish. Every other GET
+#: here returns a fixed payload, where being made to answer twice costs what
+#: answering once did.
+#:
+#: `/api/health` is deliberately *not* in this set: `probe()` calls it without a
+#: token to find out whether a server is already running, which is the one thing
+#: a stranger may usefully learn.
+GUARDED_READS = frozenset({"/api/find"})
 
 #: The only Host headers this loopback server answers. A DNS-rebound page — an
 #: attacker's hostname pointed at 127.0.0.1 — connects to the same socket but
@@ -335,6 +360,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if not self._host_ok():
             return
+        if urlparse(self.path).path in GUARDED_READS and not self._authed():
+            return
         try:
             if self.path in ("/", "/index.html"):
                 self._send(200, self._page(), "text/html; charset=utf-8")
@@ -352,7 +379,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(joined_payload(*_stores()))
             elif self.path == "/api/task-pending":
                 self._json(pending.load(task_pending.path()))
-            elif self.path.startswith("/api/find"):
+            elif urlparse(self.path).path == "/api/find":
+                # The path alone, not a prefix: `startswith` answered
+                # `/api/findXYZ` as a find, which is the only route here that
+                # did not have to be spelled correctly.
                 self._json(find_payload(parse_qs(
                     urlparse(self.path).query).get("q", [""])[0]))
             elif self.path == "/api/health":

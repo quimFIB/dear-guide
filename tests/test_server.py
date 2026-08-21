@@ -716,3 +716,57 @@ def test_the_page_and_the_cli_agree(srv, store):
     out = CliRunner().invoke(
         app, ["--project", str(store), "find", "is:unsettled", "--ids"])
     assert d["matched"]["decisions"] == out.stdout.split()
+
+
+def test_a_contradictory_query_is_a_fault_and_not_an_empty_filter(srv, dual):
+    """`matched: {}` was the one value the page's convention had no meaning
+    for: `null` means "not filtered" and an empty list means "filtered, nothing
+    here", but every lookup into `{}` is `undefined`, which `passes()` reads as
+    unfiltered. So the canvas drew every node under a "0 matches" label — the
+    reading worse than either honest answer."""
+    code, d = jreq(srv, "/api/find?q=falsifier:corpus%20because:D05")
+    assert code == 200 and "fault" in d and "matched" not in d
+
+
+def test_the_endpoint_is_not_matched_by_prefix(srv, store):
+    """`startswith` answered `/api/findXYZ` as a find — the only route here
+    that did not have to be spelled correctly."""
+    code, _ = jreq(srv, "/api/findXYZ?q=is:unsettled")
+    assert code == 404
+
+
+def test_a_pattern_that_could_wedge_the_server_is_refused(srv, store):
+    """This route is a GET, so the token never applies, and `Host: 127.0.0.1`
+    is what a no-cors `fetch` from any page sends anyway. An unbounded pattern
+    here parks a thread that cannot be interrupted."""
+    code, d = jreq(srv, "/api/find?q=%2F(a%2B)%2B%24%2F")
+    assert code == 200 and "backtrack" in d["fault"]
+
+
+def test_find_requires_the_token_although_it_is_a_read(srv, store):
+    """The GET/POST line moved, and this is where it moved to.
+
+    Every other read here hands back a fixed payload, so being tricked into
+    answering costs what answering normally costs. `/api/find` runs a
+    caller-supplied regex over every prose field of every record, and no cap on
+    the query text bounds that — `(.|.|.){20}ZZZZ` is eighteen characters and
+    does not finish. GET versus POST was always a proxy for effect-and-cost;
+    this route is the case that made the proxy wrong."""
+    code, _ = jreq(srv, "/api/find?q=is:unsettled", token=False)
+    assert code == 403
+
+
+def test_the_ordinary_reads_still_need_no_token(srv, store):
+    """The rule narrowed to what it is actually about, rather than widening to
+    everything. A fixed payload stays reachable, and `probe()` depends on
+    `/api/health` answering without one."""
+    for path in ("/api/graph", "/api/pending", "/api/health", "/api/tasks"):
+        code, _ = jreq(srv, path, token=False)
+        assert code == 200, path
+
+
+def test_find_still_answers_the_page(srv, store):
+    """`app.html` sends the token on every request now, not only mutating ones,
+    so the search box is unaffected by the guard."""
+    code, d = jreq(srv, "/api/find?q=is:unsettled")
+    assert code == 200 and d["matched"]["decisions"] == ["D05", "D06"]

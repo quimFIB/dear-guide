@@ -71,9 +71,10 @@ def test_a_leading_dash_negates():
     assert query.parse("-status:DECIDED").terms[0].negated
 
 
-def test_a_query_round_trips_through_its_own_rendering():
-    """`str(Query)` is what `--json` reports back as the query it ran, so a
-    reader can tell what was actually asked."""
+def test_a_plain_query_renders_back_as_itself():
+    """Textual stability, where it holds. It is the *weaker* property — see
+    `test_a_query_round_trips_by_meaning_and_not_by_text`, which is the one
+    that matters and the one this used to stand in for."""
     for source in ("embedding -status:DECIDED", "status:OPEN or status:REOPENED",
                    'falsifier:"the corpus changes"', "/embed(ding)?s?/",
                    "is:ready under:D04", "date:>2026-01-01"):
@@ -256,9 +257,16 @@ def test_evidence_is_injected_and_finds_the_spike(both):
 def test_ready_needs_a_decision_store(task_store):
     """`cli._gated_by` returns None with no decision store, which is right for
     "can I start this?" and wrong for a predicate asserting a property — so the
-    predicate is absent rather than quietly meaning `TaskGraph.ready`."""
+    predicate is absent rather than quietly meaning `TaskGraph.ready`.
+
+    The **sentence** is asserted, not only the code. This test passed for a
+    while against `no predicate `is:ready` — try blocked, orphaned,
+    outstanding, resolved`, which denies a predicate that exists and sends the
+    reader to fix a spelling that was right. Checking the exit code alone is
+    what let that stand."""
     r = dg(task_store, "find", "is:ready")
-    assert r.exit_code == 2 and "is:ready" in r.stdout
+    assert r.exit_code == 2
+    assert "is:ready" in r.stdout and "decision store" in r.stdout
 
 
 def test_ready_is_available_once_both_stores_are(both):
@@ -340,3 +348,415 @@ def test_the_staging_tray_is_counted_and_not_searched(store, g):
     r = dg(store, "find", "staged")
     assert "D09" not in r.stdout
     assert "staged and not applied" in r.stdout
+
+
+# ---- the boundary between "no" and "wrong" -------------------------------
+#
+# Everything below guards the one property this command is shaped around, in
+# the four places it was found leaking: a contradiction between stores, a
+# mistyped id, a date operator that could never match, and a predicate whose
+# store is missing. Each is paired with the honest empty result it must stay
+# distinguishable from, because a fix that collapsed the pair the other way
+# would pass a one-sided test.
+
+
+def test_a_query_no_store_can_answer_is_a_fault(both):
+    """`falsifier:corpus because:D05` asks for a record that is both a decision
+    and a task. Each half is fine; together they scope to nothing.
+
+    This used to print the hint line and *nothing else* and exit 1, which reads
+    as "there is no such work" — a false fact produced by the one path through
+    `scope` that had no guard on it."""
+    r = dg(both, "find", "falsifier:corpus because:D05")
+    assert r.exit_code == 2
+    assert "falsifier:corpus" in r.stdout and "because:D05" in r.stdout
+
+
+def test_the_contradiction_names_both_halves(both):
+    """Naming only the term that tripped it would send the reader to delete the
+    wrong one."""
+    r = dg(both, "find", "is:settled is:outstanding")
+    assert "decisions" in r.stdout and "tasks" in r.stdout
+
+
+def test_a_genuinely_empty_answer_over_both_stores_is_still_exit_one(both):
+    """The other side of the pair. Fixing the contradiction by treating an
+    empty scope as an error would be easy to do by treating an empty *result*
+    as one too, and that would destroy the property instead of restoring it."""
+    r = dg(both, "find", "zzznotanywhereinthisstore")
+    assert r.exit_code == 1
+
+
+@pytest.mark.parametrize("q", ["under:D0", "under:NOSUCH", "above:NOSUCH",
+                               "because:NOSUCH", "waits:ZZZ", "after:NOSUCH"])
+def test_a_structural_term_naming_no_record_is_a_fault(both, q):
+    """`model.children`/`depends` skip ids that name no vertex — right for
+    traversal, because `validate()` is what reports a dangling edge, and wrong
+    here, where `under:D0` came back empty and read as *nothing is under D04*.
+
+    A dropped digit is the likeliest typo in this grammar and was the only one
+    with no rescue at all: the *did you mean* pass covers bare words only."""
+    assert dg(both, "find", q).exit_code == 2
+
+
+def test_a_subgraph_that_is_really_empty_is_still_exit_one(store):
+    """D03 exists and opens nothing, so `under:D03` is a fair question with
+    nothing in it. The id check must not swallow this case."""
+    assert dg(store, "find", "under:D03").exit_code == 1
+
+
+def test_a_mistyped_id_is_offered_a_near_miss(store):
+    """The rescue the prose terms already had, extended to the term class where
+    a typo was both likeliest and completely silent. A suggestion, never a
+    row: the empty result stays a fact only while nothing has been guessed."""
+    r = dg(store, "find", "under:D04x")
+    assert r.exit_code == 2 and "did you mean" in r.stdout and "D04" in r.stdout
+
+
+def test_the_link_terms_still_take_a_decision_id(both):
+    """`because:` lives on the task lens and its argument is a *decision* id.
+    Resolving it against the task ids would refuse every correct use of it, so
+    the lens carries where each structural term's argument lives."""
+    r = dg(both, "find", "because:D05", "--ids")
+    assert r.exit_code == 0 and r.stdout.split() == ["T02"]
+
+
+def test_the_date_operators_include_their_boundary(lens):
+    """`date:>=` used to parse as `>` with a stray `=` on the operand, and
+    `"2026-01-03" > "=2026-01-03"` is false for every date there will ever be.
+    So the most natural thing to type after learning `>` matched nothing, said
+    exit 1, and never explained itself."""
+    after = query.select(query.parse("date:>2026-01-03"), lens)
+    incl = query.select(query.parse("date:>=2026-01-03"), lens)
+    assert incl == ["D03", *after]
+
+
+def test_the_other_date_operators_still_mean_what_they_did(lens):
+    assert query.select(query.parse("date:<=2026-01-02"), lens) == ["D01", "D02"]
+    assert query.select(query.parse("date:<2026-01-02"), lens) == ["D01"]
+
+
+@pytest.mark.parametrize("bad", ["date:>", "date:<", "date:>=", "date:<="])
+def test_an_operator_with_no_date_is_a_fault(bad):
+    """`date:>` compared every date against the empty string and so matched
+    them all — the same failure pointing the other way."""
+    with pytest.raises(query.Fault):
+        query.parse(bad)
+
+
+def test_a_predicate_whose_store_is_absent_says_which_store(task_store):
+    """"no predicate `is:ready` — try blocked, orphaned, outstanding, resolved"
+    sends a reader to fix their spelling. Their spelling was right; the project
+    is missing the decision store that answers the question."""
+    r = dg(task_store, "find", "is:ready")
+    assert r.exit_code == 2 and "decision store" in r.stdout
+
+
+def test_an_unknown_predicate_is_still_reported_as_a_typo(task_store):
+    """The contrast: `is:notathing` really is a misspelling, and the offer list
+    is the right help for it."""
+    r = dg(task_store, "find", "is:notathing")
+    assert r.exit_code == 2 and "no predicate" in r.stdout
+
+
+# ---- the scanner keeps a value's parts apart -----------------------------
+
+
+def test_a_colon_inside_a_phrase_is_not_a_field_separator():
+    """The silent one. `parse` used to re-split the joined token on the first
+    `:`, so a quoted phrase beginning with a field name became a search of that
+    field — different rows, no fault, and no way to tell."""
+    t = query.parse('"note: nobody has"').terms[0]
+    assert t.kind == "prose" and t.value.raw == "note: nobody has"
+
+
+def test_a_regex_may_contain_a_colon():
+    """Same cause, louder symptom: this became a field named `\\x00foo`, and
+    the control character used to smuggle regex-ness through the string leaked
+    into the error message."""
+    t = query.parse("/foo:bar/").terms[0]
+    assert t.kind == "prose" and t.value.regex and t.value.raw == "foo:bar"
+
+
+def test_a_regex_may_contain_an_escaped_delimiter():
+    r"""`/https?:\/\//` could not be written at all: the backslash was copied
+    and the `/` after it closed the pattern."""
+    assert query.parse(r"/https?:\/\//").terms[0].value.raw == "https?://"
+
+
+def test_only_the_delimiter_is_escapable_inside_a_pattern():
+    r"""`\w` must survive as `\w`, and `\\` as `\\`. Collapsing every escape
+    would hand `re` a dangling backslash and stop `/a\\/` compiling."""
+    assert query.parse(r"/\w+/").terms[0].value.raw == r"\w+"
+    assert query.parse(r"/a\\/").terms[0].value.raw == "a\\\\"
+
+
+def test_quoting_makes_or_a_word_rather_than_the_operator():
+    """Quoting is how a reader says *literally this*. Testing the joined text
+    made `x "or" y` mean `x OR y` and left the word unsearchable."""
+    q = query.parse('x "or" y')
+    assert len(q.groups) == 3
+    assert query.parse('"or"').terms[0].value.raw == "or"
+
+
+@pytest.mark.parametrize("bad", ["/foo/i", '"ab"cd'])
+def test_text_after_a_closing_delimiter_is_a_fault(bad):
+    """`/foo/i` is somebody reaching for a regex flag. It used to be silently
+    joined up and searched for as `fooi`."""
+    with pytest.raises(query.Fault):
+        query.parse(bad)
+
+
+def test_the_regex_sentinel_is_gone():
+    """A control character carrying structure through a string is what made
+    the colon bug possible and what leaked into a user-facing message. `Tok`
+    carries it in a field instead."""
+    assert not hasattr(query, "REGEX_MARK")
+
+
+def test_a_query_round_trips_by_meaning_and_not_by_text():
+    """`str(Query)` is what `--json` reports as the query it ran and what the
+    browser writes back into its box, so it has to *parse back to the same
+    thing*. Asserting the string alone was the weaker property and is what hid
+    `title:/a b/` rendering as `title:"/a b/"` and returning a literal."""
+    def shape(q):
+        return [[(t.kind, t.name, t.negated,
+                  None if t.value is None else
+                  (t.value.raw, t.value.regex, t.value.op)) for t in grp]
+                for grp in q.groups]
+
+    for source in ("embedding -status:DECIDED", "status:OPEN or status:REOPENED",
+                   'falsifier:"the corpus changes"', "/embed(ding)?s?/",
+                   "is:ready under:D04", "date:>2026-01-01", "date:>=2026-01",
+                   "title:/a b/", "/a b/", "/foo:bar/", 'x "or" y',
+                   r"/https?:\/\//"):
+        once = query.parse(source)
+        assert shape(query.parse(str(once))) == shape(once), source
+
+
+# ---- cost -----------------------------------------------------------------
+
+
+def test_a_structural_term_is_walked_once_per_query(g):
+    """`fn(arg)` returns the same whole set for every candidate row, and it was
+    called once per row — building the set, testing one membership, throwing it
+    away. Six hundred vertices made `above:` take fifteen seconds against a
+    walk that costs twenty milliseconds.
+
+    Pinned as an invocation count rather than a duration: the timing would be
+    flaky and the invariant is the thing that actually matters."""
+    lens = query.decision_lens(g)
+    calls, real = [], lens.structural["under"]
+    lens.structural["under"] = lambda arg: (calls.append(arg), real(arg))[1]
+    got = query.select(query.parse("under:D01"), lens)
+    assert set(got) == g.descendants("D01")
+    assert len(calls) == 1, f"walked {len(calls)} times for {len(lens.ids)} rows"
+
+
+def test_a_term_whose_argument_is_not_in_this_store_skips_the_walk(both):
+    """`waits:` exists on both lenses, so a decision id used to be walked over
+    the task store too — ten of the twenty-four seconds that query took, spent
+    proving an empty set empty."""
+    from dgraph import cross
+    from dgraph.model import Graph
+    from dgraph.tasks import TaskGraph
+
+    lenses = cross.lenses(Graph.load(), TaskGraph.load(both / "tasks.json"))
+    tasks = next(l for l in lenses if l.kind == "tasks")
+    calls, real = [], tasks.structural["waits"]
+    tasks.structural["waits"] = lambda arg: (calls.append(arg), real(arg))[1]
+    query.select(query.parse("waits:D05"), tasks)
+    assert calls == []
+
+
+@pytest.mark.parametrize("pattern", [r"/(a+)+$/", r"/^(\w+\s+)+\w+!/",
+                                     r"/(x+x+)+y/"])
+def test_a_pattern_that_can_backtrack_exponentially_is_refused(pattern):
+    r"""`dg find '/^(\w+\s+)+\w+!/'` over six hundred records did not return
+    within two minutes, and the same query reaches `GET /api/find` from any
+    page in the browser. `re` has no timeout and a running match cannot be
+    interrupted, so the only place to stop it is before it starts."""
+    with pytest.raises(query.Fault):
+        query.parse(pattern)
+
+
+@pytest.mark.parametrize("pattern", [r"/embed(ding)?s?/", r"/\w+/",
+                                     r"/https?:\/\//", r"/D0[1-9]/",
+                                     r"/(foo|bar)/", r"/[A-Z]{2,4}-\d+/"])
+def test_an_ordinary_pattern_is_not_refused(pattern):
+    """The guard refuses a *shape*, so it has to leave the shapes people
+    actually write alone — `/embed(ding)?s?/` is the design's own example of
+    the escape hatch that makes exactness liveable."""
+    assert query.parse(pattern).terms[0].value.regex
+
+
+def test_a_query_past_the_cap_is_refused():
+    """`GET /api/find?q=` accepts whatever is sent, and it is a GET, so no
+    token stands in front of it."""
+    with pytest.raises(query.Fault):
+        query.parse("a" * (query.MAX_QUERY + 1))
+
+
+# ---- what the command reports --------------------------------------------
+
+
+def test_json_names_every_store_including_the_ones_out_of_scope(both):
+    """`null` for a store the query was not about, `[]` for one that was and
+    matched nothing. Omitting the key left a consumer unable to tell those
+    apart without re-parsing the query, and `data["decisions"]` raising on a
+    perfectly good answer. `find_payload` drew this distinction from the
+    start; the two surfaces now agree."""
+    data = json.loads(dg(both, "find", "falsifier:corpus", "--json").stdout)
+    assert data["tasks"] is None and isinstance(data["decisions"], list)
+    assert data["scope"] == ["decisions"]
+
+
+def test_a_fault_under_json_is_reported_as_json(store):
+    """Exit 2 already tells a script it asked wrong; it should not have to
+    parse a caret diagram to find out why."""
+    r = dg(store, "find", "zzz:x", "--json")
+    assert r.exit_code == 2
+    assert json.loads(r.stdout)["fault"].startswith("unknown field")
+
+
+@pytest.mark.parametrize("n", ["0", "-1"])
+def test_limit_counts_rows_and_so_starts_at_one(store, n):
+    """`--limit 0` printed a count and a "… 2 more" line with no rows above
+    it; `--limit -1` dropped the *last* row and reported it as withheld —
+    Python's slice semantics leaking through a flag."""
+    assert dg(store, "find", "is:unsettled", "--limit", n).exit_code == 2
+
+
+def test_the_withheld_field_list_is_checked_against_the_dataclasses():
+    """`decision_lens` cannot derive which stored fields are unsearchable — it
+    is an editorial judgement — but it can verify the list names real fields.
+    A rename that left the list behind would quietly make the old field
+    searchable, which is the drift `_fields_of` exists to prevent."""
+    with pytest.raises(AssertionError):
+        query._excluded("tasks", query.Value)
+
+
+def test_the_predicate_lists_match_the_lenses(g, tg):
+    """`DECISION_PREDICATES` and `TASK_PREDICATES` exist so that `cross.lenses`
+    can name what a *missing* store would have answered — a lens that was never
+    built cannot list its own vocabulary. They are checked here rather than
+    derived, so a predicate added without updating them fails a test instead of
+    becoming one that a project lacking the store denies rather than explains."""
+    assert set(query.DECISION_PREDICATES) == set(query.decision_lens(g).predicates)
+    assert set(query.TASK_PREDICATES) == set(query.task_lens(tg).predicates)
+
+
+def test_a_predicate_is_explained_when_its_store_will_not_parse(tmp_path, monkeypatch):
+    """The warning about an unreadable `decisions.json` is right and should be
+    the whole answer, not a preamble to a line denying the predicate."""
+    from dgraph import project
+    from conftest import TASK_FIXTURE
+
+    (tmp_path / "tasks.json").write_text(json.dumps(TASK_FIXTURE), encoding="utf-8")
+    (tmp_path / "decisions.json").write_text("{ not json", encoding="utf-8")
+    monkeypatch.setattr(project, "_override", tmp_path)
+    r = dg(tmp_path, "find", "is:unsettled")
+    assert r.exit_code == 2
+    assert "could not be read" in r.stdout and "decision store" in r.stdout
+    assert "no predicate" not in r.stdout
+
+
+# ---- exact where the vocabulary is closed, substring where it is prose ----
+
+
+def test_an_id_matches_exactly_and_not_as_a_substring(both):
+    """`id:0` used to return every record in this store, and in a larger one a
+    scattered eleven sharing nothing but a digit — the worse case, because it
+    can be mistaken for an answer rather than noticed as nonsense.
+
+    Ids are zero-padded, so every id below ten carries a `0`; the substring
+    rule was inherited from the generic field path rather than chosen."""
+    assert dg(both, "find", "id:D04", "--ids").stdout.split() == ["D04"]
+    assert dg(both, "find", "id:0").exit_code == 1
+    assert dg(both, "find", "id:D").exit_code == 1
+
+
+def test_an_id_still_ignores_case():
+    """Case-insensitive throughout, exact fields included."""
+    from dgraph.query import Value
+    assert Value("d04").same("D04")
+
+
+def test_a_pattern_overrides_exactness(both):
+    """The bargain that makes a strict default affordable: `/…/` is one
+    keystroke away and says out loud that an approximation is wanted, so the
+    closed-vocabulary fields can afford to be exact without losing anything."""
+    got = dg(both, "find", "id:/^D0/", "--ids").stdout.split()
+    assert got == ["D01", "D02", "D03", "D04", "D05", "D06"]
+
+
+def test_a_status_matches_the_base_and_the_stored_form(store):
+    """A blocked vertex stores `BLOCKED:D05` — the premise is part of the
+    string, and `status:BLOCKED` only ever worked because matching was a
+    substring test. `BLOCKED` is what the listing shows and so what a reader
+    types, so the base is offered alongside the stored value."""
+    assert dg(store, "find", "status:BLOCKED", "--ids").stdout.split() == ["D06"]
+    assert dg(store, "find", "status:BLOCKED:D05", "--ids").stdout.split() == ["D06"]
+
+
+def test_a_status_no_longer_matches_a_prefix_of_itself(store):
+    """The point of the change: `status:BLOCK` is not a status."""
+    assert dg(store, "find", "status:BLOCK").exit_code == 1
+
+
+def test_the_status_chips_in_the_page_still_resolve(store, g):
+    """`app.html` writes `status:` + `base(v.status)` into the query box, so
+    every base status the page can offer has to match something. This is the
+    coupling that a naive exactness change would have broken silently — the
+    chips would have emptied the canvas with no error anywhere."""
+    for status in {v.base_status for v in g.vertices.values()}:
+        assert dg(store, "find", f"status:{status}").exit_code == 0, status
+
+
+def test_an_area_matches_exactly(store):
+    assert dg(store, "find", "area:Beta", "--ids").stdout.split() == [
+        "D04", "D05", "D06"]
+    assert dg(store, "find", "area:Bet").exit_code == 1
+
+
+def test_the_prose_fields_still_match_substrings(store):
+    """Exactness stops at the closed vocabularies. Exact-matching a sentence is
+    never the question somebody has, so `note:` would have needed a regex every
+    single time — and a default that is never right is not a default."""
+    assert dg(store, "find", "note:nobody", "--ids").stdout.split() == ["D05"]
+    assert dg(store, "find", "falsifier:corpus", "--ids").stdout.split() == ["D04"]
+
+
+def test_every_exact_field_is_a_real_field(g, tg):
+    """`EXACT` is a retyped list like `_UNSEARCHABLE`, so it gets the same
+    bargain: verified against the lenses rather than trusted."""
+    for lens in (query.decision_lens(g), query.task_lens(tg)):
+        for name in query.EXACT:
+            assert name in lens.fields, name
+
+
+def test_a_negated_term_is_vacuously_true_where_the_field_is_absent(both):
+    """Kept deliberately, so pinned deliberately.
+
+    A task has no `falsifier`, so "this task's falsifier does not contain zzz"
+    is true of all of them. Making it *false* instead — the tempting patch —
+    would leave `x` and `-x` both false for the same record, which is not a
+    negation any more.
+
+    The oddity is the scoping rule rather than the logic: alone the term
+    narrows to decisions and the vacuity never shows, and it surfaces only in
+    an OR-group with a term the task store knows, because the group then keeps
+    both lenses."""
+    alone = dg(both, "find", "--ids", "--", "-falsifier:zzz").stdout.split()
+    assert alone == ["D01", "D02", "D03", "D04", "D05", "D06"]
+
+    grouped = dg(both, "find", "--ids", "--",
+                 "is:outstanding or -falsifier:zzz").stdout.split()
+    assert grouped == [*alone, "T01", "T02", "T03", "T04"]
+
+
+def test_the_positive_form_of_an_absent_field_never_matches(both):
+    """The asymmetry is only in the negated direction, which is the point: it
+    is negation doing its job, not a hole in the field table."""
+    got = dg(both, "find", "--ids", "is:outstanding or falsifier:zzz")
+    assert got.stdout.split() == ["T02", "T03", "T04"]

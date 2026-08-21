@@ -42,15 +42,66 @@ from dataclasses import dataclass, field
 PROSE = ("title", "note", "answer", "falsifier", "summary", "why", "outcome",
          "source")
 
+#: Fields whose values come from a closed vocabulary, and which therefore match
+#: **exactly** rather than as substrings. An id, a status and an area are things
+#: a record *is*, not prose it contains, and substring matching on them answered
+#: questions nobody asked: `id:0` returned every record in a small store, and in
+#: a larger one returned a scattered eleven that share nothing but a digit —
+#: which is the worse failure, because it can be mistaken for an answer.
+#:
+#: Exact is the right default here precisely *because* the escape hatch already
+#: exists. `id:/^D0/` says "the D0 block" in a way the reader can see, and a
+#: pattern still overrides exactness on these fields (see `Value.same`). The
+#: prose fields keep substring matching for the opposite reason: exact-matching
+#: a sentence is never the question, so `note:` would have required a regex
+#: every single time, and a default that is never right is not a default.
+EXACT = ("id", "status", "area")
+
 #: Fields compared as dates rather than matched as text, so `date:>2026-01-01`
 #: means what it looks like. ISO-8601 sorts lexicographically, which is why the
 #: comparison needs no parsing and a bare `date:2026-01` still prefix-matches.
 DATES = ("date", "done")
 
+#: Date comparisons, **longest first**, because that ordering is the whole fix
+#: for the worst bug this module has had. Matching one character at a time read
+#: `date:>=2026-01-01` as `>` with a stray `=` on the front of the operand, and
+#: `"2026-01-01" > "=2026-01-01"` is false for every date there will ever be —
+#: so the most natural thing to type after learning that `>` works matched
+#: nothing, always, and said exit 1: *you asked, and the answer is nothing*.
+#:
+#: Note what `>=` and `<=` mean against a *partial* date. `date:>=2026-01`
+#: includes all of January because every fuller date sorts after the prefix;
+#: `date:<=2026-01` excludes it, for the same reason. That is lexicographic
+#: comparison being honest rather than a special case worth building — a
+#: partial date is a prefix, and `<=` on a prefix is genuinely ambiguous. Use
+#: `date:<2026-02` for "before February", which says what it means.
+DATE_OPS = (">=", "<=", ">", "<")
 
-#: Marks a tokenised value as a regex. A control character, so it cannot occur
-#: in a query somebody typed and needs no escaping anywhere.
-REGEX_MARK = "\0"
+#: What a bare field name may not contain. Whitespace ends the token, `:` ends
+#: the name, and `"`/`/` open a value — so `date:2026/01` is a date, and
+#: `/foo:bar/` is a pattern with a colon in it rather than a field called
+#: `foo`.
+_NAME_STOP = ':"/'
+
+#: What each store answers on its own. Named here because `cross.lenses` has to
+#: say what a *missing* store would have answered, and a lens that was never
+#: built cannot list its own vocabulary — without this, `is:unsettled` against
+#: an unreadable `decisions.json` reported "no predicate `is:unsettled`", which
+#: denies a predicate that exists over a store that merely failed to parse.
+#: Checked against the built lenses by a test rather than derived from them,
+#: the same bargain `_UNSEARCHABLE` makes.
+DECISION_PREDICATES = ("settled", "unsettled", "provisional", "shaky",
+                       "blocked", "terminal", "superseded", "orphaned")
+TASK_PREDICATES = ("outstanding", "resolved", "blocked", "orphaned")
+
+#: Caps on what will be parsed at all. Nobody types a two-thousand-character
+#: query, and `GET /api/find?q=` otherwise accepts whatever is sent.
+#:
+#: These bound the *parse*, and should not be mistaken for bounding the work: a
+#: pathological pattern fits in eighteen characters. What bounds that is
+#: `server.GUARDED_READS`.
+MAX_QUERY = 2000
+MAX_PATTERN = 200
 
 
 class Fault(Exception):
@@ -94,11 +145,27 @@ class Value:
             return re.search(self.raw, text, re.I) is not None
         return self.raw.lower() in text.lower()
 
+    def same(self, text: str) -> bool:
+        """Exact, case-insensitively — unless the reader asked for a pattern.
+
+        A regex overrides exactness rather than being narrowed by it, which is
+        the whole bargain: the fields in `EXACT` can afford a strict default
+        *because* `/…/` is one keystroke away and says out loud that an
+        approximation is wanted.
+        """
+        if self.regex:
+            return re.search(self.raw, text, re.I) is not None
+        return self.raw.lower() == text.lower()
+
     def matches_date(self, text: str) -> bool:
         if self.op == ">":
             return text > self.raw
         if self.op == "<":
             return text < self.raw
+        if self.op == ">=":
+            return text >= self.raw
+        if self.op == "<=":
+            return text <= self.raw
         return text.startswith(self.raw) or self.matches(text)
 
 
@@ -120,13 +187,11 @@ class Term:
     column: int = 0
 
     def __str__(self) -> str:
-        v = ""
-        if self.value:
-            v = f"/{self.value.raw}/" if self.value.regex else self.value.op + self.value.raw
-            if " " in v:
-                v = f'"{v}"'
-        head = f"is:{self.name}" if self.kind == "is" else \
-               (f"{self.name}:{v}" if self.name else v)
+        if self.kind == "is":
+            head = f"is:{self.name}"
+        else:
+            v = _render(self.value, bare=not self.name)
+            head = f"{self.name}:{v}" if self.name else v
         return ("-" if self.negated else "") + head
 
 
@@ -155,102 +220,302 @@ class Query:
 # ---- parsing -------------------------------------------------------------
 
 
-def _tokens(source: str) -> list[tuple[str, int]]:
+@dataclass(frozen=True)
+class Tok:
+    """One whitespace-delimited token, already taken apart.
+
+    The scanner knows where a value begins — that is what `_NAME_STOP` and the
+    delimiter rules are for — and this carries that knowledge out rather than
+    flattening it back into a string. An earlier version returned the joined
+    text and let `parse` re-split it on the first `:`, which made a colon
+    inside a quoted phrase indistinguishable from the field separator:
+    `"note: nobody has"` silently became a search of the `note` field for
+    `" nobody has"`, with no fault, different rows, and no way to tell. A value
+    that was quoted or delimited is marked as such here, and `parse` never
+    looks inside it again.
+
+    It also retires the control character this module used to smuggle
+    regex-ness through the same string. A sentinel that leaks — and it did,
+    into ``unknown field `\\x00foo` `` — is a sentinel that was carrying
+    structure a field should have carried.
+    """
+
+    name: str            # field or predicate name, "" for a bare value
+    value: str
+    regex: bool = False
+    quoted: bool = False
+    negated: bool = False
+    column: int = 0
+
+    @property
+    def is_or(self) -> bool:
+        """Whether this token is the alternation operator rather than the word.
+
+        Quoting is how a reader says *literally this*, so `"or"` is the word.
+        Testing the token's parts is the only way to know that; testing the
+        joined text, as this used to, made `x "or" y` mean `x OR y` and left
+        the commonest word in English unsearchable.
+        """
+        return (not self.name and not self.negated
+                and not self.regex and not self.quoted
+                and self.value.lower() == "or")
+
+
+def _tokens(source: str) -> list[Tok]:
     """Split on whitespace, keeping quoted phrases and regexes whole.
 
     Hand-written rather than `shlex`, which would strip the `/` delimiters it
     knows nothing about and would treat a lone apostrophe in a title as an
     unterminated quote.
-
-    A `/` only opens a regex where a *value* may start — at the beginning of a
-    token or straight after the `:` — so `date:2026/01` is a date and not an
-    unterminated pattern. A quote opens a phrase in the same two places, for the
-    same reason: a store is full of prose with apostrophes in it.
     """
-    out: list[tuple[str, int]] = []
+    out: list[Tok] = []
     i, n = 0, len(source)
     while i < n:
         if source[i].isspace():
             i += 1
             continue
-        start, buf, closer = i, [], None
-        while i < n and (closer is not None or not source[i].isspace()):
-            c = source[i]
-            if closer is not None:
-                if c == closer:
-                    closer = None
-                else:
-                    buf.append(c)
-            elif c in '"/' and _at_value(buf):
-                closer = c
-                if c == "/":
-                    buf.append(REGEX_MARK)
-            else:
-                buf.append(c)
-            i += 1
-        if closer is not None:
-            raise Fault(f"unterminated {closer}", start)
-        out.append(("".join(buf), start))
+        tok, i = _token(source, i)
+        out.append(tok)
     return out
 
 
-def _at_value(buf: list[str]) -> bool:
-    """Whether a value may begin here: nothing yet, a bare `-`, or after `:`."""
-    return not buf or buf == ["-"] or buf[-1] == ":"
+def _token(source: str, i: int) -> tuple[Tok, int]:
+    n, start = len(source), i
+    negated = source[i] == "-" and i + 1 < n and not source[i + 1].isspace()
+    if negated:
+        i += 1
+    name, i = _name(source, i, start)
+    text, regex, quoted, i = _text(source, i, start)
+    return Tok(name, text, regex, quoted, negated, start), i
 
 
-def _value(raw: str, field_name: str, column: int) -> Value:
-    if raw.startswith(REGEX_MARK):
-        body = raw[1:]
+def _name(source: str, i: int, column: int) -> tuple[str, int]:
+    """A leading `field:`, if there is one: bare characters up to a colon.
+
+    A `"` or `/` ends the scan without ending it in a colon, which is what
+    makes `/foo:bar/` a pattern rather than a field named `foo` — the colon
+    the old parser split on is inside a value that had already begun.
+    """
+    n, j = len(source), i
+    while j < n and not source[j].isspace() and source[j] not in _NAME_STOP:
+        j += 1
+    if j < n and source[j] == ":":
+        if j == i:
+            raise Fault("a term cannot start with ':'", column)
+        return source[i:j], j + 1
+    return "", i
+
+
+def _text(source: str, i: int, column: int) -> tuple[str, bool, bool, int]:
+    """The value at `i`, as `(text, regex, quoted, next_index)`."""
+    n = len(source)
+    if i < n and source[i] in '"/':
+        closer = source[i]
+        body, j = _delimited(source, i + 1, closer, column)
+        if j < n and not source[j].isspace():
+            # `/foo/i` is somebody reaching for a regex flag, and `"a"b` is a
+            # typo. Both used to be swallowed and searched for as `fooi` and
+            # `ab`. Naming them is the whole habit of this command.
+            raise Fault(f"text after the closing {closer}", j)
+        return body, closer == "/", closer == '"', j
+    j = i
+    while j < n and not source[j].isspace():
+        j += 1
+    return source[i:j], False, False, j
+
+
+def _delimited(source: str, i: int, closer: str, column: int) -> tuple[str, int]:
+    r"""Up to the closing delimiter, with `\<delimiter>` standing for a literal one.
+
+    **Only the delimiter is escapable.** Every other backslash passes through
+    with the character after it, unchanged, which is what lets `/\w+/` mean
+    what it says: collapsing `\\` to `\` here would hand `re` a dangling
+    escape, and `/a\\/` — a pattern matching a backslash — would stop
+    compiling. So `\/` is the one sequence this consumes, and it is the one
+    that was previously impossible to write.
+    """
+    n, buf = len(source), []
+    while i < n:
+        c = source[i]
+        if c == "\\" and i + 1 < n:
+            nxt = source[i + 1]
+            buf.append(nxt if nxt == closer else c + nxt)
+            i += 2
+            continue
+        if c == closer:
+            return "".join(buf), i + 1
+        buf.append(c)
+        i += 1
+    raise Fault(f"unterminated {closer}", column)
+
+
+def _value(tok: Tok, field_name: str) -> Value:
+    if tok.regex:
+        if len(tok.value) > MAX_PATTERN:
+            raise Fault(f"pattern longer than {MAX_PATTERN} characters",
+                        tok.column)
         try:
-            re.compile(body)
+            re.compile(tok.value)
         except re.error as exc:
-            raise Fault(f"bad regex: {exc}", column) from None
-        return Value(body, regex=True)
-    if field_name in DATES and raw[:1] in (">", "<"):
-        return Value(raw[1:], op=raw[0])
-    return Value(raw)
+            raise Fault(f"bad regex: {exc}", tok.column) from None
+        if _may_blow_up(tok.value):
+            raise Fault(
+                "that pattern can backtrack exponentially — one repetition "
+                "inside another, like `(\\w+\\s+)+`. Narrow the inner part, "
+                "or match it once", tok.column)
+        return Value(tok.value, regex=True)
+    if not tok.quoted and field_name in DATES:
+        for op in DATE_OPS:
+            if tok.value.startswith(op):
+                rest = tok.value[len(op):]
+                if not rest:
+                    raise Fault(f"`{field_name}:{op}` needs a date after it",
+                                tok.column)
+                return Value(rest, op=op)
+    return Value(tok.value)
+
+
+#: Anything at least this large is `re`'s "no upper bound".
+_ENDLESS = 4294967295
+
+
+def _may_blow_up(pattern: str) -> bool:
+    r"""Whether a pattern has an unbounded repetition inside another one.
+
+    That shape — `(a+)+`, `(\w+\s+)+`, `(x+x+)+y` — is what makes a regex take
+    exponential time in the length of the text. It is not hypothetical:
+    `dg find '/^(\w+\s+)+\w+!/'` over six hundred records did not return within
+    two minutes. `re` offers no timeout and a running match cannot be
+    interrupted — `SIGALRM` only fires on the main thread, and the server is
+    threaded — so the only place to stop it is before it starts.
+
+    **Read what this does not do.** It refuses one shape, and there are others.
+    Bounded repetition over overlapping alternatives goes straight through and
+    is just as bad: `/(.|.|.){11}ZZZZ/` takes 6.6 seconds against the six-record
+    demo store, and each `+1` on the count triples it. `MAX_PATTERN` is no help
+    — that pattern is eighteen characters. Deciding the general case means
+    proving no input drives exponential path exploration, which is ambiguity
+    detection on the NFA, and every cheap approximation either refuses patterns
+    people legitimately write or leaks a family like this one.
+
+    So this is a guard against an **honest mistake**, not against an attacker.
+    What bounds a hostile pattern is that the route carrying one requires the
+    token: see `server.GUARDED_READS`. Anyone typing `dg find` at their own
+    terminal can still hang it, and can still press ctrl-C.
+
+    It refuses a shape rather than proving slowness, so `(ab+c)+` is caught and
+    is harmless — the right direction to be wrong in, since the reader gets a
+    sentence telling them what to change. And it reads `re`'s private parse
+    tree, so it fails **open** if a future version moves it: a best-effort
+    guard that stops working is worth more than one that turns every pattern
+    into a crash.
+    """
+    try:
+        import re._parser as parser
+
+        return _nested_repeat(parser.parse(pattern), inside=False)
+    except Exception:
+        return False
+
+
+def _nested_repeat(seq, *, inside: bool) -> bool:
+    for op, arg in seq:
+        name = getattr(op, "name", str(op))
+        if name in ("MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT"):
+            _, hi, body = arg
+            endless = int(hi) >= _ENDLESS
+            if endless and inside:
+                return True
+            if _nested_repeat(body, inside=inside or endless):
+                return True
+        elif name == "SUBPATTERN":
+            if _nested_repeat(arg[3], inside=inside):
+                return True
+        elif name == "BRANCH":
+            if any(_nested_repeat(b, inside=inside) for b in arg[1]):
+                return True
+        elif name in ("ASSERT", "ASSERT_NOT"):
+            if _nested_repeat(arg[1], inside=inside):
+                return True
+        elif name == "ATOMIC_GROUP":
+            if _nested_repeat(arg, inside=inside):
+                return True
+    return False
+
+
+def _term(tok: Tok) -> Term:
+    # An empty value is a fault however it was written. `title:""` and `//`
+    # both match every record, which is never the question somebody meant to
+    # ask and is exactly the shape that reads as an answer.
+    if tok.name == "is":
+        if not tok.value:
+            raise Fault("`is:` needs a predicate", tok.column)
+        return Term("is", tok.value, None, tok.negated, tok.column)
+    if tok.name:
+        if not tok.value:
+            raise Fault(f"`{tok.name}:` needs a value", tok.column)
+        return Term("named", tok.name, _value(tok, tok.name), tok.negated,
+                    tok.column)
+    if not tok.value:
+        raise Fault("empty term", tok.column)
+    return Term("prose", "", _value(tok, ""), tok.negated, tok.column)
 
 
 def parse(source: str) -> Query:
     """A query string as an AND of ORs. Raises `Fault` with a column."""
+    if len(source) > MAX_QUERY:
+        raise Fault(f"query longer than {MAX_QUERY} characters", MAX_QUERY)
     toks = _tokens(source)
     if not toks:
         raise Fault("empty query", 0)
     groups: list[list[Term]] = []
     joining = False
-    for raw, col in toks:
-        if raw.lower() == "or" and not raw.startswith(REGEX_MARK):
+    for tok in toks:
+        if tok.is_or:
             if not groups:
-                raise Fault("`or` needs a term before it", col)
+                raise Fault("`or` needs a term before it", tok.column)
             joining = True
             continue
-        negated = raw.startswith("-") and len(raw) > 1
-        body = raw[1:] if negated else raw
-        name, sep, rhs = body.partition(":")
-        if sep and not name:
-            raise Fault("a term cannot start with ':'", col)
-        if sep:
-            if name == "is":
-                if not rhs:
-                    raise Fault("`is:` needs a predicate", col)
-                term = Term("is", rhs.lstrip(REGEX_MARK), None, negated, col)
-            else:
-                if not rhs:
-                    raise Fault(f"`{name}:` needs a value", col)
-                term = Term("named", name, _value(rhs, name, col), negated, col)
-        else:
-            if not body:
-                raise Fault("empty term", col)
-            term = Term("prose", "", _value(body, "", col), negated, col)
+        term = _term(tok)
         if joining:
             groups[-1].append(term)
             joining = False
         else:
             groups.append([term])
     if joining:
-        raise Fault("`or` needs a term after it", toks[-1][1])
+        raise Fault("`or` needs a term after it", toks[-1].column)
     return Query(groups)
+
+
+# ---- rendering a query back to text --------------------------------------
+
+
+def _render(v: Value, *, bare: bool) -> str:
+    """A value as text that parses back to the same value.
+
+    Textual stability is not the property that matters here; semantic stability
+    is. The old rule quoted anything containing a space, regexes included, so
+    `title:/a b/` rendered as `title:"/a b/"` and came back a *literal*. That
+    string is what `--json` reports as the query it ran and what the browser
+    writes back into its search box, so a reader who copied it out got a
+    different question than the one that was answered.
+    """
+    if v.regex:
+        return "/" + v.raw.replace("/", "\\/") + "/"
+    text = v.op + v.raw
+    if _needs_quoting(text, bare=bare):
+        return '"' + text.replace('"', '\\"') + '"'
+    return text
+
+
+def _needs_quoting(text: str, *, bare: bool) -> bool:
+    if not text or any(c.isspace() for c in text):
+        return True
+    if text[0] in '"/-':
+        return True
+    # Only a value with no field in front of it can be re-read as `field:value`
+    # or as the alternation operator, so only that one pays for the quotes.
+    return bare and (":" in text or text.lower() == "or")
 
 
 # ---- what a store offers -------------------------------------------------
@@ -275,9 +540,36 @@ class Lens:
     structural: dict[str, Callable[[str], set[str]]]
     #: Rendering aid, not part of selection: `(status, title, area)` per id.
     row: Callable[[str], tuple[str, str, str]]
+    #: Where a structural term's *argument* lives, when it is not this store.
+    #: `because:D05` is a term on the task lens whose argument is a decision
+    #: id, so resolving it against the task ids would refuse every valid query
+    #: that uses it. Absent means "this store's own ids".
+    arg_kind: dict[str, str] = field(default_factory=dict)
+    #: Predicates this lens would offer if the project had the other store,
+    #: as `name -> the store it needs`. Not a capability — the opposite: a
+    #: record of what was left out, so `vet` can say *this project has no
+    #: decision store* instead of *no such predicate*. See `_no_predicate`.
+    withheld: dict[str, str] = field(default_factory=dict)
+    #: Memo for structural walks, for the life of this lens. See `_walk`.
+    #: Neither this nor `_ids` is part of the surface a store offers, so both
+    #: stay out of `==` and `repr`.
+    memo: dict = field(default_factory=dict, compare=False, repr=False)
+    _ids: set = field(default_factory=set, compare=False, repr=False)
 
     def prose(self) -> tuple[str, ...]:
         return tuple(f for f in PROSE if f in self.fields)
+
+    def holds(self, rid: str) -> bool:
+        """Whether this store has a record by that id.
+
+        Structural terms take an id, and `model.children`/`depends` skip ids
+        that name no vertex — right for traversal, because `validate()` is what
+        reports a dangling edge, and wrong for search, where it turned
+        `under:D0` into an empty result reading as *nothing is under D04*.
+        """
+        if not self._ids:
+            self._ids.update(self.ids)
+        return rid in self._ids
 
 
 def _fields_of(*classes) -> tuple[str, ...]:
@@ -298,8 +590,36 @@ def _texts(vals: Iterable[object]) -> list[str]:
     return [v for v in vals if isinstance(v, str) and v]
 
 
-def decision_lens(g, *, predicates=None, structural=None,
-                  hide: Iterable[str] = ()) -> Lens:
+#: Stored fields deliberately outside the query vocabulary. `to` and `active`
+#: are the graph structure, `src` and `replaced_by` are the history's own
+#: bookkeeping, and `format` is a rendering hint — none of them is something a
+#: person searching would think to name.
+_UNSEARCHABLE = {"decisions": ("src", "to", "active", "format", "replaced_by"),
+                 "tasks": ("format",)}
+
+
+def _excluded(kind: str, *classes) -> frozenset:
+    """`_UNSEARCHABLE[kind]`, checked against the classes it claims to name.
+
+    This list is an editorial judgement, so unlike the field names themselves
+    it cannot be read off the dataclass. What it *can* be is verified. A name
+    here that no longer exists is a rename that left the list behind — and the
+    field it used to hide is now quietly searchable, which is exactly the drift
+    `_fields_of` exists to prevent, reintroduced by the retyped list beside it.
+    Failing loudly is the whole point: it is a programming error, not a query.
+    """
+    have = set(_fields_of(*classes))
+    stale = [n for n in _UNSEARCHABLE[kind] if n not in have]
+    if stale:
+        raise AssertionError(
+            f"query.py withholds {kind} fields that no longer exist: "
+            f"{', '.join(stale)} — renamed in "
+            f"{', '.join(c.__name__ for c in classes)}?")
+    return frozenset(_UNSEARCHABLE[kind])
+
+
+def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
+                  withheld=None, hide: Iterable[str] = ()) -> Lens:
     """The decision store as a queryable surface.
 
     A vertex and its active edge are one record here, which is why `answer:`
@@ -310,15 +630,23 @@ def decision_lens(g, *, predicates=None, structural=None,
     from dgraph.model import Edge, Vertex
 
     hidden = set(hide)
+    out_of = _excluded("decisions", Vertex, Edge)
     names = tuple(f for f in _fields_of(Vertex, Edge)
-                  if f not in hidden and f not in ("src", "to", "active",
-                                                   "format", "replaced_by"))
+                  if f not in hidden and f not in out_of)
 
     def values(vid: str, name: str) -> list[str]:
         v = g.vertices[vid]
         out = _texts([getattr(v, name, None)])
         if name == "id":
             out = [vid]
+        if name == "status":
+            # Both forms, because a blocked vertex stores `BLOCKED:D05` — the
+            # premise is part of the string. `status:` matches exactly now, and
+            # `BLOCKED` is what the listing shows and therefore what a reader
+            # types; offering the base as well as the stored value keeps that
+            # working, and keeps `status:BLOCKED:D05` — "blocked on *that*" —
+            # available for anyone who wants it.
+            out = _texts(dict.fromkeys([v.base_status, v.status]))
         e = g.active_edge(vid)
         if e is not None:
             out += _texts([getattr(e, name, None)])
@@ -350,6 +678,7 @@ def decision_lens(g, *, predicates=None, structural=None,
         predicates=preds, structural=struct,
         row=lambda vid: (g.vertices[vid].base_status, g.vertices[vid].title,
                          g.vertices[vid].area),
+        arg_kind=dict(arg_kind or {}), withheld=dict(withheld or {}),
     )
 
 
@@ -358,8 +687,8 @@ def _shaky() -> frozenset:
     return SHAKY
 
 
-def task_lens(tg, *, predicates=None, structural=None,
-              hide: Iterable[str] = ()) -> Lens:
+def task_lens(tg, *, predicates=None, structural=None, arg_kind=None,
+              withheld=None, hide: Iterable[str] = ()) -> Lens:
     """The task store as a queryable surface.
 
     `hide` is how the caller removes the cross-graph link fields from the
@@ -371,8 +700,9 @@ def task_lens(tg, *, predicates=None, structural=None,
     from dgraph.tasks import Task
 
     hidden = set(hide)
+    out_of = _excluded("tasks", Task)
     names = tuple(f for f in _fields_of(Task)
-                  if f not in hidden and f != "format")
+                  if f not in hidden and f not in out_of)
 
     def values(tid: str, name: str) -> list[str]:
         if name == "id":
@@ -399,6 +729,7 @@ def task_lens(tg, *, predicates=None, structural=None,
         predicates=preds, structural=struct,
         row=lambda tid: (tg.tasks[tid].status, tg.tasks[tid].title,
                          tg.tasks[tid].area),
+        arg_kind=dict(arg_kind or {}), withheld=dict(withheld or {}),
     )
 
 
@@ -440,6 +771,11 @@ def vet(q: Query, lenses: list[Lens]) -> None:
     available: an empty result read as "there is nothing", when the truth is
     "you asked wrong". So a name unknown to *every* lens is a fault — while a
     name known to one is not, and simply scopes the query to it.
+
+    A mistyped *argument* is the same failure one level down, which is why
+    `_resolve` is called from inside here rather than offered beside it: a
+    caller that vetted and forgot to resolve would be back to reporting
+    `under:D0` as a fact about D04.
     """
     for t in q.terms:
         if t.kind == "prose":
@@ -447,12 +783,92 @@ def vet(q: Query, lenses: list[Lens]) -> None:
         if any(_knows(l, t) for l in lenses):
             continue
         if t.kind == "is":
-            offer = sorted({p for l in lenses for p in l.predicates})
-            raise Fault(f"no predicate `is:{t.name}` — try "
-                        f"{', '.join(offer)}", t.column)
+            raise Fault(_no_predicate(t, lenses), t.column)
         offer = sorted({f for l in lenses for f in (*l.fields, *l.structural)})
         raise Fault(f"unknown field `{t.name}` — try {', '.join(offer)}",
                     t.column)
+    _resolve(q, lenses)
+
+
+def _no_predicate(t: Term, lenses: list[Lens]) -> str:
+    """Why `is:<name>` cannot be answered — which is two different sentences.
+
+    A predicate the tool has never heard of is a typo, and the offer list is
+    the right help. A predicate that exists but whose store this project lacks
+    is *not* a typo, and telling somebody to "try blocked, orphaned,
+    outstanding, resolved" when they asked for `is:ready` sends them to fix the
+    wrong thing: the question was fine, the project is missing the decision
+    store that answers it. `withheld` is how `cross.lenses` says which is which
+    — it is the code that decided not to install the predicate, so it is the
+    only place that knows why.
+    """
+    for l in lenses:
+        need = l.withheld.get(t.name)
+        if need:
+            return (f"`is:{t.name}` needs a {need} store, and this project "
+                    f"has none")
+    offer = sorted({p for l in lenses for p in l.predicates})
+    return f"no predicate `is:{t.name}` — try {', '.join(offer)}"
+
+
+def _resolve(q: Query, lenses: list[Lens]) -> None:
+    """Refuse a structural term whose argument names no record.
+
+    `under:` `above:` `waits:` `after:` `during:` `because:` `evidence:` all
+    take an id, and `model.children`/`depends` skip ids that name no vertex —
+    correct for traversal, because `validate()` is what reports a dangling
+    edge, and wrong here, where it turned `under:D0` into an empty result that
+    reads as *nothing is under D04*. A dropped digit is the likeliest typo in
+    this whole grammar and was the only one with no rescue at all.
+
+    This refuses; it does not resolve. `under:D0` must not quietly become
+    `under:D04` — prefix resolution is a separate decision recorded as out of
+    scope, and making a search feature the place it arrived unannounced is
+    exactly what that note was protecting against.
+    """
+    by_kind = {l.kind: l for l in lenses}
+    for t in q.terms:
+        if t.kind != "named" or t.value is None:
+            continue
+        spaces: list[Lens] = []
+        for l in lenses:
+            if t.name in l.structural:
+                owner = by_kind.get(l.arg_kind.get(t.name, l.kind))
+                # No lens for the argument's store means this project cannot
+                # check the id — `because:D05` on a tasks-only project. Silence
+                # is right there: we do not know that it is wrong.
+                if owner is None or owner.holds(t.value.raw):
+                    break
+                spaces.append(owner)
+            elif t.name in l.fields:
+                break            # matched as text somewhere; it is not an id
+        else:
+            if spaces:
+                raise Fault(_no_such(t, spaces), t.column)
+
+
+#: What a store's records are called in a sentence.
+_NOUN = {"decisions": "decision", "tasks": "task"}
+
+
+def _no_such(t: Term, spaces: list[Lens]) -> str:
+    """The message for an argument that names nothing, with a near miss.
+
+    The suggestion is a re-run to accept, never a result folded in — the same
+    rule the prose *did you mean* follows, and for the same reason: an empty
+    result stays a fact only while nothing has been guessed on the reader's
+    behalf.
+    """
+    import difflib
+
+    pool = sorted({rid for l in spaces for rid in l.ids})
+    # Sorted back into id order after ranking: a short id is equidistant from
+    # most of its neighbours, and `difflib` breaking that tie by its own
+    # internal order reads as a guess about which one was meant.
+    near = sorted(difflib.get_close_matches(t.value.raw, pool, n=2, cutoff=0.6))
+    what = " or ".join(dict.fromkeys(_NOUN.get(l.kind, l.kind) for l in spaces))
+    tip = f" — did you mean {', '.join(near)}?" if near else ""
+    return f"`{t.name}:` names no {what} `{t.value.raw}`{tip}"
 
 
 def scope(q: Query, lenses: list[Lens]) -> list[Lens]:
@@ -468,13 +884,50 @@ def scope(q: Query, lenses: list[Lens]) -> list[Lens]:
     take the decision store away on the second half and the task store away on
     the first, leaving nothing and reporting a contradiction that is not there.
     A group keeps every lens that knows *any* of its alternatives.
+
+    **Narrowing to nothing is a fault, not an empty answer.** Two groups can
+    each be answerable and have no store in common — `falsifier:corpus
+    because:D05` asks for a record that is both a decision and a task, and
+    there is no such thing. That used to leave `keep` empty, which every caller
+    read as "nothing matched": the CLI printed the hint line and *nothing else*
+    and exited 1, and `--json` returned a bare `query` key with neither store
+    in it. It is the exact failure this command is built to refuse, arriving
+    through the one path that had no guard on it, so it is raised from here
+    where both callers already catch it.
     """
-    keep = list(lenses)
+    keep, narrowed_by = list(lenses), None
     for grp in q.groups:
         able = [l for l in lenses if any(_knows(l, t) for t in grp)]
-        if able and len(able) < len(lenses):
-            keep = [l for l in keep if l in able]
+        if not able or len(able) == len(lenses):
+            continue
+        # Identity, not `in`: `Lens` has a generated `__eq__` that would
+        # compare id lists and dicts of closures, and it is two lenses of the
+        # same kind away from being wrong as well as slow.
+        nxt = [l for l in keep if any(l is x for x in able)]
+        if not nxt:
+            raise Fault(_no_common_store(grp, able, narrowed_by, keep),
+                        grp[0].column)
+        keep, narrowed_by = nxt, grp
     return keep
+
+
+def _no_common_store(grp: list[Term], able: list[Lens],
+                     earlier: list[Term] | None, keep: list[Lens]) -> str:
+    """Name both halves of the contradiction, not just the one that tripped it.
+
+    A reader who typed two good terms needs to know *which pair* cannot hold
+    together; being told that one of them is unanswerable would send them to
+    delete the wrong one.
+    """
+    def phrase(terms):
+        return " or ".join(str(t) for t in terms)
+
+    here = f"`{phrase(grp)}` is about {' or '.join(l.kind for l in able)}"
+    if earlier is None:                     # unreachable while `keep` starts full
+        return f"no store can answer this query — {here}"
+    there = f"`{phrase(earlier)}` is about {' or '.join(l.kind for l in keep)}"
+    return (f"no store can answer this query — {there}, {here}, and no record "
+            f"is both")
 
 
 def _knows(l: Lens, t: Term) -> bool:
@@ -483,6 +936,26 @@ def _knows(l: Lens, t: Term) -> bool:
     if t.kind == "is":
         return t.name in l.predicates
     return t.name in l.structural or t.name in l.fields
+
+
+def _walk(l: Lens, t: Term, fn: Callable[[str], set[str]]) -> set[str]:
+    """The ids a structural term selects, computed once per lens.
+
+    `fn(arg)` returns the same whole set for every candidate row, and this used
+    to be called once per row — building the set, testing one membership, and
+    throwing it away. On a 600-vertex store that made `above:` take fifteen
+    seconds against a walk that costs twenty milliseconds, and the cost grew
+    with the cube of the store: the one command whose reason for existing is a
+    graph too big to read was the one that could not be run on one.
+
+    The memo lives on the lens, which is built per invocation and dropped with
+    it. That is deliberately *not* the index `docs/query-framework.md` argues
+    against — nothing is written down, and nothing outlives the question.
+    """
+    key = (t.name, t.value.raw)
+    if key not in l.memo:
+        l.memo[key] = fn(t.value.raw)
+    return l.memo[key]
 
 
 def _hit(l: Lens, rid: str, t: Term) -> Match | None:
@@ -501,12 +974,22 @@ def _hit(l: Lens, rid: str, t: Term) -> Match | None:
         # Structural first: a relation and a stored field may share a name, and
         # the relation is the one somebody meant — `waits:` is a walk, not a
         # string sitting in a record.
-        return Match("", "", str(t)) if rid in fn(t.value.raw) else None
+        if (l.arg_kind.get(t.name, l.kind) == l.kind
+                and not l.holds(t.value.raw)):
+            # `waits:` exists on both lenses, so a decision id used to be
+            # walked over the task store too — ten of the twenty-four seconds
+            # that query took, spent proving an empty set empty.
+            return None
+        return Match("", "", str(t)) if rid in _walk(l, t, fn) else None
     if t.name not in l.fields:
         return None
     for text in l.values(rid, t.name):
-        ok = (t.value.matches_date(text) if t.name in DATES
-              else t.value.matches(text))
+        if t.name in DATES:
+            ok = t.value.matches_date(text)
+        elif t.name in EXACT:
+            ok = t.value.same(text)
+        else:
+            ok = t.value.matches(text)
         if ok:
             return Match(t.name, text, str(t))
     return None

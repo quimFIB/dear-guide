@@ -169,12 +169,18 @@ const $ = s => document.querySelector(s);
 
 async function api(path, opts){
   opts = opts || {};
-  if(opts.method && opts.method !== "GET"){
-    /* The server demands this on every mutating route. Sending it as a custom
-       header is half the point: it forces a preflight that a cross-origin page
-       cannot get past. */
-    opts.headers = Object.assign({"X-DG-Token":TOKEN}, opts.headers||{});
-  }
+  /* On every request, not only the mutating ones. Sending it as a custom
+     header is most of the point: a no-cors request cannot carry one at all,
+     and a cors one triggers a preflight this server never answers — so the
+     header is what keeps another page from reaching a guarded route, with the
+     token's secrecy the smaller half.
+
+     This used to be conditional on the method, which was fine while every GET
+     returned a fixed payload. `/api/find` runs a caller-supplied regex, so its
+     cost is chosen by whoever calls it; sending the token unconditionally
+     means the next route like it is covered on the day it is written rather
+     than the day somebody notices. */
+  opts.headers = Object.assign({"X-DG-Token":TOKEN}, opts.headers||{});
   const r = await fetch(path, opts);
   const j = await r.json().catch(()=>({error:"bad response"}));
   if(!r.ok) throw new Error(j.error || r.statusText);
@@ -286,7 +292,13 @@ async function runQuery(){
     $("#qnote").textContent = "⚠ " + r.fault;
     $("#q").classList.add("bad");
   } else {
-    FOUND = r.matched || null;
+    /* An empty `matched` is not "no filter": every lookup into `{}` is
+       `undefined`, which `passes` reads as unfiltered, so the canvas drew the
+       whole graph under a "0 matches" label — the one reading worse than
+       either honest answer. `null` is how the server says "not filtered", and
+       nothing else may mean it. */
+    const m = r.matched;
+    FOUND = (m && Object.keys(m).length) ? m : null;
     $("#q").classList.remove("bad");
     const n = Object.values(FOUND || {}).reduce((a, x) => a + x.length, 0);
     $("#qnote").textContent = FOUND ? n + " match" + (n === 1 ? "" : "es") : "";

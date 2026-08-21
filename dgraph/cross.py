@@ -112,12 +112,19 @@ def lenses(g: Graph | None, tg: TaskGraph | None) -> list:
     `gated_by` returning `None` with no decision store is the right answer to
     "can I start this?" and the wrong answer to a predicate asserting a
     property.
+
+    **What is left out is recorded, not just omitted.** A predicate that needs
+    the other store goes into `withheld` naming the store it needs, so that
+    `query.vet` can say *`is:ready` needs a decision store* rather than *no
+    predicate `is:ready`*. The second sentence is a lie of the useful kind: it
+    sends a reader to fix their spelling when the truth is that their spelling
+    was right and their project is missing a store.
     """
     from dgraph import query as _q
 
     out = []
     if g is not None:
-        preds = {}
+        preds, absent = {}, {}
         if tg is not None:
             waiting = {vid for vid in g.frontier() if pending_evidence(tg, vid)}
             preds["decidable"] = lambda vid: (
@@ -128,9 +135,16 @@ def lenses(g: Graph | None, tg: TaskGraph | None) -> list:
         else:
             preds["decidable"] = lambda vid: (
                 not g.vertices[vid].settled and not g.waiting_on(vid))
-        out.append(_q.decision_lens(g, predicates=preds))
+            # Plus everything the task lens would have answered: a store that
+            # is missing still has a vocabulary, and denying its predicates
+            # sends the reader to fix a spelling that was right.
+            absent = dict.fromkeys(
+                ("implemented", "awaiting-evidence",
+                 *(p for p in _q.TASK_PREDICATES
+                   if p not in _q.DECISION_PREDICATES)), "task")
+        out.append(_q.decision_lens(g, predicates=preds, withheld=absent))
     if tg is not None:
-        preds, struct = {}, {}
+        preds, struct, absent = {}, {}, {}
         struct["because"] = lambda did: set(rests_on(tg, did))
         struct["evidence"] = lambda did: set(evidence(tg, did))
         if g is not None:
@@ -138,8 +152,19 @@ def lenses(g: Graph | None, tg: TaskGraph | None) -> list:
             preds["gated"] = lambda tid: gated_by(tg, g, tid) is not None
             loose = {d["task"] for d in unharvested(tg, g)}
             preds["unharvested"] = lambda tid: tid in loose
-        out.append(_q.task_lens(tg, predicates=preds, structural=struct,
-                                hide=LINK_FIELDS))
+        else:
+            absent = dict.fromkeys(
+                ("ready", "gated", "unharvested",
+                 *(p for p in _q.DECISION_PREDICATES
+                   if p not in _q.TASK_PREDICATES)), "decision")
+        out.append(_q.task_lens(
+            tg, predicates=preds, structural=struct, withheld=absent,
+            # Both of these are terms on the *task* lens whose argument is a
+            # *decision* id, which is the whole point of them. Without saying
+            # so, resolving the argument against the task ids would refuse
+            # every correct `because:D05` there is.
+            arg_kind=dict.fromkeys(("because", "evidence"), "decisions"),
+            hide=LINK_FIELDS))
     return out
 
 

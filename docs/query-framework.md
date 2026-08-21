@@ -97,6 +97,37 @@ the authority of the first.
 Terms are joined by **and**. A leading `-` negates. A bare `or` between two
 terms alternates them. That is the whole grammar.
 
+**A delimiter makes what is inside it literal, including from the parser.**
+Everything between `"…"` or `/…/` is a value and nothing else: `"note: see
+D04"` is a phrase containing a colon rather than a search of the `note` field,
+`/foo:bar/` is a pattern containing one, and `"or"` is the word rather than the
+operator. That has to be said because it was once untrue — the scanner
+flattened a token back into a string and the parser re-split it on the first
+`:`, so quoting, the mechanism for saying *literally this*, was the mechanism
+that changed the meaning. Inside `/…/`, `\/` is a literal slash; every other
+backslash passes through untouched, because `\w` has to keep meaning `\w`.
+Text after a closing delimiter is a fault rather than something to join up:
+`/foo/i` is somebody reaching for a regex flag, and searching for `fooi`
+instead is not a service.
+
+**A pattern with one unbounded repetition inside another is refused** —
+`(\w+\s+)+` and its relatives, which take time exponential in the length of the
+text. `re` offers no timeout and a running match cannot be interrupted, so the
+only place to stop it is before it starts. This refuses a shape rather than
+proving slowness, so it occasionally refuses something harmless; that is the
+right direction to be wrong in, because the alternative is a wedged machine and
+no message at all.
+
+It is a guard against an **honest mistake**, and it should not be read as more.
+Bounded repetition over overlapping alternatives goes straight through and is
+just as bad — `/(.|.|.){11}ZZZZ/` takes 6.6 seconds against the six-record demo
+store and triples with each `+1` on the count, in eighteen characters. Deciding
+the general case is ambiguity detection on the NFA, and every cheap
+approximation either refuses patterns people legitimately write or leaks a
+family like that one. What bounds a *hostile* pattern is §7: `/api/find` is the
+one read route that requires the token, because it is the one whose cost the
+caller chooses.
+
 **There are no parentheses**, and this is a decision rather than an omission.
 The grammar has to be typeable by someone in a hurry and by an agent that has
 read one paragraph of help, and both of those write `a b -c` correctly far more
@@ -120,10 +151,58 @@ keystroke more and says what it means.
 
 Decisions: `id title area status note answer falsifier source date summary why`.
 
-Tasks: `id title area status note outcome why because evidence_for done`.
+Tasks: `id title area status note outcome why done`.
 
-Dates compare — `date:>2026-01-01`, `date:<2026-03` — and otherwise
-prefix-match, so `date:2026-01` is that month.
+The two link fields are **not** in that list. `because` and `evidence_for` are
+withheld from the generic field table and re-offered as the structural terms
+`because:` and `evidence:` below — a plain string match on them would be a
+second implementation of `cross.rests_on`, which is the one thing §5 forbids.
+
+#### `id`, `status` and `area` match exactly; the prose fields match substrings
+
+A record's id, status and area are things it **is**, drawn from a closed
+vocabulary. The rest — `title note answer falsifier summary why outcome
+source` — are prose it *contains*. The two want opposite defaults, and giving
+them one shared default was a mistake with a memorable symptom: `id:0` returned
+every record in a ten-record store, because ids are zero-padded and every id
+below ten carries a `0`. In a twenty-five-record store it returned a scattered
+eleven — `D01`–`D09`, `D10`, `D20` — which is the worse failure, because a
+plausible-looking subset can be mistaken for an answer where an obviously
+absurd one cannot.
+
+**Exact is affordable here precisely because the escape hatch already exists.**
+`id:/^D0/` says "the D0 block" in a way the reader can see and check, and a
+pattern overrides exactness rather than being narrowed by it. That is the same
+trade §8 makes for fuzzy matching: approximation is available, and it is
+written down.
+
+**And it stops at the prose fields for the mirror reason.** Exact-matching a
+sentence is never the question anybody has, so `note:` would have required a
+regex one hundred percent of the time. A default that is never the right answer
+is not a default, it is a toll.
+
+One coupling worth knowing, because it is invisible and a naive change breaks
+it silently. A blocked vertex stores `BLOCKED:D05` — the premise id is part of
+the status string — so `status:BLOCKED` only ever worked *because* matching was
+a substring test. Both forms are now offered: `status:BLOCKED` is what the
+listing shows and therefore what a reader types, and `status:BLOCKED:D05`
+("blocked on *that* one") stays available. The web app's status chips write
+`status:` + the base status into the query box, so this is also what keeps
+clicking a chip from silently emptying the canvas.
+
+Dates compare — `date:>2026-01-01`, `date:>=2026-01-01`, `date:<=2026-03` —
+and otherwise prefix-match, so `date:2026-01` is that month. Both the strict
+and the inclusive operator exist because only one of them did once, and
+`date:>=2026-01-01` was read as `>` against an operand of `=2026-01-01`: it
+matched nothing, for every store, forever, and reported it as exit 1. An
+operator with no date after it is a fault for the mirror reason — `date:>`
+compared every date against the empty string and matched them all.
+
+Against a *partial* date the two are not symmetric: `date:>=2026-01` includes
+all of January because a fuller date sorts after the prefix, and
+`date:<=2026-01` excludes it for the same reason. That is lexicographic
+comparison being honest rather than a special case worth building. Ask for
+"before February" as `date:<2026-02`, which says what it means.
 
 **An unknown field is a fault, and this does real work.** A mistyped field name
 that silently matched nothing would be the worst outcome available: an empty
@@ -135,6 +214,35 @@ Tasks have no `falsifier`, so `dg find falsifier:corpus` is implicitly a
 decisions query, and nobody has to type `--decisions` to say what the field
 already said. The rule is: **a field unknown to every store in scope is a
 fault; a field known to some store scopes the query to it.**
+
+#### A negated term is vacuously true where the field does not exist
+
+A consequence of the two rules above, kept deliberately rather than patched,
+because it is what the words mean:
+
+    dg find 'is:outstanding or -falsifier:zzz'
+    → every decision AND every task
+
+A task has no `falsifier`, so "this task's falsifier does not contain `zzz`" is
+true of all of them. That is ordinary vacuous truth, and the alternative —
+making a term false under negation because the field is missing — would mean
+`-x` and `x` were both false for the same record, which is worse than
+surprising: it is not a negation any more.
+
+What makes it *look* wrong is the scoping rule rather than the logic. Alone,
+`-falsifier:zzz` narrows to decisions and the vacuity is invisible; it only
+surfaces when the term shares an OR-group with a term the other store knows,
+because the group then keeps both lenses. So the same term contributes
+differently depending on its company — which is exactly what per-group
+narrowing is for, seen from an angle where it is unflattering.
+
+Note the asymmetry is only in the negated direction: `is:outstanding or
+falsifier:zzz` returns the three outstanding tasks and nothing extra, because
+the positive form of a missing field simply never matches.
+
+**What would reopen it:** somebody being misled in practice, not merely
+surprised in a test. The fix then is not to change the logic but to say so in
+the output — a note that a term was vacuous for one of the stores.
 
 ### `is:` — the table is the specification
 
@@ -374,14 +482,26 @@ people:
 
     dg find 'is:decidable' --ids | xargs -n1 dg context
 
-`--json` emits `{query, decisions: [...], tasks: [...]}` with each row carrying
+`--json` emits `{query, scope, decisions, tasks}` with each row carrying
 `matched: [{field, snippet}]`, from the same walk as the text — the guarantee
 `brief.py` states for itself, that a program parsing JSON and a person reading
 the terminal cannot be told different things.
 
+Every store the project has gets a key, always. A store the query was not about
+is `null`; one that was, and matched nothing, is `[]`. The distinction is the
+same one `GET /api/find` draws, and it exists because omitting the key left a
+consumer unable to tell "scoped away" from "no matches" without re-parsing the
+query — and left `data["decisions"]` raising `KeyError` on a query that had a
+perfectly good answer. A fault under `--json` is reported *as* json,
+`{query, fault, column}`: exit 2 already says the query was wrong, and a script
+should not have to parse a caret diagram to find out why.
+
 `--limit`, default 20 per section, with a `compact.hint` line saying how many
 were withheld. `dgraph/brief.py:88` makes the general rule: output that agents
-pay for in tokens has to stay roughly flat as the store grows.
+pay for in tokens has to stay roughly flat as the store grows. It counts rows,
+so it starts at 1 — `--full` is how to ask for all of them, which leaves
+nothing for a `0` to mean, and a negative once sliced rows off the *end* while
+reporting them as withheld.
 
 `--full` gives the table, clipping nothing, as everywhere else.
 
@@ -391,11 +511,27 @@ answered as asked. `dg path` already exits 1 when there is no path
 already has a code, and a script can say
 `dg find X >/dev/null && echo "already settled"`.
 
-Exit 2 covers four things, and they are one thing: a malformed query, an
-unknown field, a predicate whose store is absent, and a query that contradicts
-its own flags. Each is "you did not ask what you think you asked", and each
-must be distinguishable from exit 1, which means "you asked, and the answer is
-nothing". Collapsing those two is how an empty result becomes a false fact.
+Exit 2 covers six things, and they are one thing: a malformed query, an unknown
+field, a predicate whose store is absent, a structural term naming an id that
+does not exist, a query no single store can answer, and a query that
+contradicts its own flags. Each is "you did not ask what you think you asked",
+and each must be distinguishable from exit 1, which means "you asked, and the
+answer is nothing". Collapsing those two is how an empty result becomes a false
+fact.
+
+The last two arrived late, by being found missing. `under:D0` — a dropped digit
+— walked a subgraph rooted at nothing and returned an empty result that read as
+*nothing is under D04*; the traversals tolerate an unknown id on purpose,
+because `validate()` is what reports a dangling edge, and search inherited that
+tolerance where it could not afford it. And `falsifier:corpus because:D05` asks
+for a record that is both a decision and a task: each half is answerable, the
+pair is not, and it scoped to no store at all and printed nothing. Both are the
+same failure as a mistyped field, one level further in, and both are named here
+so that the next reader counts six rather than rediscovering them.
+
+**A mistyped id is offered a near miss**, the way a mistyped word is — as a
+suggested re-run, never as rows folded into the answer. §8 argues that case at
+length; it applies identically here.
 
 **A flag that contradicts the query is refused.** `dg find --decisions
 because:D04` asks for decisions while naming a field only tasks have. The
@@ -426,6 +562,22 @@ predicate instead of two. This also fixes a live bug: `filter.status` is a
 single `Set` shared by both the decisions and the tasks tab
 (`app.html:150`, used at `:363` and `:369`), so selecting `DECIDED` and
 switching to tasks currently hides everything until you notice and untoggle it.
+
+**And it is the read route that requires the token**, which moved a line this
+project had drawn elsewhere. `server.py` guarded on GET versus POST, on the
+stated grounds that "the API only moves data around" — true of every other read
+here, each of which returns a fixed payload, and false of this one, whose cost
+is chosen by whoever calls it. A page the user merely visits can reach
+`127.0.0.1:8765` with a `Host` header that passes, and about twenty characters
+of regex buys unbounded CPU there. GET/POST was always standing in for
+*effect-and-cost*, so the guard now names that directly and `GUARDED_READS`
+lists the reads it catches.
+
+Requiring a custom header is what does the work, more than the token's secrecy:
+a `no-cors` request cannot carry one, and a `cors` request carrying one triggers
+a preflight this server never answers. The page therefore sends `X-DG-Token` on
+every request rather than only the mutating ones, so the next route of this kind
+is covered when it is written rather than when somebody notices.
 
 **A `/dg:find` slash command**, one file in `commands/` for both hosts, wrapping
 `dg find $ARGUMENTS`. An agent asked "did we already decide this?" currently has
@@ -508,9 +660,21 @@ argument against one: it would be the only derived structure in the project
 that is **stored** rather than recomputed, and `TODO.md:78-80` already states the
 rule — a stored field that can go stale is what this store refuses to keep.
 
+*That claim is about **matching**, and it was once quietly read as covering
+everything.* A structural term is not a scan of the records; it is a walk of
+the graph, and the walk returns the same whole set for every candidate row. It
+used to be run once per row, which made `above:` cost fifteen seconds on six
+hundred vertices where the walk itself costs twenty milliseconds — a linear
+scan of prose, timed alongside it, took seven. The fix is a memo living on the
+lens for the length of one query (`query._walk`), and it is deliberately not an
+index: nothing is written down and nothing outlives the question. The two costs
+are different in kind, and only the first one is what this section is arguing
+about.
+
 **What would reopen it:** nothing about matching quality; only a store large
 enough that a linear scan is measurably slow, which is a different problem with
-a different answer.
+a different answer. A structural term that is slow again is not that condition
+— it is a memo that stopped working.
 
 *The honest cost is typos, and it gets a cheap fix instead.* `dg find embeddig`
 returning nothing, with no clue why, is the real price of exactness. The

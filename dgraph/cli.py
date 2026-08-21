@@ -475,8 +475,18 @@ def _lenses() -> tuple[list, Graph | None, TaskGraph | None]:
     return cross.lenses(g, tg), g, tg
 
 
-def _fault(exc, source: str) -> None:
-    """Report an unanswerable query, pointing at the term that broke it."""
+def _fault(exc, source: str, *, as_json: bool = False) -> None:
+    """Report an unanswerable query, pointing at the term that broke it.
+
+    Under `--json` it is reported *as* json. Exit 2 already tells a script that
+    it asked wrong, but a script that reads stdout should not have to parse a
+    caret diagram to find out why — and the browser has taken the same view
+    since `find_payload` was written.
+    """
+    if as_json:
+        print(json.dumps({"query": source, "fault": exc.reason,
+                          "column": exc.column}, indent=2, ensure_ascii=False))
+        raise typer.Exit(2)
     con.print(f"[red]{_x(exc.reason)}[/]")
     if source:
         con.print(f"  [dim]{_x(source)}[/]")
@@ -511,11 +521,13 @@ def find(
         dg find 'is:ready area:Retrieval'
         dg find 'falsifier:"the corpus changes"'
         dg find 'under:D04 is:unsettled'
+        dg find 'date:>=2026-01-01 is:decidable'
         dg find 'is:decidable' --ids | xargs -n1 dg context
 
     Exit 1 means the query was fine and nothing matched. Exit 2 means it could
     not be answered as asked — a bad term, an unknown field, a predicate whose
-    store this project does not have, or a flag contradicting the query.
+    store this project does not have, an id that names no record, a query no
+    single store can answer, or a flag contradicting the query.
     """
     proj = project.find()
     if not proj.exists:
@@ -524,6 +536,14 @@ def find(
         raise typer.Exit(2)
     if decisions and tasks:
         con.print("[red]--decisions and --tasks are opposites[/]")
+        raise typer.Exit(2)
+    if limit < 1:
+        # `--limit 0` used to print a count and a "… 2 more" line with no rows
+        # above it, and `--limit -1` silently dropped the *last* row — Python's
+        # slice semantics leaking through a flag. `--full` is how you ask for
+        # everything, so there is nothing for a zero to mean.
+        con.print("[red]--limit counts rows, so it starts at 1[/]\n"
+                  "[dim]`--full` is how to ask for all of them[/]")
         raise typer.Exit(2)
 
     # Every store the project has, whatever the flags say. The flags narrow the
@@ -542,7 +562,7 @@ def find(
         _query.vet(q, lenses)
         wanted = _query.scope(q, lenses)
     except _query.Fault as exc:
-        _fault(exc, query)
+        _fault(exc, query, as_json=as_json)
         return
 
     asked = {"decisions"} if decisions else {"tasks"} if tasks else None
@@ -568,17 +588,26 @@ def find(
 
     found = {l.kind: _query.select(q, l) for l in wanted}
     if as_json:
+        # A store the query was not about is `null`; one that was, and matched
+        # nothing, is `[]`. The key is always present — omitting it, as this
+        # used to, left a consumer unable to tell "scoped away" from "no
+        # matches" without re-parsing the query, and `data["decisions"]`
+        # raising `KeyError` on a perfectly good answer. `find_payload` had
+        # this distinction from the start; the two surfaces now agree.
         print(json.dumps({
             "query": str(q),
-            **{l.kind: [_find_row(q, l, r) for r in found[l.kind]]
-               for l in wanted},
+            "scope": [l.kind for l in wanted],
+            **{l.kind: ([_find_row(q, l, r) for r in found[l.kind]]
+                        if l.kind in found else None)
+               for l in lenses},
         }, indent=2, ensure_ascii=False))
     elif ids:
         for l in wanted:
             for rid in found[l.kind]:
                 print(rid)
     else:
-        _find_report(q, wanted, found, full=full, limit=limit, g=g)
+        _find_report(q, wanted, found, full=full, limit=limit, g=g,
+                     proj=proj)
 
     if not any(found.values()):
         if not (as_json or ids):
@@ -625,7 +654,7 @@ def _find_aside(q, l, rid: str, g: Graph | None) -> str:
 
 
 def _find_report(q, lenses, found: dict, *, full: bool, limit: int,
-                 g: Graph | None) -> None:
+                 g: Graph | None, proj) -> None:
     for l in lenses:
         rows = found[l.kind]
         heading, style = _SECTION[l.kind]
@@ -666,12 +695,12 @@ def _find_report(q, lenses, found: dict, *, full: bool, limit: int,
             if len(rows) > len(shown):
                 con.print(f"  [dim]… {len(rows) - len(shown)} more — "
                           f"`--limit {len(rows)}` or `--ids`[/]")
-    _find_staged(found)
+    _find_staged(proj)
     if not full:
         con.print(compact.hint("dg find … --full", "the table, nothing clipped"))
 
 
-def _find_staged(found: dict) -> None:
+def _find_staged(proj) -> None:
     """Say when the tray also matches, without folding it into the rows.
 
     A staged op is a different kind of thing from a record — it has no id to
@@ -679,7 +708,6 @@ def _find_staged(found: dict) -> None:
     answer `dg context` and some do not. The brief keeps the tray in its own
     section for the same reason.
     """
-    proj = project.find()
     staged = len(pending.load(proj.pending)) + len(
         pending.load(proj.task_pending))
     if staged:
