@@ -1,0 +1,26 @@
+---
+description: Find decisions and work by what they say, not by where they sit
+argument-hint: <query> [--decisions|--tasks] [--ids] [--full]
+allowed-tools: Bash(dg find:*)
+---
+
+!`dg find $ARGUMENTS`
+
+Every other reading starts from the frontier or from an id you already have.
+This one starts from a word, which is what makes it the command to reach for
+before settling something: *was this already decided?*
+
+A bare word searches prose — titles, notes, answers, falsifiers, outcomes.
+`field:value` matches one stored field, `is:name` asks a derived question
+(`is:decidable`, `is:ready`, `is:unsettled`), and `under:D04` scopes to the part
+of the graph that decision opened. Terms are ANDed, `-` negates one, `or`
+alternates two.
+
+The aside on each row says *why* it matched, so a row can be judged without
+opening it. An empty result means nothing in the store contains that string —
+it is a fact, not a threshold, and worth trusting. A malformed query says so
+instead, and the two are different exit codes.
+
+`--ids` gives bare ids for a pipe: `dg find 'is:decidable' --ids` names every
+question that could be settled right now, and `dg context <id>` on each gives
+the reasoning behind it.

@@ -86,6 +86,63 @@ def task_link(tg: TaskGraph, g: Graph, tid: str) -> dict:
     }
 
 
+#: The cross-graph link's fields, named here because this is where naming them
+#: is allowed. `dgraph/query.py` builds its field table off the dataclasses and
+#: would therefore *offer* these without ever mentioning them, so it is handed
+#: this list to withhold them — a generic string match on `because` would be a
+#: second implementation of `rests_on` below, which looks like a plain
+#: comparison and is really the derived reverse of the relation.
+LINK_FIELDS = ("because", "evidence_for")
+
+
+def lenses(g: Graph | None, tg: TaskGraph | None) -> list:
+    """Both stores as queryable surfaces, with the cross-graph terms supplied.
+
+    Here rather than in `cli`, though `cli` is allowed to reason about the link
+    too, because the browser needs the same surface and `server.py` is *not* on
+    the allowlist `tests/test_cross.py` enforces. Two copies of this would be
+    the `brief` "is this premise shaky?" bug again, with the copies further
+    apart.
+
+    **Two tiers, and they fail differently when a store is missing.** `because`
+    and `evidence` read only the task store, so a project with no decisions
+    keeps them. The rest need both, and are simply absent otherwise — which is
+    the point: `query.vet` then turns a query naming one into a fault rather
+    than a quiet half-answer. That matters most for `is:ready`, where
+    `gated_by` returning `None` with no decision store is the right answer to
+    "can I start this?" and the wrong answer to a predicate asserting a
+    property.
+    """
+    from dgraph import query as _q
+
+    out = []
+    if g is not None:
+        preds = {}
+        if tg is not None:
+            waiting = {vid for vid in g.frontier() if pending_evidence(tg, vid)}
+            preds["decidable"] = lambda vid: (
+                not g.vertices[vid].settled and not g.waiting_on(vid)
+                and vid not in waiting)
+            preds["implemented"] = lambda vid: bool(rests_on(tg, vid))
+            preds["awaiting-evidence"] = lambda vid: vid in waiting
+        else:
+            preds["decidable"] = lambda vid: (
+                not g.vertices[vid].settled and not g.waiting_on(vid))
+        out.append(_q.decision_lens(g, predicates=preds))
+    if tg is not None:
+        preds, struct = {}, {}
+        struct["because"] = lambda did: set(rests_on(tg, did))
+        struct["evidence"] = lambda did: set(evidence(tg, did))
+        if g is not None:
+            preds["ready"] = lambda tid: ready(tg, g, tid)
+            preds["gated"] = lambda tid: gated_by(tg, g, tid) is not None
+            loose = {d["task"] for d in unharvested(tg, g)}
+            preds["unharvested"] = lambda tid: tid in loose
+        out.append(_q.task_lens(tg, predicates=preds, structural=struct,
+                                hide=LINK_FIELDS))
+    return out
+
+
 def blast_radius(tg: TaskGraph, dids: list[str]) -> list[str]:
     """Unfinished work resting on any of these decisions.
 

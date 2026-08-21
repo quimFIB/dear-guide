@@ -25,6 +25,7 @@ from dgraph import compact
 from dgraph import cross, editor, pending, project, render, task_editor
 from dgraph import task_pending, task_render
 from dgraph import model
+from dgraph import query as _query
 from dgraph.model import SIMPLE_STATUSES, Graph
 from dgraph.tasks import ID_RE as TASK_ID_RE
 from dgraph.tasks import MISSING_EDGE, TaskGraph
@@ -58,7 +59,8 @@ WEB = "In a browser"
 #: the same description would leave a reader counting commands that do not
 #: exist, and looking for the difference between them.
 LAYOUT = (
-    (READ, ("show", "brief", "node", "why/context", "tree", "path", "areas")),
+    (READ, ("show", "find", "brief", "node", "why/context", "tree", "path",
+            "areas")),
     (HONEST, ("check", "gate", "render")),
     (RECORD, ("add", "decide", "reopen", "confirm", "repair",
               "dep", "undep", "rm")),
@@ -450,6 +452,264 @@ def _show_table(g: Graph, att: list[dict]) -> None:
     con.print("  ".join(
         f"[{_style(k)}]{k} {n}[/]" for k, n in sorted(_brief.counts(g).items())
     ))
+
+
+# ---- finding things ------------------------------------------------------
+#
+# The only reading that starts from a word rather than from the frontier or an
+# id. Everything it knows how to ask lives in `dgraph/query.py`; what lives here
+# is the part that module may not have — the cross-graph link — plus rendering.
+
+
+def _lenses() -> tuple[list, Graph | None, TaskGraph | None]:
+    """Every store this project has, as queryable surfaces.
+
+    The cross-graph terms come from `cross.lenses`, which is the module allowed
+    to say what the link means and is also what the browser calls — one
+    implementation, so a query cannot mean two things depending on where it was
+    typed.
+    """
+    proj = project.find()
+    g = _decisions_or_none() if proj.has_decisions else None
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    return cross.lenses(g, tg), g, tg
+
+
+def _fault(exc, source: str) -> None:
+    """Report an unanswerable query, pointing at the term that broke it."""
+    con.print(f"[red]{_x(exc.reason)}[/]")
+    if source:
+        con.print(f"  [dim]{_x(source)}[/]")
+        con.print("  [dim]" + " " * exc.column + "^[/]")
+    raise typer.Exit(2)
+
+
+@app.command(rich_help_panel=READ)
+def find(
+    query: str = typer.Argument(..., metavar="QUERY",
+                                help="Terms, ANDed. `-` negates, `or` alternates."),
+    decisions: bool = typer.Option(False, "--decisions", "-d",
+                                   help="Search only the decision store."),
+    tasks: bool = typer.Option(False, "--tasks", "-t",
+                               help="Search only the task store."),
+    as_json: bool = typer.Option(False, "--json", help="The same as data."),
+    ids: bool = typer.Option(False, "--ids",
+                             help="Bare ids, one per line, for a pipe."),
+    full: bool = typer.Option(False, "--full",
+                              help="The table, with no title clipped."),
+    limit: int = typer.Option(20, "--limit", "-n",
+                              help="Rows per section before summarising."),
+) -> None:
+    """Find decisions and work by what they say.
+
+    A bare word searches prose — titles, notes, answers, falsifiers, outcomes.
+    `field:value` matches one stored field, `is:name` asks a derived question,
+    and `under:`/`above:`/`because:` walk the graph. Terms are ANDed; `-`
+    negates one and `or` alternates two.
+
+        dg find 'embedding -status:DECIDED'
+        dg find 'is:ready area:Retrieval'
+        dg find 'falsifier:"the corpus changes"'
+        dg find 'under:D04 is:unsettled'
+        dg find 'is:decidable' --ids | xargs -n1 dg context
+
+    Exit 1 means the query was fine and nothing matched. Exit 2 means it could
+    not be answered as asked — a bad term, an unknown field, a predicate whose
+    store this project does not have, or a flag contradicting the query.
+    """
+    proj = project.find()
+    if not proj.exists:
+        con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
+                  f"[dim]run `dg init` there, or pass --project PATH[/]")
+        raise typer.Exit(2)
+    if decisions and tasks:
+        con.print("[red]--decisions and --tasks are opposites[/]")
+        raise typer.Exit(2)
+
+    # Every store the project has, whatever the flags say. The flags narrow the
+    # *answer*, not the vocabulary: vetting against a subset would report
+    # `because` as an unknown field under `--decisions`, when the truth is that
+    # the field is real and the flag disagrees with it — and those two need
+    # different corrections.
+    lenses, g, tg = _lenses()
+    if not lenses:
+        con.print(f"[red]nothing to search: no readable store under "
+                  f"{proj.root}[/]")
+        raise typer.Exit(2)
+
+    try:
+        q = _query.parse(query)
+        _query.vet(q, lenses)
+        wanted = _query.scope(q, lenses)
+    except _query.Fault as exc:
+        _fault(exc, query)
+        return
+
+    asked = {"decisions"} if decisions else {"tasks"} if tasks else None
+    if asked is not None:
+        narrowed = [l for l in wanted if l.kind in asked]
+        if not narrowed:
+            flag = "--decisions" if decisions else "--tasks"
+            other = "tasks" if decisions else "decisions"
+            if any(l.kind in asked for l in lenses):
+                # The store exists; the query is simply about the other one.
+                # Refused rather than resolved: honouring the flag would print
+                # an empty section for a query that had a perfectly good
+                # answer, and that failure is invisible. Honouring the field
+                # would at least visibly ignore an argument somebody typed.
+                con.print(f"[red]{flag} contradicts the query[/]\n"
+                          f"[dim]it names something only the {other} store "
+                          f"has — drop {flag}, or ask the other question[/]")
+            else:
+                con.print(f"[red]{flag}, but this project has no "
+                          f"{list(asked)[0][:-1]} store[/]")
+            raise typer.Exit(2)
+        wanted = narrowed
+
+    found = {l.kind: _query.select(q, l) for l in wanted}
+    if as_json:
+        print(json.dumps({
+            "query": str(q),
+            **{l.kind: [_find_row(q, l, r) for r in found[l.kind]]
+               for l in wanted},
+        }, indent=2, ensure_ascii=False))
+    elif ids:
+        for l in wanted:
+            for rid in found[l.kind]:
+                print(rid)
+    else:
+        _find_report(q, wanted, found, full=full, limit=limit, g=g)
+
+    if not any(found.values()):
+        if not (as_json or ids):
+            _did_you_mean(q, wanted)
+        raise typer.Exit(1)
+
+
+def _find_row(q, l, rid: str) -> dict:
+    status, title, area = l.row(rid)
+    return {"id": rid, "status": status, "title": title, "area": area,
+            "matched": [{"field": m.field, "snippet": compact.clip(m.text, 120),
+                         "term": m.term} for m in _query.explain(q, l, rid)]}
+
+
+#: How a store's rows are titled and coloured, so the two sections read as the
+#: same view of different vocabularies rather than two commands' output.
+_SECTION = {"decisions": ("DECISIONS", _style),
+            "tasks": ("TASKS", lambda s: TASK_STYLE.get(s, "white"))}
+
+
+def _find_aside(q, l, rid: str, g: Graph | None) -> str:
+    """Why this row is here.
+
+    The one place `find` departs from `dg show`'s row, and the point of the
+    command: `dg show` puts waits/unblocks in the aside because you are
+    triaging, `find` puts the field that matched there because you are
+    identifying.
+
+    A title hit needs no aside — the title is already on the line — so it falls
+    back to what `dg show` would have said, which is why a search for a word
+    that happens to be in the titles still reads as a frontier listing.
+    """
+    hits = [m for m in _query.explain(q, l, rid) if m.field != "title"]
+    if hits:
+        m = hits[0]
+        rest = f" (+{len(hits) - 1})" if len(hits) > 1 else ""
+        return f"{m.field}: {compact.gist(m.text)}{rest}"
+    if l.kind == "decisions" and g is not None:
+        waits, opens = g.waiting_on(rid), g.children(rid)
+        if waits:
+            return "waits " + ", ".join(waits)
+        return "unblocks " + ", ".join(opens) if opens else ""
+    return ""
+
+
+def _find_report(q, lenses, found: dict, *, full: bool, limit: int,
+                 g: Graph | None) -> None:
+    for l in lenses:
+        rows = found[l.kind]
+        heading, style = _SECTION[l.kind]
+        con.print(f"\n[bold]{heading}[/]  {len(rows)} match of {len(l.ids)}")
+        if not rows:
+            con.print("  [dim]nothing matches here[/]")
+            continue
+        shown = rows if full else rows[:limit]
+        asides = {rid: _find_aside(q, l, rid, g) for rid in shown}
+        if full:
+            t = Table(header_style="bold")
+            for c in ("ID", "Title", "Status", "Matched", "Area"):
+                t.add_column(c)
+            for rid in shown:
+                status, title, area = l.row(rid)
+                t.add_row(rid, _x(title), f"[{style(status)}]{status}[/]",
+                          _x(asides[rid]) or "—", _x(area))
+            con.print(t)
+        else:
+            entries, tails = [], []
+            for rid in shown:
+                status, title, area = l.row(rid)
+                # An empty aside stays the empty string, never empty markup:
+                # `compact.listing` joins the tail onto whatever is truthy, and
+                # `[dim][/]` is truthy, which leaves a row separated from its
+                # area by a bullet and nothing else.
+                aside = f"[dim]{_x(asides[rid])}[/]" if asides[rid] else ""
+                entries.append((rid, f"[{style(status)}]{status}[/]",
+                                _x(title), aside))
+                tails.append(f"[dim]{_x(area)}[/]")
+            # `prose_aside` only when an aside is actually prose. With every
+            # row hit on its title the asides are short cross-references or
+            # absent, and giving the aside its own column then spends the
+            # title's width on nothing.
+            prose = any(":" in asides[rid] for rid in shown)
+            _say(compact.listing(entries, width=_width(), markup=True,
+                                 tails=tails, prose_aside=prose))
+            if len(rows) > len(shown):
+                con.print(f"  [dim]… {len(rows) - len(shown)} more — "
+                          f"`--limit {len(rows)}` or `--ids`[/]")
+    _find_staged(found)
+    if not full:
+        con.print(compact.hint("dg find … --full", "the table, nothing clipped"))
+
+
+def _find_staged(found: dict) -> None:
+    """Say when the tray also matches, without folding it into the rows.
+
+    A staged op is a different kind of thing from a record — it has no id to
+    follow up with — so a result set mixing them would be one where some rows
+    answer `dg context` and some do not. The brief keeps the tray in its own
+    section for the same reason.
+    """
+    proj = project.find()
+    staged = len(pending.load(proj.pending)) + len(
+        pending.load(proj.task_pending))
+    if staged:
+        con.print(f"  [dim]{staged} op(s) staged and not applied — "
+                  f"`dg pending` (not searched)[/]")
+
+
+def _did_you_mean(q, lenses) -> None:
+    """Rescue a typo without letting a guess into the result set.
+
+    Exactness is what makes an empty result a *fact* — "nothing contains that
+    string" is actionable in a way that "nothing matched, at whatever threshold
+    was configured" is not. The cost is that `dg find embeddig` says nothing
+    useful, so the suggestion is offered as a re-run to accept or ignore, and
+    never as rows silently folded in.
+    """
+    import difflib
+    bare = [t.value.raw for t in q.terms
+            if t.kind == "prose" and not t.negated and not t.value.regex]
+    if not bare:
+        return
+    vocab = set()
+    for l in lenses:
+        vocab |= _query.words(l)
+    tips = []
+    for word in bare:
+        near = difflib.get_close_matches(word.lower(), vocab, n=2, cutoff=0.8)
+        tips += [f"{word} → {n}" for n in near if n != word.lower()]
+    if tips:
+        con.print("  [dim]did you mean " + _x(", ".join(tips)) + "?[/]")
 
 
 @app.command(rich_help_panel=READ)

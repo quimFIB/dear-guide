@@ -28,6 +28,7 @@ import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from dgraph import applying, cross, editor, pending, project, render, task_pending
 from dgraph.model import Graph
@@ -232,6 +233,44 @@ def stage_task(tg: TaskGraph, op: dict) -> list[dict]:
     return [op]
 
 
+def find_payload(q: str) -> dict:
+    """One query, answered for the browser exactly as the CLI answers it.
+
+    The same `cross.lenses` and the same `dgraph.query`, so a query typed into
+    the page and the same query typed at a shell cannot disagree. The page
+    needs *ids*, not rows — it already holds every record and only wants to
+    know which to draw — so this returns id lists and the match evidence, and
+    leaves rendering where rendering belongs.
+
+    A fault is reported as data with a column rather than as a 500: a mistyped
+    query is an ordinary thing to do in a search box, and the box wants to
+    underline it, not show an error page.
+    """
+    from dgraph import query as _q
+
+    lenses = cross.lenses(*_stores())
+    if not q.strip():
+        return {"query": "", "matched": None}   # null = "no filter", not "none"
+    try:
+        parsed = _q.parse(q)
+        _q.vet(parsed, lenses)
+        wanted = _q.scope(parsed, lenses)
+    except _q.Fault as exc:
+        return {"query": q, "fault": exc.reason, "column": exc.column}
+    out: dict = {"query": str(parsed), "matched": {}, "scope": [
+        l.kind for l in wanted]}
+    for l in wanted:
+        hits = _q.select(parsed, l)
+        out["matched"][l.kind] = hits
+        out.setdefault("why", {}).update({
+            rid: [{"field": m.field, "snippet": m.text[:160]}
+                  for m in _q.explain(parsed, l, rid)] for rid in hits})
+    # A store the query is not about is absent from `matched`, which the page
+    # reads as "this tab is not filtered" — different from an empty list, which
+    # means "filtered, and nothing here matches".
+    return out
+
+
 def _stores() -> tuple[Graph | None, TaskGraph | None]:
     """Both stores, each `None` when the project does not have it.
 
@@ -313,6 +352,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(joined_payload(*_stores()))
             elif self.path == "/api/task-pending":
                 self._json(pending.load(task_pending.path()))
+            elif self.path.startswith("/api/find"):
+                self._json(find_payload(parse_qs(
+                    urlparse(self.path).query).get("q", [""])[0]))
             elif self.path == "/api/health":
                 self._json(health())
             elif self.path == "/api/editor":

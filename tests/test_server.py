@@ -666,3 +666,53 @@ def test_the_delete_route_takes_an_op_id(srv, store):
     code, bad = jreq(srv, "/api/pending/zzzz", "DELETE")
     assert code == 400 and "zzzz" in bad["error"]
     assert len(pending.load()) == 1
+
+
+# ---- /api/find: the page and the CLI answer with one engine ---------------
+
+
+def test_find_returns_ids_not_rows(srv, store):
+    """The page already holds every record and only needs to know which to
+    draw, so the endpoint returns ids and the match evidence and leaves
+    rendering where rendering belongs."""
+    code, d = jreq(srv, "/api/find?q=is:unsettled")
+    assert code == 200
+    assert d["matched"]["decisions"] == ["D05", "D06"]
+
+
+def test_find_reports_a_fault_as_data_not_a_500(srv, store):
+    """A mistyped query is an ordinary thing to do in a search box; the box
+    wants to underline it, not show an error page."""
+    code, d = jreq(srv, "/api/find?q=falsifer:x")
+    assert code == 200 and "falsifer" in d["fault"] and "column" in d
+
+
+def test_an_empty_query_is_not_a_filter(srv, store):
+    """`null` rather than an empty match set: "not filtered" and "filtered, and
+    nothing matches" must not blank the page the same way."""
+    code, d = jreq(srv, "/api/find?q=")
+    assert code == 200 and d["matched"] is None
+
+
+def test_a_store_the_query_is_not_about_is_absent(srv, store):
+    """Absence reads as "this tab is not filtered". An empty list would blank
+    the tasks tab whenever somebody searched a decision-only field."""
+    code, d = jreq(srv, "/api/find?q=falsifier:evidence")
+    assert "tasks" not in d["matched"] and d["matched"]["decisions"] == ["D01"]
+
+
+def test_find_says_which_field_matched(srv, store):
+    code, d = jreq(srv, "/api/find?q=falsifier:evidence")
+    assert d["why"]["D01"][0]["field"] == "falsifier"
+
+
+def test_the_page_and_the_cli_agree(srv, store):
+    """One engine, so a query typed into the page and the same query typed at a
+    shell cannot mean different things."""
+    from typer.testing import CliRunner
+
+    from dgraph.cli import app
+    _, d = jreq(srv, "/api/find?q=is:unsettled")
+    out = CliRunner().invoke(
+        app, ["--project", str(store), "find", "is:unsettled", "--ids"])
+    assert d["matched"]["decisions"] == out.stdout.split()

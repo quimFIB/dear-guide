@@ -26,6 +26,13 @@
   .chip{border:1px solid var(--line);background:transparent;color:var(--dim);
     border-radius:99px;padding:2px 10px;cursor:pointer;font-size:12px}
   .chip.on{color:var(--ink);border-color:var(--accent);background:#1c2733}
+  #q{border:1px solid var(--line);background:transparent;color:var(--ink);
+    border-radius:99px;padding:3px 12px;font-size:12px;width:24ch;
+    font-family:inherit;outline:none}
+  #q:focus{border-color:var(--accent)}
+  #q.bad{border-color:#e0533d}
+  #qnote{font-size:11px;max-width:38ch;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
   .grow{flex:1}
   button.primary{background:var(--accent);color:#04121f;border:0;border-radius:6px;
     padding:5px 12px;font-weight:650;cursor:pointer}
@@ -107,6 +114,8 @@
     <span class="muted" id="counts"></span>
     <span id="statusChips"></span>
     <button class="chip" id="frontierOnly">frontier only</button>
+    <input id="q" placeholder="find…" title="Same query language as `dg find`: a bare word searches prose, field:value matches one field, is:name asks a derived question, under:D04 scopes to a subgraph. `-` negates, `or` alternates.">
+    <span class="muted" id="qnote"></span>
     <span class="grow"></span>
     <span class="legend" id="legend"></span>
     <button class="primary" id="applyBtn" disabled>Apply</button>
@@ -147,7 +156,13 @@ const TASK_COLOR = {TODO:"var(--warn)", DOING:"var(--accent)",
 const DRAFTS={}, NOTES={};
 let EDITING=null;
 const TOKEN = document.querySelector('meta[name=dg-token]').content;
-const filter = {status:new Set(), frontier:false};
+/* One filter, and it is a query string. The status chips and `frontier only`
+   are sugar that edit this text rather than predicates of their own — the page
+   used to carry a second copy in a shared `Set`, which is why selecting
+   DECIDED and switching to the tasks tab emptied it. `FOUND` is what the
+   server matched; `null` means "not filtered", which is a different thing from
+   an empty list ("filtered, and nothing here"). */
+let QUERY = "", FOUND = null, QSEQ = 0;
 
 const base = s => s.split(":")[0];
 const $ = s => document.querySelector(s);
@@ -180,9 +195,29 @@ async function boot(){
   TPEND = T ? await api("/api/task-pending").catch(()=>[]) : [];
   ED = ED || await api("/api/editor").catch(()=>({available:false}));
   if(tab!=="decisions" && !T) tab="decisions";
+  bindQuery();
   tabs(); chips(); legend(); layout(); draw(); tray();
 }
 let ALL_AREAS=[];
+
+let QTIMER=null;
+function bindQuery(){
+  const box=$("#q");
+  if(box.dataset.bound) return;      /* boot() runs again after Apply */
+  box.dataset.bound="1";
+  box.oninput=()=>{
+    /* Debounced: the query runs server-side so that the page and `dg find`
+       cannot disagree about what a term means, and that is a request per
+       keystroke otherwise. */
+    clearTimeout(QTIMER);
+    QTIMER=setTimeout(()=>setQuery(box.value), 160);
+  };
+  box.onkeydown=e=>{
+    if(e.key==="Enter"){ clearTimeout(QTIMER); setQuery(box.value); }
+    if(e.key==="Escape"){ box.value=""; setQuery(""); box.blur(); }
+    e.stopPropagation();             /* the canvas owns arrows and +/- */
+  };
+}
 
 /* The three readings. `joined` is the one neither store can produce alone: it
    is the whole reason the two are linked rather than merged. */
@@ -200,20 +235,104 @@ function tabs(){
   });
 }
 
+/* ---- the one filter -------------------------------------------------------
+
+   Everything that hides a node goes through `runQuery`. The chips compose
+   query text; they do not test statuses themselves. */
+
+/* Positive terms only. A hand-typed `-status:DECIDED` is the reader's, not the
+   chips', and a click that silently deleted it would be losing typing. */
+const STATUS_RE = /(^|\s)status:[^\s]+(\s+or\s+status:[^\s]+)*/g;
+const LIVE = "is:unsettled or is:outstanding";
+
+function statusesIn(text){
+  const out = new Set();
+  (text.match(/(?:^|\s)status:[^\s]+/g) || []).forEach(m =>
+    out.add(m.trim().slice("status:".length)));
+  return out;
+}
+
+function withStatuses(text, set){
+  /* Rewrite the status run in place rather than appending: two runs would be
+     ANDed, and `status:OPEN status:DECIDED` matches nothing, which reads as a
+     broken chip rather than as the contradiction it is. */
+  const rest = text.replace(STATUS_RE, " ")
+    /* Stripping a run can strand the `or` that joined it to a term the chips
+       do not own, and a dangling `or` is a parse fault rather than a filter. */
+    .replace(/\s+or\s+or\s+/g, " or ").replace(/^\s*or\s+|\s+or\s*$/g, "")
+    .replace(/\s+/g, " ").trim();
+  const grp = [...set].sort().map(s => "status:" + s).join(" or ");
+  return [grp, rest].filter(Boolean).join(" ");
+}
+
+function setQuery(text){
+  QUERY = text.trim();
+  const box = $("#q");
+  if(box.value.trim() !== QUERY) box.value = QUERY;
+  runQuery();
+}
+
+async function runQuery(){
+  const seq = ++QSEQ;
+  if(!QUERY){ FOUND = null; $("#qnote").textContent = ""; syncChips(); draw(); return; }
+  let r;
+  try { r = await api("/api/find?q=" + encodeURIComponent(QUERY)); }
+  catch(e){ return; }
+  /* A slow answer to an old keystroke must not overwrite a fast answer to a
+     new one. */
+  if(seq !== QSEQ) return;
+  if(r.fault){
+    FOUND = null;
+    $("#qnote").textContent = "⚠ " + r.fault;
+    $("#q").classList.add("bad");
+  } else {
+    FOUND = r.matched || null;
+    $("#q").classList.remove("bad");
+    const n = Object.values(FOUND || {}).reduce((a, x) => a + x.length, 0);
+    $("#qnote").textContent = FOUND ? n + " match" + (n === 1 ? "" : "es") : "";
+  }
+  syncChips();
+  draw();
+}
+
+function syncChips(){
+  const on = statusesIn(QUERY);
+  $("#statusChips").querySelectorAll("button").forEach(b =>
+    b.classList.toggle("on", on.has(b.dataset.s)));
+  $("#frontierOnly").classList.toggle("on", QUERY.includes(LIVE));
+}
+
+function toggleStatus(s){
+  const set = statusesIn(QUERY);
+  set.has(s) ? set.delete(s) : set.add(s);
+  setQuery(withStatuses(QUERY, set));
+}
+
+function toggleLive(){
+  setQuery(QUERY.includes(LIVE)
+    ? QUERY.replace(LIVE, "").replace(/\s+/g, " ").trim()
+    : (QUERY ? LIVE + " " + QUERY : LIVE));
+}
+
+/* `matched` omits a store the query is not about, and that absence means "this
+   tab is not filtered" — as opposed to an empty list, which means "filtered,
+   and nothing here matches". Conflating the two would blank a tab whenever
+   somebody searched a field the other store owns. */
+function passes(kind, id){
+  if(!FOUND) return true;
+  const hits = FOUND[kind];
+  return hits === undefined ? true : hits.includes(id);
+}
+
 function chips(){
   if(tab==="tasks"){ taskChips(); return; }
   const seen = [...new Set(G.vertices.map(v=>base(v.status)))].sort();
   $("#statusChips").innerHTML = seen.map(s=>
     `<button class="chip" data-s="${esc(s)}">${esc(s)}</button>`).join(" ");
-  $("#statusChips").querySelectorAll("button").forEach(b=>b.onclick=()=>{
-    const s=b.dataset.s;
-    filter.status.has(s)?filter.status.delete(s):filter.status.add(s);
-    b.classList.toggle("on"); draw();
-  });
-  $("#frontierOnly").onclick=()=>{
-    filter.frontier=!filter.frontier;
-    $("#frontierOnly").classList.toggle("on"); draw();
-  };
+  $("#statusChips").querySelectorAll("button").forEach(b=>
+    b.onclick=()=>toggleStatus(b.dataset.s));
+  $("#frontierOnly").onclick = toggleLive;
+  syncChips();
   const c={}; G.vertices.forEach(v=>c[base(v.status)]=(c[base(v.status)]||0)+1);
   let txt = G.vertices.length+" decisions · "+
     Object.entries(c).map(([k,n])=>`${n} ${k.toLowerCase()}`).join(", ");
@@ -224,12 +343,11 @@ function chips(){
 function taskChips(){
   const seen=[...new Set(T.tasks.map(x=>x.status))].sort();
   $("#statusChips").innerHTML = seen.map(s=>
-    `<button class="chip${filter.status.has(s)?" on":""}" data-s="${esc(s)}">${esc(s)}</button>`).join(" ");
-  $("#statusChips").querySelectorAll("button").forEach(b=>b.onclick=()=>{
-    const s=b.dataset.s;
-    filter.status.has(s)?filter.status.delete(s):filter.status.add(s);
-    b.classList.toggle("on"); draw();
-  });
+    `<button class="chip" data-s="${esc(s)}">${esc(s)}</button>`).join(" ");
+  $("#statusChips").querySelectorAll("button").forEach(b=>
+    b.onclick=()=>toggleStatus(b.dataset.s));
+  $("#frontierOnly").onclick = toggleLive;
+  syncChips();
   /* `ready` here is the cross-graph one: prerequisites resolved *and* the
      premise settled. Reporting the task store's own narrower answer would
      promise work that `dg task start` is about to say is blocked. */
@@ -358,17 +476,9 @@ function xyOf(id){
   return (tab==="tasks" ? T.xy : tab==="joined" ? JOIN.xy : G.xy)[id];
 }
 
-function visible(v){
-  if(filter.frontier && !G.frontier.includes(v.id)) return false;
-  if(filter.status.size && !filter.status.has(base(v.status))) return false;
-  return true;
-}
+function visible(v){ return passes("decisions", v.id); }
 
-function tvisible(x){
-  if(filter.frontier && !T.frontier.includes(x.id)) return false;
-  if(filter.status.size && !filter.status.has(x.status)) return false;
-  return true;
-}
+function tvisible(x){ return passes("tasks", x.id); }
 
 /* One node renderer for both stores: same box, same two wrapped title lines,
    so a decision and a task read as the same kind of thing in the joined view

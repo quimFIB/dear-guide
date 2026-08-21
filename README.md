@@ -156,6 +156,9 @@ dg context T14                           # the same for a piece of work
 dg path D01 D09                          # the chain of evidence between two
 dg tree                                  # the DAG
 dg areas                                 # counts by area, in both stores
+dg find embedding                        # every decision and task that says so
+dg find 'under:D04 is:unsettled'         # ...still open in what D04 opened
+dg find 'is:decidable' --ids             # ...ids alone, for a pipe
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg reopen D06                            # stage a reopen + its propagation
@@ -221,6 +224,18 @@ parser — a decisions document of your own will not parse, and the fix is to
 write the JSON or to drive `dg add` and `dg decide` from your document.
 
 ### How much each command says
+
+`dg find` is the only reading that starts from a **word**. Every other one
+starts from the frontier or from an id you already have, which is fine until
+the frontier stops fitting on a screen and "was this already decided?" has no
+command behind it. A bare word searches prose; `field:value` matches one stored
+field; `is:name` asks a derived question and delegates to the method that
+already answers it, so `is:ready` cannot disagree with `dg task`. The aside on
+each row says *why* it matched. Nothing is ranked and nothing is fuzzy-matched:
+an empty result means nothing in the store contains that string, which is a
+fact worth trusting, and `/regex/` is there when approximation is wanted where
+the reader can see it. A malformed query exits 2 and no matches exits 1, so a
+script can tell "you asked wrong" from "already settled, nothing found".
 
 The reading commands are **short by default and long on request**. `dg show`,
 `dg task` and `dg context` give one line per thing — id, status, title, and what
