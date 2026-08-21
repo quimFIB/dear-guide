@@ -148,15 +148,41 @@ def _ordered(layout) -> type[TyperGroup]:
     print one row for `why` and `context` is to hand it a single command
     carrying both names. The first name wins the help text and, since the row
     is only a label, any of them still runs.
+
+    That label is for the *help*, and `list_commands` has a second audience:
+    click reads it to build shell completions too. A shell offering
+    `why/context` would complete a name nobody typed, while hiding `context`,
+    which somebody might — so completion asks for the same list without the
+    collapse, through `ctx.meta`, rather than each caller getting whichever
+    form happens to suit the other.
     """
     order = [name for _, names in layout for name in names]
+
+    #: Set on the context while click is completing, read by `list_commands`.
+    PLAIN = "dgraph.plain_command_names"
 
     class Ordered(TyperGroup):
         def list_commands(self, ctx):
             known = [n for n in order
                      if all(a in self.commands for a in n.split("/"))]
             listed = {a for n in known for a in n.split("/")}
-            return known + sorted(set(self.commands) - listed)
+            tail = sorted(set(self.commands) - listed)
+            if ctx is not None and ctx.meta.get(PLAIN):
+                return [a for n in known for a in n.split("/")] + tail
+            return known + tail
+
+        def shell_complete(self, ctx, incomplete):
+            """Completion is dispatch, not display.
+
+            Click's own walk is kept — it is the thing that knows about hidden
+            commands and about completing options after them — and only the
+            names it walks are corrected.
+            """
+            ctx.meta[PLAIN] = True
+            try:
+                return super().shell_complete(ctx, incomplete)
+            finally:
+                ctx.meta.pop(PLAIN, None)
 
         def get_command(self, ctx, name):
             if "/" in name and name not in self.commands:

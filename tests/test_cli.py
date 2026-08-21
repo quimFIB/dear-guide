@@ -1712,6 +1712,43 @@ def test_aliases_read_as_one_line(tmp_path):
         assert runner.invoke(app, [name, "--help"]).exit_code == 0
 
 
+def _grouped():
+    """The click group typer builds, and a context to ask it questions with.
+
+    Through `context_class` rather than `click.Context`: typer vendors click
+    now, so importing it by name is importing a package this project does not
+    depend on and may not have.
+    """
+    import typer.main
+    cmd = typer.main.get_command(app)
+    return cmd, cmd.context_class(cmd, info_name="dg")
+
+
+def _completions(incomplete: str) -> list[str]:
+    cmd, ctx = _grouped()
+    return [c.value for c in cmd.shell_complete(ctx, incomplete)]
+
+
+def test_completion_offers_the_names_a_shell_can_type(tmp_path):
+    """The one-line label is for the help screen. Click reads the same list to
+    build completions, where `why/context` would be a name nobody typed —
+    inserted by TAB — while `context`, which somebody might type, went
+    missing from it."""
+    assert "context" in _completions("c")
+    assert _completions("w") == ["why"]
+    assert not [c for c in _completions("") if "/" in c]
+
+
+def test_the_help_and_the_shell_are_asked_for_different_lists(tmp_path):
+    """Both audiences read `list_commands`, and they want different answers:
+    one row for the pair, both names to type. Pinned together so neither can
+    be fixed by giving the other the wrong one."""
+    cmd, ctx = _grouped()
+    assert "why/context" in cmd.list_commands(ctx)
+    assert "why" in _completions("") and "context" in _completions("")
+    assert ctx.meta == {}, "completion left its flag on the context"
+
+
 def test_the_order_inside_a_panel_is_the_order_you_meet_them(tmp_path):
     """The sequences that motivated ordering the help at all, pinned literally:
     create before settle, settle before reverse, and removal last."""
