@@ -28,25 +28,45 @@ from __future__ import annotations
 from datetime import date as _date
 
 from dgraph import cross, editor, project
-from dgraph.editor import EditorAbort, EditorError  # noqa: F401  (re-exported)
+from dgraph.editor import EditorAbort, EditorError
 from dgraph.model import Graph
-#: `PROSE` is imported rather than restated: the list that decides when an op
-#: *claims* org and the list that decides what the store honours it for have to
-#: be one list.
-from dgraph.task_pending import PROSE  # noqa: F401
-from dgraph.tasks import ID_RE, TaskGraph
-
-#: The task store's statuses, for the buffer's `#+TODO:` line. Org colours a
-#: keyword it knows; the decision list would colour the wrong words here.
-STATUSES = ("TODO", "DOING", "DONE", "DROPPED")
+#: The prose a task's `format` covers. Imported rather than restated, and read
+#: by `_org` below: the list that decides when an op *claims* org and the list
+#: that decides what the store honours it for have to be one list, and the way
+#: they stop being one is by each module keeping its own.
+from dgraph.task_pending import PROSE
+from dgraph.tasks import ID_RE, RESOLVED, STATUSES, UNFINISHED, TaskGraph
 
 
 def _header(title: str, **props: str) -> str:
-    """`editor._header` with the task store's keywords."""
+    """`editor._header` with the task store's keywords.
+
+    Built from the model's own status lists rather than spelled out again. Org
+    colours the keywords it is told about, and the buffer is the one place a
+    writer types a status by hand: a line naming a status the store does not
+    have, or missing one it does, is wrong exactly where being wrong shows.
+    """
     return editor._HEADER.format(
-        title=title, todo="TODO DOING", done="DONE DROPPED",
+        title=title,
+        todo=" ".join(s for s in STATUSES if s in UNFINISHED),
+        done=" ".join(s for s in STATUSES if s in RESOLVED),
         props=editor._props(props),
     )
+
+
+def _org(op: dict) -> dict:
+    """Tag `op` as org, where it writes prose the store will convert.
+
+    A task carries one `format` for its whole record, and `task_pending`
+    applies it to whichever of `PROSE` the op actually writes. An op claiming a
+    dialect while writing none of them is a claim that silently does nothing;
+    an op writing one without claiming it renders org as markdown, which is the
+    defect this pairing exists to have closed. Both sides read `PROSE`, so
+    neither can be extended without the other following.
+    """
+    if any(op.get(f) for f in PROSE):
+        op["format"] = "org"
+    return op
 
 
 def next_id(tg: TaskGraph) -> str:
@@ -289,12 +309,11 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict) -> list[dict]:
     op = {"op": "add_task", "id": tid, "title": _need(f, "title"), "area": area}
     if f.get("note", "").strip():
         op["note"] = f["note"].strip()
-        op["format"] = "org"
     for field, key in (("Because", "because"), ("Evidence for", "evidence_for")):
         val = f.get(field.lower(), "").strip()
         if val:
             op[key] = _premise(g, val, field)
-    ops = [op]
+    ops = [_org(op)]
     # One group, in the order the CLI stages them: the task, then its edges.
     # A task landing without them is not a partial batch something refuses —
     # it is a task that reads as startable. Audit F28.
@@ -311,17 +330,17 @@ def _parse_done(tg: TaskGraph, meta: dict, f: dict) -> list[dict]:
     tid = meta.get("task")
     if tid not in tg.tasks:
         raise EditorError(f"unknown task {tid!r}")
-    return [{
+    # Provenance, exactly as `editor._parse_close` records it: this buffer is
+    # org, so the views must convert its emphasis rather than read `*HNSW*` as
+    # markdown's italic. Claimed through `_org` rather than written in, so the
+    # claim is checked against what the store will honour. A task carries one
+    # `format` for its whole record, so the caller says so when the record
+    # already held prose written somewhere else.
+    return [_org({
         "op": "set_status", "task": tid, "status": meta.get("status", "DONE"),
         "outcome": _need(f, "outcome"),
         "done": meta.get("date") or _date.today().isoformat(),
-        # Provenance, exactly as `editor._parse_close` records it: this buffer
-        # is org, so the views must convert its emphasis rather than read
-        # `*HNSW*` as markdown's italic. A task carries one `format` for its
-        # whole record — see `PROSE` — so the caller says so when the record
-        # already held prose written somewhere else.
-        "format": "org",
-    }]
+    })]
 
 
 def compose_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None,

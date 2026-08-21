@@ -1638,6 +1638,27 @@ DISAGREE = {
 }
 
 
+def test_a_heading_meaning_two_things_is_an_error_where_it_is_written():
+    """Two of the headings are one string used by both screens, so the pairing
+    cannot be a dict literal: it would keep the last and lose the count. The
+    mechanism is exercised rather than trusted, because the case it catches is
+    one nobody writes on purpose."""
+    with pytest.raises(ValueError, match="two meanings"):
+        cli._roles(("Keeping it honest", "honest"),
+                   ("Keeping it honest", "store"))
+    # And a heading shared on purpose is still one entry, not a refusal.
+    assert cli._roles((cli.HONEST, "honest"), (cli.T_HONEST, "honest")) == {
+        cli.HONEST: "honest"}
+
+
+def test_every_panel_on_both_screens_has_a_role():
+    """`ROLES` is what the agreement test reads; a panel missing from it makes
+    that test raise rather than fail, which reads as a broken test."""
+    for layout in (cli.LAYOUT, cli.TASK_LAYOUT):
+        for panel, _ in layout:
+            assert panel in cli.ROLES, panel
+
+
 def test_the_one_heading_disagreement_is_the_deliberate_one():
     """So that closing it reads as a decision rather than as tidying up."""
     dec = {n: cli.ROLES[p] for n, p in _panels(cli.LAYOUT).items()}

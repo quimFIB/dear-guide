@@ -283,7 +283,38 @@ def test_an_empty_buffer_aborts_rather_than_erroring(tg, task_store):
         task_editor.parse("", tg=tg, g=None)
 
 
-def test_the_two_modules_agree_on_which_prose_carries_the_dialect():
-    """One list, imported rather than restated: the fields an op may claim org
-    for and the fields the store honours it for must be the same fields."""
+def test_an_op_claims_org_exactly_where_the_store_will_honour_it(tg, task_store):
+    """One list, imported rather than restated — and read, which is the half
+    that makes it hold. `format` is one field for a task's whole record and the
+    store applies it beside whichever of `PROSE` the op writes, so an op
+    claiming the dialect while writing none of them claims nothing, and one
+    writing prose without claiming it renders org as markdown. Asserted over
+    what the parsers actually emit, so a new field has to satisfy it."""
     assert task_editor.PROSE is task_pending.PROSE
+
+    def ops(text, **fields):
+        return task_editor.parse(fill(text, **fields), tg=tg, g=None)
+
+    emitted = [
+        *ops(task_editor.render_add(tg, None), title="Prose", area="Alpha",
+             note="*HNSW* beat IVF"),          # writes a note
+        *ops(task_editor.render_add(tg, None), title="Bare", area="Alpha",
+             after="T04"),                     # writes none, and an edge op
+        *ops(task_editor.render_done(tg, None, "T02"), outcome="*0.94* at 10"),
+    ]
+    assert len(emitted) == 4
+    for op in emitted:
+        wrote_prose = any(op.get(f) for f in task_pending.PROSE)
+        assert bool(op.get("format")) == wrote_prose, op
+
+
+def test_the_keyword_line_is_built_from_the_store_s_own_statuses(tg, task_store):
+    """Restating them here is how the buffer comes to offer a status the store
+    does not have, in the one place a writer types one by hand."""
+    from dgraph import tasks
+    line = next(ln for ln in task_editor.render_add(tg, None).splitlines()
+                if ln.startswith("#+TODO:"))
+    assert line == "#+TODO: TODO DOING | DONE DROPPED"
+    for s in tasks.STATUSES:
+        assert s in line
+

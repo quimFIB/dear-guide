@@ -98,12 +98,36 @@ TASK_LAYOUT = (
     (T_STORE, ("init", "import", "export")),
 )
 
+
+def _roles(*pairs: tuple[str, str]) -> dict[str, str]:
+    """`{panel: role}`, refusing one heading with two meanings.
+
+    Built from pairs rather than written as a dict literal because two of the
+    headings below are the *same string* on both help screens — "Keeping it
+    honest" and the staging line read identically for decisions and for work,
+    which is deliberate and is why the two sides can share a role. A literal
+    would have quietly kept whichever came last, so the twelve pairs declared
+    would have been ten entries and a later disagreement would have resolved
+    itself in silence. Here it is an error where the pairs are, which is the
+    only place anybody would be looking.
+    """
+    out: dict[str, str] = {}
+    for panel, role in pairs:
+        if out.setdefault(panel, role) != role:
+            raise ValueError(
+                f"the heading {panel!r} is {out[panel]!r} on one help screen "
+                f"and {role!r} on the other: one wording, two meanings")
+    return out
+
+
 #: What each panel is *for*, so the two screens can be checked against each
 #: other rather than read side by side by somebody who remembers to.
-ROLES = {READ: "read", HONEST: "honest", RECORD: "record", STAGE: "stage",
-         STORE: "store", WORK: "work", WEB: "web",
-         T_READ: "read", T_HONEST: "honest", T_RECORD: "record",
-         T_STAGE: "stage", T_STORE: "store"}
+ROLES = _roles(
+    (READ, "read"), (HONEST, "honest"), (RECORD, "record"), (STAGE, "stage"),
+    (STORE, "store"), (WORK, "work"), (WEB, "web"),
+    (T_READ, "read"), (T_HONEST, "honest"), (T_RECORD, "record"),
+    (T_STAGE, "stage"), (T_STORE, "store"),
+)
 
 
 def _ordered(layout) -> type[TyperGroup]:

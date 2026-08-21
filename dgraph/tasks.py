@@ -104,7 +104,10 @@ class Task:
     #: what the work *was* is the opposite of keeping a record: the decision
     #: store keeps a superseded answer forever for the same reason.
     why: str | None = None
-    format: str | None = None    # the note's dialect: "org", else markdown
+    #: The dialect of every piece of prose this record holds — the note, the
+    #: outcome and the reason it was dropped, all converted through this one
+    #: field by `task_render`. "org", else markdown. See `task_pending.PROSE`.
+    format: str | None = None
     #: The decision this work exists because of — a `D`-id in the *other*
     #: store. Held here and nowhere else: `decisions.json` never names a task,
     #: so a change to it always means a decision changed. Nothing in this
