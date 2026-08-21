@@ -19,7 +19,7 @@ repo=/path/to/dear-guide
 ln -s "$repo/skills/dear-guide"      ~/.config/opencode/skills/dear-guide
 ln -s "$repo/opencode/dear-guide.ts" ~/.config/opencode/plugins/dear-guide.ts
 for c in "$repo"/commands/*.md; do
-  ln -s "$c" ~/.config/opencode/commands/"$(basename "$c")"
+  ln -s "$c" ~/.config/opencode/commands/"dg-$(basename "$c")"
 done
 ```
 
@@ -31,6 +31,12 @@ Two things about those paths:
   one file for one host; it now holds the same five files Claude Code loads
   from the plugin root. One copy, two hosts — the arrangement the skill has
   always had.
+- **The link is named `dg-<file>`, not `<file>`.** Claude Code namespaces a
+  plugin's commands under the plugin name, so `commands/brief.md` is `/dg:brief`
+  there and needs no prefix in the file. Here the directory is flat and shared
+  with every other tool installed into it — `/context` and `/tasks` are names
+  something else has already taken — so the prefix goes on the link instead of
+  in a second copy of the file.
 - opencode also reads `~/.claude/skills/` and `.claude/skills/` directly, so if
   you already keep skills there, the skill symlink can point at one of those
   instead. It is the same file either way: the frontmatter is restricted to

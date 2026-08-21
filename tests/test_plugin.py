@@ -228,6 +228,43 @@ def test_the_manifests_validate():
     assert "Validation passed" in r.stdout, r.stdout + r.stderr
 
 
+def test_a_command_file_carries_no_prefix_of_its_own():
+    """Each host supplies its own namespace, so the file must not.
+
+    Claude Code prefixes a plugin's commands with the plugin name — `dg`, so
+    `brief.md` is `/dg:brief`. A `dg-` in the filename would come back doubled
+    there. opencode gets the same file under a link the install renames.
+    """
+    for path in COMMANDS:
+        assert not path.stem.startswith("dg-"), \
+            f"{path.name}: the plugin name already says `dg`"
+
+
+def test_the_plugin_is_named_for_the_command_it_wraps():
+    """`/dg:brief` reads as the CLI does. The manifest name is what Claude Code
+    puts before the colon, and the marketplace entry has to agree with it or the
+    install names a plugin that is not there."""
+    assert json.loads(MANIFEST.read_text())["name"] == "dg"
+    entries = json.loads(MARKET.read_text())["plugins"]
+    assert [e["name"] for e in entries] == ["dg"]
+
+
+def test_opencode_is_told_to_prefix_the_link_it_makes():
+    """The one line the two-name arrangement rests on.
+
+    opencode's user-scoped command directory is flat and shared, where `/brief`
+    and `/context` collide with whatever else is installed. The prefix lives on
+    the symlink rather than in the file, which is what keeps one copy serving
+    both hosts — and an install snippet that dropped it would silently install
+    five commands under names somebody else owns.
+    """
+    for readme in (ROOT / "opencode" / "README.md",
+                   ROOT / "docs" / "quickstart-agents.md"):
+        text = readme.read_text()
+        assert 'commands/"dg-$(basename' in text, \
+            f"{readme.name}: the link has to be renamed, not copied straight"
+
+
 def test_both_hosts_are_told_where_the_commands_live():
     """The directory moved out of `opencode/` so one copy serves both.
 

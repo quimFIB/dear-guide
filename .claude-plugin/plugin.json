@@ -1,5 +1,5 @@
 {
-  "name": "dear-guide",
+  "name": "dg",
   "description": "Track a project's development as two linked graphs: the decisions — what is settled, what it rests on, what evidence would reopen it — and the work that follows from them. Injects the open frontier at session start, teaches the recording discipline, and refuses a commit that would leave the graphs contradicting themselves.",
   "version": "0.1.0",
   "author": {

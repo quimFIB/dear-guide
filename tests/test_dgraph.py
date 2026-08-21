@@ -737,7 +737,7 @@ def test_concurrent_staging_loses_nothing(store):
     """Audit F4's other half. Every tray mutation is load-then-save, so two
     interleaving means the second writes a list built before the first one's op
     existed. Threads rather than a contrived interleave because that is the
-    real shape: `dg serve` is a `ThreadingHTTPServer` and `commands/dg-serve.md`
+    real shape: `dg serve` is a `ThreadingHTTPServer` and `commands/serve.md`
     tells the user to work in the browser and a terminal at once.
 
     Without `pending.held` this loses roughly three quarters of the batch.
@@ -781,7 +781,7 @@ def test_an_apply_does_not_overwrite_a_batch_applied_meanwhile(store):
     """Audit F10. The tray got a lock; the store it feeds did not, and `apply`
     is a read-modify-write of the store: load, apply a batch to a copy, save.
 
-    Two hosts sharing a project — which `commands/dg-serve.md` tells the user to
+    Two hosts sharing a project — which `commands/serve.md` tells the user to
     do — could each load the store and each write their own result, and the
     later write erased the earlier one's decisions while `discard` took its ops
     out of the tray. An *applied* batch, reported as applied, gone with no error

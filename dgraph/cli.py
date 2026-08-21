@@ -1722,7 +1722,7 @@ def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
     """Unstage one op, by its id or its position, and say which one it was.
 
     **Quote the id when anything else may be writing.** The tray is shared —
-    `commands/dg-serve.md` tells a user to work in the browser and a terminal at
+    `commands/serve.md` tells a user to work in the browser and a terminal at
     once — and `pending.discard` takes applied ops out by value from wherever
     they sit, which is what keeps a concurrent writer's work staged. Every index
     past them then shifts, so a position read off an earlier `dg pending` can

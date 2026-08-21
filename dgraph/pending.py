@@ -90,7 +90,7 @@ def held(path: Path | None = None, *, wait: float = project.LOCK_WAIT):
     one's op existed — the op is gone, with no error and nothing in any diff.
     That is the failure the whole staging area exists to prevent from `git`;
     it should not be reachable from the tool itself. It is not hypothetical:
-    `dg serve` is threaded, and `commands/dg-serve.md` tells the user to work
+    `dg serve` is threaded, and `commands/serve.md` tells the user to work
     in the browser and a terminal at once.
 
     The lock itself is `project.held` — the same one `dgraph/applying.py` holds
@@ -532,7 +532,7 @@ def describe(d: dict) -> str:
 # ---- collisions ----------------------------------------------------------
 #
 # Two writers on one tray is not a supported case (see `README.md`), but it is a
-# reachable one: `commands/dg-serve.md` tells a user to work in the browser and a
+# reachable one: `commands/serve.md` tells a user to work in the browser and a
 # terminal at once, and `dg serve` is threaded. When it happens the loser of the
 # race gets an op refused, and the words it is refused in decide what happens
 # next.

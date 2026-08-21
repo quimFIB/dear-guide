@@ -6,7 +6,7 @@
   },
   "plugins": [
     {
-      "name": "dear-guide",
+      "name": "dg",
       "description": "Read, record and reverse a project's decisions, and track the work that follows from them, through the `dg` CLI.",
       "source": "./"
     }

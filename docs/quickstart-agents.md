@@ -10,7 +10,7 @@ commands for the times you want to ask rather than wait to be told.
 | **read the frontier first** | `dg brief` is injected at the start of every session, and again after a compaction — no rule in an instructions file, no "read this first" |
 | **know the discipline** | the `dear-guide` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it |
-| **ask on demand** | `/dg-brief` `/dg-frontier` `/dg-tasks` `/dg-context` `/dg-serve` — the same five files on both hosts |
+| **ask on demand** | `/dg:brief` `/dg:frontier` `/dg:tasks` `/dg:context` `/dg:serve` — the same five files on both hosts, `/dg-brief` and friends on opencode |
 
 The interesting parts live in `dg` — `dg brief`, `dg gate`, `dg context` — so
 each adapter is a few dozen lines of translation with no policy of its own, and
@@ -35,7 +35,7 @@ dg --version        # so an adapter can tell when the two halves have drifted
 
 ```
 /plugin marketplace add /path/to/dear-guide
-/plugin install dear-guide
+/plugin install dg
 ```
 
 ### 2b. opencode
@@ -47,7 +47,7 @@ repo=/path/to/dear-guide
 ln -s "$repo/skills/dear-guide"      ~/.config/opencode/skills/dear-guide
 ln -s "$repo/opencode/dear-guide.ts" ~/.config/opencode/plugins/dear-guide.ts
 for c in "$repo"/commands/*.md; do
-  ln -s "$c" ~/.config/opencode/commands/"$(basename "$c")"
+  ln -s "$c" ~/.config/opencode/commands/"dg-$(basename "$c")"
 done
 ```
 
@@ -57,11 +57,13 @@ singular form loads nothing and says nothing about it); `commands/` is at the
 opencode also reads `~/.claude/skills/` directly, so an existing skills
 directory works as the symlink target instead. It is the same file either way.
 
-The `dg-` prefix on every command is not decoration. opencode's user-scoped
-command directory is a flat namespace shared with every other tool you have
-installed there, and `/context` and `/tasks` are names something else will
-already have taken. Prefixed, the five are the same on both hosts and collide
-with nothing.
+**The `dg-` the loop prepends is not decoration, and it is why the symlink is
+named differently from its target.** Claude Code namespaces a plugin's commands
+under the plugin's own name, so `commands/brief.md` is `/dg:brief` there with
+nothing to add. opencode's user-scoped command directory is a flat namespace
+shared with every other tool you have installed there, where `/context` and
+`/tasks` are names something else will already have taken — so the prefix goes
+on the link. One file, one name per host, no second copy to keep in step.
 
 Check it took:
 
@@ -99,8 +101,9 @@ TASKS  3: DONE 1, TODO 2   (2 ready, 0 blocked)
 CHECK: clean, 2 warning(s) -- `dg check`
 ```
 
-That is `dg brief`, verbatim — you can run it yourself any time, and `/dg-brief`
-prints it on demand on either host, whether or not the injection hook fired. [A session, start to finish](session-walkthrough.md) carries this same
+That is `dg brief`, verbatim — you can run it yourself any time, and `/dg:brief`
+(`/dg-brief` on opencode) prints it on demand, whether or not the injection hook
+fired. [A session, start to finish](session-walkthrough.md) carries this same
 project through a whole session, including the turn that put D01 back in the
 frontier.
 
@@ -157,17 +160,20 @@ plugin and by opencode from a symlink. Each is a `description`, a `dg`
 invocation, and a sentence saying how to read the output — no policy, for the
 same reason the adapters have none.
 
-| | |
-|---|---|
-| `/dg-brief` | the whole situation: frontier, work under review, what is staged, whether the graph is valid |
-| `/dg-frontier` | what could be picked up now — unsettled questions beside startable work |
-| `/dg-tasks` | the backlog, with the cross-graph reading of what each piece waits on |
-| `/dg-context <id> [--full]` | the chain of premises a decision or a task rests on |
-| `/dg-serve` | the graphs in a browser |
+One file, two names: Claude Code takes the namespace from the plugin, opencode
+from the prefix the install put on the link.
+
+| Claude Code | opencode | |
+|---|---|---|
+| `/dg:brief` | `/dg-brief` | the whole situation: frontier, work under review, what is staged, whether the graph is valid |
+| `/dg:frontier` | `/dg-frontier` | what could be picked up now — unsettled questions beside startable work |
+| `/dg:tasks` | `/dg-tasks` | the backlog, with the cross-graph reading of what each piece waits on |
+| `/dg:context <id> [--full]` | `/dg-context <id>` | the chain of premises a decision or a task rests on |
+| `/dg:serve` | `/dg-serve` | the graphs in a browser |
 
 Two of them are worth a note.
 
-**`/dg-context` is the one to run before dispatching a subagent.** A fresh
+**`/dg:context` is the one to run before dispatching a subagent.** A fresh
 context knows the task and nothing about why it exists; `dg context T14` prints
 the chain and ends with the reading. Pass `--full` when the output is going into
 the dispatch — the default clips each premise's answer to a sentence, which is
@@ -182,7 +188,7 @@ ask a follow-up:
 Paste that into the dispatch and the agent starts knowing what it must not
 quietly invalidate.
 
-**`/dg-serve` returns immediately.** `dg serve` blocks forever, so a command file
+**`/dg:serve` returns immediately.** `dg serve` blocks forever, so a command file
 that ran it would hang the session; `dg serve --detach` starts it in its own
 session, prints the URL and exits. It is idempotent — run it twice and the
 second run reports the first one's URL — and `dg serve --stop` ends it.

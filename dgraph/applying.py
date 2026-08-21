@@ -22,7 +22,7 @@ which swaps a fully-written file into place or leaves the old one untouched.
 And atomicity is not isolation. A write that lands whole can still land *on top
 of* another writer's, and the sequence here is a read-modify-write: load the
 store, apply a batch to a copy, save it. Two hosts sharing a project — which
-`commands/dg-serve.md` tells the user to do — could each load the store, each
+`commands/serve.md` tells the user to do — could each load the store, each
 apply their own batch, and the later write would erase the earlier one's
 decisions from the store while `discard` took its ops out of the tray. An
 *applied* batch, reported as applied, gone with no error and nothing in any

@@ -109,7 +109,7 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md) |
 | `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
 | `skills/dear-guide/` | the recording discipline, as a skill both agent hosts load |
-| `commands/` | the slash commands, one set of files for both hosts |
+| `commands/` | the slash commands, one set of files for both hosts — `/dg:brief` under Claude Code, `/dg-brief` under opencode |
 | `hooks/`, `.claude-plugin/` | the Claude Code plugin |
 | `opencode/` | the same mechanisms for opencode |
 
@@ -446,10 +446,12 @@ Code** and **opencode**, which turns three of the four habits into mechanisms:
 | **know the discipline** | the `dear-guide` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it. Work staged and never applied asks the human instead — `.dgraph-pending.json` is gitignored, so committing over it loses the record silently |
 
-Plus five slash commands, one set of files for both hosts: `/dg-brief`,
-`/dg-frontier`, `/dg-tasks`, `/dg-context <id>` and `/dg-serve`. `/dg-context` is the one that
-matters most for delegation — it prints every premise a decision or a task rests
-on, which is exactly what a subagent's fresh context is missing.
+Plus five slash commands, one set of files for both hosts: `/dg:brief`,
+`/dg:frontier`, `/dg:tasks`, `/dg:context <id>` and `/dg:serve` — spelled
+`/dg-brief` and so on in opencode, which has no plugin namespace to hang them
+under. `/dg:context` is the one that matters most for delegation: it prints
+every premise a decision or a task rests on, which is exactly what a subagent's
+fresh context is missing.
 
 What stays a habit is **recording a decision at the moment it is made**. Nothing
 a host can observe reveals that something was settled — it is a property of the
@@ -468,7 +470,7 @@ pip install -e /path/to/dear-guide   # the CLI
 
 # Claude Code
 /plugin marketplace add /path/to/dear-guide
-/plugin install dear-guide
+/plugin install dg
 ```
 
 For opencode it is symlinks — see [`opencode/README.md`](opencode/README.md).
@@ -531,7 +533,7 @@ that the skill's command table only names commands that exist.
   notion of whose ops are whose, so two agents apply each other's
   half-composed batches and the graph that results can be wrong in a way no
   mechanism is positioned to notice. One person in two terminals, or a browser
-  and a terminal, is fine and is what `commands/dg-serve.md` describes: that is
+  and a terminal, is fine and is what `commands/serve.md` describes: that is
   two writers with one intent. Two agents are two intents.
 - **Whether the store stays per-repo.** Probably: decisions are about a codebase.
   A cross-project view would need a different addressing scheme.
