@@ -145,10 +145,10 @@ dg areas            # counts by area and status, one table per store
 
 `dg`, `dg task`, `dg context` and both `pending` trays are **short by
 default**: one line per thing, with titles clipped and answers reduced to their
-first sentence, sized to the terminal you are in. `--full` gives the long form of each — the tables with
-nothing clipped, and for `dg context` the whole chain with its evidence. Ids are
-never clipped either way, so anything a short view names can be looked up from
-it.
+first sentence, sized to the terminal you are in. `--full` gives the long form
+of each — the tables with nothing clipped, and for `dg context` the whole chain
+with its evidence. Ids are never clipped either way, so anything a short view
+names can be looked up from it.
 
 `dg node D01` after the decision above:
 
