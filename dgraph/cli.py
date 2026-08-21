@@ -22,7 +22,8 @@ from dgraph import applying
 from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
-from dgraph import cross, editor, pending, project, render, task_pending, task_render
+from dgraph import cross, editor, pending, project, render, task_editor
+from dgraph import task_pending, task_render
 from dgraph import model
 from dgraph.model import SIMPLE_STATUSES, Graph
 from dgraph.tasks import ID_RE as TASK_ID_RE
@@ -1945,6 +1946,47 @@ def _tstage_all(ops: list[dict]) -> None:
     pending.stage_all(ops, task_pending.path())
 
 
+def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
+    """Run the editor over a task template, turning refusals into CLI exits.
+
+    `_compose`'s twin, and separate for the reason the modules behind them are:
+    the two buffers must not become one. What they do share is this shape — the
+    same buffer path printed, the same two exceptions caught, the same "nothing
+    staged" promise — because a writer who has aborted one should recognise
+    what happened when they abort the other.
+    """
+    proj = project.find()
+    con.print(f"[dim]buffer: {proj.edit}[/]")
+    if not editor.is_emacs(editor.resolve_editor()):
+        con.print("[dim]note: in-buffer navigation needs emacs — "
+                  "`dg task node <id>` for one piece of work in full[/]")
+    go = (task_editor.compose_add if kind == "add_task"
+          else task_editor.compose_done)
+    try:
+        return go(tg, _decisions_or_none(), **kw)
+    except editor.EditorAbort as exc:
+        con.print(f"[yellow]aborted[/] {_x(exc)}")
+        raise typer.Exit(1) from None
+    except editor.EditorError as exc:
+        con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
+
+
+def _said_dialect(tg: TaskGraph, tid: str) -> None:
+    """Say when composing in org changes how prose already stored will read.
+
+    A task carries one `format` for its whole record, so an outcome written in
+    the buffer makes the record org — including a note that was typed as a
+    flag and has been markdown until now. The two dialects differ over
+    `*asterisks*`, which is small and not nothing, and the writer is the only
+    one who can tell whether it matters. Said, not refused.
+    """
+    t = tg.tasks.get(tid)
+    if t is not None and t.format is None and (t.note or t.why):
+        con.print(f"[dim]{tid}'s prose was recorded as markdown and now reads "
+                  f"as org — *asterisks* mean bold there, not italic[/]")
+
+
 def _twarn_stuck() -> None:
     """After staging: say now if `dg apply` would refuse the task batch.
 
@@ -2067,13 +2109,34 @@ def task_add(
     evidence_for: str = typer.Option(None, "--evidence-for",
                                      help="the decision this work will inform"),
     note: str = typer.Option(None, "--note", "-n"),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
     """Stage a new task."""
     tg = _teff(_tg())
+
+    if _wants_editor(edit):
+        seed = {k: v for k, v in (
+            ("id", tid), ("title", title), ("area", area), ("note", note),
+            ("because", because), ("evidence_for", evidence_for),
+            ("after", _csv(after)),
+            ("discovered_during", _csv(discovered_during)),
+        ) if v}
+        ops = _tcompose("add_task", tg, seed=seed)
+        # Vetted before staging, exactly as `dg add --edit` is: the buffer is
+        # the one route with no flag-path guard in front of it, and a tray
+        # every other writer shares is the wrong place to discover that an op
+        # can never apply. F30.
+        _tstage_all(ops)
+        con.print(f"[green]staged[/] {len(ops)} op(s) — add {ops[0]['id']}")
+        _twarn_stuck()
+        return
+
     missing = [f for f, val in (("--id", tid), ("--title", title),
                                 ("--area", area)) if not val]
     if missing:
-        con.print(f"[red]missing option(s): {', '.join(missing)}[/]")
+        con.print(f"[red]missing option(s): {', '.join(missing)}[/]\n"
+                  f"[dim]give them as flags, or use `dg task add --edit`[/]")
         raise typer.Exit(2)
     # Checked here rather than at apply, so a typo is reported by the command
     # that contains it. The decision side only catches this at validate time.
@@ -2375,14 +2438,29 @@ def task_done(
     tid: str,
     outcome: str = typer.Option(None, "--outcome", "-o",
                                 help="what the work produced: a path, a PR, a note"),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="Compose the outcome in $EDITOR."),
 ) -> None:
-    """Stage a task as finished. Records what it produced."""
+    """Stage a task as finished. Records what it produced.
+
+    `--edit` composes the outcome in a buffer with the work's own context
+    beside it — what it unblocks, and the decision it was for. An outcome is
+    the one field of a task worth more room than a shell argument gives it.
+    """
     tg = _teff(_tg())
     _require_task(tid, tg)
     waiting = tg.waiting_on(tid)
     if waiting:
         con.print(f"[yellow]note: {tid} still waits on "
                   f"{', '.join(waiting)}[/]")
+    if _wants_editor(edit):
+        seed = {"outcome": outcome} if outcome else None
+        ops = _tcompose("set_status", tg, tid=tid, seed=seed)
+        _tstage_all(ops)
+        con.print(f"[green]staged[/] {tid} → DONE")
+        _said_dialect(tg, tid)
+        _twarn_stuck()
+        return
     outcome = outcome or _ask(
         "Outcome (what did this produce? a path, a PR, a note)", "--outcome/-o")
     _tstage({"op": "set_status", "task": tid, "status": "DONE",

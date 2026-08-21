@@ -40,6 +40,11 @@ def path() -> Path:
     return project.find().task_pending
 
 
+#: The prose a task holds, all of it covered by the record's one `format`.
+#: Shared with `task_editor.PROSE`, which decides when an op claims org.
+PROSE = ("note", "outcome", "why")
+
+
 def _apply_one(tg: TaskGraph, op: dict) -> None:
     kind = op.get("op")
     if kind not in OPS:
@@ -193,10 +198,18 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             # worth less than an absent one. Ordered before the writes below so
             # `dg task drop T --why x` on a DONE task still records its reason.
             t.why = None
+        wrote_prose = False
         for fld in ("done", "outcome", "note", "why"):
             if op.get(fld) is not None:
                 setattr(t, fld, op[fld])
-        if op.get("format") is not None and op.get("note") is not None:
+                wrote_prose = wrote_prose or fld in PROSE
+        # A task has one `format` for its whole record — `task_render` converts
+        # its note, its outcome and its `why` through the same field — so the
+        # dialect follows any prose the op writes, not the note alone. It used
+        # to follow the note alone, which meant an outcome composed in org (the
+        # only door that produces org) was stored as org and rendered as
+        # markdown: `*HNSW*` in, italic out, silently.
+        if op.get("format") is not None and wrote_prose:
             t.format = op["format"]
         return
 

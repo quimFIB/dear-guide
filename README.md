@@ -339,6 +339,7 @@ waits, and stages what comes back.
 
 ```sh
 dg decide D37 --edit     # also: dg reopen --edit, dg add --edit, dg edit N
+dg task done T14 --edit  # and the work: dg task add --edit
 export DG_EDIT=1         # make the editor the default; --no-edit overrides
 ```
 
@@ -347,6 +348,21 @@ falsifier, and checkboxes for what this decision opens. `* Context` is reference
 material: the edge that led here, each premise with its own answer and
 falsifier, the ancestor chain. **Only `* Input` is ever read back**, so nothing
 you do to the context can change what gets staged.
+
+Work gets its own templates, not the decision one with different labels. A
+decision's buffer exists because a decision has fields you have to *argue* —
+the falsifier above all. A task's exists because of one field: `dg task done
+--edit` gives you `** Outcome` alone under Input, with what the work unblocks
+and the decision it was for beside it as context, because an outcome written
+without the question in view says what was done rather than what it showed.
+`dg task add --edit` takes the whole record, with the backlog and the open
+questions listed for the fields that name them. There is one buffer per
+project but never one template: two stores that compose through one renderer
+are two stores that can drift into each other.
+
+`dg task drop` has no `--edit` on purpose. Its prose is a line, and the real
+work of dropping is the verdict on each task it releases or orphans, which the
+command asks for directly.
 
 In emacs you also get:
 
@@ -386,6 +402,11 @@ with two meanings — so anything composed through the editor is tagged
 form, an import, or an agent stays markdown and keeps markdown's meaning,
 untouched. Which door you type into is the only thing that decides, and the
 stored bytes are never rewritten either way.
+
+A task records one dialect for its whole record — its note, its outcome and its
+reason for being dropped are converted through the same field — so composing an
+outcome in the editor makes the record org, and the command says so when the
+prose already there was typed as a flag.
 
 ## Checking it in CI
 

@@ -636,13 +636,33 @@ def compose(
     launcher=None,
 ) -> list[dict]:
     """Render a buffer, hand it to the editor, and parse what comes back."""
-    path = project.find().edit
     if op is not None and index is not None:
         text = render_op(g, index, op)
     elif kind == "add_vertex":
         text = render_add(g, seed)
     else:
         text = RENDERERS[kind](g, vertex, seed)
+    return run(text, lambda after: parse(after, g=g, expect_kind=kind,
+                                         expect_vertex=vertex,
+                                         expect_index=index),
+               launcher=launcher)
+
+
+def run(text: str, parse_back, *, launcher=None) -> list[dict]:
+    """The compose *workflow*, with the record type taken out of it.
+
+    Take the project's one buffer, write `text`, run the editor, refuse a
+    buffer that came back unchanged, and hand what did come back to
+    `parse_back`. Everything here is true of composing anything: the lock, the
+    abort rules, and the guarantee that a failed parse stages nothing.
+
+    What is *not* here is the template and the parser, and that is the whole of
+    what "a task is not a decision" means at this layer. `compose` above is
+    this for decisions; `dgraph/task_editor.py` is this for work, and calls in
+    rather than teaching this module what a task is — a module that renders
+    both records is one in which the two can drift into each other.
+    """
+    path = project.find().edit
     lock = _acquire_buffer(path)
     try:
         path.write_text(text, encoding="utf-8")
@@ -655,7 +675,6 @@ def compose(
         after = path.read_text(encoding="utf-8")
         if after == before:
             raise EditorAbort("buffer was not changed — nothing staged")
-        return parse(after, g=g, expect_kind=kind, expect_vertex=vertex,
-                     expect_index=index)
+        return parse_back(after)
     finally:
         lock.unlink(missing_ok=True)

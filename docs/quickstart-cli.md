@@ -319,6 +319,7 @@ evidence. `--edit` works like `git commit`:
 
 ```sh
 dg decide D37 --edit        # also: dg reopen --edit, dg add --edit, dg edit N
+dg task done T14 --edit     # and the work: dg task add --edit
 export DG_EDIT=1            # make it the default; --no-edit overrides
 ```
 
@@ -330,6 +331,11 @@ the ancestor chain. Only `* Input` is ever read back.
 In emacs you also get `C-c C-c` to stage, `C-c C-k` to abort, and `C-c C-o` to
 follow a `dg:` link to another decision. Any editor works via `$DG_EDITOR`;
 you get the same buffer without the navigation.
+
+Work has its own templates rather than the decision one relabelled. `dg task
+done --edit` is `** Outcome` alone, with what the task unblocks and the
+decision it was for beside it; `dg task add --edit` takes the whole record. One
+buffer per project, never one template.
 
 Prose is stored exactly as typed. Org composed in the editor is tagged as such,
 so `*bold*` and `/italic/` render with org's meaning in the generated views,

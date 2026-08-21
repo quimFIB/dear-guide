@@ -531,8 +531,10 @@ for, the skill says add it and then decide it rather than staying silent:
 says so explicitly. Ask for it.
 
 **Composing in an editor.** `dg decide D04 --edit` opens an org buffer with the
-premises and their falsifiers already in it; the [web app](quickstart-web.md)
-does the same from a browser. Both are for humans — an agent passes flags.
+premises and their falsifiers already in it, and `dg task done T03 --edit` does
+the same for what a piece of work produced; the [web app](quickstart-web.md)
+opens the decision buffer from a browser. All of them are for humans — an agent
+passes flags.
 
 **Switching it off.** `DG_HOOK_OFF=1` disables the brief and the gate together.
 
