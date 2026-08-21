@@ -1080,6 +1080,30 @@ def test_areas_counts_the_work_where_there_is_only_work(run_cli):
     assert "TODO" in res.output
 
 
+def test_areas_says_a_table_is_missing_rather_than_stopping_at_zero(
+        run_cli, task_store, store):
+    """A store that exists and cannot be read is neither of the cases the two
+    tables cover. The counts *are* the answer here, so half of them is not one
+    — and an exit code of 0 is what a script would believe."""
+    (store / "decisions.json").write_text("{ not json")
+    res = run_cli("areas")
+    assert res.exit_code == 1
+    assert "Tasks" in res.output              # what could be counted, counted
+    assert "no decision counts" in res.output
+    assert "premise" not in res.output        # that is another command's word
+
+
+def test_a_cross_graph_view_still_degrades_where_areas_exits(run_cli,
+                                                             task_store, store):
+    """The same unreadable store, read by something that only wants premises:
+    it says so and carries on, because a backlog is still worth printing
+    without one. Two answers to one condition, on purpose."""
+    (store / "decisions.json").write_text("{ not json")
+    res = run_cli("task")
+    assert res.exit_code == 0
+    assert "premise information is missing" in res.output
+
+
 def test_areas_keeps_the_two_vocabularies_in_two_tables(run_cli, store):
     """`OPEN` and `TODO` are not columns of the same table: a row summing
     across them would be counting questions and work as one thing. The areas

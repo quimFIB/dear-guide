@@ -582,12 +582,15 @@ def areas() -> None:
     corner of a project, seen as what is undecided and as what is outstanding.
 
     A project with only one store gets only its table, and pays nothing for the
-    other.
+    other. A store that exists and cannot be read is the case those two do not
+    cover: this command's whole answer is the counts, so a missing table is a
+    missing answer, said in the vocabulary of counts and exited on. Printing
+    the other table and stopping at zero would hand a script half a total.
     """
     proj = project.find()
-    g = _decisions_or_none()
+    g, unreadable = _decisions_state()
     tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
-    if g is None and tg is None:
+    if g is None and tg is None and unreadable is None:
         con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
                   f"[dim]run `dg init` there, or pass --project PATH[/]")
         raise typer.Exit(2)
@@ -598,6 +601,13 @@ def areas() -> None:
         _area_counts("Tasks", tg.areas, list(tg.tasks.values()),
                      lambda t: t.status,
                      lambda s: TASK_STYLE.get(s, "white"))
+    if unreadable is not None:
+        # Last, so it is the line the reader ends on, and nonzero, so a caller
+        # that only sees the exit code does not read a partial count as a total.
+        con.print(f"[red]no decision counts: {project.STORE_NAME} could not be "
+                  f"read[/]\n[dim]{_x(unreadable)}[/]\n"
+                  f"[dim]`dg check` for what else it breaks[/]")
+        raise typer.Exit(1)
 
 
 def _area_counts(title: str, areas, items: list, status_of, style) -> None:
@@ -1987,7 +1997,10 @@ def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
     go = (task_editor.compose_add if kind == "add_task"
           else task_editor.compose_done)
     try:
-        return go(tg, _decisions_or_none(), **kw)
+        # The *effective* decision graph, matching `_resolve_premise`: the two
+        # doors onto `Because` must accept the same ids, and the buffer's
+        # frontier must be the one the writer is standing in front of.
+        return go(tg, _decisions_eff_or_none(), **kw)
     except editor.EditorAbort as exc:
         con.print(f"[yellow]aborted[/] {_x(exc)}")
         raise typer.Exit(1) from None
@@ -2203,23 +2216,68 @@ def task_add(
     _twarn_stuck()
 
 
+def _decisions_state() -> tuple[Graph | None, str | None]:
+    """The decision store, and — where there isn't one — whether that is news.
+
+    `(None, None)`: this project tracks only work. Ordinary, and every
+    cross-graph view is written to expect it.
+
+    `(None, reason)`: there *is* a store and it could not be read. Not
+    ordinary, and not the same answer. The distinction is invisible to a view
+    that only wants premises — it degrades either way — and decisive for a
+    command whose whole output is one table per store, which has to say a table
+    is missing rather than print the other one and call it the answer.
+    """
+    proj = project.find()
+    if not proj.has_decisions:
+        return None, None
+    try:
+        return Graph.load(proj.store), None
+    except Exception as exc:
+        return None, str(exc) or exc.__class__.__name__
+
+
 def _decisions_or_none() -> Graph | None:
     """The decision store if this project has a readable one, else None.
 
     Task commands must work in a project that tracks only work, so every
     cross-graph view degrades to "no premise information" rather than failing.
     """
-    proj = project.find()
-    if not proj.has_decisions:
-        return None
-    try:
-        return Graph.load(proj.store)
-    except Exception:
+    g, unreadable = _decisions_state()
+    if unreadable is not None:
         # Degrading silently would print "ready" for work whose premise is
         # undecided — a wrong answer, which is worse than an absent one.
         con.print(f"[dim]{project.STORE_NAME} could not be read, so premise "
                   f"information is missing here — `dg check`[/]")
+    return g
+
+
+def _decisions_eff_or_none() -> Graph | None:
+    """`_decisions_or_none`, plus the decision ops already staged.
+
+    What a task *buffer* has to read. `_resolve_premise` resolves `--because`
+    against the effective decision graph so that a decision and the work it
+    implies can be recorded in one batch — the A3 lesson — and a buffer
+    resolving the same field against the store alone refuses what the flag
+    accepts, and lists a frontier without the question just staged onto it.
+
+    Where `_eff` stops the command, this degrades. A decision tray that no
+    longer applies is not a reason `dg task done --edit` cannot write an
+    outcome: the two stores stage independently, and this one is being read for
+    context and one optional field. Said rather than refused, and never
+    silently — a premise missing from the buffer must not be an absence with no
+    explanation beside it.
+    """
+    g = _decisions_or_none()
+    if g is None:
         return None
+    try:
+        return pending.preview(g)
+    except pending.ApplyError as exc:
+        con.print(f"[dim]the staged decision ops no longer apply cleanly, so "
+                  f"this buffer shows {project.STORE_NAME} as it stands — "
+                  f"`dg pending` to review[/]\n[dim]{_x(exc)}[/]")
+        return g
 
 
 def _gated_by(tg: TaskGraph, g: Graph | None, tid: str) -> str | None:

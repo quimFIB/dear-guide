@@ -65,6 +65,18 @@ def tray(store):
     return pending.load(store / ".dgraph-task-pending.json")
 
 
+def capture(seen: dict, **fields: str):
+    """`fill`, keeping the template it was handed under `seen["text"]`.
+
+    The buffer still comes back changed, so the command runs to the end: a test
+    that only reads the template and returns it unedited asserts against a
+    command that aborted, which is not the same command."""
+    def edit(text: str) -> str:
+        seen["text"] = text
+        return fill(text, **fields)
+    return edit
+
+
 # ---- rendering -----------------------------------------------------------
 
 
@@ -318,3 +330,65 @@ def test_the_keyword_line_is_built_from_the_store_s_own_statuses(tg, task_store)
     for s in tasks.STATUSES:
         assert s in line
 
+
+# ---- the buffer reads the effective decision graph ------------------------
+#
+# `--because` resolves against the store *plus* what is staged on it, so that a
+# decision and the work it implies can be recorded in one batch. The buffer is
+# the second door onto the same field and has to agree, or the two refuse
+# different things and the frontier it lists is one nobody is standing in.
+
+
+def test_a_premise_staged_but_not_applied_is_still_a_premise(
+        run_cli, fake_emacs, task_store, store):
+    """What `dg task add --because` accepts, the buffer must accept."""
+    assert run_cli("add", "--id", "D07", "--title", "Just asked",
+                   "--area", "Beta").exit_code == 0
+    fake_emacs(lambda t: fill(t, title="Answer it by measuring", area="Beta",
+                              because="D07"))
+    res = run_cli("task", "add", "--edit")
+    assert res.exit_code == 0, res.output
+    assert [o for o in tray(task_store) if o["op"] == "add_task"][0][
+        "because"] == "D07"
+
+
+def test_the_buffer_lists_a_question_that_is_only_staged(
+        run_cli, fake_emacs, task_store, store):
+    """A frontier without the question just staged onto it is a buffer telling
+    the writer their own last command did not happen."""
+    assert run_cli("add", "--id", "D07", "--title", "Just asked",
+                   "--area", "Beta").exit_code == 0
+    seen = {}
+    fake_emacs(capture(seen, title="Answer it", area="Beta"))
+    assert run_cli("task", "add", "--edit").exit_code == 0
+    assert "D07 OPEN — Just asked" in seen["text"]
+
+
+def test_the_done_template_shows_a_premise_as_it_has_been_staged(
+        run_cli, fake_emacs, task_store, store):
+    """D05 is OPEN in the store and DECIDED once the staged close applies. An
+    outcome is written against the second one."""
+    assert run_cli("task", "link", "T02", "--because", "D05").exit_code == 0
+    assert run_cli("decide", "D05", "--answer", "Settled.", "--source",
+                   "discussion", "--falsifier", "the corpus changes",
+                   "--opens", "").exit_code == 0
+    seen = {}
+    fake_emacs(capture(seen, outcome="PR #241"))
+    assert run_cli("task", "done", "T02", "--edit").exit_code == 0
+    assert "D05 — Still open · DECIDED" in seen["text"], seen["text"]
+
+
+def test_a_decision_tray_that_will_not_apply_does_not_block_an_outcome(
+        run_cli, fake_emacs, task_store, store, monkeypatch):
+    """The two stores stage independently. Where `_eff` stops the command, the
+    buffer degrades to the store and says which graph it is showing."""
+    from dgraph import cli, pending as _pending
+
+    def boom(g, **kw):
+        raise _pending.ApplyError("D09 is not in the graph")
+    monkeypatch.setattr(cli.pending, "preview", boom)
+    fake_emacs(lambda t: fill(t, outcome="PR #241"))
+    res = run_cli("task", "done", "T02", "--edit")
+    assert res.exit_code == 0, res.output
+    assert "no longer apply cleanly" in res.output
+    assert [o["op"] for o in tray(task_store)] == ["set_status"]
