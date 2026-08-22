@@ -148,7 +148,7 @@ dg import prepared.json                  # or adopt one prepared elsewhere
 dg                                       # the frontier: what is still open
 dg show --full                           # ...as a table, with nothing clipped
 dg brief                                 # ...plus provisional work, staging, validity
-dg node D06                              # one decision in full
+dg node D06                              # one decision in full, reversals and all
 dg why D06                               # ...and the chain of premises underneath it
 dg why D06 --full                        # ...with every answer, source and falsifier
 dg context D06                           # the same command, its other name
@@ -159,6 +159,7 @@ dg areas                                 # counts by area, in both stores
 dg find embedding                        # every decision and task that says so
 dg find 'under:D04 is:unsettled'         # ...still open in what D04 opened
 dg find 'is:decidable' --ids             # ...ids alone, for a pipe
+dg find 'brute force' --active           # ...skipping answers since overturned
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg reopen D06                            # stage a reopen + its propagation

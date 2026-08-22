@@ -27,3 +27,9 @@ coming back empty.
 `--ids` gives bare ids for a pipe: `dg find 'is:decidable' --ids` names every
 question that could be settled right now, and `dg context <id>` on each gives
 the reasoning behind it.
+
+A decision's answers include the ones it used to have. `answer:`, `falsifier:`
+and `source:` read its superseded edges alongside its active one, and a hit in
+one is labelled `superseded answer` rather than passed off as the current
+answer — a reversal's reasoning is often the only place a rejected approach is
+written down. `--active` narrows them to what still stands.

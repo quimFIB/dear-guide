@@ -70,8 +70,8 @@ Vertices and edges, nothing else.
 |---|---|
 | `dg brief` | what matters right now: the frontier, anything provisional, staged work, validity |
 | `dg show` | the frontier — everything still open or blocked, one line each |
-| `dg find QUERY` | decisions and work by what they *say* — the only reading that starts from a word rather than the frontier or an id. `dg find 'is:decidable'`, `dg find 'under:D04 is:unsettled'`, `--ids` to pipe |
-| `dg node ID` | one decision in full, including its superseded history |
+| `dg find QUERY` | decisions and work by what they *say* — the only reading that starts from a word rather than the frontier or an id. `dg find 'is:decidable'`, `dg find 'under:D04 is:unsettled'`, `--ids` to pipe. `answer:`/`falsifier:`/`source:` read superseded edges too and label a hit `superseded answer`; `--active` narrows them to what stands |
+| `dg node ID` | one decision in full, each superseded edge with its own targets, falsifier, source and archived answer. `--active` for the answer that stands, which says how many records it left out |
 | `dg context ID` | the chain of premises it rests on. Takes a `T` id too; `--full` for the answers, sources and falsifiers |
 | `dg path A B` | the chain of evidence between two decisions |
 | `dg tree` | the graph as a tree |

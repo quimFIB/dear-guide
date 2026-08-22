@@ -103,6 +103,46 @@ def test_bracketed_store_text_survives_the_terminal(run, store, g):
     assert "[draft]" in out
 
 
+def test_node_prints_a_superseded_edge_in_full(run, store, g):
+    """A reversal is an edge with a payload, and `dg node` says it is
+    "everything known about one decision".
+
+    Until this, it printed three of a superseded edge's fields and left the
+    rest reachable only through `dg export`: D01's earlier answer opened D02
+    alone, where the answer that replaced it opens D02 and D03, and no CLI
+    surface could tell you that.
+    """
+    write(g)
+    out = run("node", "D01").output
+    assert "Superseded" in out
+    assert "older answer" in out          # the label the reopen clipped
+    assert "An older answer." in out      # ...and the prose it stands for
+    assert "opened" in out and "D02" in out
+    assert "it was measured wrong" in out
+
+
+def test_node_omits_a_field_the_superseded_edge_never_had(run, store, g):
+    """D01's reversal carries no falsifier and no source. An em-dash beside
+    those labels would read as *decided on no evidence*, which is a claim
+    about the record; the gap is that nobody wrote one down."""
+    write(g)
+    out = run("node", "D01").output
+    sup = out[out.index("Superseded"):]
+    assert "falsifier" not in sup
+    assert "source" not in sup
+
+
+def test_node_active_says_what_it_left_out(run, store, g):
+    """`--active` narrows the panel to the answer that stands. Silently would
+    be worse than not offering it: a reader who did not type the flag sees the
+    same panel and concludes the decision was never reversed."""
+    write(g)
+    out = run("node", "D01", "--active").output
+    assert "An older answer." not in out
+    assert "1 superseded edge not shown" in out
+    assert "--active" in out
+
+
 # ---- the editor workflow -------------------------------------------------
 
 ELISP = Path(__file__).resolve().parents[1] / "dgraph" / "elisp" / "dgraph.el"

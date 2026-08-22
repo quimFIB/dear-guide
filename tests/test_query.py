@@ -195,6 +195,44 @@ def test_superseded_finds_the_decision_that_was_overturned(lens):
     assert query.select(query.parse("is:superseded"), lens) == ["D01"]
 
 
+# ---- the answers a decision used to have ---------------------------------
+
+
+def test_answer_reads_the_edges_a_reversal_replaced(lens):
+    """A reversal's prose is often the only place a rejected approach is
+    written down, and `answer:` used to resolve against the active edge alone
+    — so the reasoning that overturned a decision was searchable only through
+    the label a reopen clipped from it."""
+    assert query.select(query.parse('answer:"An older answer"'), lens) == ["D01"]
+
+
+def test_active_narrows_the_search_to_the_answer_that_stands(g):
+    """`dg find --active`. The archive is the point often enough to be the
+    default, and noise often enough to need a way out."""
+    now = query.decision_lens(g, archived=False)
+    assert query.select(query.parse('answer:"An older answer"'), now) == []
+    assert query.select(query.parse('answer:"The root answer"'), now) == ["D01"]
+
+
+def test_a_hit_says_which_record_it_landed_in(lens):
+    """The whole reason the panel grew edge cards: a row saying plain
+    `answer:` about text the current answer does not contain is the same
+    conflation, one surface along."""
+    (m,) = query.explain(query.parse('answer:"An older answer"'), lens, "D01")
+    assert m.field == "superseded answer"
+    (m,) = query.explain(query.parse('answer:"The root answer"'), lens, "D01")
+    assert m.field == "answer"
+
+
+def test_date_is_when_this_was_settled_not_when_it_was_overturned(lens):
+    """An editorial line, so it is guarded. `date:>=` asks when a decision was
+    settled; answering it from a record that was overturned would quietly
+    change what every date query already in use means. D01's superseded edge
+    is dated 2025-12-01 and stays out of it."""
+    assert query.select(query.parse("date:2025-12-01"), lens) == []
+    assert query.select(query.parse("date:2026-01-01"), lens) == ["D01"]
+
+
 # ---- structure -----------------------------------------------------------
 
 

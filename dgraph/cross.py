@@ -95,7 +95,8 @@ def task_link(tg: TaskGraph, g: Graph, tid: str) -> dict:
 LINK_FIELDS = ("because", "evidence_for")
 
 
-def lenses(g: Graph | None, tg: TaskGraph | None) -> list:
+def lenses(g: Graph | None, tg: TaskGraph | None, *,
+           archived: bool = True) -> list:
     """Both stores as queryable surfaces, with the cross-graph terms supplied.
 
     Here rather than in `cli`, though `cli` is allowed to reason about the link
@@ -142,7 +143,8 @@ def lenses(g: Graph | None, tg: TaskGraph | None) -> list:
                 ("implemented", "awaiting-evidence",
                  *(p for p in _q.TASK_PREDICATES
                    if p not in _q.DECISION_PREDICATES)), "task")
-        out.append(_q.decision_lens(g, predicates=preds, withheld=absent))
+        out.append(_q.decision_lens(g, predicates=preds, withheld=absent,
+                                    archived=archived))
     if tg is not None:
         preds, struct, absent = {}, {}, {}
         struct["because"] = lambda did: set(rests_on(tg, did))

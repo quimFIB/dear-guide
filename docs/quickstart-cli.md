@@ -135,7 +135,8 @@ afterwards it is rationalisation; written first it is a commitment.
 ```sh
 dg                  # the frontier: everything still open or blocked
 dg brief            # ...plus provisional work, staging, validity
-dg node D01         # one decision in full, with its superseded history
+dg node D01         # one decision in full, with its superseded edges
+dg node D01 --active    # ...only the answer that stands
 dg context D04      # ...and the chain of premises it rests on
 dg context D04 --full   # ...with every answer, source and falsifier
 dg path D01 D04     # the chain of evidence between two decisions

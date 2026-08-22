@@ -461,18 +461,21 @@ def _show_table(g: Graph, att: list[dict]) -> None:
 # is the part that module may not have — the cross-graph link — plus rendering.
 
 
-def _lenses() -> tuple[list, Graph | None, TaskGraph | None]:
+def _lenses(*, archived: bool = True) -> tuple[list, Graph | None, TaskGraph | None]:
     """Every store this project has, as queryable surfaces.
 
     The cross-graph terms come from `cross.lenses`, which is the module allowed
     to say what the link means and is also what the browser calls — one
     implementation, so a query cannot mean two things depending on where it was
     typed.
+
+    `archived` is `dg find --active` inverted: whether a decision's superseded
+    edges are searched alongside its active one.
     """
     proj = project.find()
     g = _decisions_or_none() if proj.has_decisions else None
     tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
-    return cross.lenses(g, tg), g, tg
+    return cross.lenses(g, tg, archived=archived), g, tg
 
 
 def _fault(exc, source: str, *, as_json: bool = False) -> None:
@@ -507,6 +510,8 @@ def find(
                              help="Bare ids, one per line, for a pipe."),
     full: bool = typer.Option(False, "--full",
                               help="The table, with no title clipped."),
+    active: bool = typer.Option(False, "--active",
+                                help="Active edges only: skip superseded answers."),
     limit: int = typer.Option(20, "--limit", "-n",
                               help="Rows per section before summarising."),
 ) -> None:
@@ -517,11 +522,18 @@ def find(
     and `under:`/`above:`/`because:` walk the graph. Terms are ANDed; `-`
     negates one and `or` alternates two.
 
+    A decision's answers include the ones it used to have. `answer:`,
+    `falsifier:` and `source:` read its superseded edges as well as its active
+    one, and say `superseded answer:` when that is where the hit landed —
+    a reversal's reasoning is often the only place a rejected approach is
+    written down. `--active` narrows them to the answer that currently stands.
+
         dg find 'embedding -status:DECIDED'
         dg find 'is:ready area:Retrieval'
         dg find 'falsifier:"the corpus changes"'
         dg find 'under:D04 is:unsettled'
         dg find 'date:>=2026-01-01 is:decidable'
+        dg find 'humdrum-data --active'   # only what still stands
         dg find 'is:decidable' --ids | xargs -n1 dg context
 
     Exit 1 means the query was fine and nothing matched. Exit 2 means it could
@@ -551,7 +563,7 @@ def find(
     # `because` as an unknown field under `--decisions`, when the truth is that
     # the field is real and the flag disagrees with it — and those two need
     # different corrections.
-    lenses, g, tg = _lenses()
+    lenses, g, tg = _lenses(archived=not active)
     if not lenses:
         con.print(f"[red]nothing to search: no readable store under "
                   f"{proj.root}[/]")
@@ -768,8 +780,19 @@ def tree(root: str = typer.Argument(None, help="Vertex to root at")) -> None:
 
 
 @app.command(rich_help_panel=READ)
-def node(vid: str) -> None:
-    """Everything known about one decision."""
+def node(
+    vid: str,
+    active: bool = typer.Option(
+        False, "--active", "-a",
+        help="The answer that stands, without the ones it replaced."),
+) -> None:
+    """Everything known about one decision.
+
+    Including the edges a reversal replaced: each is printed with its own
+    targets, falsifier, source and archived answer, because a reversal is an
+    edge with a payload like any other. `--active` prints only the answer that
+    currently stands, and says how many records it left out.
+    """
     g = _g()
     if vid not in g.vertices:
         con.print(f"[red]unknown vertex {vid}[/]")
@@ -804,13 +827,37 @@ def node(vid: str) -> None:
     if ev:
         lines += [f"evidence from {', '.join(ev)}"]
     hist = g.history(vid)
-    if hist:
+    if hist and active:
+        # Never silently. A reader who did not type the flag would see the same
+        # panel and conclude the decision was never reversed, which is the one
+        # thing this store exists to keep.
+        lines += ["", f"[dim]{len(hist)} superseded "
+                      f"{'edge' if len(hist) == 1 else 'edges'} not shown — "
+                      f"drop --active to read {'it' if len(hist) == 1 else 'them'}[/]"]
+    elif hist:
         lines += ["", "[bold]Superseded[/]"]
-        lines += [
-            f"  “{_x(h.summary)}” → {_x(h.replaced_by) or '(undecided)'}"
-            f"\n    {_x(h.why)}"
-            for h in hist
-        ]
+        for h in hist:
+            lines += [
+                "",
+                f"  “{_x(h.summary)}” → {_x(h.replaced_by) or '(undecided)'}"
+                f"   [dim]{h.date or ''}[/]",
+                f"    why         {_x(h.why)}",
+            ]
+            # Only the fields this record actually holds. A reversal imported
+            # from a markdown view, or made before the payload was archived,
+            # has none of them — and a column of em-dashes would read as *it
+            # opened nothing, on no evidence*, which is a claim, not a gap.
+            if h.to:
+                lines.append(f"    opened      {', '.join(h.to)}")
+            if h.falsifier:
+                lines.append(f"    falsifier   {_x(h.falsifier)}")
+            if h.source:
+                lines.append(f"    source      {_x(h.source)}")
+            # `summary` is a label clipped from the answer, so when the two are
+            # the same string the answer is already on the line above it.
+            if h.answer and h.answer != h.summary:
+                body = "\n".join("    " + ln for ln in h.answer.splitlines())
+                lines += ["", "    [dim]archived answer[/]", _x(body)]
     con.print(Panel("\n".join(lines), title=vid, border_style=_style(v.status)))
 
 

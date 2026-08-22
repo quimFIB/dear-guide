@@ -550,6 +550,16 @@ class Lens:
     #: record of what was left out, so `vet` can say *this project has no
     #: decision store* instead of *no such predicate*. See `_no_predicate`.
     withheld: dict[str, str] = field(default_factory=dict)
+    #: What to *call* the field a hit landed in, given the text that matched.
+    #: Selection never consults it — a term matches or it does not — but a row
+    #: that says `answer:` about text the current answer does not contain is
+    #: the same conflation the web panel used to make, so the lens that knows
+    #: which record a value came from is the one that names it. Identity by
+    #: default; only the decision lens has two records per field to tell apart.
+    #: Naming is not identity: two lenses over the same store are the same
+    #: lens, so this stays out of `==` and `repr` the way `memo` does.
+    label: Callable[[str, str, str], str] = field(
+        default=lambda rid, name, text: name, compare=False, repr=False)
     #: Memo for structural walks, for the life of this lens. See `_walk`.
     #: Neither this nor `_ids` is part of the surface a store offers, so both
     #: stay out of `==` and `repr`.
@@ -590,6 +600,15 @@ def _texts(vals: Iterable[object]) -> list[str]:
     return [v for v in vals if isinstance(v, str) and v]
 
 
+#: Edge fields whose superseded copies join the search alongside the active
+#: one. `summary` and `why` are not here because they exist nowhere else: a
+#: superseded edge is the only kind that has them, so they were always read
+#: from history. `date` is deliberately left out — `date:>=2026-01-01` asks
+#: when this decision was *settled*, and answering it from a record that was
+#: overturned would quietly change what every existing date query means.
+_ARCHIVED_PROSE = ("answer", "falsifier", "source")
+
+
 #: Stored fields deliberately outside the query vocabulary. `to` and `active`
 #: are the graph structure, `src` and `replaced_by` are the history's own
 #: bookkeeping, and `format` is a rendering hint — none of them is something a
@@ -619,13 +638,21 @@ def _excluded(kind: str, *classes) -> frozenset:
 
 
 def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
-                  withheld=None, hide: Iterable[str] = ()) -> Lens:
+                  withheld=None, hide: Iterable[str] = (),
+                  archived: bool = True) -> Lens:
     """The decision store as a queryable surface.
 
-    A vertex and its active edge are one record here, which is why `answer:`
-    and `falsifier:` work as fields of a decision even though they are stored on
+    A vertex and its edges are one record here, which is why `answer:` and
+    `falsifier:` work as fields of a decision even though they are stored on
     the edge: the split is how dependency stays the graph structure, not
     something a person searching has to know.
+
+    `archived` decides whether that includes the edges a reversal replaced.
+    With it on, `answer:` means *any answer this decision has ever had* — the
+    reversal's own prose becomes findable, and a hit in it is labelled
+    `superseded answer` rather than passed off as the current one. With it off
+    the search is the active edge alone, which is what `dg find --active` asks
+    for when the archive is noise rather than the point.
     """
     from dgraph.model import Edge, Vertex
 
@@ -650,9 +677,23 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         e = g.active_edge(vid)
         if e is not None:
             out += _texts([getattr(e, name, None)])
-        if name in ("summary", "why"):
+        if name in ("summary", "why") or (archived and name in _ARCHIVED_PROSE):
             out += _texts(getattr(h, name, None) for h in g.history(vid))
         return out
+
+    def label(vid: str, name: str, text: str) -> str:
+        """Which of a decision's records this text came from.
+
+        Compared against the active edge by value rather than guessed: if the
+        current answer says it, the hit is current, and anything else under a
+        field that reads history is a reversal's words. An answer that survived
+        a reopen unchanged is reported as current, which it is.
+        """
+        if name not in _ARCHIVED_PROSE:
+            return name
+        e = g.active_edge(vid)
+        return name if e is not None and getattr(e, name, None) == text \
+            else f"superseded {name}"
 
     preds: dict[str, Callable[[str], bool]] = {
         "settled": lambda vid: g.vertices[vid].settled,
@@ -679,6 +720,7 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         row=lambda vid: (g.vertices[vid].base_status, g.vertices[vid].title,
                          g.vertices[vid].area),
         arg_kind=dict(arg_kind or {}), withheld=dict(withheld or {}),
+        label=label,
     )
 
 
@@ -964,7 +1006,7 @@ def _hit(l: Lens, rid: str, t: Term) -> Match | None:
         for name in l.prose():
             for text in l.values(rid, name):
                 if t.value.matches(text):
-                    return Match(name, text, str(t))
+                    return Match(l.label(rid, name, text), text, str(t))
         return None
     if t.kind == "is":
         pred = l.predicates.get(t.name)
@@ -991,7 +1033,7 @@ def _hit(l: Lens, rid: str, t: Term) -> Match | None:
         else:
             ok = t.value.matches(text)
         if ok:
-            return Match(t.name, text, str(t))
+            return Match(l.label(rid, t.name, text), text, str(t))
     return None
 
 
