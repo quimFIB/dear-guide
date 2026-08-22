@@ -203,6 +203,56 @@ class Task:
         return self.stops[-1].why
 
 
+def fallout(tg: TaskGraph, tid: str) -> dict[str, str]:
+    """What dropping `tid` would leave standing, and why each one is affected.
+
+    Two different consequences, deliberately reported together because they
+    need the same judgement from the same person at the same moment:
+
+    *released* — work that waited only on `tid`, which `RESOLVED` will make
+    startable. That may be wrong: a prerequisite that produced something this
+    work consumes does not release it, it undermines it.
+
+    *orphaned* — work `tid` turned up, which nothing else explains. Dropping
+    `tid` changes nothing about it at all, which is precisely why it needs
+    saying: provenance gates nothing, so the silence is total.
+
+    Only counts an origin as gone when every *other* origin is already DROPPED
+    — one surviving origin still says why the work exists.
+
+    **Here rather than in `cli.py`**, beside `dropped_prerequisites` and
+    `abandoned_origins`, which are the same reading asked after the fact. It
+    lived in the CLI, so the web `Drop it` button could not ask the question at
+    all: it posted one op and said nothing, where `dg task drop` refuses until
+    every released and orphaned task has a verdict. Two doors onto one act must
+    refuse the same thing, and a door can only refuse what it can see.
+    """
+    out = {}
+    for t in tg.unblocks(tid):
+        # Work that has already stopped is not released by anything, so it is
+        # not asked about. Without the filter a DROPPED dependant was demanded
+        # a verdict neither answer could give — `--drop-too` is refused by
+        # `task_pending` as a second drop, and `--keep` prints "still worth
+        # doing" about abandoned work — and a PARKED one was asked whether the
+        # drop had made it startable, which is not a question about a task
+        # that is not being done.
+        #
+        # `unfinished` alone would be the wrong filter here even though it is
+        # what the orphaned branch below uses: PARKED is unfinished. The two
+        # branches ask different questions — this one is about startability,
+        # which only live work has, and that one is about provenance, which
+        # parked work still needs.
+        dep = tg.tasks[t]
+        if dep.unfinished and not dep.parked and tg.waiting_on(t) == [tid]:
+            out[t] = f"released — waited only on {tid}"
+    for t in tg.prompted(tid):
+        if tg.tasks[t].unfinished and all(
+                o == tid or tg.tasks[o].status == "DROPPED"
+                for o in tg.discovered_during(t)):
+            out[t] = f"orphaned — discovered during {tid}"
+    return out
+
+
 def matches(t: Task, op: dict) -> bool:
     """Whether `t` is the task an `add_task` op would have created.
 

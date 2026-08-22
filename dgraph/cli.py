@@ -28,6 +28,10 @@ from dgraph import model
 from dgraph import query as _query
 from dgraph.model import SIMPLE_STATUSES, Graph
 from dgraph.tasks import ID_RE as TASK_ID_RE
+# Moved to `dgraph/tasks.py`, beside the two after-the-fact readings of the
+# same question; imported under the CLI's old local name so every call site
+# here is unchanged. The server needs it too — see `/api/task-fallout`.
+from dgraph.tasks import fallout as _fallout
 from dgraph.tasks import MISSING_EDGE, TaskGraph
 
 # ---- how `--help` reads --------------------------------------------------
@@ -2989,49 +2993,6 @@ def task_done(
 
 def _csv(raw: str | None) -> list[str]:
     return [x.strip() for x in raw.split(",") if x.strip()] if raw else []
-
-
-def _fallout(tg: TaskGraph, tid: str) -> dict[str, str]:
-    """What dropping `tid` would leave standing, and why each one is affected.
-
-    Two different consequences, deliberately reported together because they
-    need the same judgement from the same person at the same moment:
-
-    *released* — work that waited only on `tid`, which `RESOLVED` will make
-    startable. That may be wrong: a prerequisite that produced something this
-    work consumes does not release it, it undermines it.
-
-    *orphaned* — work `tid` turned up, which nothing else explains. Dropping
-    `tid` changes nothing about it at all, which is precisely why it needs
-    saying: provenance gates nothing, so the silence is total.
-
-    Only counts an origin as gone when every *other* origin is already DROPPED
-    — one surviving origin still says why the work exists.
-    """
-    out = {}
-    for t in tg.unblocks(tid):
-        # Work that has already stopped is not released by anything, so it is
-        # not asked about. Without the filter a DROPPED dependant was demanded
-        # a verdict neither answer could give — `--drop-too` is refused by
-        # `task_pending` as a second drop, and `--keep` prints "still worth
-        # doing" about abandoned work — and a PARKED one was asked whether the
-        # drop had made it startable, which is not a question about a task
-        # that is not being done.
-        #
-        # `unfinished` alone would be the wrong filter here even though it is
-        # what the orphaned branch below uses: PARKED is unfinished. The two
-        # branches ask different questions — this one is about startability,
-        # which only live work has, and that one is about provenance, which
-        # parked work still needs.
-        dep = tg.tasks[t]
-        if dep.unfinished and not dep.parked and tg.waiting_on(t) == [tid]:
-            out[t] = f"released — waited only on {tid}"
-    for t in tg.prompted(tid):
-        if tg.tasks[t].unfinished and all(
-                o == tid or tg.tasks[o].status == "DROPPED"
-                for o in tg.discovered_during(t)):
-            out[t] = f"orphaned — discovered during {tid}"
-    return out
 
 
 @task_app.command("drop", rich_help_panel=T_RECORD)

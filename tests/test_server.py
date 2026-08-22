@@ -772,3 +772,118 @@ def test_find_still_answers_the_page(srv, store):
     so the search box is unaffected by the guard."""
     code, d = jreq(srv, "/api/find?q=is:unsettled")
     assert code == 200 and d["matched"]["decisions"] == ["D05", "D06"]
+
+
+# ---- both doors ask what a drop leaves standing --------------------------
+
+
+def test_the_browser_can_see_the_fallout_the_cli_refuses_on(srv, dual):
+    """F2. `dg task drop` refuses until every released and orphaned task has a
+    verdict; the `Drop it` button posted one op and asked nothing. It could not
+    ask, because `_fallout` lived in `cli.py`. Now it is a read route, and the
+    rows carry titles -- a verdict asked about a bare id is a verdict nobody
+    can give."""
+    from dgraph import tasks as tasks_mod
+    from dgraph.tasks import TaskGraph
+
+    code, body = jreq(srv, "/api/task-fallout?task=T02")
+    assert code == 200
+    tg = TaskGraph.load(dual / "tasks.json")
+    assert [r["id"] for r in body["fallout"]] == sorted(
+        tasks_mod.fallout(tg, "T02"))
+    assert body["fallout"]
+    for r in body["fallout"]:
+        assert r["title"] and r["why"] and r["status"]
+
+
+def test_the_fallout_route_reports_an_unknown_task_as_data(srv, dual):
+    code, body = jreq(srv, "/api/task-fallout?task=T99")
+    assert code == 200 and "T99" in body["error"]
+
+
+def test_neither_door_stages_a_drop_while_its_fallout_is_unanswered(srv, dual,
+                                                                    monkeypatch):
+    """The claim both doors have to make together. With fallout outstanding and
+    no verdicts given, the CLI refuses (exit 2) and stages nothing; the browser
+    is handed the same list to ask about, and its own refusal is that it cannot
+    build the ops until every row is answered."""
+    from typer.testing import CliRunner
+
+    from dgraph import task_pending
+    from dgraph.cli import app
+
+    monkeypatch.setenv("TERM", "dumb")
+    res = CliRunner().invoke(app, ["--project", str(dual), "task", "drop",
+                                   "T02", "-w", "gone"])
+    assert res.exit_code == 2 and "need a verdict" in res.output
+    assert pending.load(task_pending.path()) == []
+
+    _, body = jreq(srv, "/api/task-fallout?task=T02")
+    assert [r["id"] for r in body["fallout"]] == ["T03"]
+    assert pending.load(task_pending.path()) == []      # asking stages nothing
+
+
+def test_the_browsers_drop_cascade_lands_as_one_tray_write(srv, dual,
+                                                           monkeypatch):
+    """The operator was asked about T03 and answered. A tray holding only the
+    first half says the opposite of what they answered, and the task store has
+    no invariant that would refuse an apply landing on it -- so the group is
+    one write here exactly as `_tstage_all` makes it one from the CLI."""
+    from dgraph import task_pending
+
+    counted = []
+    real = pending.save
+
+    def save(ops, path=None):
+        counted.append(len(ops))
+        return real(ops, path)
+
+    monkeypatch.setattr(pending, "save", save)
+    code, body = jreq(srv, "/api/task-pending", "POST", [
+        {"op": "set_status", "task": "T02", "status": "DROPPED",
+         "why": "gone", "date": "2026-03-01"},
+        {"op": "set_status", "task": "T03", "status": "DROPPED",
+         "why": "abandoned along with T02", "date": "2026-03-01"},
+    ])
+    assert code == 200 and len(body["staged"]) == 2
+    assert counted == [2], counted
+    tray = pending.load(task_pending.path())
+    assert [o["task"] for o in tray] == ["T02", "T03"]
+
+
+def test_a_batch_is_refused_whole_or_staged_whole(srv, dual):
+    """`vet_all` against the graph each op before it produces, before any of it
+    is staged -- so a refusal leaves the tray as it was rather than holding the
+    first half of something that was given up on."""
+    from dgraph import task_pending
+
+    code, body = jreq(srv, "/api/task-pending", "POST", [
+        {"op": "set_status", "task": "T02", "status": "DROPPED",
+         "why": "gone", "date": "2026-03-01"},
+        {"op": "set_status", "task": "T99", "status": "DROPPED",
+         "why": "no such task", "date": "2026-03-01"},
+    ])
+    assert code == 400 and "T99" in body["error"]
+    assert pending.load(task_pending.path()) == []
+
+
+def test_the_drop_button_asks_before_it_posts():
+    """The panel's half of F2, pinned in the file that holds it. The button
+    must route through the question -- a `Drop it` that posts a `DROPPED` op
+    directly is the door that asks nothing, which is the finding."""
+    html = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    assert '$("#doDrop").onclick=()=>askFallout(tsel)' in html
+    assert "/api/task-fallout?task=" in html
+    # And a DROPPED op is built in exactly one function -- `dropWith`, which
+    # only `askFallout` reaches, and which takes the verdicts as an argument.
+    body = html.split("function dropWith(")[1].split("\nfunction ")[0]
+    assert body.count('status:"DROPPED"') == 2   # the task, and its cascade
+    assert html.count('status:"DROPPED"') == 2   # and nowhere else
+
+
+def test_a_drop_that_leaves_nothing_standing_asks_nothing(srv, dual):
+    """T04 is unconnected, which is ordinary for tasks. The route says so, and
+    the panel goes straight to staging -- the CLI's
+    `test_a_drop_with_no_fallout_needs_no_verdict`, at the other door."""
+    code, body = jreq(srv, "/api/task-fallout?task=T04")
+    assert code == 200 and body["fallout"] == []

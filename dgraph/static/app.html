@@ -906,13 +906,7 @@ function taskPanel(){
     postTask({op:"set_status",task:tsel,status:"PARKED",why:w,
               date:`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`});
   });
-  $("#doDrop")&&($("#doDrop").onclick=()=>{
-    const w=$("#dwhy").value.trim();
-    if(!w){ say("Say why it is not being done — the record is the point.","bad"); return; }
-    const dt2=new Date(), pad2=n=>String(n).padStart(2,"0");
-    postTask({op:"set_status",task:tsel,status:"DROPPED",why:w,
-              date:`${dt2.getFullYear()}-${pad2(dt2.getMonth()+1)}-${pad2(dt2.getDate())}`});
-  });
+  $("#doDrop")&&($("#doDrop").onclick=()=>askFallout(tsel));
   $("#doDone")&&($("#doDone").onclick=()=>{
     const o=$("#outcome").value.trim();
     /* `dg task done` requires it, so the form does too — a DONE task with no
@@ -924,6 +918,71 @@ function taskPanel(){
   });
   $("#side").addEventListener("input", captureDraft);
   $("#side").addEventListener("change", captureDraft);
+}
+
+/* ---- what a drop leaves standing -------------------------------------
+
+   `dg task drop` refuses (exit 2, non-interactive) until every released and
+   orphaned task has a keep/drop verdict, because **both defaults are wrong
+   somewhere**: assuming "keep" leaves a task in the backlog whose whole
+   purpose died with its prerequisite, and assuming "drop" throws away work
+   that was only ever incidentally connected. This button used to post one op
+   and ask nothing, which is picking one of those defaults silently.
+
+   So it asks, and — this is the part a confirmation dialog cannot do — it can
+   act on the answer: each row carries its own verdict, and the drop plus every
+   `drop` verdict reach the tray as one write. */
+function today(){
+  /* local date, not toISOString(): that is UTC, and near midnight it disagrees
+     with the date `dg task drop` would file for the same act. */
+  const t=new Date(), p=n=>String(n).padStart(2,"0");
+  return `${t.getFullYear()}-${p(t.getMonth()+1)}-${p(t.getDate())}`;
+}
+
+async function askFallout(tid){
+  const w=($("#dwhy")&&$("#dwhy").value.trim())||"";
+  if(!w){ say("Say why it is not being done — the record is the point.","bad"); return; }
+  let res;
+  try{ res=await api("/api/task-fallout?task="+encodeURIComponent(tid)); }
+  catch(err){ say(err.message,"bad",tid); return; }
+  if(res.error){ say(res.error,"bad",tid); return; }
+  const rows=res.fallout||[];
+  if(!rows.length) return dropWith(tid, w, []);   /* nothing standing: no question */
+
+  /* Refused, not defaulted — the same refusal the CLI makes, with the same
+     remedy attached rather than a bare "no". */
+  let h=`<p class="warn">${rows.length} task(s) need a verdict before ${esc(tid)}
+    can be dropped. Nothing is staged until each one is answered.</p>`;
+  rows.forEach((r,i)=>{
+    h+=`<div class="answer"><b>${esc(r.id)}</b> ${esc(r.title)}
+      <div class="muted">${esc(r.why)}</div>
+      <label style="display:inline;margin-right:12px">
+        <input type="radio" name="fo${i}" value="keep" checked> still worth doing</label>
+      <label style="display:inline">
+        <input type="radio" name="fo${i}" value="drop"> drop it too</label></div>`;
+  });
+  h+=`<p style="margin:10px 0"><button class="primary" id="foGo">Drop ${esc(tid)}</button>
+      <button class="ghost" id="foNo">Cancel</button></p>
+      <div class="note" id="note"></div>`;
+  $("#side").innerHTML=h;
+  $("#foNo").onclick=()=>taskPanel();
+  $("#foGo").onclick=()=>{
+    const doomed=rows.filter((r,i)=>
+      $("#side").querySelector(`input[name=fo${i}]:checked`).value==="drop")
+      .map(r=>r.id);
+    dropWith(tid, w, doomed);
+  };
+}
+
+/* The drop and its cascade, as one write. `dg task drop` builds exactly this
+   list and hands it to `_tstage_all`; a task named in `--drop-too` has its
+   *own* fallout left unwalked here too — one command, one judgement, and
+   `dg check` picks up whatever the cascade releases. */
+function dropWith(tid, why, doomed){
+  const date=today();
+  postTasks([{op:"set_status",task:tid,status:"DROPPED",why,date}].concat(
+    doomed.map(t=>({op:"set_status",task:t,status:"DROPPED",
+                    why:`abandoned along with ${tid}`,date}))));
 }
 
 /* A reference to a node in either store, clickable when it resolves. A
@@ -1128,14 +1187,22 @@ async function post(op){
     if(vid===sel) panel();
   }catch(err){ say(err.message, "bad", vid); }
 }
-async function postTask(op){
-  const tid=op.task;        /* pinned: the user may navigate before this returns */
+async function postTask(op){ return postTasks([op]); }
+
+/* A group of task ops, staged as one tray write. `dg task drop --drop-too`
+   stages the drop and its cascade together through `_tstage_all`; the button
+   posts an array for the same reason — half a cascade in the tray says the
+   opposite of what the operator answered. */
+async function postTasks(ops){
+  const tid=ops[0].task;    /* pinned: the user may navigate before this returns */
   try{
     await api("/api/task-pending",{method:"POST",
-      headers:{"Content-Type":"application/json"}, body:JSON.stringify(op)});
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(ops.length===1?ops[0]:ops)});
     TPEND=await api("/api/task-pending"); tray();
     delete DRAFTS[tid];
-    say(`Staged ${op.status} for ${tid}.`, "ok", tid);
+    const more = ops.length>1 ? ` (+${ops.length-1} dropped with it)` : "";
+    say(`Staged ${ops[0].status} for ${tid}.${more}`, "ok", tid);
     if(tid===tsel) taskPanel();
   }catch(err){ say(err.message, "bad", tid); }
 }

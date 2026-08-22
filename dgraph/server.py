@@ -45,6 +45,7 @@ from urllib.parse import parse_qs, urlparse
 
 from dgraph import applying, cross, editor, pending, project, render, task_pending
 from dgraph.model import Graph
+from dgraph import tasks as tasks_mod
 from dgraph.tasks import TaskGraph, stop_label
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -256,6 +257,30 @@ def stage(g: Graph, op: dict) -> list[dict]:
     return ops
 
 
+def fallout_payload(tid: str) -> dict:
+    """What dropping `tid` leaves standing, as rows the panel can render.
+
+    One row per affected task, each carrying the title and the reason it is
+    affected, because a verdict asked about a bare id is a verdict nobody can
+    give. The same `tasks.fallout` the CLI refuses on, so the two doors cannot
+    disagree about who is affected.
+
+    A fault is data rather than a 500, matching `/api/find`: an unknown id in
+    a URL the page built is a bug worth showing, not a server error.
+    """
+    proj = project.find()
+    if not proj.has_tasks:
+        return {"error": "this project has no tasks.json"}
+    tg = task_pending.preview(TaskGraph.load(proj.tasks))
+    if tid not in tg.tasks:
+        return {"error": f"unknown task {tid}"}
+    out = tasks_mod.fallout(tg, tid)
+    return {"task": tid, "fallout": [
+        {"id": t, "title": tg.tasks[t].title, "status": tg.tasks[t].status,
+         "why": why}
+        for t, why in sorted(out.items())]}
+
+
 def _decide_note(op: dict) -> str | None:
     """The decide-time warning for a close op, or None for anything else."""
     if op.get("op") != "close" or not op.get("vertex"):
@@ -265,19 +290,35 @@ def _decide_note(op: dict) -> str | None:
     return cross.deciding_ahead_of_evidence(tg, op["vertex"])
 
 
-def stage_task(tg: TaskGraph, op: dict) -> list[dict]:
-    """Vet a task op and stage it. The one task-staging path.
+def stage_tasks(tg: TaskGraph, ops: list[dict]) -> list[dict]:
+    """Vet a batch of task ops and stage them as **one** tray write.
 
-    The twin of `stage`, and shorter for a reason the task store documents:
-    nothing about a task propagates. Reopening a decision marks its decided
-    descendants `PROVISIONAL`; finishing a task changes nothing but the task,
-    because blocked is derived and never stored. So there is a `vet` here and
-    no `expand`.
+    A drop and the cascade its verdicts imply are one judgement — the operator
+    was asked about each affected task and answered — so a tray holding only
+    the first half says the opposite of what they answered. `dg task drop`
+    stages them together through `_tstage_all`; this is the same guarantee for
+    the browser, which used to post the drop alone and nothing else.
+
+    `vet_all` checks the whole group against the graph each op before it
+    produces, before any of it is staged, so a refusal leaves the tray as it
+    was rather than holding the first half of something that was given up on.
     """
-    eff = task_pending.preview(tg)
-    task_pending.vet(eff, op)
-    pending.stage(op, task_pending.path())
-    return [op]
+    task_pending.vet_all(task_pending.preview(tg), ops)
+    pending.stage_all(ops, task_pending.path())
+    return ops
+
+
+def stage_task(tg: TaskGraph, op: dict) -> list[dict]:
+    """One task op, staged. The singular of `stage_tasks`, which is the path.
+
+    Kept because most posts are one op, and delegating rather than duplicating
+    means the vetting cannot differ between the two. There is a `vet` here and
+    no `expand`, for the reason the task store documents: nothing about a task
+    propagates. Reopening a decision marks its decided descendants
+    `PROVISIONAL`; finishing a task changes nothing but the task, because
+    blocked is derived and never stored.
+    """
+    return stage_tasks(tg, [op])
 
 
 def find_payload(q: str) -> dict:
@@ -401,6 +442,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(joined_payload(*_stores()))
             elif self.path == "/api/task-pending":
                 self._json(pending.load(task_pending.path()))
+            elif urlparse(self.path).path == "/api/task-fallout":
+                # A **read**, so the panel can ask before it posts. The CLI
+                # refuses a drop until every released and orphaned task has a
+                # verdict; the button could not offer that question because it
+                # could not see the answer. See `tasks.fallout`.
+                self._json(fallout_payload(parse_qs(
+                    urlparse(self.path).query).get("task", [""])[0]))
             elif urlparse(self.path).path == "/api/find":
                 # The path alone, not a prefix: `startswith` answered
                 # `/api/findXYZ` as a find, which is the only route here that
@@ -444,9 +492,14 @@ class Handler(BaseHTTPRequestHandler):
             if not proj.has_tasks:
                 return self._json({"error": "this project has no tasks.json — "
                                             "`dg task init` starts one"}, 400)
-            op = self._body()
+            body = self._body()
+            # A list is a group that has to land together — a drop and the
+            # cascade its verdicts imply. One tray write, as `_tstage_all`
+            # gives the CLI; half a cascade in the tray says the opposite of
+            # what the operator answered.
+            ops_in = body if isinstance(body, list) else [body]
             try:
-                ops = stage_task(TaskGraph.load(proj.tasks), op)
+                ops = stage_tasks(TaskGraph.load(proj.tasks), ops_in)
             except Exception as exc:
                 return self._json({"error": str(exc)}, 400)
             self._json({"staged": ops,

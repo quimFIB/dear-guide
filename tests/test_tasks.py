@@ -1444,3 +1444,18 @@ def test_a_restarted_task_keeps_the_stop_and_loses_the_marker(tg):
     section = task_render._section(tg, "T04")
     assert "was stuck" in section
     assert "put down" not in section and "not being done" not in section
+
+
+def test_the_fallout_reading_lives_beside_the_other_two(run_cli):
+    """SA02's first move. `_fallout` lived in `cli.py`, so the web `Drop it`
+    button could not ask the question the CLI refuses on -- a door can only
+    refuse what it can see. It now sits in `tasks.py` beside
+    `dropped_prerequisites` and `abandoned_origins`, which are the same reading
+    asked after the fact, and both doors call it."""
+    from dgraph import cli, server, tasks
+
+    assert tasks.fallout.__module__ == "dgraph.tasks"
+    assert cli._fallout is tasks.fallout
+    tg = TaskGraph.load(project.find().tasks)
+    assert set(tasks.fallout(tg, "T02")) == {"T03"}
+    assert [r["id"] for r in server.fallout_payload("T02")["fallout"]] == ["T03"]
