@@ -47,7 +47,14 @@ truth; this file is the readable view of it. `dg check` enforces the invariants.
   outcome will inform. Those live in `decisions.json`; this view names the id
   and nothing more, because it is generated from `tasks.json` alone.
 
-Statuses: `TODO` · `DOING` · `DONE` · `DROPPED`
+Statuses: `TODO` · `DOING` · `PARKED` · `DONE` · `DROPPED`
+
+`PARKED` is work put down without being given up on; `DROPPED` is work nobody
+is going to do. Both record why and when, in the same place, and neither record
+is ever cleared. What separates them is downstream: a drop releases everything
+that waited on the work, because abandoning it *is* the judgement that it was
+not needed, while a park holds them — so a park that is holding work up is
+reported until somebody picks it up, drops it, or removes the dependency.
 """
 
 
@@ -106,17 +113,24 @@ def _section(tg: TaskGraph, tid: str) -> str:
     if t.note:
         out.append(orgmd.to_markdown(t.note, fmt=t.format).strip())
         out.append("")
-    # Only where the status supports the claim. `why` is cleared when work
-    # stops being DROPPED, so a store this view can read should never hold a
-    # stale one — but `task_drop_complete` is a *finding*, and a view is
-    # generated from broken stores too, on the way to reporting them. Printing
-    # "Not being done" under a DOING task is the drift itself, so the belt is
-    # here as well as in the store.
-    if t.why and t.status == "DROPPED":
-        out.append(f"*Not being done:* {orgmd.to_markdown(t.why, fmt=t.format)}")
+    # `stopped_because` is derived from the status, so there is no longer a
+    # belt to wear here: prose that outlived its status cannot be read out of a
+    # store where the status is what decides whether prose is live.
+    live = t.stopped_because
+    if live:
+        label = "Not being done" if t.status == "DROPPED" else "Put down"
+        out.append(f"*{label}:* {orgmd.to_markdown(live, fmt=t.format)}")
         out.append("")
     if t.outcome:
         out.append(f"*Outcome:* {orgmd.to_markdown(t.outcome, fmt=t.format)}")
+    # Every stoppage, live one included — the record is what kept stopping this
+    # work, and a list that omitted the current entry would read as though the
+    # present were not part of the history.
+    if t.stops:
+        out.append("")
+        out.append("*Stopped:* " + " · ".join(
+            f"{k.date} — {orgmd.to_markdown(k.why, fmt=t.format)}"
+            for k in t.stops))
     return "\n".join(out).rstrip("\n") + "\n"
 
 

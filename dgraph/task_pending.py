@@ -25,8 +25,8 @@ from pathlib import Path
 
 from dgraph import project
 from dgraph.pending import ApplyError, already
-from dgraph.tasks import (KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES, Task,
-                          TaskEdge, TaskGraph, matches)
+from dgraph.tasks import (KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES, Stop,
+                          Task, TaskEdge, TaskGraph, matches)
 from dgraph.violation import Violation
 
 OPS = {"add_task", "add_dep", "remove_dep", "remove_task", "set_status",
@@ -42,7 +42,10 @@ def path() -> Path:
 
 #: The prose a task holds, all of it covered by the record's one `format`.
 #: Shared with `task_editor.PROSE`, which decides when an op claims org.
-PROSE = ("note", "outcome", "why")
+#: Prose whose dialect follows `Task.format`. A stop's `why` is prose
+#: too, and converted through the same field — but it is written by the
+#: append above rather than by the field loop, so it is not listed here.
+PROSE = ("note", "outcome")
 
 
 def _apply_one(tg: TaskGraph, op: dict) -> None:
@@ -177,29 +180,40 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
         t = tg.tasks[tid]
         was = t.status
         t.status = op["status"]
+        if t.status in ("PARKED", "DROPPED"):
+            # One append for both, because a park and a drop record the same
+            # fact. Appended, never assigned: this is the store's only archived
+            # record, and nothing downstream ever clears it.
+            #
+            # Stopping work that is already stopped is refused rather than
+            # merged or appended. Appending would claim two stoppages where
+            # there was one; merging would edit a record that is kept forever.
+            # The caller wanted to amend a reason, and this op cannot tell that
+            # from a genuine second stoppage.
+            if was == t.status:
+                verb = "parked" if t.status == "PARKED" else "dropped"
+                raise ApplyError(
+                    f"{tid} is already {t.status} — `dg task start {tid}` "
+                    f"first, or the record would claim it was {verb} twice")
+            if not op.get("why"):
+                raise ApplyError(
+                    f"{'parking' if t.parked else 'dropping'} {tid} needs a "
+                    f"reason: --why")
+            t.stops.append(Stop(why=op["why"], date=op["date"]))
         if was == "DONE" and t.status != "DONE":
             # The date and the outcome describe a completion that no longer
-            # holds. Task readiness is derived and cannot go stale; this is the
-            # one thing the task store does keep, so it is cleared here rather
-            # than left to rot.
+            # holds. Task readiness is derived and cannot go stale; this and
+            # the stop record are the only things the task store keeps, and
+            # unlike a stop this one *can* be contradicted by a later status —
+            # so it is cleared here rather than left to rot. Nothing clears
+            # `stops`: a stoppage that happened stays happened.
             t.done = t.outcome = None
-        if was == "DROPPED" and t.status != "DROPPED":
-            # The same rule for the other thing this store keeps, and it was
-            # missing: `why` says why the work is *not being done*, so work
-            # that is being done again must not carry one. Without this,
-            # `dg task drop T --why …` followed by `dg task start T` left the
-            # reason standing and the generated view printed "Not being done"
-            # under a DOING task, with `dg check` vouching for it — the drift
-            # this tool exists to prevent, in its own view.
-            #
-            # Cleared rather than kept-and-ignored because `why` is the record
-            # of an abandonment that has been undone; the abandonment that
-            # matters is in git, and a field that contradicts the status is
-            # worth less than an absent one. Ordered before the writes below so
-            # `dg task drop T --why x` on a DONE task still records its reason.
-            t.why = None
         wrote_prose = False
-        for fld in ("done", "outcome", "note", "why"):
+        # `why` is not among these: it is not a field any more. A reason
+        # travels in the op under that name and goes to `stops` above, which is
+        # the whole of what folding the two together bought — there is no live
+        # copy left to fall out of step with the status.
+        for fld in ("done", "outcome", "note"):
             if op.get(fld) is not None:
                 setattr(t, fld, op[fld])
                 wrote_prose = wrote_prose or fld in PROSE

@@ -94,7 +94,7 @@ T_STORE = "Starting a backlog, and moving one"
 TASK_LAYOUT = (
     (T_READ, ("node", "tree")),
     (T_HONEST, ("render",)),
-    (T_RECORD, ("add", "start", "done", "drop", "link", "unlink",
+    (T_RECORD, ("add", "start", "park", "done", "drop", "link", "unlink",
                 "dep", "undep", "rm")),
     (T_STAGE, ("pending", "drop-op", "clear")),
     (T_STORE, ("init", "import", "export")),
@@ -2286,6 +2286,10 @@ app.add_typer(task_app, name="task", rich_help_panel=WORK)
 TASK_STYLE = {
     "TODO": "bold red",
     "DOING": "yellow",
+    # Outstanding, so not `dim` like DROPPED; put down, so not urgent like
+    # TODO. The colour says which half of the store it is in, the word says
+    # what kind of outstanding it is — the decision store's own convention.
+    "PARKED": "cyan",
     "DONE": "green",
     "DROPPED": "dim",
 }
@@ -2388,7 +2392,7 @@ def _said_dialect(tg: TaskGraph, tid: str) -> None:
     one who can tell whether it matters. Said, not refused.
     """
     t = tg.tasks.get(tid)
-    if t is not None and t.format is None and (t.note or t.why):
+    if t is not None and t.format is None and (t.note or t.stops):
         con.print(f"[dim]{tid}'s prose was recorded as markdown and now reads "
                   f"as org — *asterisks* mean bold there, not italic[/]")
 
@@ -2884,6 +2888,49 @@ def task_start(tid: str) -> None:
     _twarn_stuck()
 
 
+@task_app.command("park", rich_help_panel=T_RECORD)
+def task_park(
+    tid: str,
+    why: str = typer.Option(None, "--why", "-w",
+                            help="what stopped it — kept after it resumes"),
+) -> None:
+    """Stage a task as put down, and record what stopped it.
+
+    The status between `DOING` and `DROPPED`, for work nobody is doing and
+    nobody has given up on. Unlike dropping, it settles nothing downstream:
+    parked work is still outstanding, so everything that waited on it goes on
+    waiting, and there are no `--keep`/`--drop-too` verdicts to give — that
+    machinery exists because abandoning work releases its dependants, and
+    parking asserts the opposite.
+
+    The reason is appended rather than assigned, and nothing ever clears it.
+    Every other prose field here describes the current state and is cleared
+    when that state stops holding; a park is a spell that *ended*, so the
+    record of it outlives the status, and a task put down three times says so.
+
+    Pick it up with `dg task start`.
+    """
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    t = tg.tasks[tid]
+    if t.parked:
+        con.print(f"[red]{tid} is already PARKED[/]\n"
+                  f"[dim]`dg task start {tid}` first — parking twice over would "
+                  f"record two spells where there was one[/]")
+        raise typer.Exit(1)
+    if t.resolved:
+        # Not refused: work can be reopened, and parking is a legitimate place
+        # to put it down on the way. Said out loud because the status it leaves
+        # is not the one the caller was looking at.
+        con.print(f"[yellow]note: {tid} was {t.status}; parking it makes it "
+                  f"outstanding again[/]")
+    why = why or _ask("Why is this being put down?", "--why/-w")
+    _tstage({"op": "set_status", "task": tid, "status": "PARKED",
+             "why": why, "date": _date.today().isoformat()})
+    con.print(f"[green]staged[/] {tid} → PARKED")
+    _twarn_stuck()
+
+
 @task_app.command("done", rich_help_panel=T_RECORD)
 def task_done(
     tid: str,
@@ -3019,14 +3066,21 @@ def task_drop(
             (kept if typer.confirm("  still worth doing?", default=True)
              else doomed).append(t)
 
-    op = {"op": "set_status", "task": tid, "status": "DROPPED"}
-    if why:
-        op["why"] = why
+    # Required now, where it used to be optional here and required in the web
+    # form. The reason is an archived record with a date rather than a field
+    # that gets cleared, so a drop without one writes an empty entry into the
+    # one part of this store that is kept forever — and the two doors onto the
+    # same act should not disagree about what it takes to walk through them.
+    why = why or _ask("Why is this not being done?", "--why/-w")
+    today = _date.today().isoformat()
+    op = {"op": "set_status", "task": tid, "status": "DROPPED",
+          "why": why, "date": today}
     # The drop and its cascade are one write. They are one judgement — the
     # operator was asked about each cascaded task and answered — and a tray
     # holding only the first half says the opposite of what they answered.
     cascade = [{"op": "set_status", "task": t, "status": "DROPPED",
-                "why": f"abandoned along with {tid}"} for t in sorted(doomed)]
+                "why": f"abandoned along with {tid}", "date": today}
+               for t in sorted(doomed)]
     _tstage_all([op] + cascade)
     con.print(f"[green]staged[/] {tid} → DROPPED")
     for c in cascade:
@@ -3107,12 +3161,21 @@ def _task_listing(tg: TaskGraph, waiting_for) -> None:
             aside.append(f"because {task.because}")
         if task.evidence_for:
             aside.append(f"evidence for {task.evidence_for}")
-        if not aside:
+        if task.parked:
+            # First in the aside, and unconditional: everything else here says
+            # what the *graph* makes of this task, and this says somebody put
+            # it down. A parked task with nothing else to report must not read
+            # as "startable", which is what it did before there was a status
+            # for this and people used DROPPED instead.
+            reason = task.stopped_because
+            aside.insert(0, "parked: " + compact.gist(reason) if reason
+                         else "parked")
+        elif not aside:
             aside.append("startable")
         # Yellow for the whole aside where a premise is undecided: the reason
         # this task is not startable is in there, and the eye needs sending to
         # the line before it reads which of the four bits says so.
-        style = "yellow" if gate else "dim"
+        style = "yellow" if gate else "cyan" if task.parked else "dim"
         entries.append((tid, f"[{TASK_STYLE.get(task.status, 'white')}]"
                              f"{task.status}[/]", _x(task.title),
                         f"[{style}]" + _x(" · ".join(aside)) + "[/]"))
@@ -3182,8 +3245,12 @@ def task_rm(
                          f"→ {', '.join(after) or '—'}")
     if t.status == "DONE" and t.outcome:
         lines.append(f"[yellow]loses[/] the outcome: {_x(t.outcome)}")
-    if t.why:
-        lines.append(f"[yellow]loses[/] why it was dropped: {_x(t.why)}")
+    if t.stops:
+        # The one record here that a removal cannot supersede — `dg task drop`
+        # keeps it, `dg task rm` does not, which is the difference between the
+        # two and what this line exists to make visible.
+        lines.append(f"[yellow]loses[/] {len(t.stops)} stop record(s), "
+                     f"latest: {_x(t.stops[-1].why)}")
     op = {"op": "remove_task", "task": tid, "mode": mode}
     if into:
         op["into"] = into
@@ -3211,7 +3278,11 @@ def task_node(tid: str) -> None:
     # the detail view saying "ready" was the tool contradicting itself.
     g = _decisions_or_none()
     gate = _gated_by(tg, g, tid)
-    state = ("waiting on a decision" if gate and t.unfinished
+    # `parked` outranks `blocked`: a parked task with an unfinished
+    # prerequisite is both, and the one a reader needs is the one somebody
+    # chose. Blocked describes the graph; parked describes a judgement.
+    state = ("parked" if t.parked
+             else "waiting on a decision" if gate and t.unfinished
              else "ready" if tg.ready(tid)
              else "blocked" if tg.blocked(tid) else t.status.lower())
     lines = [
@@ -3238,8 +3309,19 @@ def task_node(tid: str) -> None:
         lines.append(f"done        {t.done}")
     if t.outcome:
         lines += ["", "[bold]Outcome[/]", _x(t.outcome)]
-    if t.why and t.status == "DROPPED":
-        lines += ["", "[bold]Not being done[/]", _x(t.why)]
+    if t.stops:
+        # Kept whatever the status is now — work picked up again is the
+        # ordinary case, and the list of what kept stopping it is the record
+        # this store did not have. The live entry is the last one, and only
+        # while the status still claims a reason; `stopped_because` decides
+        # that, so this cannot disagree with the store's own reading.
+        lines += ["", "[bold]Stopped[/]"]
+        live = t.stopped_because
+        for i, k in enumerate(t.stops):
+            now = live is not None and i == len(t.stops) - 1
+            tag = ("  [cyan](still parked)[/]" if now and t.parked
+                   else "  [dim](abandoned here)[/]" if now else "")
+            lines.append(f"  [dim]{k.date}[/]  {_x(k.why)}{tag}")
     if t.note:
         lines += ["", "[bold]Note[/]", _x(t.note)]
     con.print(Panel("\n".join(lines), title=tid,

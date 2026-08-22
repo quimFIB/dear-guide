@@ -163,6 +163,9 @@ let G=null, PEND=[], sel=null, ED=null;
 let T=null, TPEND=[], JOIN=null, tsel=null;
 let tab="decisions";
 const TASK_COLOR = {TODO:"var(--warn)", DOING:"var(--accent)",
+                    /* outstanding, so not dimmed like DROPPED; put down, so
+                       not urgent like TODO */
+                    PARKED:"var(--prov)",
                     DONE:"var(--ok)", DROPPED:"var(--dim)"};
 /* Transient, per-decision, never persisted: the panel is rebuilt from scratch on
    every navigation, so anything the user has not committed yet has to live out
@@ -838,8 +841,19 @@ function taskPanel(){
   /* Only where the status supports it — see `task_render._section`. A store
      cannot hold a `why` under work in progress any more, but a view is drawn
      from broken stores too. */
-  if(x.why && x.status==="DROPPED")
-    h+=`<div class="answer muted"><b>dropped</b> — ${md(x.why, x.format)}</div>`;
+  /* Every stoppage, and no status guard: a stop describes something that
+     happened, so no later status can contradict it. Only the *last* entry can
+     be the live reason, and only while the status still claims one — the same
+     reading `Task.stopped_because` makes, so the page and the store cannot
+     disagree about which reason is current. */
+  (x.stops||[]).forEach((k,i)=>{
+    const live = i===(x.stops.length-1)
+      && (x.status==="PARKED" || x.status==="DROPPED");
+    const tag = live
+      ? ` <span class="pill" style="background:${TASK_COLOR[x.status]};color:#04121f">${
+          x.status==="PARKED"?"still":"abandoned"}</span>` : "";
+    h+=`<div class="answer muted"><b>stopped</b> <span class="muted">${esc(k.date)}</span>${tag} — ${md(k.why, x.format)}</div>`;
+  });
 
   /* Say why it is not startable before offering the buttons: the gate is the
      cross-graph one, and "blocked" without a reason is what sends people to
@@ -850,13 +864,22 @@ function taskPanel(){
     h+=`<p class="wait">Waiting on ${esc(d.waiting_on.join(", "))}.</p>`;
 
   h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">`;
-  if(x.status==="TODO" || x.status==="DOING"){
+  if(x.status==="PARKED"){
+    /* Picking it up is the only thing offered here. Finishing or dropping work
+       nobody is doing skips a step somebody has to take deliberately, and the
+       park record says the last person to look at this decided not to. */
+    h+=`<p style="margin:0 0 10px"><button class="primary" id="doStart">Pick it up again</button></p>
+      <p class="muted">Stopped ${esc((x.stops&&x.stops.length)||0)} time(s). The record is kept.</p>`;
+  }else if(x.status==="TODO" || x.status==="DOING"){
     if(x.status==="TODO")
       h+=`<p style="margin:0 0 10px"><button class="ghost" id="doStart">Start it</button></p>`;
     h+=`<label>Outcome — what this work produced</label>
       <input id="outcome" placeholder="a path, a PR, a measurement">
       <p style="margin:10px 0"><button class="primary" id="doDone">Mark done</button></p>
       <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+      <label>Or put it down — what stopped it?</label>
+      <input id="pwhy" placeholder="what you are stuck on">
+      <p style="margin:10px 0"><button class="ghost" id="doPark">Park it</button></p>
       <label>Or drop it — why is it not being done?</label>
       <input id="dwhy" placeholder="what made this unnecessary">
       <p style="margin:10px 0"><button class="ghost" id="doDrop">Drop it</button></p>`;
@@ -872,10 +895,21 @@ function taskPanel(){
   const n=NOTES[tsel]; if(n) say(n.msg, n.cls);
   $("#doStart")&&($("#doStart").onclick=()=>
     postTask({op:"set_status",task:tsel,status:"DOING"}));
+  $("#doPark")&&($("#doPark").onclick=()=>{
+    const w=$("#pwhy").value.trim();
+    /* `dg task park` requires it for the same reason `drop` does: the reason
+       is the record, and this one is the half that survives being resumed. */
+    if(!w){ say("Say what stopped it — that is the part that is kept.","bad"); return; }
+    const dt=new Date(), pad=n=>String(n).padStart(2,"0");
+    postTask({op:"set_status",task:tsel,status:"PARKED",why:w,
+              date:`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`});
+  });
   $("#doDrop")&&($("#doDrop").onclick=()=>{
     const w=$("#dwhy").value.trim();
     if(!w){ say("Say why it is not being done — the record is the point.","bad"); return; }
-    postTask({op:"set_status",task:tsel,status:"DROPPED",why:w});
+    const dt2=new Date(), pad2=n=>String(n).padStart(2,"0");
+    postTask({op:"set_status",task:tsel,status:"DROPPED",why:w,
+              date:`${dt2.getFullYear()}-${pad2(dt2.getMonth()+1)}-${pad2(dt2.getDate())}`});
   });
   $("#doDone")&&($("#doDone").onclick=()=>{
     const o=$("#outcome").value.trim();

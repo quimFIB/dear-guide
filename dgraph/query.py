@@ -92,7 +92,7 @@ _NAME_STOP = ':"/'
 #: the same bargain `_UNSEARCHABLE` makes.
 DECISION_PREDICATES = ("settled", "unsettled", "provisional", "shaky",
                        "blocked", "terminal", "superseded", "orphaned")
-TASK_PREDICATES = ("outstanding", "resolved", "blocked", "orphaned")
+TASK_PREDICATES = ("outstanding", "resolved", "blocked", "orphaned", "parked")
 
 #: Caps on what will be parsed at all. Nobody types a two-thousand-character
 #: query, and `GET /api/find?q=` otherwise accepts whatever is sent.
@@ -614,7 +614,12 @@ _ARCHIVED_PROSE = ("answer", "falsifier", "source")
 #: bookkeeping, and `format` is a rendering hint — none of them is something a
 #: person searching would think to name.
 _UNSEARCHABLE = {"decisions": ("src", "to", "active", "format", "replaced_by"),
-                 "tasks": ("format",)}
+                 # `stops` is a list of records, so a field term could never
+                 # match one; its prose is reachable under `why:`, which is
+                 # also what a person searching would name. Offering it as a
+                 # field that always returns nothing is the drift `_excluded`
+                 # exists to prevent, arriving by the front door.
+                 "tasks": ("format", "stops")}
 
 
 def _excluded(kind: str, *classes) -> frozenset:
@@ -743,19 +748,44 @@ def task_lens(tg, *, predicates=None, structural=None, arg_kind=None,
 
     hidden = set(hide)
     out_of = _excluded("tasks", Task)
-    names = tuple(f for f in _fields_of(Task)
+    # `why` is the one name here that is not a field on `Task`. Every reason a
+    # task stopped lives in `stops`, and a searcher asking "why is this not
+    # being done" types `why:` — so the term is offered and answered out of the
+    # list. Withholding it because the dataclass lost the field would retire a
+    # working query to reflect a refactor, which is the vocabulary drifting
+    # from what people actually ask.
+    names = tuple(f for f in (*_fields_of(Task), "why")
                   if f not in hidden and f not in out_of)
 
     def values(tid: str, name: str) -> list[str]:
         if name == "id":
             return [tid]
-        return _texts([getattr(tg.tasks[tid], name, None)])
+        out = _texts([getattr(tg.tasks[tid], name, None)])
+        # `why` is not a stored field any more — every reason lives in `stops`
+        # — so this is where the term gets its values at all. A hit in an entry
+        # that is not the live one is labelled as past, the way a decision's
+        # superseded answer is: both are reasons that stopped being true and
+        # are worth finding anyway.
+        if name == "why":
+            out += _texts(k.why for k in tg.tasks[tid].stops)
+        return out
+
+    def label(tid: str, name: str, text: str) -> str:
+        """`why:` reads a list, and only its last entry can be the live one."""
+        if name != "why" or tg.tasks[tid].stopped_because == text:
+            return name
+        return "stopped earlier because"
 
     preds: dict[str, Callable[[str], bool]] = {
         "outstanding": lambda tid: tg.tasks[tid].unfinished,
         "resolved": lambda tid: tg.tasks[tid].resolved,
         "blocked": lambda tid: tg.blocked(tid),
         "orphaned": lambda tid: bool(tg.abandoned_origins(tid)),
+        # Not covered by `is:blocked`: a parked task may have every
+        # prerequisite resolved and still be put down, which is the point of
+        # having a status for it. Blocked is what the graph says; parked is
+        # what somebody decided.
+        "parked": lambda tid: tg.tasks[tid].parked,
     }
     preds.update(predicates or {})
 
@@ -772,6 +802,7 @@ def task_lens(tg, *, predicates=None, structural=None, arg_kind=None,
         row=lambda tid: (tg.tasks[tid].status, tg.tasks[tid].title,
                          tg.tasks[tid].area),
         arg_kind=dict(arg_kind or {}), withheld=dict(withheld or {}),
+        label=label,
     )
 
 

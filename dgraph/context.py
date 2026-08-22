@@ -189,7 +189,12 @@ def task(tg: TaskGraph, tid: str, g: Graph | None = None) -> dict:
         "kind": "task",
         "id": tid, "title": t.title, "area": t.area, "status": t.status,
         "note": t.note, "format": t.format,
-        "outcome": t.outcome, "done": t.done, "why": t.why,
+        "outcome": t.outcome, "done": t.done,
+        # The live reason where the status makes that claim, and every
+        # stoppage besides. An agent reading this needs both: why it is stopped
+        # now, and whether this is the third time.
+        "why": t.stopped_because,
+        "stops": [{"why": k.why, "date": k.date} for k in t.stops],
         "prerequisites": tg.prerequisites(tid),
         "waiting_on": tg.waiting_on(tid),
         "unblocks": tg.unblocks(tid),

@@ -204,6 +204,25 @@ dg apply
 - If work turns up a question nobody had written down: add the decision, then
   link the task to it. Do not leave it in prose.
 
+**Put work down with `dg task park T14 --why "…"`, not `dg task drop`.** Both
+record why and when, in the same place — `stops`, the one archived record in
+this store, which nothing ever clears. They differ *downstream*: dropping says
+the work is not needed, so it releases everything that waited on it and demands
+a verdict on each one; parking says nobody is doing this right now, so it
+settles nothing and its dependants go on waiting. Reach for `drop` only when
+the work is genuinely not happening.
+
+A park is cheap on purpose, so it is chased instead: while parked work holds up
+anything unfinished, `dg check` reports it until somebody picks it up, drops it,
+or removes the dependency. A park that blocks nothing is never mentioned.
+
+Two things parking is *not*. It is not a decision: "we resumed T14" has no
+falsifier, and a node recording it is the tracker the decision graph refuses to
+become. If the work stopped because a *question* is unanswered, that question is
+the decision — record it and use `--because`, and the work resumes by itself
+when the question settles. And what revived a task is a relation between tasks,
+which `dg task dep T14 --discovered-during T09` already says.
+
 Corrections have commands; never hand-edit `tasks.json`:
 
 ```sh

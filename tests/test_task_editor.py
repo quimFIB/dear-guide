@@ -120,7 +120,7 @@ def test_a_task_keyword_line_is_the_task_store_s(tg, task_store):
     """Org colours the keywords it is told about; the decision list would
     colour the wrong words in a task buffer."""
     t = task_editor.render_add(tg, None)
-    assert "#+TODO: TODO DOING | DONE DROPPED" in t
+    assert "#+TODO: TODO DOING PARKED | DONE DROPPED" in t
 
 
 # ---- the round trip ------------------------------------------------------
@@ -326,7 +326,7 @@ def test_the_keyword_line_is_built_from_the_store_s_own_statuses(tg, task_store)
     from dgraph import tasks
     line = next(ln for ln in task_editor.render_add(tg, None).splitlines()
                 if ln.startswith("#+TODO:"))
-    assert line == "#+TODO: TODO DOING | DONE DROPPED"
+    assert line == "#+TODO: TODO DOING PARKED | DONE DROPPED"
     for s in tasks.STATUSES:
         assert s in line
 

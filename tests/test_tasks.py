@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 from dgraph import pending, project, task_pending, task_render
 from dgraph.check import CHECKS, run
 from dgraph.cli import app
-from dgraph.tasks import TaskEdge, TaskGraph
+from dgraph.tasks import Stop, TaskEdge, TaskGraph
 
 runner = CliRunner()
 
@@ -364,7 +364,7 @@ def test_dropping_a_task_keeps_the_note_that_described_it(run_cli, task_store):
     assert run_cli("apply").exit_code == 0
     t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
     assert t.note == "Nobody has finished this yet."
-    assert t.why == "the vendor tool does it"
+    assert t.stopped_because == "the vendor tool does it"
     assert "the vendor tool does it" in (task_store / "tasks.md").read_text()
 
 
@@ -399,57 +399,64 @@ def test_completion_data_under_unfinished_work_is_a_violation(tg):
 
 
 @pytest.mark.parametrize("resume", [("start", "DOING"), ("done", "DONE")])
-def test_leaving_dropped_clears_the_reason(run_cli, task_store, resume):
-    """The mirror of `test_leaving_done_clears_the_completion_data`, which is
-    the whole finding: the rule existed for one of the two fields this store
-    keeps, and the other one rotted."""
+def test_leaving_dropped_keeps_the_reason_as_a_record(run_cli, task_store, resume):
+    """There used to be a clearing rule here, mirroring the one for completion
+    data. Folding the reason into `stops` retires it: the entry describes a
+    stoppage that *happened*, so resuming cannot make it false — only the claim
+    that it is the current reason, and that claim is derived from the status.
+
+    So the live reading goes and the record stays, which is the property the
+    old field could not have.
+    """
     verb, want = resume
     # T04 on purpose: unconnected, so the drop leaves nothing standing and this
     # test is about the reason rather than about the fallout prompts.
     assert run_cli("task", "drop", "T04", "--why",
                    "superseded by the rewrite").exit_code == 0
     assert run_cli("apply").exit_code == 0
-    assert TaskGraph.load(task_store / "tasks.json").tasks["T04"].why
+    assert TaskGraph.load(task_store / "tasks.json").tasks["T04"].stopped_because
 
     args = ["task", verb, "T04"] + (["-o", "PR #9"] if verb == "done" else [])
     assert run_cli(*args).exit_code == 0
     assert run_cli("apply").exit_code == 0
 
     t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
-    assert t.status == want and t.why is None
-    assert "Not being done" not in (task_store / "tasks.md").read_text()
-    assert "superseded by the rewrite" not in (task_store / "tasks.md").read_text()
+    assert t.status == want
+    assert t.stopped_because is None                     # no longer the case
+    assert [k.why for k in t.stops] == ["superseded by the rewrite"]   # still true
+    view = (task_store / "tasks.md").read_text()
+    assert "Not being done" not in view
+    assert "superseded by the rewrite" in view           # under *Stopped:*
 
 
-def test_a_reason_under_work_being_done_is_a_violation(tg):
-    """Its own check name, because `dgraph/testing.py` gives a project one test
-    per rule and filing this under `task_done_complete` would lose it. Only
-    reachable by hand-edit now, or by a store written before the clearing
-    existed — so the message names both exits."""
-    tg.tasks["T04"].why = "left over"          # T04 is DOING
+def test_a_reason_needs_a_status_that_claims_one(tg):
+    """The rule that replaced the clearing rule, and it runs the other way. A
+    reason left behind is no longer expressible; a status asserting a reason
+    that is not there still is, and leaves the live one nowhere."""
+    tg.tasks["T04"].status = "DROPPED"          # no stops
     hits = _check(tg, "task_drop_complete")
     assert hits and hits[0].blocking and "T04" in str(hits[0])
     assert "dg task drop T04" in str(hits[0])
     assert not _check(tg, "task_done_complete")     # not the same rule
 
 
-def test_a_reason_under_dropped_work_is_fine(tg):
-    """The point of the field. It is only stale where the status contradicts
-    it, and a DROPPED task is exactly where it belongs."""
-    tg.tasks["T04"].status = "DROPPED"
-    tg.tasks["T04"].why = "the vendor tool does it"
+def test_a_record_under_work_being_done_is_not_a_finding(tg):
+    """The inverse of what used to be checked here, and the reason the change
+    was worth making: work stopped once and restarted is the ordinary case, not
+    drift, so nothing should complain about it."""
+    tg.tasks["T04"].stops = [Stop(why="was stuck", date="2026-02-01")]  # DOING
     assert _check(tg, "task_drop_complete") == []
+    assert _check(tg, "task_park_complete") == []
 
 
-def test_no_view_prints_a_reason_the_status_contradicts(tg):
-    """Belt and braces: the store cannot hold this any more, but every view is
-    generated from broken stores too, on the way to reporting them. `dg check`
-    renders `tasks.md` to compare it, so the view has to be drawable from a
-    graph it is about to condemn without repeating the false claim."""
+def test_no_view_calls_a_past_reason_the_current_one(tg):
+    """`stopped_because` is derived from the status, so a view cannot read a
+    live reason out of a task that has none — the belt the old field needed is
+    now the shape of the data."""
     from dgraph import context, task_render
-    tg.tasks["T04"].why = "abandoned, allegedly"        # DOING
-    assert "abandoned, allegedly" not in task_render.render(tg)
-    assert "abandoned, allegedly" not in context.text(context.task(tg, "T04"))
+    tg.tasks["T04"].stops = [Stop(why="was stuck, once", date="2026-02-01")]
+    assert "Not being done" not in task_render.render(tg)
+    assert context.task(tg, "T04")["why"] is None
 
 
 def test_the_stage_time_warning_names_the_stuck_batch(run_cli):
@@ -745,7 +752,7 @@ def test_drop_can_abandon_the_work_it_orphans(run_cli, task_store):
     assert run_cli("apply").exit_code == 0
     tg = TaskGraph.load(task_store / "tasks.json")
     assert tg.tasks["T04"].status == "DROPPED"
-    assert "T02" in tg.tasks["T04"].why
+    assert "T02" in tg.tasks["T04"].stopped_because
     assert tg.tasks["T03"].status == "TODO"
 
 
@@ -1166,3 +1173,179 @@ def test_areas_keeps_the_two_vocabularies_in_two_tables(run_cli, store):
     assert out.index("Decisions") < out.index("Tasks")
     for column in ("OPEN", "DECIDED", "TODO", "DONE"):
         assert column in out
+
+
+# ---- parking: the one archived record this store keeps -------------------
+
+
+def test_parked_work_still_holds_up_what_waits_on_it(tg):
+    """The whole difference from DROPPED. Abandoning work releases its
+    dependants, because abandoning it *is* the judgement that it was not
+    needed; parking asserts the opposite, so T03 goes on waiting."""
+    tg.tasks["T02"].status = "PARKED"
+    tg.tasks["T02"].stops = [Stop(why="stuck upstream", date="2026-02-01")]
+    assert tg.waiting_on("T03") == ["T02"]
+    assert not tg.ready("T03")
+    assert "T02" in tg.frontier()          # outstanding, not resolved
+    assert not tg.tasks["T02"].resolved
+
+
+def test_parked_work_is_never_ready(tg):
+    """`ready` is TODO-and-nothing-outstanding, so this comes free — but it is
+    the property somebody would break by widening that test."""
+    tg.tasks["T01"].status = "PARKED"
+    tg.tasks["T01"].stops = [Stop(why="no hardware", date="2026-02-01")]
+    assert not tg.ready("T01")
+
+
+def test_the_park_record_survives_being_picked_up(run_cli, task_store):
+    """The point of the field. Every other prose field here describes the
+    current state and is cleared when that state stops holding; a park is a
+    spell that ended, so it outlives the status."""
+    assert run_cli("task", "park", "T02", "-w", "stuck on the upstream bug").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "start", "T02").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    t = TaskGraph.load(task_store / "tasks.json").tasks["T02"]
+    assert t.status == "DOING"
+    assert [k.why for k in t.stops] == ["stuck on the upstream bug"]
+
+
+def test_a_second_park_is_a_second_record(run_cli, task_store):
+    """Put down twice, and the list says so. What kept stopping this work is
+    the reading the store did not have."""
+    for why in ("stuck upstream", "still stuck, different reason"):
+        assert run_cli("task", "park", "T02", "-w", why).exit_code == 0
+        assert run_cli("apply").exit_code == 0
+        assert run_cli("task", "start", "T02").exit_code == 0
+        assert run_cli("apply").exit_code == 0
+    t = TaskGraph.load(task_store / "tasks.json").tasks["T02"]
+    assert [k.why for k in t.stops] == ["stuck upstream",
+                                        "still stuck, different reason"]
+
+
+def test_parking_parked_work_is_refused(run_cli, task_store):
+    """Two spells where there was one. The caller meant to amend a reason, and
+    the op cannot tell that from a genuine second stoppage."""
+    assert run_cli("task", "park", "T02", "-w", "stuck").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    res = run_cli("task", "park", "T02", "-w", "still stuck")
+    assert res.exit_code == 1
+    assert "already PARKED" in res.output
+
+
+def test_a_park_and_a_drop_write_the_same_record(run_cli, task_store):
+    """One record, not two. Which of them it was is already in the status, and
+    a second live field for the current reason was the same fact stored twice
+    in the arrangement where the copies can disagree."""
+    assert run_cli("task", "park", "T02", "-w", "stuck").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "start", "T02").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "drop", "T02", "-w", "not needed after all",
+                   "--keep", "T03").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    t = TaskGraph.load(task_store / "tasks.json").tasks["T02"]
+    assert [k.why for k in t.stops] == ["stuck", "not needed after all"]
+    assert t.stopped_because == "not needed after all"
+    # `released_by_drop` warns about T03, correctly — the drop released it.
+    # Nothing *blocking*, which is the claim: one record, and it is well formed.
+    assert not [v for v in TaskGraph.load(task_store / "tasks.json").validate()
+                if v.blocking]
+
+
+def test_parked_without_a_record_is_a_finding(tg):
+    """Only reachable by hand-editing, like the completion rules. A status
+    claiming a park is in progress with no reason stored leaves the live reason
+    nowhere."""
+    tg.tasks["T01"].status = "PARKED"
+    assert [v for v in tg.validate() if v.check == "task_park_complete"]
+
+
+def test_parks_under_another_status_are_not_a_finding(tg):
+    """The mirror of `task_drop_complete`, deliberately absent. Work picked up
+    again keeps its parks — that is the ordinary case, not drift."""
+    tg.tasks["T01"].status = "DOING"
+    tg.tasks["T01"].stops = [Stop(why="was stuck", date="2026-02-01")]
+    assert not [v for v in tg.validate() if v.check == "task_park_complete"]
+
+
+def test_a_park_round_trips_through_the_store(tg):
+    tg.tasks["T01"].status = "PARKED"
+    tg.tasks["T01"].stops = [Stop(why="stuck", date="2026-02-01")]
+    parked = TaskGraph.from_dict(tg.to_dict())
+    assert parked.tasks["T01"].stops == [Stop(why="stuck", date="2026-02-01")]
+    # absent rather than [] where there is none, like every other field
+    assert "stops" not in [t for t in tg.to_dict()["tasks"] if t["id"] == "T02"][0]
+
+
+def test_a_malformed_park_is_refused_at_load(tg):
+    """An archived record silently dropped is the one thing it must never be."""
+    raw = tg.to_dict()
+    raw["tasks"][0]["stops"] = [{"why": "stuck"}]      # no date
+    with pytest.raises(ValueError, match="malformed stops entry"):
+        TaskGraph.from_dict(raw)
+
+
+def test_a_park_holding_work_up_is_chased(tg):
+    """The counterweight to parking being the cheapest thing this store offers.
+    A drop is interrogated about its dependants when it happens and chased by
+    `released_by_drop` afterwards; without this, a park settled nothing and was
+    never brought up again — so somebody stuck reaches for the cheaper one
+    every time and the backlog fills with parked work holding its dependants."""
+    tg.tasks["T02"].status = "PARKED"          # T03 waits on T02
+    tg.tasks["T02"].stops = [Stop(why="stuck upstream", date="2026-02-01")]
+    hits = _check(tg, "parked_holding_work")
+    assert hits and not hits[0].blocking       # a warning, like the drop rules
+    assert "T02" in str(hits[0]) and "T03" in str(hits[0])
+    assert "2026-02-01" in str(hits[0])        # judge staleness yourself
+    # all three exits named: pick it up, drop it (which releases), or undep
+    assert "dg task drop T02" in str(hits[0])
+    assert "undep" in str(hits[0])
+
+
+def test_a_park_holding_nothing_up_is_not_chased(tg):
+    """Silent where it costs nobody anything. A warning on every park would
+    train the eye past the ones that matter."""
+    tg.tasks["T03"].status = "PARKED"          # nothing waits on T03
+    tg.tasks["T03"].stops = [Stop(why="no hardware", date="2026-02-01")]
+    assert _check(tg, "parked_holding_work") == []
+
+
+def test_a_park_behind_finished_work_is_not_chased(tg):
+    """Held work means *unfinished* work. A dependant that is already done is
+    not being held up by anything."""
+    tg.tasks["T01"].status = "PARKED"          # T02 waits on T01, and is TODO
+    tg.tasks["T01"].stops = [Stop(why="stuck", date="2026-02-01")]
+    assert _check(tg, "parked_holding_work")
+    tg.tasks["T02"].status = "DROPPED"
+    tg.tasks["T02"].stops = [Stop(why="not needed", date="2026-02-02")]
+    assert _check(tg, "parked_holding_work") == []
+
+
+def test_stopping_already_stopped_work_is_refused(run_cli):
+    """Appending would claim two stoppages where there was one; merging would
+    edit a record that is kept forever. The caller wanted to amend a reason,
+    and the op cannot tell that from a genuine second stoppage."""
+    assert run_cli("task", "park", "T02", "-w", "stuck").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    res = run_cli("task", "park", "T02", "-w", "still stuck")
+    assert res.exit_code == 1 and "already PARKED" in res.output
+
+
+def test_a_store_written_before_stops_is_refused_with_the_repair(tg):
+    """`why` was a field and is not one now. Folded in silently it would need a
+    date this function does not have, and inventing one puts a fabricated fact
+    into the one record here that is kept forever."""
+    raw = tg.to_dict()
+    raw["tasks"][0]["why"] = "abandoned, once"
+    with pytest.raises(ValueError, match="no longer a field"):
+        TaskGraph.from_dict(raw)
+
+
+def test_dropping_needs_a_reason_at_both_doors(run_cli):
+    """The web form always required one and the CLI did not. A drop with no
+    reason now writes an empty entry into the archived record, so the two doors
+    onto the same act agree about what it takes to walk through them."""
+    res = run_cli("task", "drop", "T04", input="\n")
+    assert res.exit_code != 0 or "Why is this not being done" in res.output

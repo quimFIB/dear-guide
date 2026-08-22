@@ -113,6 +113,7 @@ CASES = [
     ([], ("task", "drop", "T02", "-w", "gone", "--keep", "T03")),
     ([], ("task", "drop", "T02", "-w", "gone", "--drop-too", "T03")),
     ([], ("task", "start", "T02")),
+    ([], ("task", "park", "T02", "-w", "stuck upstream")),
     ([], ("task", "done", "T02", "-o", "out")),
     ([], ("task", "link", "T02", "--evidence-for", "D05")),
     ([], ("task", "unlink", "T01", "--because")),

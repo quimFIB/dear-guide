@@ -22,9 +22,20 @@ are not decisions and the differences are the whole point of keeping two stores:
   it. Task readiness genuinely *is* a function of dependencies, so storing it
   would only create something that can go stale. `stale_block` has no analogue
   here; it cannot occur.
-- **No supersession.** A decision that is overturned keeps its old answer
-  forever, because how a project changed its mind is worth more than the
-  conclusion. Work that is abandoned is `DROPPED` and that is the whole record.
+- **Supersession, in one place only.** A decision that is overturned keeps its
+  old answer forever, because how a project changed its mind is worth more than
+  the conclusion. Here that applies to one question — *why is this work not
+  being done* — because it is the one whose answer can stop being true and
+  still be worth having. Every stoppage appends to `Task.stops` and nothing
+  ever clears it; work put down three times says so. Every other field this
+  store keeps is current-state and is cleared when the state it describes
+  stops holding.
+- **Two ways to stop, and they differ downstream, not in the record.** `PARKED`
+  is work nobody is doing; `DROPPED` is work nobody is going to do. Both write
+  the same `Stop`. What separates them is whether the work that waited on this
+  is now free to proceed — abandoning says yes and releases it, parking says no
+  and holds it. A store with one stopping status has to answer that question
+  the same way twice, and neither answer is right for both cases.
 - **No falsifier, no answer.** A task is finished when it is done, and what it
   produced is an `outcome` — a path, a PR, a note. That is a record, not a
   claim about the world, so nothing can falsify it.
@@ -46,10 +57,14 @@ from pathlib import Path
 from dgraph import project
 from dgraph.violation import Violation, cycle_from
 
-STATUSES = ("TODO", "DOING", "DONE", "DROPPED")
+STATUSES = ("TODO", "DOING", "PARKED", "DONE", "DROPPED")
 
-#: Work that is still outstanding — what "the backlog" means.
-UNFINISHED = frozenset({"TODO", "DOING"})
+#: Work that is still outstanding — what "the backlog" means. `PARKED` belongs
+#: here and not below: parked work is put down, not finished with, so it still
+#: holds up everything that waits on it. That is the whole difference from
+#: `DROPPED`, which releases its dependants because abandoning work *is* the
+#: judgement that it was not needed. Parking asserts the opposite.
+UNFINISHED = frozenset({"TODO", "DOING", "PARKED"})
 
 #: Work that will not be done again, so it no longer blocks anything. A dropped
 #: prerequisite releases its dependants: abandoning it *is* the decision that it
@@ -91,6 +106,24 @@ MISSING_EDGE = {
 
 
 @dataclass
+class Stop:
+    """One time this work stopped, and why. Written by `park` and by `drop`.
+
+    The store's only archived record, and deliberately one record rather than
+    two: a park and a drop answer the same question — why is this not being
+    done — and which of them it was is already in the status. Keeping a
+    separate live field for the current reason was the same fact stored twice,
+    in the arrangement where the copies can disagree.
+
+    Two fields and no more: what stopped it, and when. What *restarted* it is a
+    relation between tasks, which is what the `prompted` edge already says.
+    """
+
+    why: str
+    date: str
+
+
+@dataclass
 class Task:
     id: str
     title: str
@@ -103,7 +136,14 @@ class Task:
     #: field rather than the note, because overwriting the only description of
     #: what the work *was* is the opposite of keeping a record: the decision
     #: store keeps a superseded answer forever for the same reason.
-    why: str | None = None
+    #: Every time this work stopped, oldest first, and never cleared — the
+    #: exception the module docstring argues for. While the status is PARKED or
+    #: DROPPED the last entry is the live reason, and `stopped_because` is how
+    #: to read it; otherwise the list is the record of what kept stopping this
+    #: work, which is the thing worth having. There is no companion field for
+    #: "the current reason": that was the same fact in two places, and the
+    #: copies could disagree.
+    stops: list[Stop] = field(default_factory=list)
     #: The dialect of every piece of prose this record holds — the note, the
     #: outcome and the reason it was dropped, all converted through this one
     #: field by `task_render`. "org", else markdown. See `task_pending.PROSE`.
@@ -128,6 +168,22 @@ class Task:
     @property
     def resolved(self) -> bool:
         return self.status in RESOLVED
+
+    @property
+    def parked(self) -> bool:
+        return self.status == "PARKED"
+
+    @property
+    def stopped_because(self) -> str | None:
+        """The live reason, or None where the status makes no such claim.
+
+        Derived rather than stored, which is what retires the whole class of
+        violation the old `why` field needed: prose that outlived its status
+        cannot exist if the status is what decides whether prose is live.
+        """
+        if self.status not in ("PARKED", "DROPPED") or not self.stops:
+            return None
+        return self.stops[-1].why
 
 
 def matches(t: Task, op: dict) -> bool:
@@ -168,6 +224,39 @@ class TaskEdge:
     src: str
     to: list[str]
     kind: str
+
+
+def _task(raw: dict) -> Task:
+    """One stored task. Only `parks` needs building; everything else is scalar.
+
+    A malformed park entry is refused at load rather than in `validate`, for
+    the reason a duplicate id is: `Park(**p)` on a dict missing `why` raises
+    somewhere unhelpful, and a park silently dropped here would be invisible by
+    the time anything could report it — which is the one thing an archived
+    record must never be.
+    """
+    fields = dict(raw)
+    if "why" in fields:
+        # A store written before stops existed. Refused rather than folded in,
+        # for the reason `_edge` refuses an absent `kind`: the repair is
+        # mechanical, but the date is not something this function knows, and
+        # inventing one would put a fabricated fact into the one record here
+        # that is kept forever. Git knows when the drop landed.
+        raise ValueError(
+            f"{raw.get('id', '?')}: `why` is no longer a field — a reason now "
+            f"lives in `stops` with the date it was written. Replace it with "
+            f'"stops": [{{"why": …, "date": "YYYY-MM-DD"}}]; `git log -p` has '
+            f"the date"
+        )
+    stops = fields.pop("stops", [])
+    try:
+        fields["stops"] = [Stop(**k) for k in stops]
+    except TypeError as exc:
+        raise ValueError(
+            f"{raw.get('id', '?')}: malformed stops entry — each needs a "
+            f"`why` and a `date`, and nothing else ({exc})"
+        ) from None
+    return Task(**fields)
 
 
 def _edge(i: int, e: dict) -> TaskEdge:
@@ -219,7 +308,7 @@ class TaskGraph:
             )
         return cls(
             areas=raw.get("areas", []),
-            tasks={t["id"]: Task(**t) for t in raw["tasks"]},
+            tasks={t["id"]: _task(t) for t in raw["tasks"]},
             edges=[
                 _edge(i, e) for i, e in enumerate(raw.get("edges", []))
             ],
@@ -237,7 +326,11 @@ class TaskGraph:
                         ("id", t.id), ("title", t.title), ("area", t.area),
                         ("status", t.status), ("note", t.note),
                         ("done", t.done), ("outcome", t.outcome),
-                        ("why", t.why),
+                        # Absent rather than `[]` when there is none, matching
+                        # every other field here: the store stays readable, and
+                        # work that never stopped says so by silence.
+                        ("stops", [{"why": k.why, "date": k.date}
+                                   for k in t.stops] or None),
                         ("format", t.format), ("because", t.because),
                         ("evidence_for", t.evidence_for),
                     )
@@ -399,25 +492,31 @@ class TaskGraph:
                     add("task_no_dangling_refs", f"{e.src}: edge to itself")
 
         for tid, t in self.tasks.items():
-            # The mirror of the completion rule below, for the other thing this
-            # store keeps: `why` says why the work is *not being done*, so under
-            # any status but DROPPED it is a claim the store contradicts — and
-            # the generated view printed it as "Not being done" regardless,
-            # under a task that was in progress. Its own check name, not
-            # `task_done_complete`, because it is a different field, a different
-            # remedy, and `dgraph/testing.py` gives a project one test per rule.
-            #
-            # Applying a status change now clears it, so like the rule below
-            # this only ever fires on a hand-edit — or on a store written before
-            # that clearing existed, where the fix is to delete one line. Both
-            # exits named, because only one of them is a `dg` command and
-            # somebody has to be told which.
-            if t.status != "DROPPED" and t.why:
+            # There is no "carries a reason it should not" rule any more, and
+            # its absence is the point of folding `why` into `stops`. That rule
+            # existed because a live field outlived the status that made it
+            # true; a stop describes a stoppage that *happened*, so no later
+            # status can contradict it, and work stopped twice and restarted
+            # twice is the ordinary case rather than drift. What is checked is
+            # the other direction — a status claiming a reason that is not
+            # there. Two names for one shape, because the remedies are two
+            # different commands and `dgraph/testing.py` gives a project one
+            # test per rule.
+            if t.status == "PARKED" and not t.stops:
+                add("task_park_complete",
+                    f"{tid} is PARKED with nothing saying why — the reason it "
+                    f"stopped has nowhere to live. `dg task park {tid} --why "
+                    f"…`, or set the status back")
+            if t.status == "DROPPED" and not t.stops:
                 add("task_drop_complete",
-                    f"{tid} is {t.status} but still carries why — the reason it "
-                    f"was abandoned, from an earlier DROPPED. Work that is "
-                    f"being done again has no such reason: delete the field, or "
-                    f"`dg task drop {tid}` if it really is abandoned")
+                    f"{tid} is DROPPED with nothing saying why. Abandoning "
+                    f"work is a judgement about it, and the reason is the part "
+                    f"worth keeping: `dg task drop {tid} --why …`")
+            for k in t.stops:
+                if not k.why or not k.date:
+                    add("task_park_complete",
+                        f"{tid}: a stops entry is missing its "
+                        f"{'why' if not k.why else 'date'}")
             if t.status != "DONE":
                 # Applying a status change clears these, so this catches a
                 # hand-edit: an outcome under unfinished work is a claim the
@@ -440,6 +539,36 @@ class TaskGraph:
                     add("task_done_before_prerequisite",
                         f"{tid} is DONE but {p} ({self.tasks[p].status}) has to "
                         f"come first — finish {p}, or the dependency is wrong")
+
+        # What a park is holding up. The counterweight to parking being the
+        # cheapest thing this store offers: a drop is interrogated about its
+        # dependants at the moment it happens and chased afterwards by the two
+        # rules below, while a park settles nothing and, without this, was
+        # never brought up again. Somebody stuck reaches for the cheaper one
+        # every time, including where the work is genuinely dead, and the
+        # backlog fills with parked work silently holding its dependants.
+        #
+        # State-based, not time-based: `validate` has no clock and must not
+        # grow one, or the same store would be valid twice and invalid at
+        # midnight. The date is *reported* instead, so a reader can judge
+        # staleness themselves — which is the judgement, not the rule.
+        #
+        # Silent where a park holds nothing up: that park is costing nobody
+        # anything, and a warning about it would train the eye past the ones
+        # that matter.
+        for tid, t in self.tasks.items():
+            if not t.parked:
+                continue
+            held = [w for w in self.unblocks(tid) if self.tasks[w].unfinished]
+            if held:
+                since = f" since {t.stops[-1].date}" if t.stops else ""
+                add("parked_holding_work",
+                    f"{tid} has been parked{since} and "
+                    f"{', '.join(held)} still waits on it — pick it up, "
+                    f"`dg task drop {tid} --why …` if it is not happening "
+                    f"(which releases them), or `dg task undep` if the "
+                    f"dependency was wrong",
+                    "warning")
 
         # What a drop left behind. Both are warnings and both fire only while
         # the work is still TODO, which is the acknowledgement path — and the

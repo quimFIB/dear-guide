@@ -78,8 +78,8 @@ always sits below everything it rests on.
 | **faint dashed edge** | a dependency whose source is not settled yet |
 | **dotted cyan edge** | the link between the two graphs |
 
-Task outlines follow their status: amber `TODO`, blue `DOING`, green `DONE`,
-grey `DROPPED`. Blocked is never stored on a task — it is derived from the
+Task outlines follow their status: amber `TODO`, blue `DOING`, cyan `PARKED`,
+green `DONE`, grey `DROPPED`. Blocked is never stored on a task — it is derived from the
 prerequisites and the premise — so the dashes are computed, and a task whose
 only obstacle is an unsettled decision gets them too.
 
@@ -125,8 +125,19 @@ them apart.
 - **Mark done** needs an outcome — a path, a PR, a measurement. The form
   refuses without one, as `dg task done` does: a `DONE` task with no outcome is
   a record of nothing.
-- **Drop it** needs a reason, and keeps the note. Abandoning work *is* a
-  decision about it, and the why is the part worth keeping.
+- **Park it** is the one to reach for when nobody is doing this right now but
+  nobody has given up. It settles nothing downstream — everything that waited
+  on the task goes on waiting.
+- **Drop it** says the work is not happening, and releases what waited on it.
+  That is the only difference between the two buttons.
+
+Both need a reason, and both write the same record: a dated entry appended to
+the task, never cleared. **Pick it up again** keeps it, so work stopped three
+times shows all three, the last tagged *still* or *abandoned* while the status
+claims it. It is the one record here that outlives the state describing it.
+
+Parked work is offered one button, **Pick it up again**: finishing or dropping
+work nobody is doing skips a step somebody has to take deliberately.
 
 Finished and dropped work has no buttons. Reopening it is a correction, and
 corrections live in `dg task` where each one can carry a sentence of

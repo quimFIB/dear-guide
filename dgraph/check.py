@@ -39,6 +39,8 @@ CHECKS: tuple[str, ...] = (
     "task_acyclic",
     "task_done_complete",
     "task_drop_complete",
+    "task_park_complete",
+    "parked_holding_work",
     "task_done_before_prerequisite",
     "released_by_drop",
     "orphaned_by_drop",

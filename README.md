@@ -270,6 +270,8 @@ dg task --full                           # ...as a table, with nothing clipped
 dg task node T02                         # one task in full, with its premise
 dg task tree                             # the order of the work, from what can start
 dg task start T02                        # ...pick it up
+dg task park T02 --why "stuck on the upstream bug"   # put down, not given up on
+                                         # ...both keep the reason; only drop releases
 dg task done T02 --outcome "PR #241"
 dg task drop T02 --why "the index ships with the library"
 dg task pending                          # the task tray; `dg task clear` empties it

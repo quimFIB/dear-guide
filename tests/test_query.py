@@ -233,6 +233,28 @@ def test_date_is_when_this_was_settled_not_when_it_was_overturned(lens):
     assert query.select(query.parse("date:2026-01-01"), lens) == ["D01"]
 
 
+def test_parked_is_not_the_same_question_as_blocked(tg):
+    """A parked task may have every prerequisite resolved and still be put
+    down. Blocked is what the graph says; parked is what somebody decided."""
+    from dgraph.tasks import Stop
+    tg.tasks["T02"].status = "PARKED"          # T02's prerequisite is DONE
+    tg.tasks["T02"].stops = [Stop(why="stuck", date="2026-02-01")]
+    lens = query.task_lens(tg)
+    assert query.select(query.parse("is:parked"), lens) == ["T02"]
+    assert "T02" not in query.select(query.parse("is:blocked"), lens)
+
+
+def test_why_reads_the_stop_record(tg):
+    """Both answer *why is this work not being done*, and the archived one is
+    the half that survives being picked up again."""
+    from dgraph.tasks import Stop
+    tg.tasks["T02"].stops = [Stop(why="stuck on the kern bug", date="2026-02-01")]
+    lens = query.task_lens(tg)
+    assert query.select(query.parse('why:"kern bug"'), lens) == ["T02"]
+    (m,) = query.explain(query.parse('why:"kern bug"'), lens, "T02")
+    assert m.field == "stopped earlier because"
+
+
 # ---- structure -----------------------------------------------------------
 
 
