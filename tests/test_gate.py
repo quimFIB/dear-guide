@@ -9,7 +9,7 @@ from dataclasses import replace
 import pytest
 from typer.testing import CliRunner
 
-from dgraph import gate, pending, project
+from dgraph import check, gate, pending, project
 from dgraph.cli import app
 from dgraph.model import Graph
 from dgraph.render import write
@@ -515,3 +515,118 @@ def test_the_gate_switch_still_turns_removals_off(monkeypatch):
     for the whole gate, not one per verdict."""
     monkeypatch.setenv("DG_HOOK_OFF", "1")
     assert gate.verdict("dg rm D02")["verdict"] == "allow"
+
+
+# ---- a finding carries where it came from --------------------------------
+
+
+#: The three validators, and the store each one's findings are about. The
+#: origin is read off the finding at runtime; this is how the test tells what
+#: the right answer *is*, without trusting the same table the code trusts.
+_EMITTERS = {"model": "decision", "tasks": "task", "cross": "link"}
+
+
+def _emitter(name):
+    """The validator module that raises `name`, by looking for the literal."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(gate.__file__).parent
+    found = [origin for mod, origin in _EMITTERS.items()
+             if re.search(rf'["\']{re.escape(name)}["\']',
+                          (root / f"{mod}.py").read_text(encoding="utf-8"))]
+    assert len(found) < 2, f"{name} is emitted by {found}"
+    return found[0] if found else None
+
+
+@pytest.mark.parametrize("name", check.CHECKS)
+def test_every_check_name_resolves_to_the_store_that_emits_it(name):
+    """The F8 test, and the point of the item. Its predecessor discharged "the
+    deny names the broken store" with `task_status_legal` -- one of the eleven
+    names that happens to carry the `task_` prefix the gate classified by. Nine
+    others did not, so `released_by_drop`, `orphaned_by_drop`,
+    `parked_holding_work` and the five `evidence_*` rules were all reported as
+    decision-graph breakage, and nothing noticed."""
+    assert name in check.ORIGIN, (
+        f"{name} declares no store — add it to `check.ORIGIN`")
+    emitter = _emitter(name)
+    if emitter is None:
+        # `store_loads` and the two view checks are raised by `check` itself,
+        # which knows which store it was reading; there is no single right
+        # answer to read off a module. `store_loads` declares none at all.
+        return
+    assert check.ORIGIN[name] == emitter, (
+        f"{name} is emitted by {emitter}.py but declared as "
+        f"{check.ORIGIN[name]!r}")
+
+
+def test_no_check_name_is_classified_by_its_prefix_any_more():
+    """The convention the gate used to rely on is not merely unenforced, it is
+    false: eight rules about the task and link stores carry no prefix. Pinned so
+    that nobody restores the prefix rule as a shortcut."""
+    unprefixed = [n for n, o in check.ORIGIN.items()
+                  if o == "task" and not n.startswith(("task_", "stale_task_"))]
+    unprefixed += [n for n, o in check.ORIGIN.items()
+                   if o == "link" and not n.startswith("link_")]
+    assert sorted(unprefixed) == [
+        "evidence_dropped", "evidence_dropped_after_deciding",
+        "evidence_stalled", "evidence_stalled_after_deciding",
+        "evidence_unharvested", "orphaned_by_drop", "parked_holding_work",
+        "released_by_drop",
+    ]
+
+
+def test_every_finding_names_a_store(repo_with_tasks):
+    """Nothing reaches the gate unclassified, whichever store it came from."""
+    tg_path = repo_with_tasks / "tasks.json"
+    raw = json.loads(tg_path.read_text())
+    raw["tasks"][1]["because"] = "D99"          # a link violation
+    tg_path.write_text(json.dumps(raw))
+    _break(repo_with_tasks)                     # a decision violation
+    findings = check.run(project.Project(repo_with_tasks))
+    assert findings
+    assert all(v.origin in ("decision", "task", "link") for v in findings), (
+        [(v.check, v.origin) for v in findings if v.origin is None])
+    assert {v.origin for v in findings} >= {"decision", "link"}
+
+
+def _tasks_only(tmp_path, monkeypatch, tasks_json):
+    """A project with a `tasks.json` and no decision store at all."""
+    (tmp_path / "tasks.json").write_text(tasks_json, encoding="utf-8")
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.email=t@t",
+                 "-c", "user.name=t", "commit", "-qm", "initial"]):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                       capture_output=True)
+    monkeypatch.setattr(project, "_override", tmp_path)
+    return tmp_path
+
+
+def test_a_corrupt_tasks_json_alone_never_blames_a_decision_graph(tmp_path,
+                                                                  monkeypatch):
+    """`store_loads` is emitted by all three validators, so no naming scheme can
+    say which store it is about. A tasks-only project with an unreadable store
+    was refused with "The decision graph is not valid" -- naming a file that
+    does not exist anywhere in the project."""
+    root = _tasks_only(tmp_path, monkeypatch, "{oh no")
+    v = _v(root)
+    assert v["verdict"] == "deny"
+    assert "The task graph is not valid" in v["reason"]
+    assert "decision graph" not in v["reason"]
+    assert "decisions.json" not in v["reason"]
+
+
+@pytest.mark.parametrize("check_name, subject", [
+    ("released_by_drop", "The task graph is not valid"),
+    ("evidence_dropped", "The link between the two graphs is not valid"),
+])
+def test_an_unprefixed_rule_names_its_own_store(repo_with_tasks, monkeypatch,
+                                               check_name, subject):
+    """Two of the nine names that carried no prefix, taken all the way through
+    the gate. Both used to answer "The decision graph is not valid"."""
+    from dgraph.violation import Violation
+
+    findings = [Violation(check_name, "something broke", "error",
+                          check.ORIGIN[check_name])]
+    monkeypatch.setattr(gate._check, "run", lambda proj=None: findings)
+    v = _v(repo_with_tasks)
+    assert v["verdict"] == "deny" and subject in v["reason"]

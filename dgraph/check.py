@@ -11,6 +11,7 @@ from __future__ import annotations
 from dgraph import project as _project
 from dgraph import render
 from dgraph.model import Graph, Violation
+from dgraph.violation import DECISION, LINK, TASK, tag
 
 #: Every check this tool can emit. Parametrising over this rather than over
 #: observed violations means a clean graph still runs one test per rule, so a
@@ -56,6 +57,56 @@ CHECKS: tuple[str, ...] = (
     "evidence_stalled_after_deciding",
 )
 
+#: Which store each rule belongs to, declared rather than read off the name.
+#:
+#: The runtime origin does not come from here — `_decisions`, `_tasks` and
+#: `_link` stamp what they return, which is structural and cannot go stale.
+#: This table is the second belt: `run` uses it for anything that reaches it
+#: unstamped, and a test asserts every entry agrees with the module that
+#: actually emits the name. The prefix convention it replaces was already a
+#: lie for nine of these names.
+#:
+#: `store_loads` is emitted by all three helpers and so has no fixed entry;
+#: it is always stamped at the point of emission.
+ORIGIN: dict[str, str] = {
+    "store_loads": "",
+    "ids_wellformed": DECISION,
+    "status_legal": DECISION,
+    "no_dangling_refs": DECISION,
+    "one_active_edge": DECISION,
+    "decided_complete": DECISION,
+    "open_not_overspecified": DECISION,
+    "propagation": DECISION,
+    "stale_provisional": DECISION,
+    "stale_block": DECISION,
+    "block_is_a_premise": DECISION,
+    "no_orphans": DECISION,
+    "acyclic": DECISION,
+    "stale_view": DECISION,
+    "task_ids_wellformed": TASK,
+    "task_area_known": TASK,
+    "task_status_legal": TASK,
+    "task_no_dangling_refs": TASK,
+    "task_edge_kind": TASK,
+    "task_acyclic": TASK,
+    "task_done_complete": TASK,
+    "task_drop_complete": TASK,
+    "task_park_complete": TASK,
+    "parked_holding_work": TASK,
+    "task_done_before_prerequisite": TASK,
+    "released_by_drop": TASK,
+    "orphaned_by_drop": TASK,
+    "stale_task_view": TASK,
+    "link_resolves": LINK,
+    "link_premise_under_review": LINK,
+    "link_acyclic": LINK,
+    "evidence_unharvested": LINK,
+    "evidence_dropped": LINK,
+    "evidence_dropped_after_deciding": LINK,
+    "evidence_stalled": LINK,
+    "evidence_stalled_after_deciding": LINK,
+}
+
 
 def run(proj: _project.Project | None = None) -> list[Violation]:
     """Every finding for this project, across every store it has.
@@ -68,6 +119,8 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
     proj = proj or _project.find()
 
     if not proj.exists:
+        # No store at all, so no store to blame: left unstamped, which the
+        # gate reads as "the graphs this project keeps".
         return [Violation(
             "store_loads",
             f"no {proj.store.name} or {proj.tasks.name} under {proj.root}",
@@ -85,6 +138,13 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
         problems += _tasks(proj) if proj.has_tasks else []
         if proj.has_decisions and proj.has_tasks:
             problems += _link(proj)
+
+    # The second belt. Everything above is stamped where it was read; this
+    # catches a finding that reached here by some path that was not.
+    problems = [p if p.origin is not None or not ORIGIN.get(p.check)
+                else Violation(p.check, p.message, p.severity,
+                               ORIGIN[p.check])
+                for p in problems]
 
     unknown = sorted({p.check for p in problems} - set(CHECKS))
     if unknown:
@@ -111,12 +171,13 @@ def _link(proj: _project.Project) -> list[Violation]:
     except Exception:
         return []
     try:
-        return cross.validate(tg, g)
+        return tag(cross.validate(tg, g), LINK)
     except Exception as exc:
         return [Violation(
             "store_loads",
             f"internal: the cross-graph check failed ({exc!r}) — the link "
             f"between {proj.store.name} and {proj.tasks.name} cannot be judged",
+            origin=LINK,
         )]
 
 
@@ -135,15 +196,18 @@ def _tasks(proj: _project.Project) -> list[Violation]:
     try:
         tg = TaskGraph.load(proj.tasks)
     except Exception as exc:
-        return [Violation("store_loads", f"{proj.tasks} could not be read: {exc}")]
+        return [Violation("store_loads",
+                          f"{proj.tasks} could not be read: {exc}",
+                          origin=TASK)]
 
     try:
-        problems = tg.validate()
+        problems = tag(tg.validate(), TASK)
     except Exception as exc:
         return [Violation(
             "store_loads",
             f"internal: validate() itself failed on {proj.tasks.name} "
             f"({exc!r}) — the task graph cannot be judged valid",
+            origin=TASK,
         )]
 
     if not proj.has_decisions:
@@ -152,15 +216,18 @@ def _tasks(proj: _project.Project) -> list[Violation]:
         # cannot exist, which is the same breakage `_link` reports when both
         # stores are present — and reporting it there only would make an
         # absent `decisions.json` the way to hide it.
+        # Stamped LINK, not TASK: these are findings about the cross-store
+        # relation wherever they are emitted from, and the remedy is the same
+        # one `_link` would name.
         from dgraph import cross
-        problems += cross.validate(tg, Graph())
+        problems += tag(cross.validate(tg, Graph()), LINK)
 
     # A warning, for the reason `_decisions` gives at length below.
     if not proj.task_view.exists():
         problems.append(Violation(
             "stale_task_view",
             f"{proj.task_view.name} is missing — run `dg task render`",
-            "warning",
+            "warning", TASK,
         ))
     else:
         try:
@@ -169,7 +236,7 @@ def _tasks(proj: _project.Project) -> list[Violation]:
             problems.append(Violation(
                 "stale_task_view",
                 f"{proj.task_view.name} could not be read: {exc}",
-                "warning",
+                "warning", TASK,
             ))
         else:
             if current != task_render.render(tg):
@@ -177,7 +244,7 @@ def _tasks(proj: _project.Project) -> list[Violation]:
                     "stale_task_view",
                     f"{proj.task_view.name} does not match {proj.tasks.name}. It "
                     f"is generated — run `dg task render` rather than editing it.",
-                    "warning",
+                    "warning", TASK,
                 ))
     return problems
 
@@ -186,10 +253,12 @@ def _decisions(proj: _project.Project) -> list[Violation]:
     try:
         g = Graph.load(proj.store)
     except Exception as exc:  # malformed JSON, bad shape
-        return [Violation("store_loads", f"{proj.store} could not be read: {exc}")]
+        return [Violation("store_loads",
+                          f"{proj.store} could not be read: {exc}",
+                          origin=DECISION)]
 
     try:
-        problems = g.validate()
+        problems = tag(g.validate(), DECISION)
     except Exception as exc:
         # A validator bug must degrade to a violation, never to a crash: the
         # commit gate treats a crash as "no verdict" and would fail open on
@@ -198,6 +267,7 @@ def _decisions(proj: _project.Project) -> list[Violation]:
             "store_loads",
             f"internal: validate() itself failed on {proj.store.name} "
             f"({exc!r}) — the graph cannot be judged valid",
+            origin=DECISION,
         )]
 
     # **A warning, not an error**, and the severity is the whole argument.
@@ -227,7 +297,7 @@ def _decisions(proj: _project.Project) -> list[Violation]:
     if not proj.view.exists():
         problems.append(Violation(
             "stale_view", f"{proj.view.name} is missing — run `dg render`",
-            "warning",
+            "warning", DECISION,
         ))
     else:
         try:
@@ -239,14 +309,14 @@ def _decisions(proj: _project.Project) -> list[Violation]:
             current = None
             problems.append(Violation(
                 "stale_view", f"{proj.view.name} could not be read: {exc}",
-                "warning",
+                "warning", DECISION,
             ))
         if current is not None and current != render.render(g):
             problems.append(Violation(
                 "stale_view",
                 f"{proj.view.name} does not match {proj.store.name}. It is "
                 f"generated — run `dg render` rather than editing it.",
-                "warning",
+                "warning", DECISION,
             ))
     return problems
 

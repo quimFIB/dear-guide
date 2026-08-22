@@ -11,7 +11,7 @@ into its own namespace — so no existing caller changed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 ERROR = "error"
@@ -33,6 +33,22 @@ SEVERITIES = (ERROR, WARNING)
 
 Severity = Literal["error", "warning"]
 
+DECISION = "decision"
+TASK = "task"
+LINK = "link"
+
+#: Which store a finding is *about*, carried on the finding rather than
+#: inferred from its name. The commit gate names the broken store in its
+#: refusal, and it used to classify by prefix: `task_`/`stale_task_` meant the
+#: task store, `link_` the relation, everything else the decision graph. Nine
+#: of the thirty-six check names never carried a prefix, so a corrupt
+#: `tasks.json` in a project with no decision store at all was denied with
+#: "The decision graph is not valid" — and `store_loads`, emitted by all three
+#: validators, cannot be classified by any naming scheme at all.
+ORIGINS = (DECISION, TASK, LINK)
+
+Origin = Literal["decision", "task", "link"]
+
 
 @dataclass
 class Violation:
@@ -47,12 +63,23 @@ class Violation:
     check: str
     message: str
     severity: Severity = ERROR
+    #: The store this finding is about. Defaulted to `None` so that every
+    #: existing call site — three validators and a dozen ad-hoc raises — is
+    #: unchanged; `dgraph/check.py` stamps it as each validator's findings
+    #: come back, which is the only place that knows which store was being
+    #: read. See `ORIGINS`.
+    origin: Origin | None = None
 
     def __post_init__(self) -> None:
         if self.severity not in SEVERITIES:
             raise ValueError(
                 f"unknown severity {self.severity!r} for check "
                 f"{self.check!r} — one of {', '.join(SEVERITIES)}"
+            )
+        if self.origin is not None and self.origin not in ORIGINS:
+            raise ValueError(
+                f"unknown origin {self.origin!r} for check {self.check!r} — "
+                f"one of {', '.join(ORIGINS)}"
             )
 
     def __str__(self) -> str:
@@ -84,3 +111,19 @@ def cycle_from(trail: list[str], node: str) -> list[str]:
     loop = trail[trail.index(node):]
     k = loop.index(min(loop))
     return loop[k:] + loop[:k] + [min(loop)]
+
+
+def tag(problems: list[Violation], origin: Origin) -> list[Violation]:
+    """Stamp `origin` on findings that do not already carry one.
+
+    Called where the store being read is known — which is the caller of a
+    validator, never the validator itself: `Graph.validate` does not know it
+    is being run by `dg check` against this project's `decisions.json`, and
+    `cross.validate` is run both by the link check and, against an empty
+    decision graph, by the task check.
+
+    Already-tagged findings pass through, so a helper that mixes sources can
+    stamp the odd one out first and blanket-stamp the rest.
+    """
+    return [v if v.origin is not None else replace(v, origin=origin)
+            for v in problems]

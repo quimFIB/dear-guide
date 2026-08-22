@@ -443,12 +443,21 @@ _SUBJECT = {
 }
 
 
-def _origin(check: str) -> str:
-    if check.startswith("link_"):
-        return "link"
-    if check.startswith(("task_", "stale_task_")):
-        return "task"
-    return "decision"
+def _origin(v) -> str | None:
+    """Which store a finding is about — read off the finding, not its name.
+
+    This used to classify by prefix, and nine of the thirty-six check names
+    never carried one: `released_by_drop`, `orphaned_by_drop`,
+    `parked_holding_work` and the five `evidence_*` rules all fell through to
+    "decision", so a corrupt `tasks.json` in a project with no decision store
+    at all was refused with "The decision graph is not valid". `store_loads`
+    could not be classified by any naming scheme, since all three validators
+    emit it.
+
+    `None` when nothing claimed it — which `_SUBJECT` renders as the plural
+    subject rather than guessing a store.
+    """
+    return v.origin
 
 
 def verdict(command: str, proj: project.Project | None = None) -> dict:
@@ -510,7 +519,7 @@ def _verdict(command: str, proj: project.Project | None = None) -> dict:
         # Named by what actually broke: a task-store or link violation framed
         # as "the decision graph is not valid" sends the reader to the wrong
         # file, and the reader is often a model that will act on the sentence.
-        origins = {_origin(v.check) for v in problems}
+        origins = {_origin(v) for v in problems}
         subject = _SUBJECT.get(
             frozenset(origins), "The graphs this project keeps are not valid")
         return {
