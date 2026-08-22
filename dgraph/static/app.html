@@ -1114,11 +1114,17 @@ function say(msg, cls, vid){
 async function post(op){
   const vid=op.vertex;      /* pinned: the user may navigate before this returns */
   try{
-    await api("/api/pending",{method:"POST",headers:{"Content-Type":"application/json"},
+    const res=await api("/api/pending",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify(op)});
     PEND=await api("/api/pending"); tray();
     delete DRAFTS[vid];     /* it is staged; it is no longer unconfirmed work */
-    say(`Staged ${op.op} for ${vid}.`, "ok", vid);
+    /* The server's notes, verbatim — `cross.deciding_ahead_of_evidence` is
+       the one helper `dg decide` prints from, and a second wording here is
+       the two doors disagreeing about the same act. A note, never a refusal:
+       the op is staged either way. */
+    const notes=(res&&res.notes)||[];
+    say(`Staged ${op.op} for ${vid}.` + (notes.length?" "+notes.join(" "):""),
+        notes.length?"warn":"ok", vid);
     if(vid===sel) panel();
   }catch(err){ say(err.message, "bad", vid); }
 }

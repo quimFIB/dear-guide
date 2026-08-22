@@ -328,6 +328,97 @@ def settled_on_stalled_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
     return _stalled_evidence(tg, g, settled=True)
 
 
+def deciding_ahead_of_evidence(tg: TaskGraph | None, did: str) -> str | None:
+    """What to say when a decision is settled while its evidence is still out.
+
+    One helper, called by `dg decide` and by the browser's compose path, so
+    the two doors onto the same act cannot say different things about it — the
+    shape `dg task drop` and its `Drop it` button got wrong.
+
+    A **warning and never a refusal**. Deciding ahead of a spike is a
+    legitimate call: the answer may be obvious without it, or the spike may be
+    confirmatory. What is not legitimate is nobody being told, and nobody
+    being told again afterwards — which is what `evidence_after_deciding`
+    covers once the answer is in the store.
+
+    `None` where there is no task store, and where the decision has no
+    outstanding evidence: silence is the right answer to a decision nothing
+    was measuring.
+    """
+    if tg is None:
+        return None
+    waiting = pending_evidence(tg, did)
+    if not waiting:
+        return None
+    return (f"{did} is being settled while {', '.join(waiting)} "
+            f"{'is' if len(waiting) == 1 else 'are'} still outstanding — "
+            f"that is a legitimate call, but read the result against this "
+            f"answer when it lands. `dg check` goes on saying so until the "
+            f"work finishes before the answer, the link goes, or the "
+            f"decision is reopened.")
+
+
+def _one_line(text: str | None, limit: int = 90) -> str:
+    """An outcome as one line, clipped. Local rather than `compact.gist`: this
+    module is a validator, and a validator that imports a rendering module has
+    a dependency it cannot justify to `tests/test_cross.py`."""
+    one = " ".join((text or "").split())
+    return one if len(one) <= limit else one[:limit - 1].rstrip() + "…"
+
+
+def evidence_after_deciding(tg: TaskGraph, g: Graph) -> list[dict]:
+    """Settled decisions whose evidence is still running, or landed afterwards.
+
+    The fourth quarter of the settled half, and the only one where the
+    measurement *exists*. `settled_on_dropped_evidence` and
+    `settled_on_stalled_evidence` between them cover evidence that was
+    abandoned or put down — the cases where nothing was produced. The case
+    where something **was** produced, after the answer was already written
+    down, was reported by nothing at all: an answer settled ahead of its spike
+    is a legitimate call, but the result may contradict it, and nobody reading
+    the store six weeks later is told to look.
+
+    Two shapes, one finding:
+
+    *still coming* — an evidence task that is unfinished. The answer is
+    standing while the work that was to inform it is in flight.
+
+    *landed late* — an evidence task DONE after the active edge's date. The
+    outcome exists and has never been read against the answer, which is why
+    the message carries the outcome and not just the task id.
+
+    The partition against the other two is by decision, not by task: where
+    either of them already fires, this one is silent, so every
+    (evidence-status × relative-date) cell has exactly one owner.
+
+    Nothing here is stored. It clears when the decision is reopened (it is no
+    longer settled), when the link goes (`dg task unlink`), or when a later
+    answer post-dates the work — never by a field whose only job is to silence
+    it, which is the rule `tasks.py` states at length for `released_by_drop`.
+    """
+    covered = {u["id"] for u in settled_on_dropped_evidence(tg, g)} \
+        | {u["id"] for u in settled_on_stalled_evidence(tg, g)}
+    out = []
+    for did in sorted(g.vertices):
+        v = g.vertices[did]
+        if not v.settled or did in covered:
+            continue
+        e = g.active_edge(did)
+        when = e.date if e else None
+        late = []
+        for tid in evidence(tg, did):
+            t = tg.tasks[tid]
+            if t.unfinished:
+                late.append({"id": tid, "status": t.status, "outcome": None})
+            elif t.status == "DONE" and when and t.done and t.done > when:
+                late.append({"id": tid, "status": "DONE",
+                             "outcome": t.outcome, "done": t.done})
+        if late:
+            out.append({"id": did, "title": v.title, "status": v.status,
+                        "date": when, "tasks": late})
+    return out
+
+
 def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
     """The two graphs as one digraph, for cycle detection.
 
@@ -685,6 +776,28 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
             f"Either it was settled without them, so drop the link with "
             f"`dg task unlink {u['tasks'][0]}`, or somebody meant to finish "
             f"the work and it is still worth picking up",
+            "warning",
+        ))
+
+    for u in evidence_after_deciding(tg, g):
+        # The outcome, not just the id: the outcome is the thing that has to
+        # be read against the answer, and an id sends the reader off to look
+        # it up before they know whether it is worth looking up.
+        what = ", ".join(
+            f"{t['id']} is {t['status'].lower()}" if t["outcome"] is None
+            else f"{t['id']} finished {t['done']} — {_one_line(t['outcome'])}"
+            for t in u["tasks"])
+        running = any(t["outcome"] is None for t in u["tasks"])
+        v.append(Violation(
+            "evidence_after_deciding",
+            f"{u['id']} ({u['title']}) is {u['status']}"
+            + (f", settled {u['date']}" if u["date"] else "")
+            + f", but the work meant to inform it "
+            + ("has not reported yet" if running else "reported afterwards")
+            + f" ({what}) — read it against the answer, then `dg reopen "
+              f"{u['id']}` if it does not hold, or `dg task unlink "
+              f"{u['tasks'][0]['id']} --evidence-for` if the answer never "
+              f"needed it",
             "warning",
         ))
 

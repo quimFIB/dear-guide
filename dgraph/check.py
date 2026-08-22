@@ -55,6 +55,7 @@ CHECKS: tuple[str, ...] = (
     "evidence_dropped_after_deciding",
     "evidence_stalled",
     "evidence_stalled_after_deciding",
+    "evidence_after_deciding",
 )
 
 #: Which store each rule belongs to, declared rather than read off the name.
@@ -105,6 +106,7 @@ ORIGIN: dict[str, str] = {
     "evidence_dropped_after_deciding": LINK,
     "evidence_stalled": LINK,
     "evidence_stalled_after_deciding": LINK,
+    "evidence_after_deciding": LINK,
 }
 
 

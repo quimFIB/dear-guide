@@ -569,12 +569,12 @@ def test_no_check_name_is_classified_by_its_prefix_any_more():
                   if o == "task" and not n.startswith(("task_", "stale_task_"))]
     unprefixed += [n for n, o in check.ORIGIN.items()
                    if o == "link" and not n.startswith("link_")]
-    assert sorted(unprefixed) == [
-        "evidence_dropped", "evidence_dropped_after_deciding",
-        "evidence_stalled", "evidence_stalled_after_deciding",
-        "evidence_unharvested", "orphaned_by_drop", "parked_holding_work",
-        "released_by_drop",
-    ]
+    # Not an exact list: a new check must not have to be added here, or the
+    # pin becomes a chore and gets deleted. What is asserted is that both
+    # halves of the old convention are false, which is enough to make
+    # restoring it fail.
+    assert {"released_by_drop", "orphaned_by_drop"} <= set(unprefixed)
+    assert {"evidence_dropped", "evidence_unharvested"} <= set(unprefixed)
 
 
 def test_every_finding_names_a_store(repo_with_tasks):

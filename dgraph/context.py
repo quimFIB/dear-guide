@@ -170,6 +170,14 @@ def _work(tg: TaskGraph, did: str) -> dict:
         "rests_on": cross.rests_on(tg, did),
         "evidence": cross.evidence(tg, did),
         "pending_evidence": cross.pending_evidence(tg, did),
+        # What the evidence actually produced. Printed beside the answer,
+        # because an outcome that arrived after the answer is the one thing
+        # nobody was told to read against it — see
+        # `cross.evidence_after_deciding`, which goes on saying so in the
+        # store long after the decide-time warning has scrolled away.
+        "outcomes": {t: tg.tasks[t].outcome
+                     for t in cross.evidence(tg, did)
+                     if tg.tasks[t].status == "DONE" and tg.tasks[t].outcome},
     }
 
 
@@ -407,6 +415,10 @@ def _decision_text(d: dict) -> str:
                 f"{t}*" if t in pend else t for t in w["evidence"]))
             if pend:
                 out.append("  (* not finished yet)")
+            # Beside the answer, not behind an id. A reader who has to look
+            # the task up to find out what it measured does not look it up.
+            for t, outcome in (w.get("outcomes") or {}).items():
+                out += _wrap(f"{t} found: {outcome}", "    ")
 
     if d["shaky_premises"]:
         out += ["", f"→ this rests on {', '.join(d['shaky_premises'])}, which "

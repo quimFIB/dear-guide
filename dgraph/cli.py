@@ -825,7 +825,7 @@ def node(
         lines += [f"implemented by {', '.join(doing)}"]
     ev = _tasks_informing(vid)
     if ev:
-        lines += [f"evidence from {', '.join(ev)}"]
+        lines += ["evidence from " + ev[0]] + [" " * 14 + e for e in ev[1:]]
     hist = g.history(vid)
     if hist and active:
         # Never silently. A reader who did not type the flag would see the same
@@ -1174,6 +1174,14 @@ def _stage_close(g: Graph, op: dict) -> None:
                   f"{', '.join(released)}")
     con.print(f"[green]staged[/] {len(ops)} op(s) — review with `dg pending`, "
               f"then `dg apply`")
+    # Said here rather than in `decide`, so `--edit` and the prompt path — both
+    # of which end up here — cannot differ about it, and so the browser's
+    # compose path can call the same helper.
+    proj = project.find()
+    note = cross.deciding_ahead_of_evidence(
+        TaskGraph.load(proj.tasks) if proj.has_tasks else None, op["vertex"])
+    if note:
+        con.print(f"[yellow]note: {note}[/]")
     _warn_stuck()
 
 
@@ -2674,14 +2682,26 @@ def _tasks_implementing(did: str) -> list[str]:
 
 
 def _tasks_informing(did: str) -> list[str]:
-    """Every task whose outcome bears on this decision, with its status."""
+    """Every task whose outcome bears on this decision, with its status.
+
+    And with the outcome itself where there is one. An id and a status say
+    that a measurement happened; only the outcome can be read against the
+    answer, and reading it against the answer is the entire point of the link
+    — most sharply where the work finished *after* the decision was settled,
+    which is what `cross.evidence_after_deciding` reports in the store.
+    """
     proj = project.find()
     if not proj.has_tasks:
         return []
     try:
         from dgraph import cross
         tg = TaskGraph.load(proj.tasks)
-        return [f"{t} ({tg.tasks[t].status})" for t in cross.evidence(tg, did)]
+        out = []
+        for t in cross.evidence(tg, did):
+            task = tg.tasks[t]
+            said = cross._one_line(task.outcome) if task.outcome else ""
+            out.append(f"{t} ({task.status})" + (f" — {said}" if said else ""))
+        return out
     except Exception:
         return []
 

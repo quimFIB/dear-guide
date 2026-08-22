@@ -1006,3 +1006,158 @@ def test_the_stage_time_warning_still_fires_when_nothing_will_fix_it(run_cli, bo
 
     assert "would currently refuse" in res.output
     assert "D77" in res.output
+
+
+# ---- evidence that arrived after the answer ------------------------------
+
+
+#: The settled half's checks. Every (evidence-status x relative-date) cell must
+#: be owned by exactly one of them, or by none -- never by two.
+SETTLED_HALF = ("evidence_dropped_after_deciding",
+                "evidence_stalled_after_deciding",
+                "evidence_after_deciding")
+
+#: D01's active edge is dated 2026-01-01 in the fixture.
+DECIDED_ON = "2026-01-01"
+
+
+def _evidence(root, status, done=None, outcome=None):
+    """T04 as the sole evidence for D01, which is DECIDED. T04 is unconnected
+    in the task fixture, so nothing else is in play."""
+    tg = TaskGraph.load(root / "tasks.json")
+    t = tg.tasks["T04"]
+    t.evidence_for = "D01"
+    t.status = status
+    t.done, t.outcome = done, outcome
+    t.stops = ([Stop(why="stopped", date="2026-02-01")]
+               if status in ("PARKED", "DROPPED") else [])
+    tg.save(root / "tasks.json")
+    return tg
+
+
+@pytest.mark.parametrize("status, done, owner", [
+    ("TODO",    None,         "evidence_after_deciding"),
+    ("DOING",   None,         "evidence_after_deciding"),
+    ("PARKED",  None,         "evidence_stalled_after_deciding"),
+    ("DROPPED", None,         "evidence_dropped_after_deciding"),
+    ("DONE",    "2025-12-01", None),          # measured, then decided: quiet
+    ("DONE",    DECIDED_ON,   None),          # same day: not "afterwards"
+    ("DONE",    "2026-06-01", "evidence_after_deciding"),
+])
+def test_exactly_one_settled_half_check_owns_each_cell(both, status, done,
+                                                       owner):
+    """The partition, enumerated. SA07b's new check must cover the cells the
+    other two leave -- evidence still running, and evidence that landed after
+    the answer -- without firing where either of them already does. The
+    dropped/stalled pair was checked this way when it was added; this extends
+    the same matrix over the relative date, which is the axis the new check
+    introduces."""
+    _evidence(both, status, done=done, outcome="a number" if done else None)
+    fired = {v.check for v in run()} & set(SETTLED_HALF)
+    assert fired == ({owner} if owner else set()), f"{status}/{done}: {fired}"
+
+
+def test_the_new_check_names_the_outcome_not_just_the_task(both):
+    """The outcome is the thing that has to be read against the answer. An id
+    sends the reader off to look it up before they know whether it is worth
+    looking up."""
+    _evidence(both, "DONE", done="2026-06-01",
+              outcome="p50 latency went up 40% under the new index")
+    hits = [v for v in run() if v.check == "evidence_after_deciding"]
+    assert len(hits) == 1 and not hits[0].blocking
+    assert "p50 latency went up 40%" in str(hits[0])
+    assert "2026-06-01" in str(hits[0])
+
+
+def test_the_new_check_says_when_the_evidence_is_still_running(both):
+    _evidence(both, "DOING")
+    hits = [v for v in run() if v.check == "evidence_after_deciding"]
+    assert len(hits) == 1
+    assert "T04" in str(hits[0]) and "has not reported yet" in str(hits[0])
+
+
+@pytest.mark.parametrize("clear", ["reopen", "unlink"])
+def test_the_finding_clears_without_any_stored_field(both, clear):
+    """Nothing is stored to silence this. It goes when the decision is no
+    longer settled, or when the link that made the work evidence goes -- each
+    of which is a real statement about the work, which is the rule `tasks.py`
+    argues at length for `released_by_drop`."""
+    _evidence(both, "DONE", done="2026-06-01", outcome="a number")
+    assert [v for v in run() if v.check == "evidence_after_deciding"]
+    if clear == "reopen":
+        _reopen(both, "D01")
+    else:
+        tg = TaskGraph.load(both / "tasks.json")
+        tg.tasks["T04"].evidence_for = None
+        tg.save(both / "tasks.json")
+    assert not [v for v in run() if v.check == "evidence_after_deciding"]
+
+
+def test_a_decision_with_no_evidence_link_is_silent(both):
+    assert not [v for v in run() if v.check == "evidence_after_deciding"]
+
+
+# ---- SA07a: said at the moment it happens --------------------------------
+
+
+def test_deciding_ahead_of_evidence_warns_at_both_doors(both):
+    """One helper, called by `dg decide` and by the browser's compose path, so
+    the two doors onto settling a question cannot say different things about
+    it -- the shape `dg task drop` and its `Drop it` button got wrong."""
+    from dgraph import server
+
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D05"        # D05 is OPEN; T02 is TODO
+    tg.save(both / "tasks.json")
+
+    cli = runner.invoke(app, ["--project", str(both), "decide", "D05",
+                              "-a", "settled without waiting", "-s",
+                              "discussion", "-f", "the spike contradicts it",
+                              "-o", ""])
+    assert cli.exit_code == 0
+    assert "T02" in cli.output and "still outstanding" in cli.output
+
+    note = server._decide_note({"op": "close", "vertex": "D05",
+                                "answer": "x", "source": "discussion"})
+    assert note and "T02" in note and "still outstanding" in note
+
+
+def test_deciding_with_no_evidence_link_says_nothing(both):
+    """Silence is the right answer to a decision nothing was measuring."""
+    from dgraph import server
+
+    cli = runner.invoke(app, ["--project", str(both), "decide", "D05",
+                              "-a", "an answer", "-s", "discussion",
+                              "-f", "new evidence", "-o", ""])
+    assert cli.exit_code == 0 and "still outstanding" not in cli.output
+    assert server._decide_note({"op": "close", "vertex": "D05"}) is None
+
+
+def test_deciding_ahead_of_evidence_is_never_a_refusal(both, tmp_path):
+    """A legitimate call: the answer may be obvious without the spike, or the
+    spike confirmatory. What is not legitimate is nobody being told."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D05"
+    tg.save(both / "tasks.json")
+    res = runner.invoke(app, ["--project", str(both), "decide", "D05",
+                              "-a", "settled anyway", "-s", "discussion",
+                              "-f", "the spike contradicts it", "-o", ""])
+    assert res.exit_code == 0 and "staged" in res.output
+
+
+def test_the_outcome_is_printed_beside_the_answer(both):
+    """`dg node` and `dg context` both. A warning at decide time is not seen by
+    whoever reads the store six weeks later."""
+    from dgraph import context
+
+    _evidence(both, "DONE", done="2026-06-01",
+              outcome="p50 latency went up 40%")
+    node = runner.invoke(app, ["--project", str(both), "node", "D01"])
+    assert node.exit_code == 0 and "p50 latency went up 40%" in node.output
+
+    ctx = runner.invoke(app, ["--project", str(both), "context", "D01",
+                              "--full"])
+    assert ctx.exit_code == 0 and "p50 latency went up 40%" in ctx.output
+    assert context.decision(Graph.load(both / "decisions.json"), "D01",
+                            TaskGraph.load(both / "tasks.json")
+                            )["work"]["outcomes"]["T04"].startswith("p50")

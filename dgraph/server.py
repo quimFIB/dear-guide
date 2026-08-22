@@ -256,6 +256,15 @@ def stage(g: Graph, op: dict) -> list[dict]:
     return ops
 
 
+def _decide_note(op: dict) -> str | None:
+    """The decide-time warning for a close op, or None for anything else."""
+    if op.get("op") != "close" or not op.get("vertex"):
+        return None
+    proj = project.find()
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    return cross.deciding_ahead_of_evidence(tg, op["vertex"])
+
+
 def stage_task(tg: TaskGraph, op: dict) -> list[dict]:
     """Vet a task op and stage it. The one task-staging path.
 
@@ -425,7 +434,11 @@ class Handler(BaseHTTPRequestHandler):
                 ops = stage(g, op)
             except Exception as exc:
                 return self._json({"error": str(exc)}, 400)
-            self._json({"staged": ops, "pending": pending.load()})
+            # The same warning `dg decide` prints, from the same helper: both
+            # doors onto settling a question have to say the same thing about
+            # deciding ahead of the evidence.
+            self._json({"staged": ops, "pending": pending.load(),
+                        "notes": [n for n in [_decide_note(op)] if n]})
         elif self.path == "/api/task-pending":
             proj = project.find()
             if not proj.has_tasks:
