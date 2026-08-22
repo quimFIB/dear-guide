@@ -1224,16 +1224,6 @@ def test_a_second_park_is_a_second_record(run_cli, task_store):
                                         "still stuck, different reason"]
 
 
-def test_parking_parked_work_is_refused(run_cli, task_store):
-    """Two spells where there was one. The caller meant to amend a reason, and
-    the op cannot tell that from a genuine second stoppage."""
-    assert run_cli("task", "park", "T02", "-w", "stuck").exit_code == 0
-    assert run_cli("apply").exit_code == 0
-    res = run_cli("task", "park", "T02", "-w", "still stuck")
-    assert res.exit_code == 1
-    assert "already PARKED" in res.output
-
-
 def test_a_park_and_a_drop_write_the_same_record(run_cli, task_store):
     """One record, not two. Which of them it was is already in the status, and
     a second live field for the current reason was the same fact stored twice
@@ -1323,14 +1313,22 @@ def test_a_park_behind_finished_work_is_not_chased(tg):
     assert _check(tg, "parked_holding_work") == []
 
 
-def test_stopping_already_stopped_work_is_refused(run_cli):
+@pytest.mark.parametrize("verb, status", [("park", "PARKED"),
+                                         ("drop", "DROPPED")])
+def test_stopping_already_stopped_work_is_refused(run_cli, verb, status):
     """Appending would claim two stoppages where there was one; merging would
     edit a record that is kept forever. The caller wanted to amend a reason,
-    and the op cannot tell that from a genuine second stoppage."""
-    assert run_cli("task", "park", "T02", "-w", "stuck").exit_code == 0
+    and the op cannot tell that from a genuine second stoppage.
+
+    Both stoppages, because the rule is one rule: `task_pending` refuses on
+    `was == t.status` and neither verb is special. T04 for the drop -- it is
+    unconnected, so nothing stands to be released and the refusal is the only
+    thing under test."""
+    tid = "T02" if verb == "park" else "T04"
+    assert run_cli("task", verb, tid, "-w", "stuck").exit_code == 0
     assert run_cli("apply").exit_code == 0
-    res = run_cli("task", "park", "T02", "-w", "still stuck")
-    assert res.exit_code == 1 and "already PARKED" in res.output
+    res = run_cli("task", verb, tid, "-w", "still stuck")
+    assert res.exit_code == 1 and f"already {status}" in res.output
 
 
 def test_a_store_written_before_stops_is_refused_with_the_repair(tg):

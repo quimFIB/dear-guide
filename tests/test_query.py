@@ -473,12 +473,19 @@ def test_a_mistyped_id_is_offered_a_near_miss(store):
     assert r.exit_code == 2 and "did you mean" in r.stdout and "D04" in r.stdout
 
 
-def test_the_link_terms_still_take_a_decision_id(both):
-    """`because:` lives on the task lens and its argument is a *decision* id.
-    Resolving it against the task ids would refuse every correct use of it, so
-    the lens carries where each structural term's argument lives."""
-    r = dg(both, "find", "because:D05", "--ids")
-    assert r.exit_code == 0 and r.stdout.split() == ["T02"]
+def test_the_link_terms_resolve_their_argument_against_the_decision_ids(both):
+    """`because:` lives on the task lens and its argument is a *decision* id, so
+    `arg_kind` resolves it against the decision store rather than against the
+    ids of the lens it sits on. Resolving it the other way would refuse every
+    correct use of the term.
+
+    The claim needs both halves: that a decision id is accepted -- which
+    `test_because_is_injected_...` above covers -- and that a *task* id in the
+    same position faults rather than silently matching nothing, which is the
+    reading a bare "no results" would hide."""
+    bad = dg(both, "find", "because:T02", "--ids")
+    assert bad.exit_code != 0
+    assert "T02" in bad.output
 
 
 def test_the_date_operators_include_their_boundary(lens):

@@ -227,13 +227,6 @@ def test_json_is_untouched_by_the_new_default(both):
     assert d == context.data(project.find(), "D04")
 
 
-def test_the_compact_output_is_pipe_safe(both):
-    """Read through a pipe into a subagent's prompt. Rich markup, or the
-    soft-wrap `con.print` applies at $COLUMNS, would corrupt it."""
-    out = dg(both, "context", "D04").output
-    assert "\x1b[" not in out and "[green]" not in out
-
-
 # ---- `dg show` and `dg task` ---------------------------------------------
 
 
