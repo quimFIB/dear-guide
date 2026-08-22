@@ -22,7 +22,8 @@ def srv(store):
     from http.server import ThreadingHTTPServer
 
     s = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
-    threading.Thread(target=s.serve_forever, daemon=True).start()
+    threading.Thread(target=s.serve_forever, daemon=True,
+                     kwargs={"poll_interval": 0.01}).start()
     yield f"http://127.0.0.1:{s.server_port}"
     s.shutdown()
     s.server_close()
@@ -588,7 +589,8 @@ def test_probe_rejects_a_port_that_is_not_ours(srv, store):
             self.wfile.write(b'{"tool": "something-else"}')
 
     s = ThreadingHTTPServer(("127.0.0.1", 0), Other)
-    threading.Thread(target=s.serve_forever, daemon=True).start()
+    threading.Thread(target=s.serve_forever, daemon=True,
+                     kwargs={"poll_interval": 0.01}).start()
     try:
         assert server.probe(s.server_port) is None
     finally:
