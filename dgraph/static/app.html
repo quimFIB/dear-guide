@@ -74,6 +74,29 @@
   .answer p{margin:0 0 7px}
   .answer p:last-child{margin-bottom:0}
   .answer code{background:#1c2330;border-radius:3px;padding:0 4px;font-size:11.5px}
+  /* An edge, drawn as a card. A decision's payload hangs off one edge, and a
+     reversal is a second edge carrying a payload of its own; rendering both as
+     one column of prose is what made "which edge does this sentence belong to?"
+     unanswerable — a surviving answer that explains its own reversal reads as
+     commentary on the record it replaced. The card boundary is the answer. */
+  .edge-card{border:1px solid var(--line);border-radius:8px;background:#11161d;
+    padding:9px 11px;margin:10px 0}
+  /* dashed, the same way the canvas draws an edge that is not load-bearing */
+  .edge-card.super{border-style:dashed}
+  .edge-card>.kv{margin:7px 0 0}
+  .edge-card .answer{margin:8px 0 0}
+  .edge-head{display:block;font-size:10.5px;font-weight:700;letter-spacing:.4px;
+    color:var(--dim);text-transform:uppercase}
+  .edge-head .when{font-weight:600;letter-spacing:0;text-transform:none;
+    margin-left:6px}
+  details.edge-card>summary{cursor:pointer;list-style:none;position:relative;
+    padding-left:15px}
+  details.edge-card>summary::-webkit-details-marker{display:none}
+  details.edge-card>summary::before{content:"\25B8";position:absolute;left:0;top:0;
+    color:var(--dim);font-size:11px;line-height:1.5}
+  details.edge-card[open]>summary::before{content:"\25BE"}
+  .rev{margin-top:3px;font-size:12.5px}
+  .rev .was{text-decoration:line-through;opacity:.6}
   label{display:block;margin:9px 0 3px;color:var(--dim);font-size:12px}
   input,textarea,select{width:100%;background:#0d1117;color:var(--ink);
     border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit}
@@ -889,20 +912,77 @@ function jump(id){
   select(id);
 }
 
+/* A list of decision ids, each a link. Not decoration: an edge's targets are
+   the edge, and following one is how the graph gets read. A target naming no
+   vertex is shown as what it is, the same way `dgLink` does everywhere else —
+   `dg check` reports it and the panel must not paper over it. */
+function idList(ids, empty){
+  const known=new Set(G.vertices.map(x=>x.id));
+  return (ids&&ids.length)
+    ? ids.map(id=>dgLink(id, !known.has(id))).join(", ") : (empty||"—");
+}
+
+/* One line of prose, escaped then rendered. Phrasing content only, for the one
+   place a <p> would be wrong: inside a <summary>. */
+function mdLine(s, fmt){
+  return mdInline(esc(s||"").replace(/\n/g," ").trim(), fmt);
+}
+
+/* The active edge as a card of its own: the answer, and the four things that
+   qualify it. `date` sits in the head rather than trailing `source`, because
+   it dates the edge, not the citation. */
+function edgeCard(e, children){
+  return `<section class="edge-card">
+    <span class="edge-head">active edge<span class="when muted">${esc(e.date||"")}</span></span>
+    <div class="kv">
+      <div>opens</div><div>${idList(children, "TERMINAL")}</div>
+      <div>falsifier</div><div>${esc(e.falsifier||"—")}</div>
+      <div>source</div><div>${esc(e.source||"—")}</div>
+    </div>
+    <div class="answer">${md(e.answer, e.format)}</div></section>`;
+}
+
+/* A superseded edge, shown as the edge it is. Collapsed to the headline — what
+   it said, what beat it, and why — with its own targets, falsifier, source and
+   archived answer behind the disclosure. That last part is the point: without
+   it, an active answer that explains its own reversal cannot be told apart
+   from the record it replaced.
+
+   A reversal imported from markdown, or made before those fields were kept,
+   has nothing behind the disclosure; it is drawn flat rather than as a drawer
+   that opens on nothing. The archived answer is rendered in this record's
+   dialect — see the note on `format` in pending.py's reopen. */
+function supersededCard(x){
+  const archived = x.answer && x.answer!==x.summary ? x.answer : null;
+  const deep = (x.to&&x.to.length) || x.falsifier || x.source || archived;
+  const head = `<span class="edge-head">superseded edge<span class="when muted">${esc(x.date||"")}</span></span>
+    <div class="rev"><span class="was">${esc(x.summary||"")}</span> → <b>${esc(x.replaced_by||"(undecided)")}</b></div>
+    ${x.why?`<div class="rev muted">${mdLine(x.why, x.format)}</div>`:""}`;
+  if(!deep) return `<section class="edge-card super">${head}</section>`;
+  let b=`<div class="kv"><div>opened</div><div>${idList(x.to)}</div>`;
+  if(x.falsifier) b+=`<div>falsifier</div><div>${esc(x.falsifier)}</div>`;
+  if(x.source) b+=`<div>source</div><div>${esc(x.source)}</div>`;
+  b+=`</div>`;
+  if(archived) b+=`<div class="answer">${md(archived, x.format)}</div>`;
+  return `<details class="edge-card super"><summary>${head}</summary>${b}</details>`;
+}
+
 function panel(){
   const v=G.vertices.find(x=>x.id===sel), d=G.derived[sel];
   const e=G.edges.find(x=>x.from===sel&&x.active);
   const st=base(v.status);
+  const decided = !!(e&&e.answer);
   let h=`<h2>${esc(v.id)} — ${esc(v.title)}</h2>
     <span class="pill" style="background:${STATUS_COLOR[st]};color:#04121f">${esc(v.status)}</span>
     <span class="muted"> ${esc(v.area)}</span>
     <div class="kv">
-      <div>depends on</div><div>${esc(d.depends.join(", "))||"—"}</div>
-      <div>opens</div><div>${esc(d.children.join(", "))|| (e&&e.answer?"TERMINAL":"—")}</div>`;
-  if(e&&e.answer) h+=`<div>falsifier</div><div>${esc(e.falsifier||"—")}</div>
-      <div>source</div><div>${esc(e.source||"")} <span class="muted">${e.date||""}</span></div>`;
+      <div>depends on</div><div>${idList(d.depends)}</div>`;
+  /* Undecided, the targets are all the edge has, so they stay up here with the
+     vertex's own facts. Decided, they are part of an answer and move into its
+     card — an edge's targets belong to the edge that declared them. */
+  if(!decided) h+=`<div>opens</div><div>${idList(d.children)}</div>`;
   h+=`</div>`;
-  if(e&&e.answer) h+=`<div class="answer">${md(e.answer, e.format)}</div>`;
+  if(decided) h+=edgeCard(e, d.children);
   else if(v.note) h+=`<div class="answer muted">${md(v.note, v.format)}</div>`;
   const j = (JOIN && JOIN.by_decision[sel]) || null;
   if(j && (j.rests_on.length || j.evidence.length)){
@@ -914,13 +994,9 @@ function panel(){
       j.evidence.map(id=>dgLink(id)+(pend.has(id)?' <span class="muted">(open)</span>':"")).join(", ")}</div>`;
     h+=`</div>`;
   }
-  if(d.history.length){
-    h+=`<p class="muted" style="margin-bottom:4px">Superseded here</p>`;
-    d.history.forEach(x=>h+=`<div class="answer" style="font-size:12px">
-      <span style="text-decoration:line-through;opacity:.65">${esc(x.summary)}</span>
-      → <b>${esc(x.replaced_by||"(undecided)")}</b><br>
-      <span class="muted">${md(x.why||"", x.format)}</span></div>`);
-  }
+  /* No heading over these: each card says what it is. The old one had to,
+     because a strikethrough line on its own does not. */
+  d.history.forEach(x=>h+=supersededCard(x));
 
   if(e&&e.answer){
     h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">

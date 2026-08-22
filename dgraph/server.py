@@ -85,9 +85,18 @@ def graph_payload(g: Graph) -> dict:
             "depends": g.depends(vid),
             "depth": g.depth(vid),
             "children": g.children(vid),
+            # The whole superseded edge, not a one-line epitaph for it. A
+            # reversal is an edge with a payload of its own — its own targets,
+            # falsifier and source — and the panel draws it as one so a reader
+            # can tell which edge a sentence belongs to. Sending only the
+            # summary is what made that unanswerable: the surviving answer
+            # usually explains the reversal, and the explanation then reads as
+            # though it were part of the record it replaced.
             "history": [
                 {"summary": h.summary, "replaced_by": h.replaced_by,
-                 "why": h.why, "format": h.format}
+                 "why": h.why, "format": h.format, "answer": h.answer,
+                 "falsifier": h.falsifier, "source": h.source,
+                 "date": h.date, "to": list(h.to)}
                 for h in g.history(vid)
             ],
         }

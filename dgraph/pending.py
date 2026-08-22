@@ -878,8 +878,13 @@ def _apply_one(g: Graph, op: dict) -> None:
             answer=e.answer, falsifier=e.falsifier, source=e.source,
             date=e.date, summary=op.get("summary") or _clip(e.answer or ""),
             replaced_by=None, why=op["why"],
-            # the superseded record's rendered prose (why, summary) comes from
-            # this op; the archived answer/falsifier are never rendered again
+            # `format` is this op's dialect, covering the prose composed here —
+            # why and summary. The archived answer keeps no dialect of its own:
+            # `e.format` describes an answer this edge no longer owns, and a
+            # second field for it would be a schema change for the one place
+            # the two dialects differ (a single `*…*` span: bold in org,
+            # italic in markdown). The web panel renders the archived answer in
+            # this dialect and can be that much wrong about its emphasis.
             format=op.get("format"),
         ))
         e.answer = e.falsifier = e.source = e.date = None
