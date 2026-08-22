@@ -310,3 +310,64 @@ def test_an_unreadable_task_tray_is_reported_not_counted_as_none(run_tasks,
     assert payload["staged_tasks"] == 0
     assert any(".dgraph-task-pending.json" in v["text"] and v["blocking"]
                for v in payload["violations"])
+
+
+# ---- one definition of "blocked" -----------------------------------------
+
+
+def _five_statuses(root, edges):
+    """A task store covering every status, wired by `edges`.
+
+    `edges` is a list of (from, to) `precedes` pairs, so the same five tasks
+    can be posed with and without prerequisites.
+    """
+    raw = {"areas": ["Alpha"], "tasks": [
+        {"id": "T01", "title": "done", "area": "Alpha", "status": "DONE",
+         "done": "2026-01-05", "outcome": "landed"},
+        {"id": "T02", "title": "todo", "area": "Alpha", "status": "TODO"},
+        {"id": "T03", "title": "doing", "area": "Alpha", "status": "DOING"},
+        {"id": "T04", "title": "parked", "area": "Alpha", "status": "PARKED",
+         "stops": [{"why": "waiting on a person", "date": "2026-01-06"}]},
+        {"id": "T05", "title": "dropped", "area": "Alpha", "status": "DROPPED",
+         "stops": [{"why": "overtaken", "date": "2026-01-06"}]},
+    ], "edges": [{"from": a, "to": [b], "kind": "precedes"} for a, b in edges]}
+    (root / "tasks.json").write_text(json.dumps(raw, indent=2),
+                                     encoding="utf-8")
+    return root
+
+
+def test_work_in_hand_and_work_put_down_are_not_blocked(tmp_path, monkeypatch):
+    """The F1 shape. `blocked` used to be frontier-minus-ready, so a DOING task
+    and a PARKED task -- neither waiting on anything -- were both counted
+    blocked, and the brief disagreed with `is:blocked` and the `dg task` table
+    about who was stuck."""
+    root = _five_statuses(tmp_path, edges=[])
+    monkeypatch.setattr(project, "_override", root)
+    payload = json.loads(
+        runner.invoke(app, ["--project", str(root), "brief", "--json"]).output)
+    assert payload["tasks"]["blocked"] == 0
+
+
+@pytest.mark.parametrize("edges", [
+    [],
+    [("T01", "T02")],                       # a resolved prerequisite: not blocked
+    [("T02", "T03"), ("T03", "T04"), ("T02", "T05")],
+    [("T01", "T02"), ("T02", "T03"), ("T02", "T04"), ("T03", "T05")],
+])
+def test_the_brief_and_the_query_name_the_same_blocked_tasks(tmp_path,
+                                                             monkeypatch,
+                                                             edges):
+    """The claim is not "this store gives the right number" but "the brief and
+    `is:blocked` agree about who is blocked" -- over every status, with and
+    without prerequisites. A fourth surface inventing a fifth answer is the
+    finding, so the test compares two surfaces rather than one to a constant."""
+    root = _five_statuses(tmp_path, edges=edges)
+    monkeypatch.setattr(project, "_override", root)
+
+    def dg(*args):
+        return runner.invoke(app, ["--project", str(root), *args])
+
+    payload = json.loads(dg("brief", "--json").output)
+    ids = [x for x in dg("find", "is:blocked", "--tasks",
+                         "--ids").output.split() if x]
+    assert payload["tasks"]["blocked"] == len(ids)

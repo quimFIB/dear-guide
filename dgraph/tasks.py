@@ -443,6 +443,17 @@ class TaskGraph:
     def blocked(self, tid: str) -> bool:
         return self.tasks[tid].unfinished and bool(self.waiting_on(tid))
 
+    def blocked_ids(self) -> list[str]:
+        """Everything blocked, so that no surface counts it its own way.
+
+        `is:blocked`, the `dg task` table, the web panel and `dg brief` all
+        answer "who is blocked?" and must answer it identically. The brief
+        once derived the count as frontier-minus-ready, which called every
+        DOING and PARKED task blocked; the fix is not better arithmetic there
+        but one definition here that every surface reads.
+        """
+        return sorted(t.id for t in self.tasks.values() if self.blocked(t.id))
+
     def frontier(self) -> list[str]:
         """Everything still outstanding, ready or not."""
         return sorted(t.id for t in self.tasks.values() if t.unfinished)

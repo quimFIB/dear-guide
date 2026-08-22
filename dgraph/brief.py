@@ -124,7 +124,10 @@ def tasks(proj: project.Project) -> dict:
     return {
         "counts": tg.counts(),
         "ready": len(ready),
-        "blocked": len(tg.frontier()) - len(ready),
+        # From `tg.blocked_ids`, not frontier-minus-ready: a DOING or PARKED
+        # task with no prerequisite is neither ready nor blocked, and the
+        # subtraction called it blocked. See `TaskGraph.blocked_ids`.
+        "blocked": len(tg.blocked_ids()),
         "under_review": reviewed,
         "unharvested": loose,
     }
