@@ -300,8 +300,7 @@ class TaskGraph:
         can be finished. Treating it as an ordering would assert the opposite.
 
         What it is for is the question the edge list cannot otherwise answer —
-        when `tid` is abandoned, which work existed only because of it. See the
-        release-on-drop entry in `TODO.md`.
+        when `tid` is abandoned, which work existed only because of it.
         """
         return self._out(tid, "prompted")
 
@@ -322,8 +321,9 @@ class TaskGraph:
 
         A released dependant is not always a startable one: a prerequisite that
         *produced* something this work consumes does not release it, it
-        undermines it. The store cannot tell those apart — see `TODO.md` — so
-        it reports the fact and leaves the judgement where the knowledge is.
+        undermines it. The store cannot tell those apart — which of the two an
+        edge was usually only becomes clear when you try to proceed without it
+        — so it reports the fact and leaves the judgement where the knowledge is.
         """
         return [p for p in self.prerequisites(tid)
                 if self.tasks[p].status == "DROPPED"]

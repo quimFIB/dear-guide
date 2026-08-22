@@ -474,9 +474,8 @@ def premises(g: Graph, op: dict) -> list[str]:
     already. What is left is the structure the work attaches to.
 
     A `close` leans on the vertex it settles *and* on that vertex's premises —
-    the second being the case this exists for, and the one the demo in
-    `audit.md` walks: an answer composed under `D01 DECIDED` and applied after
-    somebody reopened it.
+    the second being the case this exists for: an answer composed under
+    `D01 DECIDED` and applied after somebody reopened it.
     """
     kind = op.get("op")
     if kind == "close":

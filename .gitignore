@@ -33,3 +33,12 @@ demo/tasks.md
 # the detached web app: a run record and its output
 .dgraph-serve.json
 .dgraph-serve.log
+
+# A local `npm install` of Claude Code itself, not a dependency of this tool.
+# `dear-guide` is a Python package — its dependencies are in `pyproject.toml`
+# and `uv.lock`, and nothing it ships reads from `node_modules/`. Committing a
+# `package.json` here would claim otherwise, so all three are ignored rather
+# than tracked.
+node_modules/
+package.json
+package-lock.json

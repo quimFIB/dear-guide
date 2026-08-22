@@ -591,7 +591,7 @@ session; a query surface on it would be a query surface nobody typed.
 ## What this deliberately is not
 
 Two of these will read as oversights unless the reasoning is written down, so
-it is, in the "what would reopen it" form `TODO.md` uses.
+it is, each with the conditions that would reopen it.
 
 ### No ranking. Results sort by id.
 
@@ -657,8 +657,8 @@ therefore check, which is the trade every other part of this design makes.
 in-memory records is a linear scan measured in microseconds; there is no
 performance argument for an index at any size this tool will see. There is an
 argument against one: it would be the only derived structure in the project
-that is **stored** rather than recomputed, and `TODO.md:78-80` already states the
-rule — a stored field that can go stale is what this store refuses to keep.
+that is **stored** rather than recomputed, against the rule this project holds
+to elsewhere — a stored field that can go stale is what it refuses to keep.
 
 *That claim is about **matching**, and it was once quietly read as covering
 everything.* A structural term is not a scan of the records; it is a walk of
