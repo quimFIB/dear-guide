@@ -52,6 +52,8 @@ CHECKS: tuple[str, ...] = (
     "evidence_unharvested",
     "evidence_dropped",
     "evidence_dropped_after_deciding",
+    "evidence_stalled",
+    "evidence_stalled_after_deciding",
 )
 
 

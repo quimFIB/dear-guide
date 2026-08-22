@@ -16,7 +16,7 @@ from dgraph.check import run
 from dgraph.cli import app
 from dgraph.model import Graph
 from dgraph.render import write
-from dgraph.tasks import Task, TaskGraph
+from dgraph.tasks import Stop, Task, TaskGraph
 
 runner = CliRunner()
 
@@ -212,7 +212,7 @@ def test_dropped_evidence_warns(both):
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T04"].evidence_for = "D05"        # D05 is OPEN
     tg.tasks["T04"].status = "DROPPED"
-    tg.tasks["T04"].why = "the vendor tool does it"
+    tg.tasks["T04"].stops = [Stop(why="the vendor tool does it", date="2026-02-01")]
     tg.save(both / "tasks.json")
     g = Graph.load(both / "decisions.json")
     # the two readings that used to be the whole story, both silent
@@ -229,7 +229,7 @@ def test_one_surviving_spike_is_not_a_dropped_silence(both):
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T04"].evidence_for = "D05"
     tg.tasks["T04"].status = "DROPPED"
-    tg.tasks["T04"].why = "no"
+    tg.tasks["T04"].stops = [Stop(why="no", date="2026-02-01")]
     tg.tasks["T02"].evidence_for = "D05"        # still unfinished
     tg.save(both / "tasks.json")
     assert not [v for v in run() if v.check == "evidence_dropped"]
@@ -243,7 +243,7 @@ def test_dropped_evidence_for_a_settled_decision_warns_on_the_other_check(both):
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T04"].evidence_for = "D01"        # D01 is DECIDED
     tg.tasks["T04"].status = "DROPPED"
-    tg.tasks["T04"].why = "no"
+    tg.tasks["T04"].stops = [Stop(why="no", date="2026-02-01")]
     tg.save(both / "tasks.json")
     g = Graph.load(both / "decisions.json")
     assert not [v for v in run() if v.check == "evidence_dropped"]
@@ -261,7 +261,7 @@ def test_one_surviving_spike_is_not_a_settled_silence(both):
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T04"].evidence_for = "D01"        # D01 is DECIDED
     tg.tasks["T04"].status = "DROPPED"
-    tg.tasks["T04"].why = "no"
+    tg.tasks["T04"].stops = [Stop(why="no", date="2026-02-01")]
     tg.tasks["T02"].evidence_for = "D01"        # still unfinished
     tg.save(both / "tasks.json")
     assert not [v for v in run()
@@ -273,11 +273,89 @@ def test_an_unsettled_decision_does_not_warn_on_the_settled_check(both):
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T04"].evidence_for = "D05"        # D05 is OPEN
     tg.tasks["T04"].status = "DROPPED"
-    tg.tasks["T04"].why = "no"
+    tg.tasks["T04"].stops = [Stop(why="no", date="2026-02-01")]
     tg.save(both / "tasks.json")
     assert not [v for v in run()
                 if v.check == "evidence_dropped_after_deciding"]
     assert [v for v in run() if v.check == "evidence_dropped"]
+
+
+def test_parked_evidence_holds_up_an_open_question(both):
+    """`parked_holding_work` across the seam. Inside the task store, parked
+    work that holds something up is chased; a decision waiting on a spike is
+    held the same way, and `unblocks` cannot see it because the thing waiting
+    is in the other store — so this was silent in both directions."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D05"        # D05 is OPEN
+    tg.tasks["T04"].status = "PARKED"
+    tg.tasks["T04"].stops = [Stop(why="stuck upstream", date="2026-02-01")]
+    tg.save(both / "tasks.json")
+    hits = [v for v in run() if v.check == "evidence_stalled"]
+    assert len(hits) == 1 and not hits[0].blocking
+    assert "T04" in str(hits[0]) and "D05" in str(hits[0])
+    # not the dropped pair: parked evidence is stopped, not gone
+    assert not [v for v in run() if v.check.startswith("evidence_dropped")]
+
+
+def test_parked_evidence_under_a_settled_answer_warns(both):
+    """The other half, mirroring the dropped pair's split on `settled`. Here an
+    answer stands on work that stopped before it produced anything — and unlike
+    an abandoned spike, this one can still be picked up, which is what the
+    remedy says."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D01"        # D01 is DECIDED
+    tg.tasks["T04"].status = "PARKED"
+    tg.tasks["T04"].stops = [Stop(why="stuck upstream", date="2026-02-01")]
+    tg.save(both / "tasks.json")
+    hits = [v for v in run() if v.check == "evidence_stalled_after_deciding"]
+    assert len(hits) == 1 and not hits[0].blocking
+    assert "dg task unlink T04" in str(hits[0])
+    assert not [v for v in run() if v.check == "evidence_stalled"]
+
+
+def test_one_dropped_and_one_parked_spike_used_to_satisfy_neither(both):
+    """The sharpest version of the silence, and the reason this pair is not a
+    widening of the dropped one. `evidence_dropped` needs *every* task
+    abandoned, so a mix escaped it; the decision then read as waiting on work
+    that exists, is unfinished, and is not being done."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D05"        # D05 is OPEN
+    tg.tasks["T04"].status = "DROPPED"
+    tg.tasks["T04"].stops = [Stop(why="not needed", date="2026-02-01")]
+    tg.tasks["T02"].evidence_for = "D05"
+    tg.tasks["T02"].status = "PARKED"
+    tg.tasks["T02"].stops = [Stop(why="stuck", date="2026-02-02")]
+    tg.save(both / "tasks.json")
+    assert not [v for v in run() if v.check == "evidence_dropped"]
+    hits = [v for v in run() if v.check == "evidence_stalled"]
+    assert len(hits) == 1
+    assert "T02" in str(hits[0])            # the recoverable half is the remedy
+
+
+def test_the_two_pairs_never_both_fire(both):
+    """An exact partition, not an overlap: the dropped pair wants every task
+    abandoned, this one wants every task stopped with at least one parked.
+    Nothing satisfies both, so no decision is reported twice."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D05"
+    tg.tasks["T04"].status = "DROPPED"
+    tg.tasks["T04"].stops = [Stop(why="no", date="2026-02-01")]
+    tg.save(both / "tasks.json")
+    checks = {v.check for v in run()}
+    assert "evidence_dropped" in checks
+    assert "evidence_stalled" not in checks
+
+
+def test_one_live_spike_is_not_a_stalled_silence(both):
+    """Matching both dropped halves: a decision visibly waiting on work
+    somebody is doing is not a silence."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D05"
+    tg.tasks["T04"].status = "PARKED"
+    tg.tasks["T04"].stops = [Stop(why="stuck", date="2026-02-01")]
+    tg.tasks["T02"].evidence_for = "D05"        # TODO, still going
+    tg.save(both / "tasks.json")
+    assert not [v for v in run() if v.check == "evidence_stalled"]
 
 
 def test_evidence_for_a_settled_decision_is_quiet(both):

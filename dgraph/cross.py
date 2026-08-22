@@ -284,6 +284,50 @@ def settled_on_dropped_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
     return out
 
 
+def _stalled_evidence(tg: TaskGraph, g: Graph, *, settled: bool) -> list[dict]:
+    """Decisions whose evidence has all stopped, with some of it recoverable.
+
+    `parked_holding_work` across the seam. Inside the task store, work parked
+    while something waits on it is reported until somebody acts; a decision
+    waiting on a spike is held up the same way, and `unblocks` cannot see it
+    because the thing waiting is in the other store.
+
+    The partition against the dropped pair is exact and deliberate: they fire
+    where *every* evidence task was abandoned, this one where every task has
+    stopped and at least one was parked. Nothing satisfies both, and the mixed
+    case — one spike dropped, one parked — used to satisfy neither, which was
+    the sharpest version of the silence: the decision reads as waiting on work
+    that exists, is unfinished, and is not being done.
+
+    Parked rather than dropped is the whole difference in the remedy. Abandoned
+    evidence is never coming, so the question is whether to settle without it.
+    Stalled evidence *can* be picked up, so the question is whether anyone
+    means to.
+    """
+    out = []
+    for did in sorted(g.vertices):
+        if g.vertices[did].settled is not settled:
+            continue
+        ev = evidence(tg, did)
+        stopped = [tg.tasks[t].status for t in ev]
+        if ev and all(k in ("PARKED", "DROPPED") for k in stopped) \
+                and "PARKED" in stopped:
+            out.append({"id": did, "title": g.vertices[did].title,
+                        "status": g.vertices[did].status, "tasks": ev,
+                        "parked": [t for t in ev if tg.tasks[t].parked]})
+    return out
+
+
+def stalled_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
+    """Unsettled decisions waiting on evidence nobody is producing."""
+    return _stalled_evidence(tg, g, settled=False)
+
+
+def settled_on_stalled_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
+    """Settled decisions whose evidence stopped before it arrived."""
+    return _stalled_evidence(tg, g, settled=True)
+
+
 def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
     """The two graphs as one digraph, for cycle detection.
 
@@ -616,6 +660,31 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
             f"settled without them, so drop the link with `dg task unlink "
             f"{u['tasks'][0]}`, or it is owed a re-examination with `dg reopen "
             f"{u['id']}`",
+            "warning",
+        ))
+
+    for u in stalled_evidence(tg, g):
+        v.append(Violation(
+            "evidence_stalled",
+            f"{u['id']} ({u['title']}) is {u['status']} and waits on evidence "
+            f"nobody is producing — {', '.join(u['parked'])} "
+            f"{'is' if len(u['parked']) == 1 else 'are'} parked and no other "
+            f"task meant to inform it is still going. Pick "
+            f"{'it' if len(u['parked']) == 1 else 'one'} up, settle the "
+            f"question on what is already known with `dg decide {u['id']}`, or "
+            f"drop the link",
+            "warning",
+        ))
+
+    for u in settled_on_stalled_evidence(tg, g):
+        v.append(Violation(
+            "evidence_stalled_after_deciding",
+            f"{u['id']} ({u['title']}) is {u['status']}, but the work meant to "
+            f"inform it stopped before it arrived ({', '.join(u['parked'])} "
+            f"parked) — the answer stands on evidence that was never produced. "
+            f"Either it was settled without them, so drop the link with "
+            f"`dg task unlink {u['tasks'][0]}`, or somebody meant to finish "
+            f"the work and it is still worth picking up",
             "warning",
         ))
 

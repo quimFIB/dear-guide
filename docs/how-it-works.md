@@ -389,23 +389,39 @@ silently. Work that merely had to come second is genuinely freed; work that was
 going to *consume* what the abandoned task produced is not freed but undermined,
 and the store cannot tell those apart. So `dg task drop` refuses until every
 task it would leave standing has a verdict — `--keep` or `--drop-too` — and
-`dg check` goes on asking about four things a drop leaves behind:
+`dg check` goes on asking about what stopped work leaves behind:
 
 ```
 ! [released_by_drop]  T04 became startable only because T03 was abandoned …
 ! [orphaned_by_drop]  T07 was discovered during T03, which was abandoned …
+! [parked_holding_work]  T03 has been parked since 2026-02-01 and T04 …
 ! [evidence_dropped]  D04 is OPEN and every task meant to inform it was …
 ! [evidence_dropped_after_deciding]  D02 is DECIDED, but every task meant …
+! [evidence_stalled]  D04 is OPEN and waits on evidence nobody is producing …
+! [evidence_stalled_after_deciding]  D02 is DECIDED, but the work meant …
 ```
 
-The last two are halves of one silence, split on whether the decision is
-settled. Unsettled, the cost is that the question reads as waiting on something
-that is never coming. Settled, an *answer* is standing on work that never
-produced anything — either it was decided without the spike, so the link is
-vestigial (`dg task unlink`), or it is owed a re-examination (`dg reopen`). The
-store cannot tell those apart, so the warning names both.
+The four `evidence_*` rules are one silence cut twice. Across, on whether the
+decision is settled: unsettled, the question reads as waiting on something that
+is not coming, and wants `dg decide` or a dropped link; settled, an *answer* is
+standing on work that never produced anything, and wants `dg task unlink` or a
+re-examination. Down, on whether the work is gone or merely stopped: abandoned
+evidence is never arriving, so the question is whether to settle without it,
+while **stalled** evidence — parked, and therefore recoverable — asks instead
+whether anyone still means to produce it.
 
-All four are warnings and none can deny a commit. They stop once the work is
+That second cut is an exact partition, not an overlap. The dropped pair fires
+where *every* evidence task was abandoned; the stalled pair where every task has
+stopped and at least one is parked. Nothing satisfies both, and the mixed case —
+one spike dropped, one parked — used to satisfy neither, which was the sharpest
+version of the silence.
+
+`parked_holding_work` is the same idea inside one store: work put down while
+something waits on it. Parking is the cheapest thing the task store offers,
+because unlike a drop it settles nothing downstream — so it is chased instead of
+interrogated, and a park that holds nothing up is never mentioned.
+
+All of these are warnings and none can deny a commit. They stop once the work is
 started, dropped, or given something else to stand on — the same shape as
 `stale_provisional` in the decision graph, and for the same reason: the premise
 moved, so re-examine the conclusion.
