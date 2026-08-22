@@ -235,13 +235,49 @@ def test_one_surviving_spike_is_not_a_dropped_silence(both):
     assert not [v for v in run() if v.check == "evidence_dropped"]
 
 
-def test_dropped_evidence_for_a_settled_decision_is_quiet(both):
+def test_dropped_evidence_for_a_settled_decision_warns_on_the_other_check(both):
+    """The louder half. `evidence_dropped` stays quiet — it is about a question
+    that reads as waiting on nothing — but an *answer* whose evidence was all
+    abandoned is standing on work that never produced anything, and that was
+    silent in both stores until `evidence_dropped_after_deciding`."""
     tg = TaskGraph.load(both / "tasks.json")
     tg.tasks["T04"].evidence_for = "D01"        # D01 is DECIDED
     tg.tasks["T04"].status = "DROPPED"
     tg.tasks["T04"].why = "no"
     tg.save(both / "tasks.json")
+    g = Graph.load(both / "decisions.json")
     assert not [v for v in run() if v.check == "evidence_dropped"]
+    hits = [v for v in run() if v.check == "evidence_dropped_after_deciding"]
+    assert len(hits) == 1 and not hits[0].blocking
+    # both readings named, because the store cannot tell them apart
+    assert "dg task unlink T04" in str(hits[0])
+    assert "dg reopen D01" in str(hits[0])
+    assert cross.settled_on_dropped_evidence(tg, g)[0]["id"] == "D01"
+
+
+def test_one_surviving_spike_is_not_a_settled_silence(both):
+    """Matches the unsettled half: one live spike and the answer may yet be
+    backed, so there is nothing to break."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D01"        # D01 is DECIDED
+    tg.tasks["T04"].status = "DROPPED"
+    tg.tasks["T04"].why = "no"
+    tg.tasks["T02"].evidence_for = "D01"        # still unfinished
+    tg.save(both / "tasks.json")
+    assert not [v for v in run()
+                if v.check == "evidence_dropped_after_deciding"]
+
+
+def test_an_unsettled_decision_does_not_warn_on_the_settled_check(both):
+    """The two halves partition on `settled`; neither should double-report."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D05"        # D05 is OPEN
+    tg.tasks["T04"].status = "DROPPED"
+    tg.tasks["T04"].why = "no"
+    tg.save(both / "tasks.json")
+    assert not [v for v in run()
+                if v.check == "evidence_dropped_after_deciding"]
+    assert [v for v in run() if v.check == "evidence_dropped"]
 
 
 def test_evidence_for_a_settled_decision_is_quiet(both):

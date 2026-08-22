@@ -49,6 +49,7 @@ CHECKS: tuple[str, ...] = (
     "link_acyclic",
     "evidence_unharvested",
     "evidence_dropped",
+    "evidence_dropped_after_deciding",
 )
 
 

@@ -255,6 +255,35 @@ def dropped_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
     return out
 
 
+def settled_on_dropped_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
+    """Settled decisions whose evidence was abandoned, all of it.
+
+    `dropped_evidence`'s other half, and the sharper one. There the question is
+    still open, so the cost is only that it reads as waiting on something that
+    is never coming. Here an *answer* is standing, and the work that was to
+    inform it never produced anything — the link says "the answer waits on this
+    work", and the work was given up on.
+
+    The store cannot tell which of two things happened, so the message names
+    both. Either the question turned out to be settleable without the spike, in
+    which case the link is vestigial and should go; or the answer rests on
+    evidence that never arrived, in which case it is owed a re-examination.
+    Both are cheap; the silence is not.
+
+    Only when *every* evidence task was dropped, matching the unsettled half:
+    one surviving spike and the answer may yet be backed.
+    """
+    out = []
+    for did in sorted(g.vertices):
+        if not g.vertices[did].settled:
+            continue
+        ev = evidence(tg, did)
+        if ev and all(tg.tasks[t].status == "DROPPED" for t in ev):
+            out.append({"id": did, "title": g.vertices[did].title,
+                        "status": g.vertices[did].status, "tasks": ev})
+    return out
+
+
 def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
     """The two graphs as one digraph, for cycle detection.
 
@@ -575,6 +604,18 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
             f"to inform it was abandoned ({', '.join(u['tasks'])}) — no "
             f"evidence is coming. Settle it on what is already known with "
             f"`dg decide {u['id']}`, plan new evidence, or drop the link",
+            "warning",
+        ))
+
+    for u in settled_on_dropped_evidence(tg, g):
+        v.append(Violation(
+            "evidence_dropped_after_deciding",
+            f"{u['id']} ({u['title']}) is {u['status']}, but every task meant "
+            f"to inform it was abandoned ({', '.join(u['tasks'])}) — the "
+            f"answer stands on evidence that never arrived. Either it was "
+            f"settled without them, so drop the link with `dg task unlink "
+            f"{u['tasks'][0]}`, or it is owed a re-examination with `dg reopen "
+            f"{u['id']}`",
             "warning",
         ))
 
