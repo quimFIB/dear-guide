@@ -2,6 +2,7 @@
 sees an arbitrary shell command and a miss is silent in both directions: a false
 negative lets a contradiction into the history, a false positive blocks work."""
 
+import itertools
 import json
 import subprocess
 from dataclasses import replace
@@ -630,3 +631,78 @@ def test_an_unprefixed_rule_names_its_own_store(repo_with_tasks, monkeypatch,
     monkeypatch.setattr(gate._check, "run", lambda proj=None: findings)
     v = _v(repo_with_tasks)
     assert v["verdict"] == "deny" and subject in v["reason"]
+
+
+# ---- the gate answers the whole command ----------------------------------
+
+
+@pytest.mark.parametrize("a, b", list(itertools.product(gate.RANK, repeat=2)))
+def test_the_stronger_verdict_wins_and_no_reason_is_dropped(a, b):
+    """The property the fall-through rests on. `combine` is order-independent,
+    returns the strongest of the two, and carries both reasons -- the second is
+    the half F4 lost, since the removal's `ask` kept its verdict but replaced
+    the commit's reason with its own."""
+    left = {"verdict": a, "reason": f"because {a}"}
+    right = {"verdict": b, "reason": f"because {b}"}
+    out = gate.combine([left, right])
+    assert out["verdict"] == max((a, b), key=gate.RANK.index)
+    assert f"because {a}" in out["reason"]
+    assert f"because {b}" in out["reason"]
+    assert gate.combine([right, left])["verdict"] == out["verdict"]
+
+
+def test_combine_of_nothing_is_a_silent_allow():
+    assert gate.combine([]) == {"verdict": "allow", "reason": ""}
+    assert gate.combine([{"verdict": "allow", "reason": ""}]) == {
+        "verdict": "allow", "reason": ""}
+
+
+@pytest.mark.parametrize("removal", ["dg rm D01", "dg task rm T01"])
+def test_a_removal_beside_a_commit_on_an_invalid_store_still_denies(
+        repo_with_tasks, removal):
+    """F4. `_verdict` returned the removal's `ask` before it looked for a
+    commit, so `dg rm D01 && git commit` against a broken store answered `ask`
+    where the commit alone answers `deny` -- and the graph the commit would
+    have recorded a contradiction into was never mentioned."""
+    _break(repo_with_tasks)
+    v = _v(repo_with_tasks, f"{removal} && git commit -m x")
+    assert v["verdict"] == "deny"
+    assert "removes a node" in v["reason"]
+    assert "The decision graph is not valid" in v["reason"]
+    assert "status_legal" in v["reason"]
+
+
+@pytest.mark.parametrize("removal", ["dg rm D01", "dg task rm T01"])
+def test_a_removal_beside_a_commit_over_a_staged_tray_says_both(
+        repo_with_tasks, removal):
+    """Same verdict as the removal alone, and that is the point: `ask` is right
+    here, but the reason the operator reads has to name the ops about to be
+    lost as well as the node about to go."""
+    pending.stage({"op": "set_status", "task": "T02", "status": "DOING"},
+                  repo_with_tasks / ".dgraph-task-pending.json")
+    v = _v(repo_with_tasks, f"{removal} && git commit -m x")
+    assert v["verdict"] == "ask"
+    assert "removes a node" in v["reason"]
+    assert "1 task op(s)" in v["reason"] and "dg task clear" in v["reason"]
+
+
+def test_a_removal_beside_a_clean_commit_is_still_asked_about(repo_with_tasks):
+    """The inversion that moving the check below the commit path would cause:
+    a clean commit answers `allow`, and the removal's `ask` -- the reason these
+    commands sit behind the gate at all -- would become unreachable."""
+    v = _v(repo_with_tasks, "dg rm D01 && git commit -m x")
+    assert v["verdict"] == "ask" and "removes a node" in v["reason"]
+
+
+def test_a_removal_beside_a_commit_carries_a_view_warning_too(repo_with_tasks,
+                                                              monkeypatch):
+    """A `warn` is the weakest thing the commit path emits, so it is the one a
+    combiner that merely took the stronger verdict would silently drop."""
+    monkeypatch.chdir(repo_with_tasks)
+    (repo_with_tasks / "decision-graph.md").write_text("stale\n")
+    subprocess.run(["git", "-C", str(repo_with_tasks), "add", "decisions.json",
+                    "decision-graph.md"], check=True, capture_output=True)
+    v = _v(repo_with_tasks, "dg rm D01 && git commit -m x")
+    assert v["verdict"] == "ask"
+    assert "removes a node" in v["reason"]
+    assert "decision-graph.md" in v["reason"]

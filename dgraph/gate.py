@@ -479,18 +479,56 @@ def verdict(command: str, proj: project.Project | None = None) -> dict:
         }
 
 
+#: The verdicts, weakest first. `combine` returns the strongest, which is the
+#: only ordering that makes a compound command safe: a `deny` reached by one
+#: half of `dg rm D01 && git commit` cannot be softened by the other half's
+#: `ask`, and an `ask` cannot be softened by a `warn`.
+RANK = ("allow", "warn", "ask", "deny")
+
+
+def combine(answers: list[dict]) -> dict:
+    """One answer for a command that trips more than one rule.
+
+    The strongest verdict, carrying **every** reason. Both halves matter and
+    the second is the one that used to be lost: `_verdict` returned the
+    removal's `ask` before it ever looked for a commit, so `dg rm D01 && git
+    commit` against an invalid store answered `ask` where the commit alone
+    answers `deny`, and against a staged tray kept the right verdict but for
+    the wrong reason — the operator was told about the removal and not about
+    the ops the commit was about to drop.
+
+    The `notes` branch of the commit path already combined this way; this is
+    the same rule applied one level up.
+    """
+    answers = [a for a in answers if a["verdict"] != "allow" or a["reason"]]
+    if not answers:
+        return _allow()
+    best = max(RANK.index(a["verdict"]) for a in answers)
+    reasons = [a["reason"] for a in answers if a["reason"]]
+    return {"verdict": RANK[best], "reason": "\n".join(dict.fromkeys(reasons))}
+
+
 def _verdict(command: str, proj: project.Project | None = None) -> dict:
     if _off():
         return _allow()
 
-    # Before the commit path, and never a deny: this is not a question about
-    # whether the graph is valid — a removal is legal, and the tool will refuse
-    # an invalid one on its own. It is a question about whether a person meant
-    # it. `ask` is the only verdict that puts that to a human, and it is the
-    # reason the removal commands exist behind it rather than not at all.
+    # A floor of `ask` and a note, rather than an answer: this is not a
+    # question about whether the graph is valid — a removal is legal, and the
+    # tool will refuse an invalid one on its own. It is a question about
+    # whether a person meant it. `ask` is the only verdict that puts that to a
+    # human, and it is the reason the removal commands exist behind it rather
+    # than not at all.
+    #
+    # It used to `return` here, which answered the removal and never looked at
+    # the rest of the command. Moving the check *below* the commit path would
+    # only invert that — a removal alongside a clean commit would answer
+    # `allow`, and the `ask` these commands exist behind would be unreachable,
+    # which is the failure `TRIGGERS` was widened to fix. So neither half is
+    # first: both run, and `combine` answers.
     removals = _removals(command)
+    answers = []
     if removals:
-        return {
+        answers.append({
             "verdict": "ask",
             "reason": f"{', '.join(sorted(set(removals)))} removes a node from "
                       f"the graph. Nothing in this tool records what a removal "
@@ -498,8 +536,11 @@ def _verdict(command: str, proj: project.Project | None = None) -> dict:
                       f"history, this keeps none — so git is the only way back. "
                       f"`--splice` and `--into` go further and assert an edge "
                       f"nobody wrote. Confirm this is meant.",
-        }
+        })
+    return combine(answers + [_commit_verdict(command, proj)])
 
+
+def _commit_verdict(command: str, proj: project.Project | None = None) -> dict:
     commits = _commits(command)
     if not commits:
         return _allow()
