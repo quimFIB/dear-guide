@@ -1,31 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
      role="img" aria-labelledby="dg-title">
-  <title id="dg-title">dear-guide — two linked graphs, joined at one seam</title>
-  <!-- The drawing is 51x45; this centres it in the square box and scales it to
-       fill, so the mark works as an avatar and a favicon without a second file. -->
-  <g transform="translate(32 32) scale(1.15) translate(-28 -29)">
+  <title id="dg-title">dear-guide — a diary open at both graphs, the seam across the fold</title>
 
-  <!-- Decisions: a question and the two it opens. Filled circles; dependency is
-       the structure, so the edges are the whole of what a vertex "has". -->
-  <g stroke="#4c8fd6" stroke-width="3.5" stroke-linecap="round">
-    <line x1="13.6" y1="18.6" x2="10.4" y2="27.4"/>
-    <line x1="18.4" y1="18.6" x2="21.6" y2="27.4"/>
+  <!-- The diary, open. The fold is the seam: two stores, one spread, and the
+       only edge that crosses the gutter is the one a task may declare. -->
+  <g fill="none" stroke="#57606a" stroke-width="2.6" stroke-linejoin="round"
+     stroke-linecap="round">
+    <path d="M32 20 C26 14.5 15 14 6.5 16 V49 C15 47 26 47 32 52.5"/>
+    <path d="M32 20 C38 14.5 49 14 57.5 16 V49 C49 47 38 47 32 52.5"/>
+  </g>
+
+  <!-- Left page — decisions: a question and the two it opens. Filled circles;
+       dependency is the structure, so the edges are the whole of what a
+       vertex "has". -->
+  <g stroke="#4c8fd6" stroke-width="2.8" stroke-linecap="round">
+    <line x1="17.6" y1="28.4" x2="14.4" y2="35.6"/>
+    <line x1="20.4" y1="28.4" x2="23.6" y2="35.6"/>
   </g>
   <g fill="#4c8fd6">
-    <circle cx="16" cy="12" r="5.5"/>
-    <circle cx="8"  cy="34" r="5.5"/>
-    <circle cx="24" cy="34" r="5.5"/>
+    <circle cx="19" cy="25.5" r="4.2"/>
+    <circle cx="13" cy="39"   r="4.2"/>
+    <circle cx="25" cy="39"   r="4.2"/>
   </g>
 
-  <!-- Work: a different shape, because it is a different store. -->
-  <g stroke="#7d8590" stroke-width="3.5" stroke-linecap="round" fill="none">
-    <line x1="48" y1="29.5" x2="48" y2="38.5"/>
-    <rect x="42.5" y="16.5" width="11" height="11" rx="2.5"/>
-    <rect x="42.5" y="40.5" width="11" height="11" rx="2.5"/>
+  <!-- Right page — work: a different shape, because it is a different store. -->
+  <g stroke="#7d8590" stroke-width="2.8" stroke-linecap="round" fill="none">
+    <rect x="40" y="22" width="10" height="10" rx="2.4"/>
+    <line x1="45" y1="33.4" x2="45" y2="38.6"/>
+    <rect x="40" y="40" width="10" height="10" rx="2.4"/>
   </g>
 
   <!-- The seam: the one link that crosses, and the only dashed line here. -->
-  <line x1="30.7" y1="30.6" x2="40.7" y2="25.6" stroke="#a371f7"
-        stroke-width="3.5" stroke-linecap="round" stroke-dasharray="0.1 6.5"/>
-  </g>
+  <line x1="29.4" y1="37" x2="38.4" y2="30.4" stroke="#a371f7"
+        stroke-width="3" stroke-linecap="round" stroke-dasharray="0.1 5"/>
 </svg>
