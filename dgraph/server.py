@@ -45,7 +45,7 @@ from urllib.parse import parse_qs, urlparse
 
 from dgraph import applying, cross, editor, pending, project, render, task_pending
 from dgraph.model import Graph
-from dgraph.tasks import TaskGraph
+from dgraph.tasks import TaskGraph, stop_label
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -160,6 +160,10 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
             # panel must be able to say *why* something is not startable.
             "ready": tg.ready(tid),
             "blocked": tg.blocked(tid),
+            # What to call the live stop. Sent rather than decided in the
+            # browser: `tasks.STOP_LABEL` is the one table, and a panel
+            # picking its own word is how the three renderers came to disagree.
+            "stop_label": stop_label(tg.tasks[tid].status),
             "cross": (
                 {"gated_by": None, "ready": tg.ready(tid), "premise": None,
                  "evidence_for": None, "premise_status": None,

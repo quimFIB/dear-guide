@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dgraph import orgmd, project
-from dgraph.tasks import TaskGraph
+from dgraph.tasks import TaskGraph, stop_label
 
 NONE = "—"
 
@@ -113,24 +113,30 @@ def _section(tg: TaskGraph, tid: str) -> str:
     if t.note:
         out.append(orgmd.to_markdown(t.note, fmt=t.format).strip())
         out.append("")
-    # `stopped_because` is derived from the status, so there is no longer a
-    # belt to wear here: prose that outlived its status cannot be read out of a
-    # store where the status is what decides whether prose is live.
-    live = t.stopped_because
-    if live:
-        label = "Not being done" if t.status == "DROPPED" else "Put down"
-        out.append(f"*{label}:* {orgmd.to_markdown(live, fmt=t.format)}")
-        out.append("")
     if t.outcome:
         out.append(f"*Outcome:* {orgmd.to_markdown(t.outcome, fmt=t.format)}")
     # Every stoppage, live one included — the record is what kept stopping this
     # work, and a list that omitted the current entry would read as though the
     # present were not part of the history.
+    #
+    # Once, not twice. The live reason used to be printed above as well, so a
+    # task stopped a single time had its reason in the file twice and nothing
+    # said which entry was current. The list carries the label instead, on the
+    # last entry and only while the status still claims it — `app.html` already
+    # draws it this way, and `tasks.stop_label` is where the word comes from,
+    # so the two cannot disagree.
     if t.stops:
-        out.append("")
+        # Only where there is something to separate from. A task with neither
+        # a note nor an outcome already ends on the blank line after the field
+        # list, and appending a second was the stray double blank.
+        if out[-1] != "":
+            out.append("")
+        label = stop_label(t.status)
+        last = len(t.stops) - 1
         out.append("*Stopped:* " + " · ".join(
             f"{k.date} — {orgmd.to_markdown(k.why, fmt=t.format)}"
-            for k in t.stops))
+            + (f" **({label.lower()})**" if label and i == last else "")
+            for i, k in enumerate(t.stops)))
     return "\n".join(out).rstrip("\n") + "\n"
 
 

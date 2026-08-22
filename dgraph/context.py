@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 
 from dgraph import compact as _c
 from dgraph.model import Graph
-from dgraph.tasks import TaskGraph
+from dgraph.tasks import TaskGraph, stop_label
 
 WIDTH = 76
 
@@ -194,6 +194,11 @@ def task(tg: TaskGraph, tid: str, g: Graph | None = None) -> dict:
         # stoppage besides. An agent reading this needs both: why it is stopped
         # now, and whether this is the third time.
         "why": t.stopped_because,
+        # The word for it, from `tasks.STOP_LABEL` and never chosen here.
+        # Three renderers used to pick their own, and this one picked it by
+        # testing the status a second time — on top of `stopped_because`,
+        # which has already gated on it — so the PARKED reason was dropped.
+        "stop_label": stop_label(t.status),
         "stops": [{"why": k.why, "date": k.date} for k in t.stops],
         "prerequisites": tg.prerequisites(tid),
         "waiting_on": tg.waiting_on(tid),
@@ -430,12 +435,21 @@ def _task_text(d: dict) -> str:
     if d["outcome"]:
         out.append(f"  outcome: {d['outcome']}"
                    + (f"  ·  {d['done']}" if d["done"] else ""))
-    # Gated on the status for the reason the two generated views are: `why`
-    # says why the work is not being done, and this text is piped into a
-    # subagent's prompt, where "dropped: …" under a DOING task is a claim it
-    # would act on.
-    if d["why"] and d["status"] == "DROPPED":
-        out.append(f"  dropped: {d['why']}")
+    # Every stoppage, oldest first, with the live one marked — one list and
+    # one marker, the construction `task_render` and `app.html` both use.
+    #
+    # The live reason used to be printed here on its own, under a
+    # `status == "DROPPED"` test laid on top of `Task.stopped_because`, which
+    # has already gated on the status. The second test swallowed every PARKED
+    # reason: the one status whose entire point is that somebody wrote down
+    # why the work stopped. `stop_label` decides the word now, in one place.
+    if d["stops"]:
+        out += ["", f"STOPPED ({len(d['stops'])}) — oldest first"]
+        last = len(d["stops"]) - 1
+        for i, k in enumerate(d["stops"]):
+            mark = (f"  ← {d['stop_label'].lower()}"
+                    if d["stop_label"] and i == last else "")
+            out.append(f"  {k['date']}  {k['why']}{mark}")
 
     p = d["premise"]
     if p:
@@ -548,6 +562,15 @@ def compact(d: dict) -> str:
         d.get("note"), d.get("format"))
     if own:
         out.append("  " + _c.clip(own, COMPACT_WIDTH - 2))
+
+    # Why the work stopped, on its own line. The default form rendered neither
+    # the parked nor the dropped reason, so the one-line answer to "what is
+    # happening with this task" left out the only sentence anybody wrote about
+    # why nothing is.
+    if d["kind"] == "task" and d.get("why"):
+        said = f"{d['stop_label'].lower()}: " + (
+            _c.gist(d["why"], d.get("format")) or "")
+        out.append("  " + _c.clip(said, COMPACT_WIDTH - 2))
 
     chain_ids = [p["id"] for p in d["chain"]]
     shaky = set(d["shaky_premises"])

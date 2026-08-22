@@ -847,11 +847,13 @@ function taskPanel(){
      reading `Task.stopped_because` makes, so the page and the store cannot
      disagree about which reason is current. */
   (x.stops||[]).forEach((k,i)=>{
-    const live = i===(x.stops.length-1)
-      && (x.status==="PARKED" || x.status==="DROPPED");
+    /* The word comes from the server (`tasks.STOP_LABEL`), not from a status
+       test here: three renderers picking their own label is how the parked
+       reason came to be printed by one and dropped by the others. */
+    const live = i===(x.stops.length-1) && !!d.stop_label;
     const tag = live
       ? ` <span class="pill" style="background:${TASK_COLOR[x.status]};color:#04121f">${
-          x.status==="PARKED"?"still":"abandoned"}</span>` : "";
+          esc(d.stop_label.toLowerCase())}</span>` : "";
     h+=`<div class="answer muted"><b>stopped</b> <span class="muted">${esc(k.date)}</span>${tag} — ${md(k.why, x.format)}</div>`;
   });
 

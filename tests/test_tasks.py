@@ -1404,3 +1404,45 @@ def test_every_task_a_drop_asks_about_can_take_either_verdict(run_cli,
         assert applied.exit_code == 0, f"--drop-too {t}: {applied.output}"
         assert TaskGraph.load(store).tasks[t].status == "DROPPED"
         store.write_text(snapshot, encoding="utf-8")   # back, for the next one
+
+
+# ---- one stop list, one live marker --------------------------------------
+
+
+def _with_stops(tg, status, stops):
+    tg.tasks["T04"].status = status
+    tg.tasks["T04"].stops = [Stop(why=w, date=d) for w, d in stops]
+    return tg
+
+
+def test_a_reason_stopped_once_is_rendered_once(tg):
+    """F6. `_section` printed the live reason and then the whole `stops` list
+    containing it, so a task stopped a single time had its reason in `tasks.md`
+    twice -- and nothing in the markdown said which entry was current."""
+    _with_stops(tg, "DROPPED", [("superseded by the rewrite", "2026-02-01")])
+    section = task_render._section(tg, "T04")
+    assert section.count("superseded by the rewrite") == 1
+    assert "not being done" in section
+    assert "\n\n\n" not in section          # the stray double blank line
+
+
+def test_three_stops_are_all_rendered_in_order_with_only_the_last_live(tg):
+    """The record is what kept stopping this work; the live marker is a claim
+    about now, and only the last entry can carry it."""
+    _with_stops(tg, "PARKED", [("first", "2026-01-01"),
+                               ("second", "2026-02-01"),
+                               ("third", "2026-03-01")])
+    section = task_render._section(tg, "T04")
+    assert section.index("first") < section.index("second") < section.index("third")
+    assert section.count("(put down)") == 1
+    assert "2026-03-01 — third **(put down)**" in section
+    assert "2026-01-01 — first ·" in section     # unmarked, and still first
+
+
+def test_a_restarted_task_keeps_the_stop_and_loses_the_marker(tg):
+    """The record survives, the claim does not. `stopped_because` is derived
+    from the status, so nothing has to be cleared for this to hold."""
+    _with_stops(tg, "DOING", [("was stuck", "2026-01-01")])
+    section = task_render._section(tg, "T04")
+    assert "was stuck" in section
+    assert "put down" not in section and "not being done" not in section

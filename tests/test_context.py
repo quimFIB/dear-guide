@@ -260,3 +260,74 @@ def test_why_reports_an_unknown_id_like_context_does(store, g):
     write(g)
     a, b = dg(store, "why", "D99"), dg(store, "context", "D99")
     assert a.exit_code == 1 and a.output == b.output
+
+
+# ---- why work stopped, whatever stopped it -------------------------------
+
+
+def _stopped(root, status, stops):
+    """T04 -- unconnected, so nothing else is in the way -- stopped `stops`."""
+    from dgraph.tasks import Stop
+    tg = TaskGraph.load(root / "tasks.json")
+    tg.tasks["T04"].status = status
+    tg.tasks["T04"].stops = [Stop(why=w, date=d) for w, d in stops]
+    tg.save(root / "tasks.json")
+    return tg
+
+
+@pytest.mark.parametrize("status, label", [("PARKED", "put down"),
+                                           ("DROPPED", "not being done")])
+@pytest.mark.parametrize("flag", [[], ["--full"]])
+def test_the_context_surface_shows_why_work_stopped(task_store, status, label,
+                                                    flag):
+    """F5. `text` tested `status == "DROPPED"` on top of `stopped_because`,
+    which has already gated on the status -- so the PARKED reason, the one
+    status whose entire point is a written reason, was silently dropped. And
+    `compact`, the default, rendered neither.
+
+    Parametrised over both statuses and both forms because the claim is "the
+    context surface shows why work stopped", not "it shows why work was
+    dropped"."""
+    _stopped(task_store, status, [("the upstream fix never landed", "2026-02-01")])
+    res = dg(task_store, "context", "T04", *flag)
+    assert res.exit_code == 0
+    assert "the upstream fix never landed" in res.output
+    assert label in res.output.lower()
+
+
+def test_context_says_which_of_three_stops_is_live(task_store):
+    """Three stoppages, three reasons, and which one is current is the thing a
+    reader cannot work out from a bare list."""
+    _stopped(task_store, "PARKED", [("first", "2026-01-01"),
+                                    ("second", "2026-02-01"),
+                                    ("third", "2026-03-01")])
+    out = dg(task_store, "context", "T04", "--full").output
+    body = out.split("STOPPED")[1]
+    assert body.index("first") < body.index("second") < body.index("third")
+    assert "third  ← put down" in body
+    assert "first  ← " not in body and "second  ← " not in body
+
+
+def test_context_marks_no_stop_live_once_the_work_restarted(task_store):
+    """The record survives the restart; the claim that it is current does not."""
+    _stopped(task_store, "DOING", [("was stuck", "2026-01-01")])
+    out = dg(task_store, "context", "T04", "--full").output
+    assert "was stuck" in out
+    assert "put down" not in out and "not being done" not in out
+
+
+def test_one_table_names_the_stop_for_every_renderer(task_store):
+    """The label is chosen in one place. Three renderers picked it
+    independently -- `task_render`, `app.html` and `context` -- and the fourth
+    opinion is how F5 happened."""
+    from dgraph import server, task_render, tasks
+
+    assert sorted(tasks.STOP_LABEL) == ["DROPPED", "PARKED"]
+    assert tasks.stop_label("DOING") is None
+    tg = _stopped(task_store, "PARKED", [("stuck", "2026-02-01")])
+    label = tasks.STOP_LABEL["PARKED"]
+
+    assert label.lower() in task_render.render(tg)
+    assert context.task(tg, "T04")["stop_label"] == label
+    # The panel is served the word rather than choosing one.
+    assert server.task_payload(tg, None)["derived"]["T04"]["stop_label"] == label

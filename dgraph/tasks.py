@@ -99,6 +99,23 @@ KINDS = ("precedes", "prompted")
 #: who has learned `dg rm --splice` should not have to learn it twice.
 REMOVAL_MODES = ("sever", "splice", "into")
 
+#: What to call the live stop, by the status that claims it. One table, read by
+#: every renderer: `task_render` writes it into `tasks.md`, `context` prints it
+#: in both its forms, and the server sends it to the browser panel so `app.html`
+#: renders the served word rather than choosing a fourth. Three renderers
+#: picking the label independently is how the PARKED reason came to be printed
+#: by one of them and dropped by the other two.
+STOP_LABEL = {"PARKED": "Put down", "DROPPED": "Not being done"}
+
+
+def stop_label(status: str) -> str | None:
+    """The label for the live stop, or `None` where the status claims none.
+
+    Follows `Task.stopped_because`: the status is what decides whether a stop
+    is live, so the same statuses that produce a reason produce a label.
+    """
+    return STOP_LABEL.get(status)
+
 MISSING_EDGE = {
     "precedes": "{src} is not a prerequisite of {other}",
     "prompted": "{other} was not discovered during {src}",
