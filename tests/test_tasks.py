@@ -1349,3 +1349,58 @@ def test_dropping_needs_a_reason_at_both_doors(run_cli):
     onto the same act agree about what it takes to walk through them."""
     res = run_cli("task", "drop", "T04", input="\n")
     assert res.exit_code != 0 or "Why is this not being done" in res.output
+
+
+# ---- a drop does not interrogate work that is already stopped ------------
+
+
+def _stopped_dependants(run_cli):
+    """T02 with two dependants that have already stopped: T03 parked, T05
+    dropped. Both waited only on T02, so both were fallout before the filter."""
+    assert run_cli("task", "add", "--id", "T05", "-t", "Also after T02",
+                   "--area", "Beta", "--after", "T02").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "park", "T03", "-w", "waiting on a person"
+                   ).exit_code == 0
+    assert run_cli("task", "drop", "T05", "-w", "overtaken").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+
+
+def test_a_drop_asks_no_verdict_about_work_that_already_stopped(run_cli):
+    """The F3 shape. The released branch had no status filter, so a DROPPED or
+    PARKED dependant was demanded a verdict -- and for the dropped one neither
+    answer worked: `--drop-too` is refused by `task_pending` as a second drop,
+    and `--keep` prints "still worth doing" about abandoned work."""
+    _stopped_dependants(run_cli)
+    res = run_cli("task", "drop", "T02", "-w", "not needed after all")
+    assert res.exit_code == 0
+    assert "need a verdict" not in res.output
+    assert "T03" not in res.output and "T05" not in res.output
+
+
+def test_every_task_a_drop_asks_about_can_take_either_verdict(run_cli,
+                                                              task_store):
+    """The wider claim: the command must not offer a choice one branch of which
+    the store refuses. Every task `_fallout` reports is staged with
+    `--drop-too` here, and each must apply cleanly."""
+    from dgraph.cli import _fallout
+
+    _stopped_dependants(run_cli)
+    assert run_cli("task", "dep", "T04", "--discovered-during", "T02"
+                   ).exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    store = task_store / "tasks.json"
+    snapshot = store.read_text(encoding="utf-8")
+    tg = TaskGraph.load(store)
+    affected = sorted(_fallout(tg, "T02"))
+    assert affected, "the fixture must actually produce fallout"
+
+    for t in affected:
+        others = [o for o in affected if o != t]
+        res = run_cli("task", "drop", "T02", "-w", "no", "--drop-too", t,
+                      *(["--keep", ",".join(others)] if others else []))
+        assert res.exit_code == 0, f"--drop-too {t}: {res.output}"
+        applied = run_cli("apply")
+        assert applied.exit_code == 0, f"--drop-too {t}: {applied.output}"
+        assert TaskGraph.load(store).tasks[t].status == "DROPPED"
+        store.write_text(snapshot, encoding="utf-8")   # back, for the next one

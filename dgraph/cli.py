@@ -2990,7 +2990,21 @@ def _fallout(tg: TaskGraph, tid: str) -> dict[str, str]:
     """
     out = {}
     for t in tg.unblocks(tid):
-        if tg.waiting_on(t) == [tid]:
+        # Work that has already stopped is not released by anything, so it is
+        # not asked about. Without the filter a DROPPED dependant was demanded
+        # a verdict neither answer could give — `--drop-too` is refused by
+        # `task_pending` as a second drop, and `--keep` prints "still worth
+        # doing" about abandoned work — and a PARKED one was asked whether the
+        # drop had made it startable, which is not a question about a task
+        # that is not being done.
+        #
+        # `unfinished` alone would be the wrong filter here even though it is
+        # what the orphaned branch below uses: PARKED is unfinished. The two
+        # branches ask different questions — this one is about startability,
+        # which only live work has, and that one is about provenance, which
+        # parked work still needs.
+        dep = tg.tasks[t]
+        if dep.unfinished and not dep.parked and tg.waiting_on(t) == [tid]:
             out[t] = f"released — waited only on {tid}"
     for t in tg.prompted(tid):
         if tg.tasks[t].unfinished and all(
