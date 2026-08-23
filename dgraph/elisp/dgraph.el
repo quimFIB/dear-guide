@@ -263,6 +263,11 @@ checks the same things again — a user in another editor never runs this."
     ;; git-commit-mode does. C-c C-o is left alone: the dg: link type means
     ;; org-open-at-point already does the right thing.
     ;;
+    ;; These two are the only `C-c C-<letter>' keys this mode takes, and both
+    ;; are the price of reading as a commit buffer: somebody who has finished
+    ;; typing reaches for C-c C-c without looking. Everything else lives under
+    ;; `dgraph-prefix'; see there for why.
+    ;;
     ;; The walk keys are NOT here.  They only work in a buffer naming a vertex
     ;; that exists, so they are bound per buffer in `dgraph-edit-mode' below —
     ;; a binding present everywhere and working in half the buffers is the
@@ -271,6 +276,33 @@ checks the same things again — a user in another editor never runs this."
     (define-key m (kbd "C-c C-k") #'dgraph-abort)
     m)
   "Keymap for `dgraph-edit-mode'.")
+
+(defconst dgraph-prefix "C-c d"
+  "The prefix the navigation keys live under.
+
+`C-c <letter>' is space Emacs reserves for the user, and a package taking one
+is a small trespass.  It is the lesser of the two available: this buffer is an
+*org* buffer, and the alternative — staying in the major mode's `C-c
+C-<letter>' namespace — means shadowing org itself.  Three keys did, and one
+of them was `C-c C-v', which in org is not a command but the whole
+`org-babel' prefix map: forty-odd commands traded for one, in a buffer whose
+Context subtree can hold source blocks.  `C-c C-p' and `C-c C-a' cost
+`org-previous-visible-heading' and `org-attach' on top of that.
+
+So the navigation keys moved here and org keeps all three.  What did not move
+is C-c C-c and C-c C-k, which are worth their shadow and say so above.")
+
+(defvar dgraph-walk-map
+  (let ((m (make-sparse-keymap)))
+    (define-key m (kbd "p") #'dgraph-parent)
+    (define-key m (kbd "a") #'dgraph-ancestors)
+    (define-key m (kbd "v") #'dgraph-visit)
+    m)
+  "Navigation keys, under `dgraph-prefix'.
+
+Bound per buffer rather than in `dgraph-edit-mode-map', because all three read
+`:DGRAPH_VERTEX:' and a buffer composing a decision that does not exist yet
+has none to read.")
 
 (defun dgraph--protect-context ()
   "Make the `* Context' subtree read-only.
@@ -293,11 +325,12 @@ nothing."
   :lighter " dgraph" :keymap dgraph-edit-mode-map
   (when dgraph-edit-mode
     ;; Bound only where they can work, and where the header says so.  The two
-    ;; have to agree: the header is the only documentation these keys have.
+    ;; have to agree: the header is the only documentation these keys have,
+    ;; and `dgraph--every-bound-key-is-advertised' checks it in both
+    ;; directions — `C-c C-v' was bound here for a long time and named in no
+    ;; header, which is the half that used to be unwatched.
     (when (dgraph--walkable)
-      (local-set-key (kbd "C-c C-p") #'dgraph-parent)
-      (local-set-key (kbd "C-c C-a") #'dgraph-ancestors)
-      (local-set-key (kbd "C-c C-v") #'dgraph-visit))
+      (local-set-key (kbd dgraph-prefix) dgraph-walk-map))
     (setq-local org-startup-folded nil)
     (dgraph--protect-context)
     (org-fold-hide-sublevels 1)
@@ -310,13 +343,50 @@ nothing."
     (message "C-c C-c to stage · C-c C-k to abort · C-c C-o follows a dg: link")))
 
 (defun dgraph--advertised-keys ()
-  "The C-c bindings this buffer's own header claims.  Read back for the test."
+  "The C-c bindings this buffer's own header claims.  Read back for the test.
+
+Matches both shapes: the two `C-c C-<letter>' keys this mode keeps, and the
+navigation keys under `dgraph-prefix'."
   (save-excursion
     (goto-char (point-min))
     (let (found)
-      (while (re-search-forward "C-c \\(C-[a-z]\\)" nil t)
+      (while (re-search-forward "C-c \\(?:C-[a-z]\\|d [a-z]\\)" nil t)
         (push (match-string 0) found))
       (delete-dups (nreverse found)))))
+
+(defun dgraph--bound-keys ()
+  "Every key in this buffer bound to a command this package defines.
+
+The other half of `dgraph--advertised-keys'.  Deliberately scoped to
+`dgraph-' commands rather than to every binding: an org buffer has some two
+dozen `C-c C-<letter>' keys and all but ours are org's own, so \"everything
+bound is advertised\" would be false by design.  What must hold is that
+nothing *this package* binds is undocumented."
+  (let (found)
+    (mapatoms
+     (lambda (sym)
+       (when (and (commandp sym)
+                  (string-prefix-p "dgraph-" (symbol-name sym))
+                  ;; `dgraph--' is private; only user-facing commands are
+                  ;; things a header could sensibly name.
+                  (not (string-prefix-p "dgraph--" (symbol-name sym))))
+         ;; Over every active keymap, not `current-local-map': the walk keys
+         ;; are local but C-c C-c and C-c C-k live in the minor-mode map, and
+         ;; a check that could not see those would have a blind spot of
+         ;; exactly the kind it exists to close.
+         (dolist (k (where-is-internal sym))
+           (push (key-description k) found)))))
+    (delete-dups (nreverse found))))
+
+(defun dgraph--every-bound-key-is-advertised ()
+  "Keys this package binds here that no header names.  Nil when all is well.
+
+The direction that was missing.  `advertised_keys.el' walked the header and
+checked each key was bound, so a key advertised and broken failed — and a key
+bound and undocumented could not.  `C-c C-v' sat in that gap from the commit
+that introduced the editor until somebody read the two lists side by side."
+  (let ((named (dgraph--advertised-keys)))
+    (seq-remove (lambda (k) (member k named)) (dgraph--bound-keys))))
 
 (defun dgraph--maybe-enable ()
   (when (and buffer-file-name

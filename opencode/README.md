@@ -28,7 +28,7 @@ Two things about those paths:
 - The directories are **plural** — `plugins/`, `commands/`. The singular form
   loads nothing and says nothing about it.
 - **`commands/` is at the repo root, not under `opencode/`.** It used to hold
-  one file for one host; it now holds the same five files Claude Code loads
+  one file for one host; it now holds the same six files Claude Code loads
   from the plugin root. One copy, two hosts — the arrangement the skill has
   always had.
 - **The link is named `dg-<file>`, not `<file>`.** Claude Code namespaces a
@@ -62,9 +62,10 @@ directory. The two mechanisms do not depend on them.
 | the brief | prepended to the first message of a session, and again after a compaction |
 | `/dg-brief` | the brief on demand — works whether or not the injection hook does |
 | `/dg-frontier` · `/dg-tasks` | what is decidable now; the backlog and what is startable |
+| `/dg-find <query>` | decisions and work by what they *say* — the only reading that starts from a word, and so the only answer to *was this already decided?* |
 | `/dg-context <id>` | every premise a decision or a task rests on — what to read before dispatching work |
 | `/dg-serve` | the graphs in a browser, started detached so the session keeps its prompt |
-| the commit gate | `dg gate` judges every `bash` call that mentions `commit`; a refusal arrives as the tool's error, with the reason and the fix |
+| the commit gate | `dg gate` judges every `bash` call carrying one of `dg gate --triggers`' words — `commit` and `rm` today; a refusal arrives as the tool's error, with the reason and the fix |
 | the `dear-guide` skill | loaded by opencode's own `skill` tool when a decision or a piece of work is in play |
 
 `DG_HOOK_OFF=1` in the environment switches off both the brief and the gate. It
@@ -79,6 +80,6 @@ the plugin's environment is the host's.
   made from inside one is not gated.
 - **Injecting the brief is the one part not guaranteed by the API.** opencode has
   no session-start hook; the plugin edits the first user message instead. If a
-  future version stops honouring that, `/decisions` still works, and
+  future version stops honouring that, `/dg-brief` still works, and
   `experimental.chat.system.transform` is the other candidate — the payload is
   the same string either way.

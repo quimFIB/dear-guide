@@ -266,7 +266,7 @@ def _decisions_text(proj: project.Project, g: Graph, d: dict,
     tally = ", ".join(f"{k} {n}" for k, n in sorted(d["counts"].items()))
     out = [
         f"DECISION GRAPH  {proj.root}  {len(g.vertices)} decisions: {tally}",
-        "Record what gets settled with `dg` -- see the decisions skill.",
+        "Record what gets settled with `dg` -- see the dear-guide skill.",
         "",
         f"FRONTIER ({len(fr)}) -- not settled",
     ]

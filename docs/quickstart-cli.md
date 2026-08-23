@@ -135,6 +135,8 @@ afterwards it is rationalisation; written first it is a commitment.
 ```sh
 dg                  # the frontier: everything still open or blocked
 dg brief            # ...plus provisional work, staging, validity
+dg find caching     # every decision and task whose prose says so
+dg find 'under:D04 is:unsettled'    # ...still open in what D04 opened
 dg node D01         # one decision in full, with its superseded edges
 dg node D01 --active    # ...only the answer that stands
 dg context D04      # ...and the chain of premises it rests on
@@ -143,6 +145,16 @@ dg path D01 D04     # the chain of evidence between two decisions
 dg tree             # the DAG
 dg areas            # counts by area and status, one table per store
 ```
+
+`dg find` is the only one of these that starts from a **word**; every other
+starts from the frontier or from an id you already have. That makes it the one
+to reach for before settling something — *was this already decided?* A bare word
+searches prose, `field:value` matches one stored field, `is:name` asks a derived
+question, and `under:`/`above:`/`because:` walk the graph. An empty result means
+nothing in the store contains that string, which is a fact worth trusting: exit
+1 says "asked, and the answer is nothing", exit 2 says "you did not ask what you
+think you asked". The design behind it is [its own
+document](query-framework.md).
 
 `dg`, `dg task`, `dg context` and both `pending` trays are **short by
 default**: one line per thing, with titles clipped and answers reduced to their
@@ -337,9 +349,14 @@ back. The buffer has an `* Input` half you fill in and a `* Context` half —
 the premise you are deciding on top of, with its own answer and falsifier, and
 the ancestor chain. Only `* Input` is ever read back.
 
-In emacs you also get `C-c C-c` to stage, `C-c C-k` to abort, and `C-c C-o` to
-follow a `dg:` link to another decision. Any editor works via `$DG_EDITOR`;
-you get the same buffer without the navigation.
+In emacs you also get `C-c C-c` to stage, `C-c C-k` to abort, `C-c C-o` to
+follow a `dg:` link to another decision, and three navigation keys under
+`C-c d`: `p` for a premise, `a` for every premise this rests on, `v` to look up
+any decision by id. They live under their own prefix so that org keeps its
+`C-c C-<letter>` keys — `C-c C-v` alone is org-babel's whole prefix map. The
+navigation keys are bound per buffer, so each header lists only what that
+buffer actually has. Any editor works via `$DG_EDITOR`; you get the same buffer
+without the navigation.
 
 Work has its own templates rather than the decision one relabelled. `dg task
 done --edit` is `** Outcome` alone, with what the task unblocks and the

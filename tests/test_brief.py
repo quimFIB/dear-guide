@@ -137,7 +137,7 @@ def test_brief_points_at_the_skill(run, store, g):
     """Injected text is guaranteed context; the skill loads only if the model
     chooses to. This line is the only thing that makes it discoverable."""
     write(g)
-    assert "decisions skill" in run("brief").output
+    assert "dear-guide skill" in run("brief").output
 
 
 def test_brief_reports_a_broken_graph(run, store, g):

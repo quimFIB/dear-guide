@@ -2,7 +2,7 @@
 
 A CLI only records what somebody remembers to run, and the thing that forgets is
 an agent working across many sessions. The plugin turns three of the four habits
-into mechanisms, for **Claude Code** and **opencode** alike, and adds five
+into mechanisms, for **Claude Code** and **opencode** alike, and adds six
 commands for the times you want to ask rather than wait to be told.
 
 |  | how |
@@ -10,7 +10,7 @@ commands for the times you want to ask rather than wait to be told.
 | **read the frontier first** | `dg brief` is injected at the start of every session, and again after a compaction — no rule in an instructions file, no "read this first" |
 | **know the discipline** | the `dear-guide` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it |
-| **ask on demand** | `/dg:brief` `/dg:frontier` `/dg:tasks` `/dg:context` `/dg:serve` — the same five files on both hosts, `/dg-brief` and friends on opencode |
+| **ask on demand** | `/dg:brief` `/dg:frontier` `/dg:tasks` `/dg:find` `/dg:context` `/dg:serve` — the same six files on both hosts, `/dg-brief` and friends on opencode |
 
 The interesting parts live in `dg` — `dg brief`, `dg gate`, `dg context` — so
 each adapter is a few dozen lines of translation with no policy of its own, and
@@ -79,7 +79,7 @@ you type anything:
 
 ```
 DECISION GRAPH  /home/you/retrieval-index  4 decisions: OPEN 1, PROVISIONAL 2, REOPENED 1
-Record what gets settled with `dg` -- see the decisions skill.
+Record what gets settled with `dg` -- see the dear-guide skill.
 
 FRONTIER (2) -- not settled
   D01  REOPENED  Exact or approximate search?  [Search]
@@ -155,7 +155,7 @@ different repository is allowed, since it records nothing about this graph.
 
 ## The commands
 
-Five files in `commands/` at the repo root, loaded by Claude Code from the
+Six files in `commands/` at the repo root, loaded by Claude Code from the
 plugin and by opencode from a symlink. Each is a `description`, a `dg`
 invocation, and a sentence saying how to read the output — no policy, for the
 same reason the adapters have none.
@@ -168,10 +168,11 @@ from the prefix the install put on the link.
 | `/dg:brief` | `/dg-brief` | the whole situation: frontier, work under review, what is staged, whether the graph is valid |
 | `/dg:frontier` | `/dg-frontier` | what could be picked up now — unsettled questions beside startable work |
 | `/dg:tasks` | `/dg-tasks` | the backlog, with the cross-graph reading of what each piece waits on |
+| `/dg:find <query>` | `/dg-find <query>` | decisions and work by what they *say* — the only reading that starts from a word |
 | `/dg:context <id> [--full]` | `/dg-context <id>` | the chain of premises a decision or a task rests on |
 | `/dg:serve` | `/dg-serve` | the graphs in a browser |
 
-Two of them are worth a note.
+Three of them are worth a note.
 
 **`/dg:context` is the one to run before dispatching a subagent.** A fresh
 context knows the task and nothing about why it exists; `dg context T14` prints
@@ -187,6 +188,14 @@ ask a follow-up:
 
 Paste that into the dispatch and the agent starts knowing what it must not
 quietly invalidate.
+
+**`/dg:find` is the one to run before settling something.** Every other reading
+starts from the frontier or from an id already in hand, which is no help at all
+against *was this already decided?* — the question an agent with a fresh context
+has no way to ask. A bare word searches prose; `is:decidable`, `under:D04` and
+the rest ask derived questions; `--ids` pipes. An empty result is a fact rather
+than a threshold, and a query that cannot be answered exits 2 instead of coming
+back empty, so a script can tell the two apart.
 
 **`/dg:serve` returns immediately.** `dg serve` blocks forever, so a command file
 that ran it would hang the session; `dg serve --detach` starts it in its own

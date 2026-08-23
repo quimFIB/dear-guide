@@ -29,7 +29,7 @@ dg serve --stop
 ```
 
 `--detach` exists so that something with a prompt to get back to — a shell
-script, or a coding-agent session running `/serve` — can open the app at all.
+script, or a coding-agent session running `/dg:serve` — can open the app at all.
 It is **idempotent**: run it twice and the second run reports the first one's
 URL rather than fighting for the port.
 

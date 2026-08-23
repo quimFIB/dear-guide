@@ -42,7 +42,7 @@ puts the result into the session's context:
 
 ```
 DECISION GRAPH  /home/you/retrieval-index  4 decisions: DECIDED 3, OPEN 1
-Record what gets settled with `dg` -- see the decisions skill.
+Record what gets settled with `dg` -- see the dear-guide skill.
 
 FRONTIER (1) -- not settled
   D04  OPEN  How does the index absorb new documents?  [Index]
@@ -72,7 +72,7 @@ error, no cost. The same hook runs and exits silently.
 > breaks.
 
 Claude has the frontier in context but not the discipline, so it loads the
-`decisions` skill — the model, the rules, the command table — and then reads the
+`dear-guide` skill — the model, the rules, the command table — and then reads the
 decision the number bears on, before touching anything:
 
 ```sh
@@ -302,13 +302,24 @@ checking the encoder still normalises matters more under HNSW than it did under
 the scan. T02 is a week of work on a scan you are no longer going to run:
 
 ```sh
-dg task drop T02
+dg task drop T02 --why "the scan those threads were being pinned for is not being run"
 dg task add --id T04 --title "Build the HNSW index and sweep efSearch" \
             --area Search --because D01
 dg task add --id T05 --title "Split the corpus into four shards and merge results" \
             --area Serving --because D03
 dg apply
 ```
+
+`--why` is not optional and the command will not proceed without it — bare, it
+prompts, and a prompt with nobody at the keyboard is a hung command. It is the
+same rule `--falsifier` follows: the sentence is the whole record, and written
+afterwards there is nothing to write it from. Nothing waited on T02, so no
+verdict was needed; had anything been left standing, the drop would have listed
+it and refused until each one had `--keep` or `--drop-too`.
+
+The other verb for stopping is `dg task park T14 --why "…"`, which records the
+same entry and settles nothing downstream — work nobody is doing, as against
+work nobody is going to do. T02 is the second kind.
 
 ```sh
 dg task
@@ -468,7 +479,7 @@ CHECK: clean
 | | |
 |---|---|
 | the frontier arrived before turn 1 | **mechanism** — `SessionStart`, and again after compaction |
-| Claude knew `--falsifier` is required and never hand-edited the store | **mechanism** — the `decisions` skill, loaded on demand |
+| Claude knew `--falsifier` is required and never hand-edited the store | **mechanism** — the `dear-guide` skill, loaded on demand |
 | the reversal listed both dependent decisions *and* the work in flight | **mechanism** — `dg reopen` computes it; nobody works it out by hand |
 | the benchmark's conclusion could not quietly go unrecorded | **mechanism** — `--evidence-for`, and the check behind it |
 | the half-staged commit was refused | **mechanism** — `dg gate` on every Bash command containing `commit` |
@@ -544,10 +555,12 @@ passes flags.
 
 - **About fifteen lines of context per session start**, plus a subprocess. In a
   project with no `decisions.json`: nothing at all.
-- **No slash command on Claude Code.** The brief is injected, and the skill
-  loads when a decision is in play. Run `dg brief` in a terminal to read it
-  yourself. (opencode has `/decisions`, because its brief injection is the one
-  part its API does not guarantee.)
+- **Nothing here needed a slash command.** The brief is injected and the skill
+  loads when a decision is in play, so the six commands — `/dg:brief`,
+  `/dg:frontier`, `/dg:tasks`, `/dg:find`, `/dg:context`, `/dg:serve`, spelled
+  `/dg-brief` and so on under opencode — are for asking rather than waiting to
+  be told. `/dg-brief` matters more on opencode, whose brief injection is the
+  one part its API does not guarantee.
 - **The gate only sees commands containing one of its trigger words** — `dg gate
   --triggers` prints them, `commit` and `rm` today. That is the fast path *and*
   the boundary: everything the gate can refuse contains one of them, so nothing

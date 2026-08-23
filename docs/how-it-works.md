@@ -83,16 +83,19 @@ dg apply
 each item is waiting for:
 
 ```
-┃ ID  ┃ Decision                          ┃ Status      ┃ Waiting on ┃ Unblocks ┃
-│ D01 │ Exact or approximate search?      │ OPEN        │ —          │ —        │
-│ D02 │ Which distance metric?            │ OPEN        │ D01        │ —        │
-│ D03 │ How are queries spread across co… │ OPEN        │ D01        │ D04      │
-│ D04 │ How does the index absorb new do… │ BLOCKED:D03 │ D03        │ —        │
+FRONTIER  4 not settled of 4   BLOCKED 1  OPEN 3
+  D01  OPEN     Exact or approximate search?         ·  decidable now
+  D02  OPEN     Which distance metric?               ·  waits D01
+  D03  OPEN     How are queries spread across core…  ·  waits D01 · unblocks D04
+  D04  BLOCKED  How does the index absorb new docu…  ·  waits D03
+  `dg show --full` for the table, nothing clipped
 ```
 
-That table answers "what can I actually work on?" — only D01 has nothing in
-*Waiting on*. This is what gets injected at the start of an agent session, and
-what you read yourself on a Monday.
+That answers "what can I actually work on?" — only D01 says *decidable now*.
+This is what gets injected at the start of an agent session, and what you read
+yourself on a Monday. It is short by default because an agent pays for it in
+tokens every session; `dg show --full` gives the same rows as a table with
+nothing clipped.
 
 ## Answering one
 
@@ -137,9 +140,8 @@ Hold on to that reasoning — it matters in a minute. With three settled, the
 frontier collapses to one line:
 
 ```
-┃ ID  ┃ Decision                              ┃ Status ┃ Waiting on ┃
-│ D04 │ How does the index absorb new docume… │ OPEN   │ —          │
-DECIDED 3  OPEN 1
+FRONTIER  1 not settled of 4   DECIDED 3  OPEN 1
+  D04  OPEN  How does the index absorb new documents?  ·  decidable now · Index
 ```
 
 D04 went from `BLOCKED:D03` to `OPEN` on its own. Settling D03 released
@@ -198,10 +200,10 @@ provisional decisions each need a human judgement, and until they get one
 `dg check` keeps saying so:
 
 ```
-! [stale_provisional] D02 is PROVISIONAL but every premise it rests on is
-  settled again — re-examine it, then `dg confirm D02`
-! [stale_provisional] D03 is PROVISIONAL but every premise it rests on is
-  settled again — re-examine it, then `dg confirm D03`
+! [stale_provisional] (warning) D02 is PROVISIONAL but every premise it rests
+  on is settled again — re-examine it, then `dg confirm D02`
+! [stale_provisional] (warning) D03 is PROVISIONAL but every premise it rests
+  on is settled again — re-examine it, then `dg confirm D03`
 ```
 
 Here is where the two of them part company, and why the propagation was worth
@@ -348,7 +350,7 @@ Tasks get their own graph, which is a different thing on purpose:
 | answers | a question | nothing; it produces something |
 | finished when | somebody settles it, with evidence | the work is done |
 | carries | an answer, a source, a **falsifier** | an **outcome** |
-| reversed by | new evidence, kept forever as a reversal | nothing — abandoned work is `DROPPED` |
+| reversed by | new evidence, kept forever as a reversal | nothing — work that stops is `PARKED` or `DROPPED`, and every stoppage is kept |
 | status | explicit, never inferred | blocked is *derived* from what precedes it |
 
 The test for which store an entry belongs in: **can you write a falsifier for
@@ -494,16 +496,47 @@ reads `waiting on evidence from T06` rather than `decidable now` — and buys th
 check worth the whole exercise:
 
 ```
-! [evidence_unharvested] T06 is DONE and was to inform D04 (How does the index
-  absorb new documents?), which is still unsettled — record what it showed with
-  `dg decide D04`
+! [evidence_unharvested] (warning) T06 is DONE and was to inform D04 (How does
+  the index absorb new documents?), which is still unsettled — record what it
+  showed with `dg decide D04`, or drop the link
 ```
 
 *The benchmark ran and nobody wrote down the conclusion.* Invisible in both
 graphs separately: the task looks finished, the decision merely undecided. It is
 the single most ordinary way a project loses a result it paid for.
 
-One rule keeps this from becoming a nuisance: **anything a reopen can cause is a
+### Evidence that arrives after the answer
+
+The other order happens too, and it is legitimate: the question got settled on
+what was already known, and the spike reported afterwards. Nothing is missing
+from the record — but a result nobody has read against the answer is exactly as
+lost as an unrecorded conclusion, so `evidence_after_deciding` names it, with
+the outcome rather than only the task id, because the outcome is the thing that
+has to be read against the answer.
+
+A result can mean three things, and each has a command:
+
+| it… | |
+|---|---|
+| refutes the answer | `dg reopen D04` |
+| was never needed | `dg task unlink T06 --evidence-for` |
+| **confirms the answer** | `dg confirm D04 --against T06 --note "what it showed"` |
+
+The third is the common one and had no honest exit until it had a command:
+reopening asserts a doubt nobody has, unlinking deletes the measurement from the
+record, and doing nothing leaves a warning that can never end — which is how a
+warning trains the eye past the ones that matter.
+
+So `dg confirm --against` records a **reading**: dated, kept, naming the task
+and the question it was read against. It is not a switch that stays off. The
+baseline is per evidence task, so confirming against one of two late results
+leaves the finding naming the other, and a *later* result post-dates the reading
+and brings the finding back on its own. Like a stoppage, it records a past act
+rather than claiming something about the present, which is why it cannot go
+stale — and is why it is a record this store will keep where it refuses a stored
+`acknowledged` flag.
+
+One rule keeps all of this from becoming a nuisance: **anything a reopen can cause is a
 warning, never an error.** If work resting on a reopened decision made the store
 invalid, one `dg reopen` would block every commit in the repository until
 somebody triaged the backlog — and the check would be switched off the same day.
@@ -585,4 +618,4 @@ the rule and the fix.
 - [CLI quick start](quickstart-cli.md) — the commands, step by step.
 - [Web quick start](quickstart-web.md) — the same graph, laid out and clickable.
 - [Agent plugin](quickstart-agents.md) — the brief at session start, the commit
-  gate and the five slash commands, for Claude Code and opencode.
+  gate and the six slash commands, for Claude Code and opencode.

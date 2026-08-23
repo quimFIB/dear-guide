@@ -1024,7 +1024,7 @@ def gate(
                                   help="Print the substrings an adapter's fast "
                                        "path must let through, one per line."),
 ) -> None:
-    """Judge a shell command before a host runs it: allow, ask, or deny.
+    """Judge a shell command before a host runs it: allow, warn, ask or deny.
 
     The commit gate, host-neutral. Both agent adapters call this and translate
     the answer, so the rule lives here rather than twice in two languages. Always

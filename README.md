@@ -63,8 +63,8 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
 ### The task graph — `tasks.json`
 
 - A **task** is a unit of work, with an explicit status: `TODO` · `DOING` ·
-  `DONE` · `DROPPED`. Finishing one records an **outcome** — a path, a PR, a
-  note — and abandoning one records **why**.
+  `PARKED` · `DONE` · `DROPPED`. Finishing one records an **outcome** — a path,
+  a PR, a note — and stopping one records **why**, whichever way it stopped.
 - An **edge** says which of two things it means. `precedes` is a prerequisite:
   the task it points from must be resolved first. `prompted` is provenance:
   doing that task turned this one up. Provenance makes nothing wait — a chore
@@ -78,9 +78,16 @@ the point:
   are resolved, so there is no status to keep up to date and none to go stale.
   Decisions keep status explicit because a decision can have consequences and
   still be under review; readiness genuinely *is* a function of dependencies.
-- **No supersession, and no falsifier.** Work that is abandoned is `DROPPED` and
-  that is the whole record. An outcome is a record of what happened, not a claim
-  about the world, so nothing can falsify it.
+- **Supersession in one place only, and no falsifier.** One question here can
+  stop being true and still be worth having — *why is this work not being
+  done* — so every stoppage appends to the task and nothing ever clears it;
+  work put down three times says so. Every other field is current-state. An
+  outcome is a record of what happened, not a claim about the world, so nothing
+  can falsify it.
+- **Two ways to stop, differing downstream and not in the record.** `PARKED` is
+  work nobody is doing; `DROPPED` is work nobody is going to do. Both write the
+  same entry. What separates them is whether the work that waited on this is
+  now free: dropping says yes and releases it, parking says no and holds it.
 - **An unconnected task is ordinary.** An unconnected decision is a smell.
 
 ### The one seam
@@ -106,7 +113,7 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG` |
 | `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
-| `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md) |
+| `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md); plus [the design behind `dg find`](docs/query-framework.md) |
 | `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
 | `skills/dear-guide/` | the recording discipline, as a skill both agent hosts load |
 | `commands/` | the slash commands, one set of files for both hosts — `/dg:brief` under Claude Code, `/dg-brief` under opencode |
@@ -164,6 +171,7 @@ dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
+dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds
 dg repair                                # a store a merge broke: stage the missing propagation
 dg pending                               # review; `--full` for the table
 dg apply                                 # validate, then write both files
@@ -304,6 +312,23 @@ Three views behind the tabs in the header:
 | **tasks** | the work, ranked by prerequisite depth. Start it, finish it with an outcome, or drop it with a reason |
 | **joined** | both graphs at once, with the `because` and `evidence_for` links drawn between them — the reading neither store gives on its own |
 
+**Every write the CLI has, bar one.** `+ new` records a question or a piece of
+work — a graph you can answer but not grow is a viewer with buttons, and the
+moment you have to leave to write something down is the moment prose wins.
+**Edit structure** corrects premises, prerequisites, provenance and the seam,
+and a removal says what it sets loose *before* it stages anything. A
+`PROVISIONAL` decision can be **re-affirmed** as well as reopened, so the
+interface that manufactures the status can also clear it. A soundness chip
+appears when `dg check` has anything to say and stages `dg repair` when that is
+the remedy. The readings — the chain behind a decision, the path between two,
+counts by area — are computed by the functions the CLI calls, and both doors
+stage the same op list for the same intent, which `tests/test_doors.py` asserts.
+
+The one exception is **removing a record**: `dg rm` and `dg task rm` stay
+terminal-only, because removal erases instead of superseding, and friction is
+the intended behaviour. Starting or moving a store — `init`, `import`,
+`export` — is terminal-only for the obvious reason.
+
 The two staging trays stay separate all the way through **Apply**, exactly as
 `dg apply` treats them: a task batch that will not apply cannot stop a decision
 batch that would.
@@ -389,7 +414,18 @@ In emacs you also get:
 | `C-c C-c` | stage it and return to the shell |
 | `C-c C-k` | abort — nothing is staged |
 | `C-c C-o` | follow a `dg:` link to that decision (plain `org-open-at-point`) |
-| `C-c C-p` · `C-c C-a` | jump to a premise · list every premise it rests on |
+| `C-c d p` · `C-c d a` | jump to a premise · list every premise it rests on |
+| `C-c d v` | look up any decision by id, with completion over the graph |
+
+The navigation keys are bound only in a buffer that names a vertex to walk
+from, and each buffer's header lists what it actually has — checked both ways,
+so a key cannot be advertised without working or bound without being named.
+
+**They sit under `C-c d` rather than `C-c C-…` because this is an org buffer**,
+and `C-c C-<letter>` is org's namespace: taking `C-c C-v` would shadow the
+whole `org-babel` prefix — forty-odd commands — in a buffer whose Context can
+hold source blocks. Only `C-c C-c` and `C-c C-k` shadow org, and they earn it
+by making the buffer behave like the commit buffer it is modelled on.
 
 The elisp ships with the package and is loaded by `dg` itself, so there is
 nothing to install. It is strictly read-only — it can look up decisions, never
@@ -444,13 +480,38 @@ check added to the tool shows up in every project automatically.
 
 ## What `dg check` enforces
 
-Well-formed unique IDs · legal statuses · no dangling edge or `BLOCKED:`
-references · at most one active edge per vertex · every `DECIDED` vertex has a
-date, source, falsifier and decision edge · `OPEN`/`BLOCKED` vertices carry no
-answer · no `DECIDED` vertex resting on an unsettled premise · nothing
-`BLOCKED` on something already settled · nothing left `PROVISIONAL` once its
-premises are settled again · no orphans · acyclic · the rendered markdown
-matches the store.
+It checks whichever stores the project has, and the seam between them when it
+has both. Every rule prints its own name, so a refusal is greppable.
+
+**The decisions.** Well-formed unique IDs · legal statuses · no dangling edge or
+`BLOCKED:` references · a `BLOCKED:` premise backed by a real edge · at most one
+active edge per vertex · every `DECIDED` vertex has a date, source, falsifier and
+decision edge · `OPEN`/`BLOCKED` vertices carry no answer · no `DECIDED` vertex
+resting on an unsettled premise · nothing `BLOCKED` on something already settled
+· acyclic. Two warnings: an orphan, and a vertex left `PROVISIONAL` once its
+premises are settled again.
+
+**The work.** The same well-formedness — ids, statuses, areas, no dangling
+reference, acyclic — plus: an edge says which kind it is · a `DONE` task has a
+date and an outcome, and did not finish before its own prerequisite · a `PARKED`
+or `DROPPED` task records why · a reading records its date, note and the
+decision it was read against, and is reported if the link it named has since
+moved. Three warnings, each about what stopping work left behind: something
+released only because a prerequisite was abandoned, something orphaned by that
+abandonment, and parked work holding up something unfinished.
+
+**The seam**, and this is what neither store can check alone. Two errors: a
+`because`/`evidence_for` naming a decision that does not exist, and a cycle
+across the two graphs. The rest are warnings, because *anything a reopen can
+cause must never block a commit* — work resting on a premise under review, and
+five ways evidence and an answer can come apart: the work finished and its
+conclusion was never recorded; every task meant to inform a question was
+abandoned, before or after it was settled; the work stopped without being
+abandoned, before or after; and the work reported *after* the answer was
+settled, which `dg confirm --against` is the honest exit from.
+
+**The view.** `decision-graph.md` and `tasks.md` are generated, so a view that
+has fallen behind its store is a warning and `dg render` rebuilds it.
 
 ## Driving it from a coding agent
 
@@ -464,12 +525,13 @@ Code** and **opencode**, which turns three of the four habits into mechanisms:
 | **know the discipline** | the `dear-guide` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it. Work staged and never applied asks the human instead — `.dgraph-pending.json` is gitignored, so committing over it loses the record silently |
 
-Plus five slash commands, one set of files for both hosts: `/dg:brief`,
-`/dg:frontier`, `/dg:tasks`, `/dg:context <id>` and `/dg:serve` — spelled
-`/dg-brief` and so on in opencode, which has no plugin namespace to hang them
-under. `/dg:context` is the one that matters most for delegation: it prints
-every premise a decision or a task rests on, which is exactly what a subagent's
-fresh context is missing.
+Plus six slash commands, one set of files for both hosts: `/dg:brief`,
+`/dg:frontier`, `/dg:tasks`, `/dg:find <query>`, `/dg:context <id>` and
+`/dg:serve` — spelled `/dg-brief` and so on in opencode, which has no plugin
+namespace to hang them under. Two matter most. `/dg:context` prints every
+premise a decision or a task rests on, which is exactly what a subagent's fresh
+context is missing; `/dg:find` is the only reading that starts from a word, and
+so the only one that answers *was this already decided?*
 
 What stays a habit is **recording a decision at the moment it is made**. Nothing
 a host can observe reveals that something was settled — it is a property of the

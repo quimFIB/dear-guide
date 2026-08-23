@@ -1196,8 +1196,20 @@ def test_a_buffer_advertises_only_keys_that_work_in_it(both, kind, walkable):
         capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     advertised = r.stdout.strip().splitlines()[-1]
-    assert ("C-c C-p" in advertised) is walkable, advertised
-    assert ("C-c C-a" in advertised) is walkable, advertised
+    # All three walk keys, not two: `C-c d v` (`dgraph-visit`) was bound in
+    # every walkable buffer and named in none, and the fixture's second
+    # direction is what now refuses that. Asserting it here as well keeps the
+    # walkable/not-walkable split honest for it too.
+    assert ("C-c d p" in advertised) is walkable, advertised
+    assert ("C-c d a" in advertised) is walkable, advertised
+    assert ("C-c d v" in advertised) is walkable, advertised
+    # The navigation keys live under `C-c d` so that org keeps its own
+    # `C-c C-<letter>` namespace — `C-c C-v` alone is org-babel's whole prefix
+    # map. Only the two commit-buffer keys shadow org now, and they are argued
+    # for in `dgraph-edit-mode-map`.
+    assert "C-c C-p" not in advertised, advertised
+    assert "C-c C-a" not in advertised, advertised
+    assert "C-c C-v" not in advertised, advertised
     # C-c C-o is org's own `org-open-at-point`, and the `dg:` link type makes
     # it work in every buffer — including the task ones, whose Context names
     # the decision they point at.

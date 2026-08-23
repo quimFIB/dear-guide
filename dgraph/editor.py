@@ -61,14 +61,21 @@ _CHECKED = re.compile(r"^[ \t]*[-+*][ \t]+\[[Xx]\][ \t]+(D\d+)", re.M)
 #: the `dg:` link type makes work everywhere.
 _KEYS_ALWAYS = "#   C-c C-o  follow a dg: link"
 
-#: ...and the two that only a buffer with premises to walk can offer.
-#: `dgraph-parent` and `dgraph-ancestors` read `:DGRAPH_VERTEX:`, so a buffer
-#: without one — `dg add`, and both task buffers — had them bound to an error
-#: and advertised in its own header. Interface audit F8: the header is the only
-#: documentation these keys have, and it was documenting what they could not
-#: do. Written by `_header`'s caller rather than assumed, so a new buffer kind
-#: has to say which it is.
-_KEYS_WALK = "      C-c C-p  parent      C-c C-a  ancestors"
+#: ...and the three that only a buffer with premises to walk can offer.
+#: `dgraph-parent`, `dgraph-ancestors` and `dgraph-visit` read
+#: `:DGRAPH_VERTEX:`, so a buffer without one — `dg add`, and both task
+#: buffers — had them bound to an error and advertised in its own header.
+#: Interface audit F8: the header is the only documentation these keys have,
+#: and it was documenting what they could not do. Written by `_header`'s
+#: caller rather than assumed, so a new buffer kind has to say which it is.
+#:
+#: Under `C-c d` rather than `C-c C-<letter>`, because this is an org buffer
+#: and the mode namespace is org's: the old `C-c C-v` shadowed the entire
+#: `org-babel` prefix map. `dgraph-prefix` in `dgraph.el` has the argument.
+#: This line and the bindings are checked against each other in both
+#: directions — the reverse check is why `visit` appears here at all, having
+#: been bound and unnamed since the editor was written.
+_KEYS_WALK = "\n#   C-c d p  premise    C-c d a  ancestors    C-c d v  any decision"
 
 _HEADER = """\
 # -*- mode: org; -*-

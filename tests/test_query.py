@@ -17,6 +17,8 @@ answerable about one store at a time.
 """
 
 import json
+import re
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -169,14 +171,86 @@ def test_a_field_both_stores_have_keeps_both(g, tg):
 
 
 def test_every_predicate_delegates_to_something_that_exists(g, tg):
-    """The `is:` table is the specification, and this is what stops it drifting
-    from the code it claims to name. A predicate that raises here has lost the
-    method it was standing in for."""
+    """A predicate that raises here has lost the method it was standing in for.
+
+    This covers the *code*, and only the code — it walks the lens's own dict.
+    What keeps the documented table honest is
+    `test_the_is_table_documents_every_predicate` below; the two were once
+    confused for each other, and four predicates shipped undocumented while
+    this one passed.
+    """
     for lens, ids in ((query.decision_lens(g), g.vertices),
                       (query.task_lens(tg), tg.tasks)):
         for name, pred in lens.predicates.items():
             for rid in ids:
                 assert isinstance(pred(rid), bool), name
+
+
+#: The prose that claims to specify the `is:` vocabulary. Named here so the
+#: test below fails loudly if the document is moved rather than silently
+#: finding no table and asserting nothing.
+QUERY_DOC = Path(__file__).resolve().parents[1] / "docs" / "query-framework.md"
+
+#: A row of the `is:` table: the predicate, what it means on decisions, what it
+#: means on tasks. Anchored to a lowercase backticked first cell and three
+#: columns, which is that table's shape and no other table's in the file.
+_IS_ROW = re.compile(r"^\| `([a-z-]+)` \| (.+?) \| (.+?) \|$", re.M)
+
+
+def documented_predicates() -> dict[str, set[str]]:
+    """The `is:` table, read out of the document rather than restated here.
+
+    A list of expected names kept beside this function would be the third copy
+    of the vocabulary and the one nothing checks — which is the defect being
+    fixed, reintroduced in the fix.
+    """
+    rows = _IS_ROW.findall(QUERY_DOC.read_text(encoding="utf-8"))
+    assert rows, f"no `is:` table found in {QUERY_DOC.name}"
+    out: dict[str, set[str]] = {"decisions": set(), "tasks": set()}
+    for name, decisions, tasks in rows:
+        # An em dash alone is "not offered on this store". A cell that merely
+        # contains one — `Task.resolved` — DONE or DROPPED` — is a definition.
+        if decisions.strip() != "—":
+            out["decisions"].add(name)
+        if tasks.strip() != "—":
+            out["tasks"].add(name)
+    return out
+
+
+def test_the_is_table_documents_every_predicate(g, tg):
+    """The table in `docs/query-framework.md` against the predicates that exist.
+
+    The document called that table "the implementation's only specification"
+    and claimed a test held it to the code. No test read the file at all, and
+    the gap was not theoretical: `resolved`, `parked`, `implemented` and
+    `awaiting-evidence` were all shipping and undocumented.
+
+    Neither existing guard could have caught them.
+    `test_the_predicate_lists_match_the_lenses` pins `DECISION_PREDICATES` and
+    `TASK_PREDICATES` to the *base* lenses, so it never sees a predicate
+    `cross.lenses` injects; and the delegation test above asserts a predicate
+    works, not that anyone was told it exists.
+
+    So this compares against `cross.lenses`, which is the one call holding the
+    base and injected predicates together — the same surface `dg find` and
+    `GET /api/find` are built on, so the table is checked against what a reader
+    can actually type.
+
+    Equality both ways on purpose. A row for a predicate that does not exist
+    sends somebody to write a query that exits 2, which is the same defect
+    pointing the other way.
+    """
+    from dgraph import cross
+
+    documented = documented_predicates()
+    for lens in cross.lenses(g, tg):
+        assert set(lens.predicates) == documented[lens.kind], (
+            f"the `is:` table in {QUERY_DOC.name} disagrees with "
+            f"{lens.kind}: undocumented "
+            f"{sorted(set(lens.predicates) - documented[lens.kind])}, "
+            f"documented but absent "
+            f"{sorted(documented[lens.kind] - set(lens.predicates))}"
+        )
 
 
 def test_unsettled_is_the_frontier(lens, g):

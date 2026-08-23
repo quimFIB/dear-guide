@@ -13,7 +13,10 @@ browser's "frontier only" button needed one question asked in two vocabularies.
 
 ## The gap
 
-There are five ways to read a graph today, and all five are structural:
+*Written before `dg find` existed, and left in the present tense it was written
+in: the gap is the argument for the shape, and rewriting it as history would
+lose the reasoning.* There were five ways to read a graph, and all five were
+structural:
 
 | | starts from |
 |---|---|
@@ -27,8 +30,7 @@ Every one of them begins either at *the whole frontier* or at *an id you
 already have*. Nothing gets you from a **word** to an id. Grep `dgraph/cli.py`
 for `--area`, `--status`, `filter` or `search` and the only hit is `dg add
 --area`, which *sets* an area. The single filtering surface in the entire tool
-is the status chips in the web app (`dgraph/static/app.html:150`, predicate at
-`:362`).
+was the status chips in the web app.
 
 At demo size — six decisions, six tasks — you do not notice, because `dg show`
 fits on a screen and you can read it. The moment a graph outgrows a screen, the
@@ -41,7 +43,7 @@ questions that have no answer at all start to matter:
 - *What is still open underneath D04?*
 
 The last one is instructive: it is purely structural, the traversal for it
-already exists (`Graph.descendants`, `dgraph/model.py:256`), and there is still
+already exists (`Graph.descendants`, `dgraph/model.py:257`), and there is still
 no way to ask it. `dg tree D04` prints the subtree and you find the open ones
 with your eyes.
 
@@ -81,7 +83,7 @@ the schema, because it *is* the schema.
 
 **Every `is:` predicate delegates to a method that already exists.** `is:ready`
 calls `TaskGraph.ready`; it does not re-derive readiness. This is the rule
-`Graph.waiting_on` states in its own docstring (`dgraph/model.py:246`): one
+`Graph.waiting_on` states in its own docstring (`dgraph/model.py:247`): one
 implementation, because a vertex whose premises differ between two callers is
 exactly the disagreement this tool exists to prevent. A query language that
 re-implemented `ready` would be a second opinion about the graph, printed with
@@ -151,7 +153,16 @@ keystroke more and says what it means.
 
 Decisions: `id title area status note answer falsifier source date summary why`.
 
-Tasks: `id title area status note outcome why done`.
+Tasks: `id title area status note done outcome readings why`.
+
+`why` is the exception that proves the rule, and it arrived when parking did.
+It is no longer a field on `Task` — every reason work stopped lives in `stops`,
+appended and never cleared — but a searcher asking *why is this not being done*
+types `why:`, so the term is kept and answered out of that list. A hit in an
+entry that is not the live one is labelled `stopped earlier because`, exactly as
+a decision's archived answer is labelled `superseded answer`: both are reasons
+that stopped being true and are worth finding anyway. Retiring a working query
+to reflect a refactor would be the vocabulary drifting from what people ask.
 
 The two link fields are **not** in that list. `because` and `evidence_for` are
 withheld from the generic field table and re-offered as the structural terms
@@ -244,35 +255,77 @@ the positive form of a missing field simply never matches.
 surprised in a test. The fix then is not to change the logic but to say so in
 the output — a note that a term was vacuous for one of the stores.
 
-### `is:` — the table is the specification
+### `is:` — the table, and what guards it
 
-Each predicate names the callable it delegates to. This table is not
-documentation of the implementation; it is the implementation's only
-specification, and a test asserts every name on it resolves to a callable that
-exists, so it cannot quietly stop being true.
+Each predicate names the callable it delegates to.
+
+**This table is checked against the code**, and that sentence replaces one
+claiming the same thing while it was not true. Three links in the chain, and
+for a while only two existed:
+
+- **code → it works.** `test_every_predicate_delegates_to_something_that_exists`
+  walks each lens's own `predicates` dict and asserts every entry returns a
+  `bool` for every id. A predicate whose underlying method was renamed away
+  fails here.
+- **code ↔ the in-code list.** `query.DECISION_PREDICATES` and
+  `TASK_PREDICATES` exist so `cross.lenses` can name what a *missing* store
+  would have answered, and `test_the_predicate_lists_match_the_lenses` pins
+  them to the built lenses by set equality in both directions. That is the
+  implementation's real specification for the **base** predicates.
+- **code → this table.** `test_the_is_table_documents_every_predicate` parses
+  the rows below and compares them against `cross.lenses(g, tg)`, which is the
+  one call holding the base and the injected predicates together — the surface
+  `dg find` and `GET /api/find` are actually built on, so the table is held to
+  what a reader can type. Equality both ways: a row for a predicate that does
+  not exist sends somebody to write a query that exits 2, which is the same
+  defect pointing the other way.
+
+The third link was missing for as long as this section claimed to have it, and
+four rows went with it. `resolved` and `parked` are base predicates, so the
+second link forced them into the tuples — the code stayed consistent and the
+consistency stopped at the edge of the repository. `implemented` and
+`awaiting-evidence` are injected by `cross.lenses` and are in neither tuple, by
+design, so only the first link saw them at all. All four were legal, tested,
+and invisible from here.
+
+Worth naming what that was, since the document argues against it everywhere
+else: a second copy of a fact, in a place where nothing could tell it had gone
+stale. The rule this file states for `field:` — *no aliasing layer, so the
+vocabulary cannot drift from the schema* — is the one the `is:` table was
+exempt from, and the test is what ends the exemption.
 
 | `is:` | on decisions | on tasks |
 |---|---|---|
 | `settled` | `Vertex.settled` (`model.py:86`) | — |
-| `unsettled` | `Graph.frontier` (`model.py:309`) | — |
+| `unsettled` | `Graph.frontier` (`model.py:310`) | — |
 | `decidable` | unsettled, `waiting_on` empty, no running evidence (`brief.evidence_map`) | — |
+| `awaiting-evidence` | unsettled, with a live `evidence_for` task (`cross.pending_evidence`) | — |
+| `implemented` | has work resting on it (`cross.rests_on`) | — |
 | `provisional` | `base_status` | — |
 | `shaky` | `context.SHAKY` (`context.py:102`) | — |
 | `terminal` | `Edge.terminal` (`model.py:115`) | — |
-| `superseded` | `Graph.history` non-empty (`model.py:214`) | — |
-| `blocked` | `base_status == BLOCKED` | `TaskGraph.blocked` (`tasks.py:350`) |
+| `superseded` | `Graph.history` non-empty (`model.py:215`) | — |
+| `blocked` | `base_status == BLOCKED` | `TaskGraph.blocked` (`tasks.py:602`) |
 | `ready` | — | `TaskGraph.ready` ∧ not `cross.gated_by` |
-| `outstanding` | — | `Task.unfinished` (`tasks.py:125`) |
+| `outstanding` | — | `Task.unfinished` (`tasks.py:228`) |
+| `resolved` | — | `Task.resolved` — `DONE` or `DROPPED` |
+| `parked` | — | `Task.parked` |
 | `gated` | — | `cross.gated_by` (`cross.py:42`) |
-| `unharvested` | — | `cross.unharvested` (`cross.py:128`) |
-| `orphaned` | the `no_orphans` finding | `TaskGraph.abandoned_origins` (`tasks.py:331`) |
+| `unharvested` | — | `cross.unharvested` (`cross.py:212`) |
+| `orphaned` | the `no_orphans` finding | `TaskGraph.abandoned_origins` (`tasks.py:583`) |
+
+`awaiting-evidence` and `decidable` are the same partition of the frontier read
+from both sides, which is why they arrived together: an unsettled question is
+either waiting on a spike or it is answerable now. `parked` arrived with the
+status it names — a store that gained a way to stop work without abandoning it
+needs a way to ask which work that is.
 
 `is:blocked` computes differently in the two stores, and that is correct rather
 than a wart. It means *held up*, and the two stores are held up by different
 things: a decision by a premise it names in its status, a task by an unresolved
 prerequisite. One word, one meaning, two derivations — which is the same
 arrangement `dg areas` already makes when it prints two tables that share their
-areas and not their vocabularies (`dgraph/cli.py:601`).
+areas and not their vocabularies (`dgraph/cli.py:931`).
 
 `is:decidable` is the one predicate with no single existing method behind it,
 because it is the conjunction `dg show` already computes inline when it decides
@@ -284,13 +337,13 @@ improvement to `dg show` that falls out of doing this properly.
 
 | term | means | delegates to |
 |---|---|---|
-| `under:D04` | strict descendants | `Graph.descendants` (`model.py:256`) |
-| `above:D04` | strict ancestors | `Graph.ancestors` (`model.py:267`) |
+| `under:D04` | strict descendants | `Graph.descendants` (`model.py:257`) |
+| `above:D04` | strict ancestors | `Graph.ancestors` (`model.py:268`) |
 | `waits:D02` | rests on, directly | `Graph.depends` / `TaskGraph.prerequisites` |
 | `because:D04` | work justified by that decision | `cross.rests_on` — *injected* |
 | `evidence:D04` | work bearing on that decision | `cross.evidence` — *injected* |
 | `after:T02` | work downstream of that task | `TaskGraph.unblocks`, transitively |
-| `during:T02` | work that task turned up | `TaskGraph.prompted` (`tasks.py:294`) |
+| `during:T02` | work that task turned up | `TaskGraph.prompted` (`tasks.py:546`) |
 
 `because:` and `evidence:` are marked *injected* because they cross the barrier;
 see below. The rest read one store and live in `query.py`.
@@ -334,14 +387,14 @@ must not import `cross`") is simply false.
 **Importing `cross` is not the line.** Seven modules already do — `brief`,
 `check`, `applying`, `context`, `task_editor`, `cli`, `server` — and nine
 import both `model` and `tasks`. `test_only_cross_reasons_about_the_link`
-(`tests/test_cross.py:383`) says so outright: *"Aggregators (`cli`, `check`,
+(`test_only_cross_reasons_about_the_link`, `tests/test_cross.py`) says so outright: *"Aggregators (`cli`, `check`,
 `brief`) may load both stores — that is what composing a report means. What
 they must not do is decide what the link means."*
 
 So the barrier has two halves, and only the second one is about `query.py`:
 
 - The **structural** half — `model` and `tasks` cannot import each other
-  (`tests/test_cross.py:374`). That keeps either model from growing a
+  (`test_the_two_models_are_mutually_ignorant`, `tests/test_cross.py`). That keeps either model from growing a
   dependency on the other's vocabulary. `query.py` is not a model and this half
   does not constrain it.
 - The **semantic** half — every module outside the allowlist
@@ -447,6 +500,7 @@ check.
 ## The command
 
     dg find QUERY [--decisions | --tasks] [--full] [--json] [--ids] [--limit N]
+                  [--active]
 
 Both stores by default, with a labelled section each:
 
@@ -470,7 +524,7 @@ field that matched and a snippet of it* there because you are identifying. When
 the hit was in the title, the title is already the evidence, so the aside falls
 back to waits/unblocks and nothing is wasted.
 
-Ids are never clipped, per `README.md:235` — a listing you cannot follow up is
+Ids are never clipped, per the README's *“Ids are the exception to the clipping”* — a listing you cannot follow up is
 not a shorter listing, it is a worse one. Snippets clip through
 `compact.clip`.
 
@@ -505,9 +559,18 @@ reporting them as withheld.
 
 `--full` gives the table, clipping nothing, as everywhere else.
 
+`--active` arrived after the rest, with the archive. `answer:`, `falsifier:` and
+`source:` read a decision's **superseded** edges as well as its active one, and
+label a hit `superseded answer:` where it landed there — because a reversal's
+reasoning is often the only place a rejected approach is written down, and a
+search that could not reach it would send the reader back to `dg export`.
+`--active` narrows them to the answer that currently stands. The default is the
+archive for the same reason the store keeps it: the question *was this already
+tried?* is answered by the edges nobody is standing on any more.
+
 **Exit codes** are 0 for matches, 1 for none, 2 for a query that cannot be
 answered as asked. `dg path` already exits 1 when there is no path
-(`cli.py:535`), so "the question was well formed and the answer is empty"
+(`cli.path`, `dgraph/cli.py:866`), so "the question was well formed and the answer is empty"
 already has a code, and a script can say
 `dg find X >/dev/null && echo "already settled"`.
 
@@ -553,15 +616,16 @@ reason.
 
 ## The other consumers
 
-The engine is worth more than the command, because there are three other places
-that need exactly this and currently have nothing.
+The engine is worth more than the command, because there were three other places
+that needed exactly this and had nothing. All three have it now.
 
-**The web app** gets a search box over `GET /api/find?q=`. The existing status
-chips become sugar that writes `status:X` into that box, so the page has one
-predicate instead of two. This also fixes a live bug: `filter.status` is a
-single `Set` shared by both the decisions and the tasks tab
-(`app.html:150`, used at `:363` and `:369`), so selecting `DECIDED` and
-switching to tasks currently hides everything until you notice and untoggle it.
+**The web app** has a search box over `GET /api/find?q=`. The status chips and
+`frontier only` became sugar that write `status:X` and the frontier predicate
+into that box, so the page has one filter and it is a query string
+(`app.html`, `QUERY` and `syncChips`). That also killed a live bug: `filter.status`
+had been a single `Set` shared by both the decisions and the tasks tab, so
+selecting `DECIDED` and switching to tasks hid everything until you noticed and
+untoggled it. One filter cannot have that failure.
 
 **And it is the read route that requires the token**, which moved a line this
 project had drawn elsewhere. `server.py` guarded on GET versus POST, on the
@@ -579,11 +643,11 @@ a preflight this server never answers. The page therefore sends `X-DG-Token` on
 every request rather than only the mutating ones, so the next route of this kind
 is covered when it is written rather than when somebody notices.
 
-**A `/dg:find` slash command**, one file in `commands/` for both hosts, wrapping
-`dg find $ARGUMENTS`. An agent asked "did we already decide this?" currently has
-`dg show` and hope.
+**A `/dg:find` slash command** — `commands/find.md`, one file for both hosts,
+wrapping `dg find $ARGUMENTS`. Before it, an agent asked "did we already decide
+this?" had `dg show` and hope.
 
-**`skills/dear-guide/SKILL.md`** gains one row in its reading table.
+**`skills/dear-guide/SKILL.md`** gained one row in its reading table.
 
 **`dg brief` does not get a search.** It is a fixed payload injected into every
 session; a query surface on it would be a query surface nobody typed.
@@ -604,7 +668,7 @@ to that question. A ranking that does not truncate only changes the row order.
 
 *Id order is time order, and it is stable.* Ids are allocated monotonically, so
 sorting by id is roughly sorting by when the question was asked, and the store
-already sorts by `(area, id)` (`Graph.to_dict`, `dgraph/model.py:171`). That
+already sorts by `(area, id)` (`Graph.to_dict`, `dgraph/model.py:172`). That
 order is predictable, which is what lets you run a query, change something, run
 it again and read the difference. A relevance order does not have that
 property: it reshuffles on edits to the *store* rather than to the matched set,
@@ -698,21 +762,31 @@ command resolves an id.
 
 ## What building it has to satisfy
 
-Not a checklist of good intentions — these are existing tests that will fail.
+Not a checklist of good intentions — these were existing tests that would fail,
+and they are named rather than cited by line so that they stay findable:
 
 - A `LAYOUT` entry under `READ` with a matching `rich_help_panel`
-  (`tests/test_cli.py:1611`, `:1632`), and a panel role that agrees across both
-  help screens (`:1644`, `:1685`).
+  (`test_every_command_is_in_a_help_panel`,
+  `test_each_command_declares_the_panel_the_layout_puts_it_in`), and a panel
+  role that agrees across both help screens
+  (`test_the_two_help_screens_agree_on_what_a_heading_means`,
+  `test_every_panel_on_both_screens_has_a_role`) — all in `tests/test_cli.py`.
 - The declared panel order and within-panel order must render
-  (`tests/test_cli.py:1701`, `:1783`).
+  (`test_the_help_renders_the_panels_in_the_declared_order`,
+  `test_the_order_inside_a_panel_is_the_order_you_meet_them`).
 - `tests/test_query.py` in the `tests/test_context.py` idiom: the pure
   `parse`/`select` walk tested directly, the CLI rendering tested separately,
   and an assertion that the text and `--json` forms come from the same walk.
-- A test over the `is:` table asserting every name resolves to a callable that
-  exists — the one claim in this document that could silently stop being true.
-- If the slash command ships, the plugin tests apply: frontmatter keys,
+- A test asserting every predicate delegates to something that exists — which
+  landed as `test_every_predicate_delegates_to_something_that_exists`, over the
+  lens's own dict rather than over the `is:` table above. That left the table
+  itself unguarded, and it is the one claim in this document that did silently
+  stop being true; `test_the_is_table_documents_every_predicate` closes it, and
+  *§`is:` — the table, and what guards it* has the account.
+- The plugin tests, which `commands/find.md` now sits under: frontmatter keys,
   `allowed-tools` covering every `!` block, and no subcommand named that does
-  not exist (`tests/test_plugin.py:150`–`:200`).
+  not exist (`test_command_mentions_only_subcommands_that_exist`,
+  `tests/test_plugin.py`).
 
 ## A note on this repository
 
