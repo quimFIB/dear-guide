@@ -419,9 +419,13 @@ In emacs you also get:
 | `C-c d p` · `C-c d a` | jump to a premise · list every premise it rests on |
 | `C-c d v` | look up any decision by id, with completion over the graph |
 
-The navigation keys are bound only in a buffer that names a vertex to walk
-from, and each buffer's header lists what it actually has — checked both ways,
-so a key cannot be advertised without working or bound without being named.
+The last three are gated on what they actually need, and the two needs differ:
+`p` and `a` resolve the vertex this buffer is composing, so they appear only
+where there is one; `v` prompts over the whole graph, so it appears wherever
+there is a decision store to read — including `dg add` and the task buffers,
+which have no premise to walk to and are therefore where looking one up is
+worth most. Each buffer's header lists what it has, checked both ways, so a key
+cannot be advertised without working or bound without being named.
 
 **They sit under `C-c d` rather than `C-c C-…` because this is an org buffer**,
 and `C-c C-<letter>` is org's namespace: taking `C-c C-v` would shadow the

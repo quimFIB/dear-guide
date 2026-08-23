@@ -52,6 +52,15 @@
       (getenv "DG_PROJECT")
       default-directory))
 
+(defun dgraph--decisions-p ()
+  "Whether this project has a decision store for `dg export' to read.
+
+A file test rather than a probe: running `dg export' to find out would pay a
+subprocess on every buffer, and would report a store that exists but is broken
+as one that is not there.  `decisions.json' is the store's name and has been
+through both renames unchanged, which is what makes naming it here safe."
+  (file-exists-p (expand-file-name "decisions.json" (dgraph--project))))
+
 (defun dgraph--dg (&rest args)
   "Run `dg' with ARGS and return stdout.  Read-only subcommands only."
   (unless (member (car args) dgraph-readonly-commands)
@@ -292,17 +301,25 @@ Context subtree can hold source blocks.  `C-c C-p' and `C-c C-a' cost
 So the navigation keys moved here and org keeps all three.  What did not move
 is C-c C-c and C-c C-k, which are worth their shadow and say so above.")
 
-(defvar dgraph-walk-map
-  (let ((m (make-sparse-keymap)))
-    (define-key m (kbd "p") #'dgraph-parent)
-    (define-key m (kbd "a") #'dgraph-ancestors)
-    (define-key m (kbd "v") #'dgraph-visit)
-    m)
-  "Navigation keys, under `dgraph-prefix'.
+(defconst dgraph-prefix-keys
+  '(("v" dgraph-visit    store)
+    ("p" dgraph-parent   vertex)
+    ("a" dgraph-ancestors vertex))
+  "The keys under `dgraph-prefix', each with what it needs to work.
 
-Bound per buffer rather than in `dgraph-edit-mode-map', because all three read
-`:DGRAPH_VERTEX:' and a buffer composing a decision that does not exist yet
-has none to read.")
+One declaration rather than a keymap per condition, so that adding a key means
+saying what it requires and nothing else.  The mode builds a fresh map per
+buffer from this; a shared keymap mutated per buffer would leak one buffer's
+bindings into the next.
+
+Two requirements, and the difference is the bug this shape exists to have
+fixed.  `store' means a readable decision store, which is all
+`dgraph-visit' needs — it prompts with completion over the whole graph.
+`vertex' means `:DGRAPH_VERTEX:' names a decision that exists, which
+`dgraph-parent' and `dgraph-ancestors' resolve against.  `v' was gated on
+`vertex' with the other two for a long time, so it was absent from `dg add'
+and both task buffers — precisely the buffers with no premise to walk to, and
+therefore the ones where looking a decision up is worth most.")
 
 (defun dgraph--protect-context ()
   "Make the `* Context' subtree read-only.
@@ -329,8 +346,20 @@ nothing."
     ;; and `dgraph--every-bound-key-is-advertised' checks it in both
     ;; directions — `C-c C-v' was bound here for a long time and named in no
     ;; header, which is the half that used to be unwatched.
-    (when (dgraph--walkable)
-      (local-set-key (kbd dgraph-prefix) dgraph-walk-map))
+    ;;
+    ;; Both conditions are read from the world — the store from the disk, the
+    ;; vertex from this buffer — rather than from the header.  So what the
+    ;; test checks is two independent readings of the same fact agreeing, not
+    ;; a copy of a decision taken elsewhere.
+    (let ((have (list (and (dgraph--decisions-p) 'store)
+                      (and (dgraph--decisions-p) (dgraph--walkable) 'vertex)))
+          (m (make-sparse-keymap))
+          (any nil))
+      (pcase-dolist (`(,key ,cmd ,needs) dgraph-prefix-keys)
+        (when (memq needs have)
+          (define-key m (kbd key) cmd)
+          (setq any t)))
+      (when any (local-set-key (kbd dgraph-prefix) m)))
     (setq-local org-startup-folded nil)
     (dgraph--protect-context)
     (org-fold-hide-sublevels 1)
@@ -402,7 +431,8 @@ that introduced the editor until somebody read the two lists side by side."
   "Assert the file loaded coherently.  Run by the test suite."
   (dolist (sym '(dgraph-finish dgraph-abort dgraph-parent dgraph-ancestors
                  dgraph-visit dgraph-edit-mode dgraph--walkable dgraph--op
-                 dgraph--advertised-keys))
+                 dgraph--advertised-keys dgraph--bound-keys
+                 dgraph--decisions-p dgraph--every-bound-key-is-advertised))
     (unless (fboundp sym) (error "missing: %s" sym)))
   (unless (org-link-get-parameter "dg" :follow)
     (error "the dg: link type did not register"))

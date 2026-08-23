@@ -353,10 +353,10 @@ In emacs you also get `C-c C-c` to stage, `C-c C-k` to abort, `C-c C-o` to
 follow a `dg:` link to another decision, and three navigation keys under
 `C-c d`: `p` for a premise, `a` for every premise this rests on, `v` to look up
 any decision by id. They live under their own prefix so that org keeps its
-`C-c C-<letter>` keys — `C-c C-v` alone is org-babel's whole prefix map. The
-navigation keys are bound per buffer, so each header lists only what that
-buffer actually has. Any editor works via `$DG_EDITOR`; you get the same buffer
-without the navigation.
+`C-c C-<letter>` keys — `C-c C-v` alone is org-babel's whole prefix map. Each
+header lists only what that buffer has: `p` and `a` need the decision this
+buffer is composing, `v` only needs a decision store to read. Any editor works
+via `$DG_EDITOR`; you get the same buffer without the navigation.
 
 Work has its own templates rather than the decision one relabelled. `dg task
 done --edit` is `** Outcome` alone, with what the task unblocks and the

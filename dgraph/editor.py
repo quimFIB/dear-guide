@@ -61,21 +61,28 @@ _CHECKED = re.compile(r"^[ \t]*[-+*][ \t]+\[[Xx]\][ \t]+(D\d+)", re.M)
 #: the `dg:` link type makes work everywhere.
 _KEYS_ALWAYS = "#   C-c C-o  follow a dg: link"
 
-#: ...and the three that only a buffer with premises to walk can offer.
-#: `dgraph-parent`, `dgraph-ancestors` and `dgraph-visit` read
-#: `:DGRAPH_VERTEX:`, so a buffer without one — `dg add`, and both task
-#: buffers — had them bound to an error and advertised in its own header.
-#: Interface audit F8: the header is the only documentation these keys have,
-#: and it was documenting what they could not do. Written by `_header`'s
-#: caller rather than assumed, so a new buffer kind has to say which it is.
+#: ...and the two that only a buffer with premises to walk can offer.
+#: `dgraph-parent` and `dgraph-ancestors` resolve `:DGRAPH_VERTEX:`, so a
+#: buffer without one — `dg add`, and both task buffers — had them bound to an
+#: error and advertised in its own header. Interface audit F8: the header is
+#: the only documentation these keys have, and it was documenting what they
+#: could not do. Written by `_header`'s caller rather than assumed, so a new
+#: buffer kind has to say which it is.
 #:
 #: Under `C-c d` rather than `C-c C-<letter>`, because this is an org buffer
 #: and the mode namespace is org's: the old `C-c C-v` shadowed the entire
 #: `org-babel` prefix map. `dgraph-prefix` in `dgraph.el` has the argument.
-#: This line and the bindings are checked against each other in both
-#: directions — the reverse check is why `visit` appears here at all, having
-#: been bound and unnamed since the editor was written.
-_KEYS_WALK = "\n#   C-c d p  premise    C-c d a  ancestors    C-c d v  any decision"
+_KEYS_WALK = "      C-c d p  premise      C-c d a  ancestors"
+
+#: `dgraph-visit` is the one navigation key that does **not** need a vertex:
+#: it prompts with completion over the whole graph and shows whatever is
+#: picked. So it was gated on the wrong condition — bound beside the two above
+#: and therefore absent from `dg add` and both task buffers, which is where
+#: looking a decision up is *most* useful, since those are the buffers with no
+#: premise to walk to. What it does need is a decision store to read, because
+#: `dgraph.el` reaches it through `dg export`; a tasks-only project has none,
+#: and advertising a key that would error is the F8 shape again.
+_KEYS_VISIT = "\n#   C-c d v  look up any decision"
 
 _HEADER = """\
 # -*- mode: org; -*-
@@ -97,13 +104,19 @@ def _props(d: dict[str, str]) -> str:
     return "\n".join(f":DGRAPH_{k.upper()}: {v}" for k, v in d.items() if v is not None)
 
 
-def _header(title: str, **props: str) -> str:
+def _header(title: str, *, decisions: bool = True, **props: str) -> str:
+    """The buffer preamble. `decisions` says whether a decision store exists.
+
+    Two independent conditions, because the keys need different things. The
+    walk keys need a *vertex* — `dg add` composes one that does not exist yet,
+    so it has no premises to offer. `visit` needs only a *store*, which every
+    decision buffer has and a task buffer in a tasks-only project does not.
+    """
     return _HEADER.format(
         title=title,
-        # The walk keys only where there is a vertex to walk from. `dg add`
-        # composes a decision that does not exist yet, so it has no premises
-        # in the graph to offer.
-        keys=_KEYS_ALWAYS + (_KEYS_WALK if props.get("vertex") else ""),
+        keys=_KEYS_ALWAYS
+        + (_KEYS_WALK if props.get("vertex") else "")
+        + (_KEYS_VISIT if decisions else ""),
         todo=" ".join(s for s in STATUSES if s != "DECIDED"),
         done="DECIDED",
         props=_props(props),

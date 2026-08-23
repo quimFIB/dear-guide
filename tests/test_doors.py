@@ -1160,6 +1160,28 @@ BUFFERS = [
 ]
 
 
+#: The two key shapes a header can carry, matching `dgraph--advertised-keys`.
+_KEY_RE = re.compile(r"C-c (?:C-[a-z]|d [a-z])")
+
+
+def _keys(*fragments):
+    """The keys named in a header fragment, read off `editor.py` itself.
+
+    Derived rather than restated. Before this the vocabulary lived in three
+    places — `dgraph-prefix-keys`, the header constants, and a row of string
+    literals in this file — and only the first two were checked against each
+    other, so the copy here could say anything.
+    """
+    from dgraph import editor
+    return {k for f in fragments for k in _KEY_RE.findall(getattr(editor, f))}
+
+
+WALK_KEYS = _keys("_KEYS_WALK")
+VISIT_KEYS = _keys("_KEYS_VISIT")
+#: What may legitimately sit in org's own `C-c C-<letter>` namespace.
+MODE_CTRL_KEYS = _keys("_HEADER", "_KEYS_ALWAYS")
+
+
 def _buffer(kind, root):
     from dgraph import editor as ed, task_editor as ted
     g, tg = Graph.load(), TaskGraph.load(root / "tasks.json")
@@ -1195,25 +1217,56 @@ def test_a_buffer_advertises_only_keys_that_work_in_it(both, kind, walkable):
          str(buf)],
         capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
-    advertised = r.stdout.strip().splitlines()[-1]
-    # All three walk keys, not two: `C-c d v` (`dgraph-visit`) was bound in
-    # every walkable buffer and named in none, and the fixture's second
-    # direction is what now refuses that. Asserting it here as well keeps the
-    # walkable/not-walkable split honest for it too.
-    assert ("C-c d p" in advertised) is walkable, advertised
-    assert ("C-c d a" in advertised) is walkable, advertised
-    assert ("C-c d v" in advertised) is walkable, advertised
+    advertised = set(_KEY_RE.findall(r.stdout.strip().splitlines()[-1]))
+
+    # The two gates are independent, and the expected sets come from
+    # `editor.py` rather than being spelled out again here — the vocabulary was
+    # written down three times before this (the keymap, the header, and a row
+    # of literals in this file), and the third copy agreed with nothing.
+    assert (WALK_KEYS <= advertised) is walkable, advertised
+    # `both` has a decision store, so every kind offers `visit` — including the
+    # two that are not walkable, which is the whole point of the second gate:
+    # a buffer with no premise to walk to is where looking one up is worth
+    # most, and it was the buffer that did not offer it.
+    assert VISIT_KEYS <= advertised, advertised
+    if not walkable:
+        assert not WALK_KEYS & advertised, advertised
+
     # The navigation keys live under `C-c d` so that org keeps its own
     # `C-c C-<letter>` namespace — `C-c C-v` alone is org-babel's whole prefix
-    # map. Only the two commit-buffer keys shadow org now, and they are argued
-    # for in `dgraph-edit-mode-map`.
-    assert "C-c C-p" not in advertised, advertised
-    assert "C-c C-a" not in advertised, advertised
-    assert "C-c C-v" not in advertised, advertised
-    # C-c C-o is org's own `org-open-at-point`, and the `dg:` link type makes
-    # it work in every buffer — including the task ones, whose Context names
-    # the decision they point at.
-    assert "C-c C-o" in advertised
+    # map. Only the keys the header itself names may appear there: the two
+    # commit-buffer keys, argued for in `dgraph-edit-mode-map`, and `C-c C-o`,
+    # which is org's own `org-open-at-point` reached through the `dg:` link
+    # type and therefore works in the task buffers too.
+    assert {k for k in advertised if k.startswith("C-c C-")} == MODE_CTRL_KEYS
+
+
+@pytest.mark.skipif(shutil.which("emacs") is None, reason="emacs not installed")
+def test_a_tasks_only_project_offers_no_navigation_at_all(task_store):
+    """`visit` needs a decision store; a project tracking only work has none.
+
+    The other half of the gate above. `dgraph.el` reaches decisions through
+    `dg export`, which fails here, so advertising the key would bind it to an
+    error — interface audit F8's shape, arrived at from the opposite side.
+    """
+    from dgraph.tasks import TaskGraph
+    from dgraph import task_editor as ted
+
+    buf = task_store / ".dgraph-edit.org"
+    buf.write_text(ted.render_add(TaskGraph.load(task_store / "tasks.json"),
+                                  None), encoding="utf-8")
+    r = subprocess.run(
+        ["emacs", "-batch",
+         "-l", str(Path(__file__).resolve().parents[1]
+                   / "dgraph" / "elisp" / "dgraph.el"),
+         "-l", str(Path(__file__).resolve().parent
+                   / "fixtures" / "advertised_keys.el"),
+         str(buf)],
+        capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    advertised = set(_KEY_RE.findall(r.stdout.strip().splitlines()[-1]))
+    assert not (WALK_KEYS | VISIT_KEYS) & advertised, advertised
+    assert advertised == MODE_CTRL_KEYS, advertised
 
 
 @pytest.mark.skipif(shutil.which("emacs") is None, reason="emacs not installed")

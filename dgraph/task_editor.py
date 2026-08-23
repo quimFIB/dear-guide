@@ -38,23 +38,34 @@ from dgraph.task_pending import PROSE
 from dgraph.tasks import ID_RE, RESOLVED, STATUSES, UNFINISHED, TaskGraph
 
 
-def _header(title: str, **props: str) -> str:
+def _header(title: str, *, decisions: bool = False, **props: str) -> str:
     """`editor._header` with the task store's keywords.
 
     Built from the model's own status lists rather than spelled out again. Org
     colours the keywords it is told about, and the buffer is the one place a
     writer types a status by hand: a line naming a status the store does not
     have, or missing one it does, is wrong exactly where being wrong shows.
+
+    `decisions` is whether this project has a decision store, which decides
+    one key: see the `keys` argument below.
     """
     return editor._HEADER.format(
         title=title,
-        # No walk keys, ever. `dgraph.el` reads the decision store and only
+        # No *walk* keys, ever. `dgraph.el` reads the decision store and only
         # that: `dgraph-readonly-commands` is `("export")` and the guard tests
         # the first argument, so `dg task export` is refused as `dg task` and
-        # the file cannot reach this store at all. Advertising `C-c C-p` here
+        # the file cannot reach this store at all. Advertising `C-c d p` here
         # bound it to "This buffer is not composing a decision", which is both
         # an error and, in a task buffer, a confusing one.
-        keys=editor._KEYS_ALWAYS,
+        #
+        # `C-c d v` is the exception, and it took a while to see. It looks up a
+        # *decision*, which is the other store — the one `dgraph.el` can read.
+        # A task buffer names the decision it is `because` of right there in
+        # its Context, so this is the buffer where wanting to read one is most
+        # likely, and it was the buffer that did not offer it. Only where that
+        # store exists: a tasks-only project would bind it to a failing
+        # `dg export`.
+        keys=editor._KEYS_ALWAYS + (editor._KEYS_VISIT if decisions else ""),
         todo=" ".join(s for s in STATUSES if s in UNFINISHED),
         done=" ".join(s for s in STATUSES if s in RESOLVED),
         props=editor._props(props),
@@ -142,6 +153,7 @@ def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
     ready = [t for t in sorted(tg.tasks) if tg.ready(t)]
     return (
         _header("dg task add — a new task", op="add_task",
+                decisions=g is not None,
                 project=str(project.find().root))
         + "\n* Input\n"
         + editor._field("Id", f"Like T07. Next unused: {nxt}",
@@ -204,6 +216,7 @@ def render_done(tg: TaskGraph, g: Graph | None, tid: str,
     waiting = tg.waiting_on(tid)
     return (
         _header(f"dg task done {tid} — {t.title}", op="set_status", task=tid,
+                decisions=g is not None,
                 status="DONE",
                 project=str(project.find().root),
                 date=seed.get("done") or _date.today().isoformat())

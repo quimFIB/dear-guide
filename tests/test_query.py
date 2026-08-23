@@ -196,6 +196,11 @@ QUERY_DOC = Path(__file__).resolve().parents[1] / "docs" / "query-framework.md"
 #: columns, which is that table's shape and no other table's in the file.
 _IS_ROW = re.compile(r"^\| `([a-z-]+)` \| (.+?) \| (.+?) \|$", re.M)
 
+#: The structural-terms table, whose first cell carries an argument
+#: (`under:D04`) and so cannot match `_IS_ROW`.
+_TERM_ROW = re.compile(
+    r"^\| `([a-z]+:[A-Za-z0-9]+)` \| (.+?) \| (.+?) \|$", re.M)
+
 
 def documented_predicates() -> dict[str, set[str]]:
     """The `is:` table, read out of the document rather than restated here.
@@ -215,6 +220,57 @@ def documented_predicates() -> dict[str, set[str]]:
         if tasks.strip() != "—":
             out["tasks"].add(name)
     return out
+
+
+#: A `Class.attr` or `module.func` in backticks — what the tables cite as the
+#: thing a term delegates to. `(?!py`)` keeps the `` `model.py` `` pointers
+#: beside them out: those name the file a symbol lives in, not a symbol.
+_SYMBOL = re.compile(r"`([A-Za-z_]+\.(?!py`)[A-Za-z_]+)`")
+
+#: Where an unqualified name in those citations lives. The tables write
+#: `Vertex.settled`, not `dgraph.model.Vertex.settled`, because the prose reads
+#: better; this is the one place that shorthand is expanded.
+_HOMES = ("dgraph.model", "dgraph.tasks", "dgraph.cross", "dgraph.query",
+          "dgraph.context", "dgraph.brief", "dgraph.compact")
+
+
+def _resolves(dotted: str) -> bool:
+    """Whether `Class.attr` / `module.func` names something that exists."""
+    import importlib
+
+    owner, _, attr = dotted.partition(".")
+    for home in _HOMES:
+        mod = importlib.import_module(home)
+        if home.rsplit(".", 1)[-1] == owner:          # `cross.gated_by`
+            if hasattr(mod, attr):
+                return True
+        target = getattr(mod, owner, None)            # `Vertex.settled`
+        if target is not None and hasattr(target, attr):
+            return True
+    return False
+
+
+def test_the_tables_delegate_to_things_that_exist():
+    """The *other* two columns: what each term claims to delegate to.
+
+    `test_the_is_table_documents_every_predicate` pins the term names. This
+    pins the rest of the row, which was prose nothing read — and it had already
+    rotted once: seventeen `file:line` citations in this document pointed at
+    the wrong lines, `tasks.py:350` naming `TaskGraph.blocked` when it had
+    moved to 602.
+
+    The line numbers are gone now, because a citation that has to be re-checked
+    on every edit is one that will not be. A symbol is the durable half: it
+    survives the code moving, and it is the half a reader actually follows.
+    """
+    doc = QUERY_DOC.read_text(encoding="utf-8")
+    rows = _IS_ROW.findall(doc) + _TERM_ROW.findall(doc)
+    cited = {s for row in rows for cell in row[1:]
+             for s in _SYMBOL.findall(cell)}
+    assert cited, "no delegate symbols found — did the tables change shape?"
+    missing = sorted(s for s in cited if not _resolves(s))
+    assert not missing, (
+        f"{QUERY_DOC.name} names symbols that do not exist: {missing}")
 
 
 def test_the_is_table_documents_every_predicate(g, tg):

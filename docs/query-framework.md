@@ -43,13 +43,13 @@ questions that have no answer at all start to matter:
 - *What is still open underneath D04?*
 
 The last one is instructive: it is purely structural, the traversal for it
-already exists (`Graph.descendants`, `dgraph/model.py:257`), and there is still
+already exists (`Graph.descendants`, `dgraph/model.py`), and there is still
 no way to ask it. `dg tree D04` prints the subtree and you find the open ones
 with your eyes.
 
 What is *not* missing is worth stating, because it bounds the problem. Asking
 what work a decision prompted is already answerable — `cross.rests_on`
-(`dgraph/cross.py:27`), surfaced by `dg task` and `dg context`. The graph's
+(`dgraph/cross.py`), surfaced by `dg task` and `dg context`. The graph's
 relations are well served. It is its **contents** that are unreachable.
 
 ## The shape of the answer
@@ -72,7 +72,7 @@ This is the constraint everything else follows from. `dg find` selects rows; it
 does not invent a way of looking at them. Three rules make that concrete, and
 each is a rule this codebase already lives by elsewhere.
 
-**Output goes through `compact.listing`** (`dgraph/compact.py:160`) — the same
+**Output goes through `compact.listing`** (`dgraph/compact.py`) — the same
 renderer behind `dg show` and `dg task`. A result row looks like a frontier row
 because it *is* a frontier row, selected differently.
 
@@ -83,7 +83,7 @@ the schema, because it *is* the schema.
 
 **Every `is:` predicate delegates to a method that already exists.** `is:ready`
 calls `TaskGraph.ready`; it does not re-derive readiness. This is the rule
-`Graph.waiting_on` states in its own docstring (`dgraph/model.py:247`): one
+`Graph.waiting_on` states in its own docstring (`dgraph/model.py`): one
 implementation, because a vertex whose premises differ between two callers is
 exactly the disagreement this tool exists to prevent. A query language that
 re-implemented `ready` would be a second opinion about the graph, printed with
@@ -272,13 +272,22 @@ for a while only two existed:
   would have answered, and `test_the_predicate_lists_match_the_lenses` pins
   them to the built lenses by set equality in both directions. That is the
   implementation's real specification for the **base** predicates.
-- **code → this table.** `test_the_is_table_documents_every_predicate` parses
-  the rows below and compares them against `cross.lenses(g, tg)`, which is the
-  one call holding the base and the injected predicates together — the surface
+- **code → this table.** Two tests, one per half of a row.
+  `test_the_is_table_documents_every_predicate` parses the rows below and
+  compares the **term names** against `cross.lenses(g, tg)`, which is the one
+  call holding the base and the injected predicates together — the surface
   `dg find` and `GET /api/find` are actually built on, so the table is held to
   what a reader can type. Equality both ways: a row for a predicate that does
   not exist sends somebody to write a query that exits 2, which is the same
-  defect pointing the other way.
+  defect pointing the other way. `test_the_tables_delegate_to_things_that_exist`
+  then resolves every **symbol** the other columns cite, here and in the
+  structural-terms table below.
+
+There were `file:line` citations here once, and they are gone. Seventeen of
+them had rotted — `tasks.py:350` naming `TaskGraph.blocked` after it moved to
+602 — which is what a reference needing re-verification on every edit does. The
+symbol is the durable half, and the half a reader follows; the module beside it
+narrows the search without pretending to precision it cannot keep.
 
 The third link was missing for as long as this section claimed to have it, and
 four rows went with it. `resolved` and `parked` are base predicates, so the
@@ -296,23 +305,23 @@ exempt from, and the test is what ends the exemption.
 
 | `is:` | on decisions | on tasks |
 |---|---|---|
-| `settled` | `Vertex.settled` (`model.py:86`) | — |
-| `unsettled` | `Graph.frontier` (`model.py:310`) | — |
+| `settled` | `Vertex.settled` (`model.py`) | — |
+| `unsettled` | `Graph.frontier` (`model.py`) | — |
 | `decidable` | unsettled, `waiting_on` empty, no running evidence (`brief.evidence_map`) | — |
 | `awaiting-evidence` | unsettled, with a live `evidence_for` task (`cross.pending_evidence`) | — |
 | `implemented` | has work resting on it (`cross.rests_on`) | — |
 | `provisional` | `base_status` | — |
-| `shaky` | `context.SHAKY` (`context.py:102`) | — |
-| `terminal` | `Edge.terminal` (`model.py:115`) | — |
-| `superseded` | `Graph.history` non-empty (`model.py:215`) | — |
-| `blocked` | `base_status == BLOCKED` | `TaskGraph.blocked` (`tasks.py:602`) |
+| `shaky` | `context.SHAKY` (`context.py`) | — |
+| `terminal` | `Edge.terminal` (`model.py`) | — |
+| `superseded` | `Graph.history` non-empty (`model.py`) | — |
+| `blocked` | `base_status == BLOCKED` | `TaskGraph.blocked` (`tasks.py`) |
 | `ready` | — | `TaskGraph.ready` ∧ not `cross.gated_by` |
-| `outstanding` | — | `Task.unfinished` (`tasks.py:228`) |
+| `outstanding` | — | `Task.unfinished` (`tasks.py`) |
 | `resolved` | — | `Task.resolved` — `DONE` or `DROPPED` |
 | `parked` | — | `Task.parked` |
-| `gated` | — | `cross.gated_by` (`cross.py:42`) |
-| `unharvested` | — | `cross.unharvested` (`cross.py:212`) |
-| `orphaned` | the `no_orphans` finding | `TaskGraph.abandoned_origins` (`tasks.py:583`) |
+| `gated` | — | `cross.gated_by` (`cross.py`) |
+| `unharvested` | — | `cross.unharvested` (`cross.py`) |
+| `orphaned` | the `no_orphans` finding | `TaskGraph.abandoned_origins` (`tasks.py`) |
 
 `awaiting-evidence` and `decidable` are the same partition of the frontier read
 from both sides, which is why they arrived together: an unsettled question is
@@ -325,7 +334,7 @@ than a wart. It means *held up*, and the two stores are held up by different
 things: a decision by a premise it names in its status, a task by an unresolved
 prerequisite. One word, one meaning, two derivations — which is the same
 arrangement `dg areas` already makes when it prints two tables that share their
-areas and not their vocabularies (`dgraph/cli.py:931`).
+areas and not their vocabularies (`dgraph/cli.py`).
 
 `is:decidable` is the one predicate with no single existing method behind it,
 because it is the conjunction `dg show` already computes inline when it decides
@@ -337,13 +346,13 @@ improvement to `dg show` that falls out of doing this properly.
 
 | term | means | delegates to |
 |---|---|---|
-| `under:D04` | strict descendants | `Graph.descendants` (`model.py:257`) |
-| `above:D04` | strict ancestors | `Graph.ancestors` (`model.py:268`) |
+| `under:D04` | strict descendants | `Graph.descendants` (`model.py`) |
+| `above:D04` | strict ancestors | `Graph.ancestors` (`model.py`) |
 | `waits:D02` | rests on, directly | `Graph.depends` / `TaskGraph.prerequisites` |
 | `because:D04` | work justified by that decision | `cross.rests_on` — *injected* |
 | `evidence:D04` | work bearing on that decision | `cross.evidence` — *injected* |
 | `after:T02` | work downstream of that task | `TaskGraph.unblocks`, transitively |
-| `during:T02` | work that task turned up | `TaskGraph.prompted` (`tasks.py:546`) |
+| `during:T02` | work that task turned up | `TaskGraph.prompted` (`tasks.py`) |
 
 `because:` and `evidence:` are marked *injected* because they cross the barrier;
 see below. The rest read one store and live in `query.py`.
@@ -551,7 +560,7 @@ perfectly good answer. A fault under `--json` is reported *as* json,
 should not have to parse a caret diagram to find out why.
 
 `--limit`, default 20 per section, with a `compact.hint` line saying how many
-were withheld. `dgraph/brief.py:88` makes the general rule: output that agents
+were withheld. `dgraph/brief.py` makes the general rule: output that agents
 pay for in tokens has to stay roughly flat as the store grows. It counts rows,
 so it starts at 1 — `--full` is how to ask for all of them, which leaves
 nothing for a `0` to mean, and a negative once sliced rows off the *end* while
@@ -570,7 +579,8 @@ tried?* is answered by the edges nobody is standing on any more.
 
 **Exit codes** are 0 for matches, 1 for none, 2 for a query that cannot be
 answered as asked. `dg path` already exits 1 when there is no path
-(`cli.path`, `dgraph/cli.py:866`), so "the question was well formed and the answer is empty"
+(`cli.path`, `dgraph/cli.py`), so "the question was well formed and the
+answer is empty"
 already has a code, and a script can say
 `dg find X >/dev/null && echo "already settled"`.
 
@@ -668,7 +678,7 @@ to that question. A ranking that does not truncate only changes the row order.
 
 *Id order is time order, and it is stable.* Ids are allocated monotonically, so
 sorting by id is roughly sorting by when the question was asked, and the store
-already sorts by `(area, id)` (`Graph.to_dict`, `dgraph/model.py:172`). That
+already sorts by `(area, id)` (`Graph.to_dict`, `dgraph/model.py`). That
 order is predictable, which is what lets you run a query, change something, run
 it again and read the difference. A relevance order does not have that
 property: it reshuffles on edits to the *store* rather than to the matched set,
