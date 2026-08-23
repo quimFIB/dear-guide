@@ -254,6 +254,16 @@ a finished `--evidence-for` task's decision is still unsettled — that second o
 means a benchmark ran and its conclusion was never recorded. Both are warnings and
 never block a commit.
 
+It also warns when evidence lands *after* the answer was settled, which is a
+legitimate order to work in but leaves a result nobody has read against the
+answer. Three ways out, one per thing the result can turn out to mean: it
+refutes the answer → `dg reopen`; the answer never needed it → `dg task unlink
+T01 --evidence-for`; **it confirms the answer** → `dg confirm D01 --against T01
+--note "what it showed"`, which is the common one. The reading is per task and
+per decision, dated, and kept — so confirming against one of two late results
+leaves the warning naming the other, and a *later* result post-dates the
+reading and brings the warning back on its own.
+
 Two things about the link are errors rather than warnings: a link naming a
 decision that does not exist, and a cycle across the two graphs (work that must
 finish before a decision that the work exists because of). `dg apply` refuses a

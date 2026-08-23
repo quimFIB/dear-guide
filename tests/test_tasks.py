@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 from dgraph import pending, project, task_pending, task_render
 from dgraph.check import CHECKS, run
 from dgraph.cli import app
-from dgraph.tasks import (Stop, TaskEdge, TaskGraph,
+from dgraph.tasks import (Reading, Stop, TaskEdge, TaskGraph,
                           starting_on_abandoned_work)
 
 runner = CliRunner()
@@ -783,6 +783,73 @@ def test_starting_work_says_what_was_abandoned(run_cli):
 def test_starting_ordinary_work_says_nothing_about_abandonment(run_cli):
     res = run_cli("task", "start", "T02")         # T01 is DONE
     assert res.exit_code == 0 and "abandoned" not in res.output
+
+
+def test_a_reading_survives_a_round_trip(tg, task_store):
+    """Archived like a stop, and absent rather than empty where there is none —
+    the store stays readable, and work nobody has read against an answer says
+    so by silence."""
+    tg.tasks["T02"].evidence_for = "D01"
+    tg.tasks["T02"].readings = [Reading(date="2026-07-01", note="it holds",
+                                        against="D01")]
+    tg.save(task_store / "tasks.json")
+    raw = json.loads((task_store / "tasks.json").read_text())
+    rows = {t["id"]: t for t in raw["tasks"]}
+    assert rows["T02"]["readings"] == [
+        {"date": "2026-07-01", "note": "it holds", "against": "D01"}]
+    assert "readings" not in rows["T01"]
+    back = TaskGraph.load(task_store / "tasks.json")
+    assert back.tasks["T02"].read_against("D01") == "2026-07-01"
+    assert back.tasks["T02"].read_against("D09") is None
+
+
+def test_a_reading_with_no_note_is_the_box_tick_the_record_refuses(tg):
+    tg.tasks["T02"].evidence_for = "D01"
+    tg.tasks["T02"].readings = [Reading(date="2026-07-01", note="",
+                                        against="D01")]
+    hits = [v for v in tg.validate() if v.check == "task_reading_complete"]
+    assert len(hits) == 1 and "note" in hits[0].message
+
+
+def test_a_reading_left_behind_by_a_moved_link_says_so(tg):
+    """Kept rather than deleted — it is an archived record — but flagged,
+    because a reading against a question this work no longer informs is inert
+    and a reader could take it for cover it does not give."""
+    tg.tasks["T02"].evidence_for = "D09"
+    tg.tasks["T02"].readings = [Reading(date="2026-07-01", note="it holds",
+                                        against="D01")]
+    hits = [v for v in tg.validate() if v.check == "task_reading_stale"]
+    assert len(hits) == 1 and "D01" in hits[0].message
+    assert not hits[0].blocking
+
+
+def test_reading_the_same_evidence_twice_in_a_day_is_refused(tg):
+    """The refusal a second park gets, for the same reason: two entries would
+    claim two readings where there was one, and this record is kept forever.
+    A reading on a later date is a genuine second reading."""
+    from dgraph.pending import ApplyError
+    tg.tasks["T02"].evidence_for = "D01"
+    tg.tasks["T02"].status, tg.tasks["T02"].done = "DONE", "2026-06-01"
+    tg.tasks["T02"].outcome = "a number"
+    op = {"op": "read_evidence", "task": "T02", "against": "D01",
+          "note": "it holds", "date": "2026-07-01"}
+    task_pending._apply_one(tg, op)
+    with pytest.raises(ApplyError, match="already read"):
+        task_pending._apply_one(tg, op)
+    task_pending._apply_one(tg, {**op, "date": "2026-08-01"})
+    assert [r.date for r in tg.tasks["T02"].readings] == ["2026-07-01",
+                                                          "2026-08-01"]
+
+
+def test_unfinished_work_has_no_result_to_read(tg):
+    """The op's own floor: a reading is a reading *of a result*, and work that
+    has not reported has not produced one."""
+    from dgraph.pending import ApplyError
+    tg.tasks["T02"].evidence_for = "D01"
+    with pytest.raises(ApplyError, match="no result to read"):
+        task_pending._apply_one(tg, {"op": "read_evidence", "task": "T02",
+                                     "against": "D01", "note": "x",
+                                     "date": "2026-07-01"})
 
 
 def test_work_orphaned_by_a_drop_is_flagged(tg):

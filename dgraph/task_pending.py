@@ -25,12 +25,12 @@ from pathlib import Path
 
 from dgraph import project
 from dgraph.pending import ApplyError, already
-from dgraph.tasks import (KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES, Stop,
-                          Task, TaskEdge, TaskGraph, matches)
+from dgraph.tasks import (KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
+                          Reading, Stop, Task, TaskEdge, TaskGraph, matches)
 from dgraph.violation import Violation
 
 OPS = {"add_task", "add_dep", "remove_dep", "remove_task", "set_status",
-       "set_link"}
+       "set_link", "read_evidence"}
 
 #: An extra validator over a proposed task graph — see `apply_all`.
 Checker = Callable[[TaskGraph], list[Violation]]
@@ -171,6 +171,39 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             if fld not in ("because", "evidence_for"):
                 raise ApplyError(f"cannot clear {fld!r}")
             setattr(tg.tasks[tid], fld, None)
+        return
+
+    if kind == "read_evidence":
+        # Appended, never assigned, like a stop: this and `stops` are the two
+        # archived records here, and nothing downstream ever clears either.
+        tid = op["task"]
+        if tid not in tg.tasks:
+            raise ApplyError(f"unknown task {tid!r}")
+        t = tg.tasks[tid]
+        did = op["against"]
+        # Whether this task is evidence for *that* question is not asked here:
+        # what the link means is `cross`'s to decide and a test enforces it, so
+        # the pairing is refused at the door (`dg confirm --against`, which has
+        # to see the decision store anyway) and flagged in the store by
+        # `task_reading_stale`. What is asked here is only what this module can
+        # see: the task exists, it produced something, and the entry is not a
+        # second copy of one already recorded.
+        if t.unfinished:
+            raise ApplyError(
+                f"{tid} is {t.status} — there is no result to read against an "
+                f"answer yet")
+        if not op.get("note"):
+            raise ApplyError(
+                f"reading {tid} against {did} needs what it showed: --note")
+        if any(r.against == did and r.date == op["date"] for r in t.readings):
+            # The same refusal a second park gets, for the same reason: two
+            # entries would claim two readings where there was one, and this
+            # record is kept forever. A reading on a *later* date is a genuine
+            # second reading and is allowed.
+            raise ApplyError(
+                f"{tid} was already read against {did} on {op['date']}")
+        t.readings.append(Reading(date=op["date"], note=op["note"],
+                                  against=did))
         return
 
     if kind == "set_status":

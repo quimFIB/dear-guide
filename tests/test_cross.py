@@ -16,7 +16,7 @@ from dgraph.check import run
 from dgraph.cli import app
 from dgraph.model import Graph
 from dgraph.render import write
-from dgraph.tasks import Stop, Task, TaskGraph
+from dgraph.tasks import Reading, Stop, Task, TaskGraph
 
 runner = CliRunner()
 
@@ -1091,6 +1091,124 @@ def test_the_finding_clears_without_any_stored_field(both, clear):
         tg.tasks["T04"].evidence_for = None
         tg.save(both / "tasks.json")
     assert not [v for v in run() if v.check == "evidence_after_deciding"]
+
+
+def _read(root, tid="T04", did="D01", date="2026-07-01", note="it holds"):
+    """Record a reading, the way `dg confirm --against` would."""
+    tg = TaskGraph.load(root / "tasks.json")
+    tg.tasks[tid].readings.append(Reading(date=date, note=note, against=did))
+    tg.save(root / "tasks.json")
+    return tg
+
+
+def test_a_reading_clears_the_finding(both):
+    """The exit the finding had no other way to offer. Evidence that lands
+    after an answer and *confirms* it is the common case, and before this the
+    only ways out were asserting a doubt nobody has or deleting the
+    measurement from the record."""
+    _evidence(both, "DONE", done="2026-06-01", outcome="a number")
+    assert [v for v in run() if v.check == "evidence_after_deciding"]
+    _read(both, date="2026-07-01")
+    assert not [v for v in run() if v.check == "evidence_after_deciding"]
+
+
+def test_a_later_result_brings_the_finding_back(both):
+    """What separates a dated record of an act from a flag whose job is to
+    silence a check: the baseline moves to the reading, so a result that
+    post-dates *the reading* is late again, with nothing to clear or unset."""
+    _evidence(both, "DONE", done="2026-06-01", outcome="a number")
+    _read(both, date="2026-07-01")
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].done = "2026-09-01"
+    tg.tasks["T04"].outcome = "re-run on the new corpus: it does not hold"
+    tg.save(both / "tasks.json")
+    hits = [v for v in run() if v.check == "evidence_after_deciding"]
+    assert len(hits) == 1 and "re-run on the new corpus" in str(hits[0])
+
+
+def test_a_reading_covers_only_the_evidence_it_was_about(both):
+    """The baseline is per task, not per decision: two late results and one
+    reading leaves the finding naming the other one."""
+    tg = TaskGraph.load(both / "tasks.json")
+    for tid in ("T03", "T04"):
+        t = tg.tasks[tid]
+        t.evidence_for, t.status = "D01", "DONE"
+        t.done, t.outcome = "2026-06-01", f"{tid} measured something"
+    tg.save(both / "tasks.json")
+    _read(both, tid="T04", date="2026-07-01")
+    hits = [v for v in run() if v.check == "evidence_after_deciding"]
+    assert len(hits) == 1
+    assert "T03" in str(hits[0]) and "T04" not in str(hits[0])
+
+
+def test_a_reading_against_another_question_covers_nothing(both):
+    """`against` is what stops a reading following the work if the link is
+    later moved: it records which answer was read, not merely that one was."""
+    _evidence(both, "DONE", done="2026-06-01", outcome="a number")
+    _read(both, did="D02", date="2026-07-01")
+    assert [v for v in run() if v.check == "evidence_after_deciding"]
+
+
+def test_the_finding_names_every_late_task_in_its_advice(both):
+    """The advice used to name `tasks[0]` while the sentence above it listed
+    two, so half the finding had no remedy attached to it."""
+    tg = TaskGraph.load(both / "tasks.json")
+    for tid in ("T03", "T04"):
+        t = tg.tasks[tid]
+        t.evidence_for, t.status = "D01", "DONE"
+        t.done, t.outcome = "2026-06-01", "a number"
+    tg.save(both / "tasks.json")
+    said = str([v for v in run() if v.check == "evidence_after_deciding"][0])
+    assert "--against T03,T04" in said and "unlink T03,T04" in said
+
+
+def test_confirming_against_evidence_stages_a_task_op(run_cli, both):
+    """One command, one tray. The reading is task state, so `dg confirm
+    --against` stages into the task tray and never alongside a status op."""
+    _evidence(both, "DONE", done="2026-06-01", outcome="a number")
+    res = run_cli("confirm", "D01", "--against", "T04",
+                  "--note", "0.91 against a 0.85 bar — it holds")
+    assert res.exit_code == 0
+    assert not (both / ".dgraph-pending.json").exists()   # not the other tray
+    staged = json.loads((both / ".dgraph-task-pending.json").read_text())
+    assert [o["op"] for o in staged] == ["read_evidence"]
+    assert staged[0]["against"] == "D01" and staged[0]["task"] == "T04"
+    assert run_cli("apply").exit_code == 0
+    assert not [v for v in run() if v.check == "evidence_after_deciding"]
+
+
+def test_confirming_needs_to_know_which_evidence(run_cli, both):
+    """Refused rather than defaulted to all of them, matching `dg task drop`:
+    each result is a separate reading and the note is about that result."""
+    _evidence(both, "DONE", done="2026-06-01", outcome="a number")
+    res = run_cli("confirm", "D01")
+    assert res.exit_code == 2 and "--against T04" in res.output
+
+
+def test_confirming_against_evidence_needs_what_it_showed(run_cli, both):
+    _evidence(both, "DONE", done="2026-06-01", outcome="a number")
+    res = run_cli("confirm", "D01", "--against", "T04")
+    assert res.exit_code == 1 and "--note" in res.output
+
+
+def test_confirming_against_work_that_is_not_awaiting_a_reading(run_cli, both):
+    _evidence(both, "DONE", done="2026-06-01", outcome="a number")
+    res = run_cli("confirm", "D01", "--against", "T02", "--note", "x")
+    assert res.exit_code == 1 and "T02" in res.output
+
+
+def test_a_provisional_decision_still_confirms_its_status(run_cli, both):
+    """The other half of the verb is untouched: with no `--against` and a
+    PROVISIONAL status, `dg confirm` re-affirms the status as it always did."""
+    g = Graph.load(both / "decisions.json")
+    # D02 provisional under a premise that is settled again — the state
+    # `dg confirm` exists for, without dragging D01 through a reversal.
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    g.save(both / "decisions.json")
+    res = run_cli("confirm", "D02")
+    assert res.exit_code == 0 and "back to DECIDED" in res.output
+    staged = json.loads((both / ".dgraph-pending.json").read_text())
+    assert staged and all(o["op"] == "set_status" for o in staged)
 
 
 def test_a_decision_with_no_evidence_link_is_silent(both):

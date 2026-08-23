@@ -391,10 +391,27 @@ def evidence_after_deciding(tg: TaskGraph, g: Graph) -> list[dict]:
     either of them already fires, this one is silent, so every
     (evidence-status × relative-date) cell has exactly one owner.
 
-    Nothing here is stored. It clears when the decision is reopened (it is no
-    longer settled), when the link goes (`dg task unlink`), or when a later
-    answer post-dates the work — never by a field whose only job is to silence
-    it, which is the rule `tasks.py` states at length for `released_by_drop`.
+    The date it measures against is **the last time this evidence was read
+    against this answer**, not the answer's own date. Those are the same until
+    somebody reads it, so an unread result behaves exactly as before; the
+    difference is that reading it is now something the store can be told, by
+    `dg confirm <d> --against <t>`. Without that the finding had no honest
+    exit at all in its commonest case — evidence that *confirms* the answer —
+    since `reopen` asserts a doubt that is not there and `unlink` deletes the
+    measurement from the record.
+
+    That baseline is per evidence task, not per decision: reading one spike
+    says nothing about another, so a decision with two late results and one
+    reading goes on naming the other one.
+
+    `Task.readings` is not the field this codebase refuses to keep — see
+    `tasks.Reading`, which argues it. The short form: a later result post-dates
+    the reading and the finding returns by itself, which is what separates a
+    dated record of an act from a flag that silences a check.
+
+    It also still clears when the decision is reopened (it is no longer
+    settled), when the link goes (`dg task unlink`), or when a later answer
+    post-dates the work.
     """
     covered = {u["id"] for u in settled_on_dropped_evidence(tg, g)} \
         | {u["id"] for u in settled_on_stalled_evidence(tg, g)}
@@ -409,9 +426,17 @@ def evidence_after_deciding(tg: TaskGraph, g: Graph) -> list[dict]:
         for tid in evidence(tg, did):
             t = tg.tasks[tid]
             if t.unfinished:
+                # No baseline applies: there is nothing to read yet, so a
+                # reading cannot have covered it.
                 late.append({"id": tid, "status": t.status, "outcome": None})
-            elif t.status == "DONE" and when and t.done and t.done > when:
-                late.append({"id": tid, "status": "DONE",
+                continue
+            # `when` still gates: a settled vertex with no active edge has no
+            # answer date to be late against, which is what it meant before a
+            # reading could move the baseline.
+            read = t.read_against(did)
+            base = max(when, read) if (when and read) else when
+            if t.status == "DONE" and when and t.done and t.done > base:
+                late.append({"id": tid, "status": "DONE", "read": read,
                              "outcome": t.outcome, "done": t.done})
         if late:
             out.append({"id": did, "title": v.title, "status": v.status,
@@ -788,16 +813,20 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
             else f"{t['id']} finished {t['done']} — {_one_line(t['outcome'])}"
             for t in u["tasks"])
         running = any(t["outcome"] is None for t in u["tasks"])
+        # Every late task, not the first one: the advice used to name
+        # `tasks[0]` while the sentence above it listed two, so half the
+        # finding had no remedy attached to it.
+        ids = ",".join(t["id"] for t in u["tasks"])
         v.append(Violation(
             "evidence_after_deciding",
             f"{u['id']} ({u['title']}) is {u['status']}"
             + (f", settled {u['date']}" if u["date"] else "")
             + f", but the work meant to inform it "
             + ("has not reported yet" if running else "reported afterwards")
-            + f" ({what}) — read it against the answer, then `dg reopen "
-              f"{u['id']}` if it does not hold, or `dg task unlink "
-              f"{u['tasks'][0]['id']} --evidence-for` if the answer never "
-              f"needed it",
+            + f" ({what}) — read it against the answer, then `dg confirm "
+              f"{u['id']} --against {ids}` if it still holds, `dg reopen "
+              f"{u['id']}` if it does not, or `dg task unlink {ids} "
+              f"--evidence-for` if the answer never needed it",
             "warning",
         ))
 

@@ -141,6 +141,37 @@ class Stop:
 
 
 @dataclass
+class Reading:
+    """One time this work was read against the answer it was evidence for.
+
+    The exit `evidence_after_deciding` had no other way to offer. Evidence that
+    lands after a decision is settled has three possible readings — it refutes
+    the answer, it was never needed, or **it confirms the answer** — and only
+    the first two had a command. The third is the common one, and without this
+    the warning could not end: `reopen` asserts a doubt that is not there,
+    `unlink` deletes the measurement from the record, and doing nothing leaves
+    a permanent warning that trains the eye past every other one.
+
+    Three fields. `against` is a `D`-id in the *other* store, held for the
+    reason `evidence_for` is held here and interpreted no more than that one
+    is: it makes the record true on its own, and it stops a reading following
+    the task if the link is later moved to a different question.
+
+    **Not the field the store refuses to keep.** The rule (`released_by_drop`,
+    below) bans a stored field whose only job is to silence a check, and its
+    reason is that such a field goes stale. This one cannot: it is a dated
+    record of a past act, like `Stop`, not a claim about the present. A
+    *later* measurement post-dates the reading and the finding returns on its
+    own — which is the behaviour a boolean "acknowledged" could never have, and
+    the test that tells the two apart.
+    """
+
+    date: str
+    note: str
+    against: str
+
+
+@dataclass
 class Task:
     id: str
     title: str
@@ -177,6 +208,22 @@ class Task:
     #: makes the decision wait on the task. Deliberately not called `settles`:
     #: a task produces evidence, a person decides.
     evidence_for: str | None = None
+    #: Every time this work was read against the answer it informs, oldest
+    #: first, and never cleared — the same archival treatment `stops` gets, for
+    #: the same reason: it records an act that happened, and an act that
+    #: happened stays happened. `cross.evidence_after_deciding` reads the last
+    #: one as its baseline; nothing here interprets `against`.
+    readings: list[Reading] = field(default_factory=list)
+
+    def read_against(self, did: str) -> str | None:
+        """The date this work was last read against `did`, if it ever was.
+
+        A plain `max` over strings, which is what ISO dates are for. Filtered
+        by `against` rather than taking the last entry: a task whose link was
+        moved must not carry the old question's readings into the new one.
+        """
+        dates = [r.date for r in self.readings if r.against == did]
+        return max(dates) if dates else None
 
     @property
     def unfinished(self) -> bool:
@@ -357,6 +404,14 @@ def _task(raw: dict) -> Task:
             f"{raw.get('id', '?')}: malformed stops entry — each needs a "
             f"`why` and a `date`, and nothing else ({exc})"
         ) from None
+    readings = fields.pop("readings", [])
+    try:
+        fields["readings"] = [Reading(**k) for k in readings]
+    except TypeError as exc:
+        raise ValueError(
+            f"{raw.get('id', '?')}: malformed readings entry — each needs a "
+            f"`date`, a `note` and an `against`, and nothing else ({exc})"
+        ) from None
     return Task(**fields)
 
 
@@ -434,6 +489,9 @@ class TaskGraph:
                                    for k in t.stops] or None),
                         ("format", t.format), ("because", t.because),
                         ("evidence_for", t.evidence_for),
+                        ("readings", [{"date": r.date, "note": r.note,
+                                       "against": r.against}
+                                      for r in t.readings] or None),
                     )
                     if val is not None
                 }
@@ -629,6 +687,27 @@ class TaskGraph:
                     add("task_park_complete",
                         f"{tid}: a stops entry is missing its "
                         f"{'why' if not k.why else 'date'}")
+            # A reading with no note is the box-tick the whole design refuses:
+            # the note is what a later reader has instead of the conversation,
+            # and without it the entry says only that somebody ran a command.
+            for r in t.readings:
+                missing = next((f for f in ("date", "note", "against")
+                                if not getattr(r, f)), None)
+                if missing:
+                    add("task_reading_complete",
+                        f"{tid}: a readings entry is missing its {missing}")
+                elif r.against != t.evidence_for:
+                    # Kept rather than deleted when the link moves — it is an
+                    # archived record — but said out loud, because a reading
+                    # against a question this work no longer informs is inert
+                    # and a reader could take it for cover it does not give.
+                    add("task_reading_stale",
+                        f"{tid} was read against {r.against} on {r.date}, but "
+                        f"it is "
+                        + (f"evidence for {t.evidence_for} now"
+                           if t.evidence_for else "evidence for nothing now")
+                        + f" — the record stands, but it covers nothing",
+                        "warning")
             if t.status != "DONE":
                 # Applying a status change clears these, so this catches a
                 # hand-edit: an outcome under unfinished work is a claim the

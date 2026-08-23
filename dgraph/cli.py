@@ -1328,18 +1328,59 @@ def repair() -> None:
     _warn_stuck()
 
 
+def _late_evidence(eff, vid: str) -> list[dict]:
+    """The finished evidence for `vid` that has never been read against it.
+
+    The same `cross.evidence_after_deciding` `dg check` reports from, narrowed
+    to one vertex and to work that actually produced something — evidence still
+    running has nothing to read. One helper, so the command and the check
+    cannot disagree about who is outstanding.
+    """
+    proj = project.find()
+    if not proj.has_tasks:
+        return []
+    tg = _teff(TaskGraph.load(proj.tasks))
+    for u in cross.evidence_after_deciding(tg, eff):
+        if u["id"] == vid:
+            return [t for t in u["tasks"] if t["outcome"] is not None]
+    return []
+
+
 @app.command(rich_help_panel=RECORD)
-def confirm(vid: str) -> None:
-    """Re-affirm a PROVISIONAL decision: its premise moved, its answer holds.
+def confirm(
+    vid: str,
+    against: str = typer.Option(None, "--against",
+                                help="evidence tasks read against this answer"),
+    note: str = typer.Option(None, "--note", "-n",
+                             help="what the evidence showed"),
+) -> None:
+    """Re-affirm a decision: its premise moved or its evidence landed, and the
+    answer holds.
 
-    Without this, PROVISIONAL is a state with no exit. `set_status` is a derived
-    op — `pending.expand` produces it and nothing else stages one — so the only
+    Two acts under one verb, told apart by what is standing in the way, and
+    never both in one command — each stages into one tray, and a command that
+    wrote to both would be a judgement the two `apply` paths could split.
+
+    **Without `--against`** it re-affirms a PROVISIONAL status. Without that,
+    PROVISIONAL is a state with no exit: `set_status` is a derived op —
+    `pending.expand` produces it and nothing else stages one — so the only
     route back to DECIDED was another `reopen` plus `decide`, which files a
-    reversal that never happened. Reversals are the most valuable thing the graph
-    holds and inventing one to escape a status would be a lie in the record.
+    reversal that never happened. Reversals are the most valuable thing the
+    graph holds and inventing one to escape a status would be a lie in the
+    record.
 
-    What it records is a real act: somebody re-read this decision under the new
-    premise and found it still stands.
+    **With `--against T01,T02`** it records that those results were read
+    against this answer and it stands — the exit
+    `cross.evidence_after_deciding` otherwise lacks. Evidence that lands after
+    a decision is settled can refute the answer (`dg reopen`), turn out never
+    to have been needed (`dg task unlink`), or confirm it, and only the third
+    is common and only the third had no command. The note is required for the
+    reason a drop's `--why` is: without it the entry records that somebody ran
+    a command, not what they found.
+
+    A reading is per task, so confirming against one of two late results leaves
+    the finding naming the other. It is not permanent silence either: a
+    *later* result post-dates the reading and the finding comes back.
     """
     g = _g()
     eff = _eff(g)
@@ -1347,6 +1388,60 @@ def confirm(vid: str) -> None:
         con.print(f"[red]unknown vertex {vid}[/]")
         raise typer.Exit(1)
     v = eff.vertices[vid]
+
+    # The reading path: asked for explicitly, or arrived at because the status
+    # has nothing to re-affirm and the evidence does. The second case used to
+    # be a bare refusal, which is what left the finding with no exit.
+    late = _late_evidence(eff, vid) if v.settled else []
+    if against or (v.base_status != "PROVISIONAL" and late):
+        if not v.settled:
+            con.print(f"[red]{vid} is {v.status} — an answer has to be "
+                      f"standing before evidence can be read against it[/]")
+            raise typer.Exit(1)
+        named = _csv(against)
+        if not named:
+            # Refused rather than defaulted to "all of them", matching
+            # `dg task drop`: each result is a separate reading and the note is
+            # about that result, so answering for several at once with one
+            # sentence is the box-tick this record exists not to be.
+            if not _interactive():
+                con.print(f"[red]{len(late)} result(s) to read against "
+                          f"{vid}[/]")
+                for t in late:
+                    con.print(f"  [bold]{t['id']}[/]  finished {t['done']}\n"
+                              f"      [dim]{_x(t['outcome'])}[/]")
+                con.print(f"[dim]re-run naming them: --against "
+                          f"{','.join(t['id'] for t in late)}[/]")
+                raise typer.Exit(2)
+            named = [t["id"] for t in late]
+        by_id = {t["id"]: t for t in late}
+        stray = [t for t in named if t not in by_id]
+        if stray:
+            con.print(f"[red]not evidence awaiting a reading against {vid}: "
+                      f"{', '.join(sorted(set(stray)))}[/]\n"
+                      f"[dim]`dg node {vid}` lists what this answer rests "
+                      f"on[/]")
+            raise typer.Exit(1)
+        today = _date.today().isoformat()
+        ops = []
+        for tid in named:
+            what = note or (
+                _ask(f"{tid} — {by_id[tid]['outcome']}\n"
+                     f"  what does it show about the answer?", "--note/-n")
+                if _interactive() else None)
+            if not what:
+                con.print(f"[red]reading {tid} against {vid} needs what it "
+                          f"showed: --note[/]")
+                raise typer.Exit(1)
+            ops.append({"op": "read_evidence", "task": tid, "against": vid,
+                        "note": what, "date": today})
+        _tstage_all(ops)
+        con.print(f"[green]staged[/] {vid} read against "
+                  f"{', '.join(named)} — a *task* op, so `dg task pending` "
+                  f"to review")
+        _twarn_stuck()
+        return
+
     if v.base_status != "PROVISIONAL":
         con.print(f"[red]{vid} is {v.status}, not PROVISIONAL — "
                   f"there is nothing to re-affirm[/]")
@@ -2706,6 +2801,13 @@ def _tasks_informing(did: str) -> list[str]:
             task = tg.tasks[t]
             said = cross._one_line(task.outcome) if task.outcome else ""
             out.append(f"{t} ({task.status})" + (f" — {said}" if said else ""))
+            # The reading, where there is one. Without it the panel shows a
+            # result and no sign that anybody ever read it against the answer,
+            # which is the difference between evidence and a loose measurement.
+            for r in task.readings:
+                if r.against == did:
+                    out.append(f"  read {r.date} — "
+                               f"{cross._one_line(r.note)}")
         return out
     except Exception:
         return []

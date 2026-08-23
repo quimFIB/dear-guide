@@ -269,6 +269,14 @@ dg confirm D02      # re-read it; it still holds
 `reopen` to escape a status — a reversal that never happened is a lie in the
 record.
 
+**The same verb, for evidence.** `dg confirm D01 --against T01 --note "…"`
+records that a result was read against a standing answer and the answer holds.
+It is what `dg check`'s *"the work meant to inform it reported afterwards"*
+warning wants, in the case where the result agrees — the other two exits,
+`dg reopen` and `dg task unlink`, both say something that is not true when it
+does. The reading is dated and kept, so a later result post-dates it and the
+warning returns on its own; nothing here is a switch that stays off.
+
 **The way in has one too.** `PROVISIONAL` is derived: `dg reopen` stages it for
 every decided descendant, and nothing else produces it. A merge, a rebase or a
 partial checkout can land the reopened premise *without* the ops it implies, and
