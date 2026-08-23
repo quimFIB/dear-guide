@@ -444,6 +444,20 @@ def evidence_after_deciding(tg: TaskGraph, g: Graph) -> list[dict]:
     return out
 
 
+def late_evidence(tg: TaskGraph, g: Graph, did: str) -> list[dict]:
+    """The finished evidence for `did` that has never been read against it.
+
+    `evidence_after_deciding` narrowed to one decision and to work that
+    actually produced something — evidence still running has nothing to read.
+    One helper, so `dg confirm --against`, the browser's control, and the check
+    itself cannot disagree about who is outstanding.
+    """
+    for u in evidence_after_deciding(tg, g):
+        if u["id"] == did:
+            return [t for t in u["tasks"] if t["outcome"] is not None]
+    return []
+
+
 def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
     """The two graphs as one digraph, for cycle detection.
 

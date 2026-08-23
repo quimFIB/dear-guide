@@ -25,7 +25,8 @@ from pathlib import Path
 
 from dgraph import project
 from dgraph.pending import ApplyError, already
-from dgraph.tasks import (KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
+from dgraph.model import Graph
+from dgraph.tasks import (ID_RE, KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
                           Reading, Stop, Task, TaskEdge, TaskGraph, matches)
 from dgraph.violation import Violation
 
@@ -259,6 +260,287 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
         if op.get("format") is not None and wrote_prose:
             t.format = op["format"]
         return
+
+
+#: What each relation spec is called, reads as, and refuses to do to itself.
+#: One table, because the two kinds differ only in these three strings and a
+#: second copy is how one of them came to be spelled differently in an error.
+REL = {
+    "precedes": {"flag": "--after", "reads": "after",
+                 "self": "cannot come after itself"},
+    "prompted": {"flag": "--discovered-during", "reads": "discovered during",
+                 "self": "cannot be discovered during itself"},
+}
+
+
+def held(tg: TaskGraph, tid: str, kind: str) -> list[str]:
+    """What already relates to `tid` this way — the reverse of the stored edge."""
+    return (tg.prerequisites(tid) if kind == "precedes"
+            else tg.discovered_during(tid))
+
+
+def relation_ops(tg: TaskGraph, tid: str, others: list[str],
+                 kind: str) -> tuple[list[dict], list[str], list[str]]:
+    """The ops for one kind of edge, and what was fresh versus already held.
+
+    Computing the ops is split from staging and from saying so, so that a
+    command taking two relation specs can build both groups before writing
+    either — otherwise the tray holds half of what was asked for.
+    """
+    already_held = [o for o in others if o in held(tg, tid, kind)]
+    fresh = [o for o in others if o not in already_held]
+    return ([{"op": "add_dep", "from": o, "to": [tid], "kind": kind}
+             for o in fresh], fresh, already_held)
+
+
+def check_relation(tg: TaskGraph, tid: str, others: list[str],
+                   kind: str) -> None:
+    """Refuse a relation spec that names nothing, or names `tid` itself."""
+    unknown = [o for o in others if o not in tg.tasks]
+    if unknown:
+        raise ApplyError(f"unknown task(s): {', '.join(unknown)}")
+    if tid in others:
+        raise ApplyError(f"{tid} {REL[kind]['self']}")
+
+
+def _require(tg: TaskGraph, tid: str) -> None:
+    if tid not in tg.tasks:
+        raise ApplyError(f"unknown task {tid}")
+
+
+def compose_dep(tg: TaskGraph, *, tid: str, after: list[str] | None = None,
+                discovered_during: list[str] | None = None
+                ) -> tuple[list[dict], list[tuple[str, list[str], list[str]]]]:
+    """`(ops, said)` for relating `tid` to other work.
+
+    Two relations, and they make different claims. `precedes` is a
+    prerequisite: it makes this task wait. `prompted` is provenance: it records
+    which work turned this one up, makes it wait on nothing, and frequently
+    runs the other way from the ordering — a cleanup noticed mid-task usually
+    has to land *before* that task can be finished.
+
+    Both kinds come back in one op list, because `--after X
+    --discovered-during Y` is one statement about how this task relates to the
+    others and half of it is a different statement.
+
+    `said` is `(kind, fresh, already)` per relation, for a surface to report.
+    """
+    after = list(after or [])
+    discovered_during = list(discovered_during or [])
+    _require(tg, tid)
+    if not after and not discovered_during:
+        raise ApplyError("nothing to record")
+    rels = [(others, kind) for others, kind
+            in ((after, "precedes"), (discovered_during, "prompted")) if others]
+    # Every spec checked before any op is built, so a bad second one cannot
+    # leave the first one's edges staged alone.
+    for others, kind in rels:
+        check_relation(tg, tid, others, kind)
+    ops, said = [], []
+    for others, kind in rels:
+        more, fresh, already = relation_ops(tg, tid, others, kind)
+        ops += more
+        said.append((kind, fresh, already))
+    return ops, said
+
+
+def compose_undep(tg: TaskGraph, *, tid: str, after: list[str] | None = None,
+                  discovered_during: list[str] | None = None
+                  ) -> tuple[list[dict], list[tuple[str, list[str]]]]:
+    """`(ops, said)` for removing relations. Releases `tid` if it waited only
+    on what is going.
+
+    Naming the kind is required rather than inferred from the pair, because
+    both kinds can hold between the same two tasks: guessing would delete the
+    ordering when the correction was to the provenance.
+    """
+    after = list(after or [])
+    discovered_during = list(discovered_during or [])
+    _require(tg, tid)
+    if not after and not discovered_during:
+        raise ApplyError("nothing to remove")
+    ops, said = [], []
+    for others, kind in ((after, "precedes"),
+                         (discovered_during, "prompted")):
+        if not others:
+            continue
+        have = held(tg, tid, kind)
+        unknown = [o for o in others if o not in have]
+        if unknown:
+            raise ApplyError(
+                MISSING_EDGE[kind].format(src=", ".join(unknown), other=tid)
+                + f"\n`dg task node {tid}` lists both relations")
+        ops += [{"op": "remove_dep", "from": o, "to": [tid], "kind": kind}
+                for o in others]
+        said.append((kind, others))
+    return ops, said
+
+
+def compose_link(tg: TaskGraph, g: Graph | None, *, tid: str,
+                 because: str | None = None,
+                 evidence_for: str | None = None) -> list[dict]:
+    """The op pointing `tid` at a decision.
+
+    The emergent case: work turns up a question nobody had written down, so the
+    decision is recorded and then the work says which question it raised —
+    after the fact, and often after the task is already done.
+    """
+    _require(tg, tid)
+    if not because and not evidence_for:
+        raise ApplyError("nothing to link — give a because or an evidence-for")
+    op = {"op": "set_link", "task": tid}
+    for did, field in ((because, "because"), (evidence_for, "evidence_for")):
+        if not did:
+            continue
+        if g is None:
+            raise ApplyError(
+                f"{did} names a decision, but this project has no decision "
+                f"graph\n`dg init` starts one")
+        if did not in g.vertices:
+            raise ApplyError(f"unknown decision {did}\n"
+                             f"`dg show` lists what is on the frontier")
+        op[field] = did
+    return [op]
+
+
+def compose_unlink(tg: TaskGraph, *, tid: str, because: bool = False,
+                   evidence_for: bool = False) -> tuple[list[dict], list[str]]:
+    """`(ops, was)` for severing `tid`'s link to a decision.
+
+    The undo `link` never had. A link recorded against the wrong decision, or
+    one that stopped being true, is a correction the tool has to be able to
+    make — hand-editing the store is the failure this exists to prevent.
+    """
+    _require(tg, tid)
+    wanted = [f for f, on in (("because", because),
+                              ("evidence_for", evidence_for)) if on]
+    if not wanted:
+        raise ApplyError("nothing to unlink — give a because or an evidence-for")
+    missing = [f for f in wanted if getattr(tg.tasks[tid], f) is None]
+    if missing:
+        raise ApplyError(
+            f"{tid} has no "
+            + " or ".join("--" + f.replace("_", "-") for f in missing)
+            + " to remove")
+    return ([{"op": "set_link", "task": tid, "clear": wanted}],
+            [getattr(tg.tasks[tid], f) for f in wanted])
+
+
+def preview_ops(tg: TaskGraph, ops: list[dict]) -> TaskGraph:
+    """`tg` with `ops` applied to a copy. Neither the store nor the tray moves."""
+    out = copy.deepcopy(tg)
+    for op in ops:
+        _apply_one(out, op)
+    return out
+
+
+def introduced(tg: TaskGraph, ops: list[dict]) -> list[Violation]:
+    """The findings `ops` would **add**. `pending.introduced`'s twin."""
+    before = {(v.check, v.message) for v in tg.validate()}
+    try:
+        after = preview_ops(tg, ops)
+    except ApplyError:
+        return []
+    return sorted((v for v in after.validate()
+                   if (v.check, v.message) not in before),
+                  key=lambda v: (v.check, v.message))
+
+
+def releases(tg: TaskGraph, g: Graph | None, ops: list[dict]) -> list[str]:
+    """The tasks that become startable if `ops` apply, and are not now.
+
+    What a *removal* sets loose. `dg task undep`'s help promises it "releases
+    this task if it waited only on that", and `unlink --because` drops a gate
+    that may have been the only thing holding work back — both are statements
+    a person should be able to read before deciding, not after. Computed
+    against the cross-graph readiness, because a task whose premise is
+    unsettled is not startable however clear its own prerequisites are.
+    """
+    from dgraph import cross
+
+    def ready(graph: TaskGraph) -> set[str]:
+        return {t for t in graph.tasks
+                if (cross.ready(graph, g, t) if g is not None
+                    else graph.ready(t))}
+
+    try:
+        after = preview_ops(tg, ops)
+    except ApplyError:
+        return []
+    return sorted(ready(after) - ready(tg))
+
+
+def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
+                area: str, after: list[str] | None = None,
+                discovered_during: list[str] | None = None,
+                because: str | None = None, evidence_for: str | None = None,
+                note: str | None = None,
+                stored: TaskGraph | None = None) -> list[dict]:
+    """The op list that records a new task, validated against `tg`.
+
+    `pending.compose_add`'s twin, and deliberately the same shape: the store's
+    staging module owns the rules for what may enter its tray, and both the CLI
+    and the browser reach them through one function rather than each keeping a
+    copy. What that buys here is larger than on the decision side, because a
+    task is born with more structure — two kinds of edge and two fields that
+    cross into the other store — and every one of them is a place two doors
+    could differ.
+
+    **The task and its edges are one op list**, for the reason audit F28 gave:
+    a task that lands without its prerequisites does not read as a partial
+    batch something will refuse, it reads as *startable*.
+
+    **Both relation specs are checked before any op is built**, so a typo in
+    the second does not leave the new task staged alone.
+
+    `g` is the *effective* decision graph, or None where this project tracks
+    only work. It is consulted for one thing — that a `because` or an
+    `evidence_for` names a decision that exists — and resolved against the tray
+    so that a decision and the work it implies can be recorded in one batch.
+    The converse never holds: nothing in the decision store consults this one.
+    """
+    after = list(after or [])
+    discovered_during = list(discovered_during or [])
+    blank = [name for name, val in (("id", tid), ("title", title),
+                                    ("area", area)) if not (val or "").strip()]
+    if blank:
+        raise ApplyError(f"a task needs {', '.join(blank)}")
+    if not ID_RE.fullmatch(tid):
+        raise ApplyError(f"malformed id {tid!r} — expected something like T07\n"
+                         f"decisions are D-ids and live in a different store")
+    if tid in tg.tasks:
+        raise ApplyError(f"{tid} already exists"
+                         + (" in the staging area"
+                            if stored is not None and tid not in stored.tasks
+                            else ""))
+    if area not in tg.areas:
+        raise ApplyError("unknown area. one of: " + ", ".join(tg.areas))
+    for did, flag in ((because, "--because"), (evidence_for, "--evidence-for")):
+        if not did:
+            continue
+        if g is None:
+            raise ApplyError(
+                f"{flag} {did} names a decision, but this project has no "
+                f"decision graph\n`dg init` starts one, or drop {flag}")
+        if did not in g.vertices:
+            raise ApplyError(f"unknown decision {did}\n"
+                             f"`dg show` lists what is on the frontier")
+    rels = [(others, kind) for others, kind
+            in ((after, "precedes"), (discovered_during, "prompted")) if others]
+    for others, kind in rels:
+        check_relation(tg, tid, others, kind)
+
+    op = {"op": "add_task", "id": tid, "title": title, "area": area}
+    if note:
+        op["note"] = note
+    if because:
+        op["because"] = because
+    if evidence_for:
+        op["evidence_for"] = evidence_for
+    ops = [op]
+    for others, kind in rels:
+        ops += relation_ops(tg, tid, others, kind)[0]
+    return ops
 
 
 def preview(tg: TaskGraph, p: Path | None = None, *, skip: int | None = None) -> TaskGraph:

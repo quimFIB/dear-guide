@@ -24,16 +24,15 @@ from dgraph import check as _check
 from dgraph import compact
 from dgraph import cross, editor, pending, project, render, task_editor
 from dgraph import task_pending, task_render
-from dgraph import model
 from dgraph import query as _query
-from dgraph.model import SIMPLE_STATUSES, Graph
+from dgraph.model import Graph
 from dgraph.tasks import ID_RE as TASK_ID_RE
 # Moved to `dgraph/tasks.py`, beside the two after-the-fact readings of the
 # same question; imported under the CLI's old local name so every call site
 # here is unchanged. The server needs it too — see `/api/task-fallout`.
 from dgraph.tasks import fallout as _fallout
 from dgraph.tasks import starting_on_abandoned_work as _start_note
-from dgraph.tasks import MISSING_EDGE, TaskGraph
+from dgraph.tasks import TaskGraph
 
 # ---- how `--help` reads --------------------------------------------------
 #
@@ -324,15 +323,6 @@ def _interactive() -> bool:
     and a test can say "pretend there is a terminal" without owning stdin.
     """
     return sys.stdin.isatty()
-
-
-def _status_legal(g: Graph, status: str, of: str | None = None) -> bool:
-    """The legality rule from `Graph.validate`, applied before staging.
-
-    Delegates rather than restating: this used to be its own copy of the rule
-    and had already drifted from the validator's — see `model.status_fault`.
-    """
-    return model.status_fault(status, g.vertices, of=of) is None
 
 
 def _tag(v) -> str:
@@ -1331,19 +1321,15 @@ def repair() -> None:
 def _late_evidence(eff, vid: str) -> list[dict]:
     """The finished evidence for `vid` that has never been read against it.
 
-    The same `cross.evidence_after_deciding` `dg check` reports from, narrowed
-    to one vertex and to work that actually produced something — evidence still
-    running has nothing to read. One helper, so the command and the check
-    cannot disagree about who is outstanding.
+    `cross.late_evidence`, with this project's stores loaded and its task tray
+    applied. The reading itself lives in `cross` because the browser needs the
+    same list — a control offering a result that is not outstanding would be
+    the two doors disagreeing about who is waiting.
     """
     proj = project.find()
     if not proj.has_tasks:
         return []
-    tg = _teff(TaskGraph.load(proj.tasks))
-    for u in cross.evidence_after_deciding(tg, eff):
-        if u["id"] == vid:
-            return [t for t in u["tasks"] if t["outcome"] is not None]
-    return []
+    return cross.late_evidence(_teff(TaskGraph.load(proj.tasks)), eff, vid)
 
 
 @app.command(rich_help_panel=RECORD)
@@ -1442,19 +1428,14 @@ def confirm(
         _twarn_stuck()
         return
 
-    if v.base_status != "PROVISIONAL":
-        con.print(f"[red]{vid} is {v.status}, not PROVISIONAL — "
-                  f"there is nothing to re-affirm[/]")
-        raise typer.Exit(1)
-    unsettled = eff.provisional_because(vid)
-    if unsettled:
-        con.print(f"[red]{vid} still rests on {', '.join(unsettled)}[/]\n"
-                  f"[dim]settle the premise first — until then PROVISIONAL is "
-                  f"the accurate status[/]")
-        raise typer.Exit(1)
-
-    ops = pending.expand(eff, {"op": "set_status", "vertex": vid,
-                               "status": "DECIDED"})
+    # Both guards and the expansion are `pending.compose_confirm`, shared with
+    # `POST /api/confirm` — a re-affirmation that skipped either would stage an
+    # op `apply` refuses, in a tray every other writer shares.
+    try:
+        ops = pending.compose_confirm(eff, vid=vid)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
     pending.stage_all(ops, against=eff)
     released = [o["vertex"] for o in ops[1:]]
     if released:
@@ -1555,7 +1536,7 @@ def add(
         ) if v}
         ops = _compose(eff, "add_vertex", seed=seed)
         # The editor was the one staging route with no stage-time guard: the
-        # flag path below runs `_status_legal` and the web app runs
+        # flag path below runs `pending.compose_add` and the web app runs
         # `pending.vet`, and this ran neither, so a buffer could stage an op
         # that could never apply — in a tray every other writer shares. F30.
         _vet_all(eff, ops)
@@ -1572,48 +1553,23 @@ def add(
         con.print(f"[red]missing option(s): {', '.join(missing)}[/]\n"
                   f"[dim]give them as flags, or use `dg add --edit`[/]")
         raise typer.Exit(2)
-    if vid in eff.vertices:
-        con.print(f"[red]{vid} already exists"
-                  + (""
-                     if vid in g.vertices
-                     else " in the staging area — `dg pending` to review")
-                  + "[/]")
-        raise typer.Exit(1)
-    if area not in eff.areas:
-        con.print(f"[red]unknown area. one of: "
-                  f"{', '.join(_x(a) for a in eff.areas)}[/]")
-        raise typer.Exit(1)
-    # `decide` validates its targets before staging; this does too, so that a
-    # typo is reported by the command that contains it rather than by `apply`
-    # two commands later.
+    # Every graph-facing rule, and the op list itself, is `pending.compose_add`
+    # — shared with `POST /api/add`, because a second door onto opening a
+    # question must not bring a second set of rules with it. What stays here is
+    # the shape of a *command-line* failure: the flag list above, and turning a
+    # refusal into a clean exit rather than a traceback.
     parents = [x.strip() for x in after.split(",") if x.strip()] if after else []
-    unknown = [x for x in parents if x not in eff.vertices]
-    if unknown:
-        con.print(f"[red]unknown parent(s): {', '.join(unknown)}[/]")
-        raise typer.Exit(1)
-    if not _status_legal(eff, status, of=vid):
-        con.print(f"[red]illegal status {_x(status)}[/]\n"
-                  f"[dim]one of {', '.join(sorted(SIMPLE_STATUSES))}, "
-                  f"or BLOCKED:<existing id>[/]")
-        raise typer.Exit(1)
-    # A block is a dependency, so its edge belongs in the tray beside the
-    # vertex rather than only materialising at apply time — `dg pending` is
-    # read by a person, and structure that appears from nowhere cannot be
-    # reviewed. `_apply_one` adds it regardless, and `add_edge` unions, so
-    # naming a blocker already given in --after changes nothing.
-    if status.startswith("BLOCKED:"):
-        blocker = status.split(":", 1)[1]      # `_status_legal` proved it exists
-        if blocker not in parents:
-            parents.append(blocker)
-    op = {"op": "add_vertex", "id": vid, "title": title,
-          "area": area, "status": status}
-    if note:
-        op["note"] = note
+    try:
+        ops = pending.compose_add(eff, vid=vid, title=title, area=area,
+                                  status=status, after=parents, note=note,
+                                  stored=g)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
     # One write, and the site that most needed it: a vertex staged without its
     # edges is only a `no_orphans` warning, so unlike every other group here a
     # half-staged one could be applied and pass.
-    pending.stage_all([op] + [{"op": "add_edge", "from": p, "to": [vid]}
-                              for p in parents], against=eff)
+    pending.stage_all(ops, against=eff)
     con.print(f"[green]staged[/] add {vid}")
     _warn_stuck()
 
@@ -1697,23 +1653,15 @@ def dep(
     """
     g = _g()
     eff = _eff(g)
-    if vid not in eff.vertices:
-        con.print(f"[red]unknown vertex {vid}[/]")
-        raise typer.Exit(1)
     parents = [x.strip() for x in after.split(",") if x.strip()]
-    unknown = [p for p in parents if p not in eff.vertices]
-    if unknown:
-        con.print(f"[red]unknown premise(s): {', '.join(unknown)}[/]")
-        raise typer.Exit(1)
-    if vid in parents:
-        con.print(f"[red]{vid} cannot rest on itself[/]")
-        raise typer.Exit(1)
-    already = [p for p in parents if p in eff.depends(vid)]
-    fresh = [p for p in parents if p not in already]
+    try:
+        ops, fresh, already = pending.compose_dep(eff, vid=vid, after=parents)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
     if already:
         con.print(f"[dim]already rests on {', '.join(already)}[/]")
-    pending.stage_all([{"op": "add_edge", "from": p, "to": [vid]}
-                       for p in fresh], against=eff)
+    pending.stage_all(ops, against=eff)
     # Nothing staged is not the same as staged, and saying otherwise sends the
     # reader to `dg pending` looking for an op that is not there.
     if not fresh:
@@ -1741,47 +1689,13 @@ def undep(
     """
     g = _g()
     eff = _eff(g)
-    if vid not in eff.vertices:
-        con.print(f"[red]unknown vertex {vid}[/]")
-        raise typer.Exit(1)
     parents = [x.strip() for x in after.split(",") if x.strip()]
-    held = eff.depends(vid)
-    unknown = [p for p in parents if p not in held]
-    if unknown:
-        con.print(f"[red]{vid} does not rest on {', '.join(unknown)}[/]\n"
-                  f"[dim]`dg node {vid}` lists its premises[/]")
-        raise typer.Exit(1)
-    decided = [p for p in parents
-               if (e := eff.active_edge(p)) is not None and e.decided]
-    if decided:
-        con.print(f"[red]{', '.join(decided)} is decided, and its targets are "
-                  f"part of that answer[/]\n"
-                  f"[dim]`dg reopen {decided[0]}` first — that strips the "
-                  f"payload and leaves the dependency editable — then remove "
-                  f"the edge and decide again with the targets you mean[/]")
-        raise typer.Exit(1)
-
-    ops = [{"op": "remove_edge", "from": p, "to": [vid]} for p in parents]
-
-    # The one repair with no judgement in it, so it is made rather than asked
-    # about: `BLOCKED:P` asserts a dependency on P, and the edge carrying that
-    # dependency is being removed, so the status is false the moment this
-    # applies. `dg confirm` already releases blocked vertices to OPEN the same
-    # way when their blocker settles. Staged in the same batch, because
-    # `block_is_a_premise` is an error and `apply_all` would otherwise refuse
-    # the whole thing with a message about an invariant the user did not break.
-    #
-    # In the same *write*, too, and that is not the same claim. This was two
-    # `stage` calls for a while, with the comment above already asserting
-    # otherwise: safe only because the intermediate happens to be refused by
-    # `block_is_a_premise` — the coincidence F18 declined to keep relying on —
-    # and paid for by whichever other writer applied in the window, whose whole
-    # batch was refused over an invariant they had not broken. Audit F31.
-    blocker = eff.vertices[vid].blocker
-    released = (eff.vertices[vid].base_status == "BLOCKED"
-                and blocker in parents)
-    if released:
-        ops.append({"op": "set_status", "vertex": vid, "status": "OPEN"})
+    try:
+        ops, blocker = pending.compose_undep(eff, vid=vid, after=parents)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    released = blocker is not None
     pending.stage_all(ops, against=eff)
 
     con.print(f"[green]staged[/] {vid} no longer rests on "
@@ -1792,11 +1706,10 @@ def undep(
                   f"removed[/]")
 
     # Reported, not repaired: each is a judgement the graph cannot make.
-    after_eff = _eff(g)
-    fresh = {(v.check, v.message) for v in after_eff.validate()} \
-        - {(v.check, v.message) for v in eff.validate()}
-    for check, message in sorted(fresh):
-        con.print(f"[yellow]{check}[/] [dim]{_x(message)}[/]")
+    # `pending.introduced` is the same difference the browser shows *before*
+    # staging, which is what lets a person decline it there.
+    for v in pending.introduced(eff, ops):
+        con.print(f"[yellow]{v.check}[/] [dim]{_x(v.message)}[/]")
     _warn_stuck()
 
 
@@ -2102,35 +2015,9 @@ def edit_cmd(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
     # against the tray `replace_group` is about to write. Audit F29.
     _vet_all(eff, new)
     pending.replace_group(op.get("ref") or i, new, against=eff,
-                          supersede=_supersedes(kind, op))
+                          supersede=editor.supersedes(kind, op))
     con.print(f"[green]updated[/] op {i} — {len(new)} op(s), review with "
               f"`dg pending`")
-
-
-def _supersedes(kind: str, op: dict):
-    """What a revision of `op` takes out of the tray, or None for "nothing".
-
-    Only an `add_vertex` supersedes anything: `close` and `reopen` each parse
-    back to exactly one op, so a revision of either is a swap and nothing else.
-    A vertex's parents are edges, staged as separate ops, and re-stating them in
-    the buffer has to retract the old ones.
-
-    An `add_edge` naming other vertices as well keeps them. Nothing in the tool
-    stages one — every producer writes a single target — but `_apply_one` unions
-    targets and the web API takes an op as data, so dropping such an op whole
-    would lose an attachment the edit never mentioned.
-    """
-    if kind != "add_vertex":
-        return None
-    vid = op.get("id")
-
-    def supersede(other: dict) -> dict | None:
-        if other.get("op") != "add_edge" or vid not in (other.get("to") or []):
-            return other
-        rest = [t for t in other["to"] if t != vid]
-        return {**other, "to": rest} if rest else None
-
-    return supersede
 
 
 @app.command(rich_help_panel=STORE)
@@ -2478,7 +2365,7 @@ def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
     go = (task_editor.compose_add if kind == "add_task"
           else task_editor.compose_done)
     try:
-        # The *effective* decision graph, matching `_resolve_premise`: the two
+        # The *effective* decision graph, as the composers resolve it: the two
         # doors onto `Because` must accept the same ids, and the buffer's
         # frontier must be the one the writer is standing in front of.
         return go(tg, _decisions_eff_or_none(), **kw)
@@ -2552,57 +2439,16 @@ def task_init(
 #: because the two relations share no verb, and a message loose enough to cover
 #: both would describe neither: `--after` makes this task wait, and
 #: `--discovered-during` deliberately does not.
-_REL = {
-    "precedes": {"flag": "--after", "reads": "after",
-                 "self": "cannot come after itself"},
-    "prompted": {"flag": "--discovered-during", "reads": "discovered during",
-                 "self": "cannot be discovered during itself"},
-}
-
-
-def _held(tg: TaskGraph, tid: str, kind: str) -> list[str]:
-    """What already relates to `tid` this way — the reverse of the stored edge."""
-    return (tg.prerequisites(tid) if kind == "precedes"
-            else tg.discovered_during(tid))
-
-
-def _relation_targets(tg: TaskGraph, tid: str, raw: str, kind: str) -> list[str]:
-    """Parse and check one relation spec, staging nothing. Exits on anything bad.
-
-    Separate from the staging below so a command taking two specs can check
-    both before writing either: `dg task add --after X --discovered-during ???`
-    must not leave the new task staged and the batch half built.
-    """
-    others = [x.strip() for x in raw.split(",") if x.strip()]
-    unknown = [o for o in others if o not in tg.tasks]
-    if unknown:
-        con.print(f"[red]unknown task(s): {', '.join(unknown)}[/]")
-        raise typer.Exit(1)
-    if tid in others:
-        con.print(f"[red]{tid} {_REL[kind]['self']}[/]")
-        raise typer.Exit(1)
-    return others
-
-
-def _relation_ops(tg: TaskGraph, tid: str, others: list[str],
-                  kind: str) -> tuple[list[dict], list[str], list[str]]:
-    """The ops for one kind of edge, and what was fresh versus already held.
-
-    Computing the ops is split from staging and from saying so, the way
-    `_relation_targets` already split *checking* from staging — and for the same
-    reason one step further on: a command taking two relation specs has to be
-    able to build both groups before writing either, or the tray holds half of
-    what was asked for. See `_tstage_all`.
-    """
-    already = [o for o in others if o in _held(tg, tid, kind)]
-    fresh = [o for o in others if o not in already]
-    return ([{"op": "add_dep", "from": o, "to": [tid], "kind": kind}
-             for o in fresh], fresh, already)
+# The relation vocabulary lives in `task_pending`, beside the composers that
+# apply its rules — the CLI is no longer its only caller. Only the wording
+# survives here, for `_say_relation`; every check and every op-building step
+# went with the composers, so a second copy cannot grow back by being handy.
+_REL = task_pending.REL
 
 
 def _say_relation(tid: str, kind: str, fresh: list[str],
                   already: list[str]) -> None:
-    """What `_relation_ops` staged, said after the write."""
+    """What `task_pending.compose_dep` staged, said after the write."""
     rel = _REL[kind]
     if already:
         con.print(f"[dim]already {rel['reads']} {', '.join(already)}[/]")
@@ -2656,40 +2502,25 @@ def task_add(
         con.print(f"[red]missing option(s): {', '.join(missing)}[/]\n"
                   f"[dim]give them as flags, or use `dg task add --edit`[/]")
         raise typer.Exit(2)
-    # Checked here rather than at apply, so a typo is reported by the command
-    # that contains it. The decision side only catches this at validate time.
-    if not TASK_ID_RE.fullmatch(tid):
-        con.print(f"[red]malformed id {_x(tid)} — expected something like T07[/]\n"
-                  f"[dim]decisions are D-ids and live in a different store[/]")
-        raise typer.Exit(1)
-    if tid in tg.tasks:
-        con.print(f"[red]{tid} already exists"
-                  + ("" if tid in _tg().tasks else " in the staging area") + "[/]")
-        raise typer.Exit(1)
-    if area not in tg.areas:
-        con.print(f"[red]unknown area. one of: "
-                  f"{', '.join(_x(a) for a in tg.areas)}[/]")
-        raise typer.Exit(1)
-    op = {"op": "add_task", "id": tid, "title": title, "area": area}
-    if note:
-        op["note"] = note
-    if because:
-        op["because"] = _resolve_premise(because)
-    if evidence_for:
-        op["evidence_for"] = _resolve_premise(evidence_for)
-    # Both relation specs are checked before anything is staged, so a typo in
-    # the second one does not leave the new task sitting in the tray alone.
-    rels = [(_relation_targets(tg, tid, raw, kind), kind)
-            for raw, kind in ((after, "precedes"),
-                              (discovered_during, "prompted")) if raw]
-    # The task and its edges are one write. A task landing without them is not
-    # a partial batch that something refuses — it is a task that reads as
-    # startable, which is the whole of audit F28.
-    ops, said = [op], []
-    for others, kind in rels:
-        more, fresh, already = _relation_ops(tg, tid, others, kind)
-        ops += more
-        said.append((kind, fresh, already))
+    # Every rule, and the op list itself, is `task_pending.compose_add` —
+    # shared with `POST /api/add-task`. The task and its edges are one write:
+    # a task landing without them is not a partial batch that something
+    # refuses, it is a task that reads as startable, which is the whole of
+    # audit F28. What stays here is the shape of a command-line failure, and
+    # saying afterwards which relations were fresh and which were already held.
+    parents, prompted = _csv(after) or [], _csv(discovered_during) or []
+    try:
+        ops = task_pending.compose_add(
+            tg, _decisions_eff_or_none(), tid=tid, title=title, area=area,
+            after=parents, discovered_during=prompted,
+            because=because, evidence_for=evidence_for, note=note,
+            stored=_tg())
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    said = [(kind, *task_pending.relation_ops(tg, tid, others, kind)[1:])
+            for others, kind in ((parents, "precedes"),
+                                 (prompted, "prompted")) if others]
     _tstage_all(ops)
     con.print(f"[green]staged[/] add {tid}")
     for kind, fresh, already in said:
@@ -2736,7 +2567,7 @@ def _decisions_or_none() -> Graph | None:
 def _decisions_eff_or_none() -> Graph | None:
     """`_decisions_or_none`, plus the decision ops already staged.
 
-    What a task *buffer* has to read. `_resolve_premise` resolves `--because`
+    What a task *buffer* has to read. The composers resolve `--because`
     against the effective decision graph so that a decision and the work it
     implies can be recorded in one batch — the A3 lesson — and a buffer
     resolving the same field against the store alone refuses what the flag
@@ -2831,27 +2662,6 @@ def _tasks_resting_on(dids: list[str]) -> list[str]:
         return []
 
 
-def _resolve_premise(did: str) -> str:
-    """Check a `--because` against the *effective* decision graph.
-
-    Resolved against the store plus its staged ops, so recording a decision and
-    the work it implies in one batch is possible — the A3 lesson. The converse
-    never holds: a decision command must not consult tasks.
-    """
-    proj = project.find()
-    if not proj.has_decisions:
-        con.print(f"[red]--because {_x(did)} names a decision, but there is no "
-                  f"{project.STORE_NAME} here[/]\n"
-                  f"[dim]`dg init` to start a decision graph, or drop "
-                  f"--because[/]")
-        raise typer.Exit(1)
-    if did not in _eff(Graph.load(proj.store)).vertices:
-        con.print(f"[red]unknown decision {_x(did)}[/]\n"
-                  f"[dim]`dg show` lists what is on the frontier[/]")
-        raise typer.Exit(1)
-    return did
-
-
 @task_app.command("link", rich_help_panel=T_RECORD)
 def task_link(
     tid: str,
@@ -2866,17 +2676,19 @@ def task_link(
     record the decision and then say which work raised it — after the fact, and
     often after the task is already done.
     """
-    _require_task(tid)
+    tg = _teff(_tg())
     if not because and not evidence_for:
         con.print("[red]nothing to link[/]\n"
                   "[dim]pass --because or --evidence-for[/]")
         raise typer.Exit(2)
-    op = {"op": "set_link", "task": tid}
-    if because:
-        op["because"] = _resolve_premise(because)
-    if evidence_for:
-        op["evidence_for"] = _resolve_premise(evidence_for)
-    _tstage(op)
+    try:
+        ops = task_pending.compose_link(tg, _decisions_eff_or_none(), tid=tid,
+                                        because=because,
+                                        evidence_for=evidence_for)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    _tstage_all(ops)
     con.print(f"[green]staged[/] {tid} linked")
     _twarn_stuck()
 
@@ -2897,21 +2709,18 @@ def task_unlink(
     to prevent.
     """
     tg = _teff(_tg())
-    _require_task(tid, tg)
     if not because and not evidence_for:
         con.print("[red]nothing to unlink[/]\n"
                   "[dim]pass --because or --evidence-for[/]")
         raise typer.Exit(2)
-    wanted = ([f for f, on in (("because", because),
-                               ("evidence_for", evidence_for)) if on])
-    missing = [f for f in wanted if getattr(tg.tasks[tid], f) is None]
-    if missing:
-        con.print(f"[red]{tid} has no {' or '.join('--' + f.replace('_', '-') for f in missing)} "
-                  f"to remove[/]")
-        raise typer.Exit(1)
-    _tstage({"op": "set_link", "task": tid, "clear": wanted})
-    con.print(f"[green]staged[/] {tid} unlinked from "
-              f"{', '.join(getattr(tg.tasks[tid], f) for f in wanted)}")
+    try:
+        ops, was = task_pending.compose_unlink(
+            tg, tid=tid, because=because, evidence_for=evidence_for)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    _tstage_all(ops)
+    con.print(f"[green]staged[/] {tid} unlinked from {', '.join(was)}")
     _twarn_stuck()
 
 
@@ -2936,22 +2745,17 @@ def task_dep(
     discovered later had no way in at all.
     """
     tg = _teff(_tg())
-    _require_task(tid, tg)
     if not after and not discovered_during:
         con.print("[red]nothing to record[/]\n"
                   "[dim]pass --after or --discovered-during[/]")
         raise typer.Exit(2)
-    rels = [(_relation_targets(tg, tid, raw, kind), kind)
-            for raw, kind in ((after, "precedes"),
-                              (discovered_during, "prompted")) if raw]
-    # Both kinds in one write: `--after X --discovered-during Y` is one
-    # statement about how this task relates to the others, and half of it is a
-    # different statement. See `_tstage_all`.
-    ops, said = [], []
-    for others, kind in rels:
-        more, fresh, already = _relation_ops(tg, tid, others, kind)
-        ops += more
-        said.append((kind, fresh, already))
+    try:
+        ops, said = task_pending.compose_dep(
+            tg, tid=tid, after=_csv(after) or [],
+            discovered_during=_csv(discovered_during) or [])
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
     _tstage_all(ops)
     for kind, fresh, already in said:
         _say_relation(tid, kind, fresh, already)
@@ -2974,31 +2778,17 @@ def task_undep(
     ordering when the correction was to the provenance.
     """
     tg = _teff(_tg())
-    _require_task(tid, tg)
     if not after and not discovered_during:
         con.print("[red]nothing to remove[/]\n"
                   "[dim]pass --after or --discovered-during[/]")
         raise typer.Exit(2)
-    # Every spec is checked, then every op is staged in one write, then the
-    # whole thing is reported — so a bad second spec cannot leave the first
-    # one's removals staged alone. See `_tstage_all`.
-    ops, said = [], []
-    for raw, kind in ((after, "precedes"), (discovered_during, "prompted")):
-        if not raw:
-            continue
-        held = _held(tg, tid, kind)
-        others = [x.strip() for x in raw.split(",") if x.strip()]
-        unknown = [o for o in others if o not in held]
-        if unknown:
-            con.print("[red]"
-                      + MISSING_EDGE[kind].format(
-                          src=", ".join(unknown), other=tid)
-                      + "[/]\n"
-                      f"[dim]`dg task node {tid}` lists both relations[/]")
-            raise typer.Exit(1)
-        ops += [{"op": "remove_dep", "from": o, "to": [tid], "kind": kind}
-                for o in others]
-        said.append((kind, others))
+    try:
+        ops, said = task_pending.compose_undep(
+            tg, tid=tid, after=_csv(after) or [],
+            discovered_during=_csv(discovered_during) or [])
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
     _tstage_all(ops)
     for kind, others in said:
         con.print(f"[green]staged[/] {tid} no longer {_REL[kind]['reads']} "

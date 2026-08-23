@@ -57,13 +57,26 @@ _HEAD = re.compile(r"^(\*+)[ \t]+(.*?)[ \t]*$", re.M)
 _PROP = re.compile(r"^[ \t]*:([A-Z_]+):[ \t]*(.*?)[ \t]*$", re.M)
 _CHECKED = re.compile(r"^[ \t]*[-+*][ \t]+\[[Xx]\][ \t]+(D\d+)", re.M)
 
+#: The keys every buffer has. `C-c C-o` is org's own `org-open-at-point`, which
+#: the `dg:` link type makes work everywhere.
+_KEYS_ALWAYS = "#   C-c C-o  follow a dg: link"
+
+#: ...and the two that only a buffer with premises to walk can offer.
+#: `dgraph-parent` and `dgraph-ancestors` read `:DGRAPH_VERTEX:`, so a buffer
+#: without one — `dg add`, and both task buffers — had them bound to an error
+#: and advertised in its own header. Interface audit F8: the header is the only
+#: documentation these keys have, and it was documenting what they could not
+#: do. Written by `_header`'s caller rather than assumed, so a new buffer kind
+#: has to say which it is.
+_KEYS_WALK = "      C-c C-p  parent      C-c C-a  ancestors"
+
 _HEADER = """\
 # -*- mode: org; -*-
 # {title}
 # Lines starting with "# " are ignored. Only the "Input" subtree is read back;
 # Context is reference material and cannot change what gets staged.
 #   C-c C-c  save and stage        C-c C-k  abort, stage nothing
-#   C-c C-o  follow a dg: link     C-c C-p  parent      C-c C-a  ancestors
+{keys}
 # An empty Input aborts, exactly like an empty git commit message.
 # A "*" at column 0 ends a field - org reads it as a heading. Escape it as ",*".
 #+TODO: {todo} | {done}
@@ -80,6 +93,10 @@ def _props(d: dict[str, str]) -> str:
 def _header(title: str, **props: str) -> str:
     return _HEADER.format(
         title=title,
+        # The walk keys only where there is a vertex to walk from. `dg add`
+        # composes a decision that does not exist yet, so it has no premises
+        # in the graph to offer.
+        keys=_KEYS_ALWAYS + (_KEYS_WALK if props.get("vertex") else ""),
         todo=" ".join(s for s in STATUSES if s != "DECIDED"),
         done="DECIDED",
         props=_props(props),
@@ -237,9 +254,21 @@ def render_reopen(g: Graph, vid: str, seed: dict | None = None) -> str:
     )
 
 
+def next_id(g: Graph) -> str:
+    """The next unused `D` id. `task_editor.next_id`'s twin, for this store.
+
+    A function rather than an expression inside `render_add`, because the org
+    buffer is no longer the only door that has to prefill it: `/api/graph`
+    sends it to the browser's new-decision form. Two doors offering different
+    "next" ids is the kind of disagreement this codebase spends its comments
+    preventing.
+    """
+    return f"D{max((int(v[1:]) for v in g.vertices if v[1:].isdigit()), default=0) + 1:02d}"
+
+
 def render_add(g: Graph, seed: dict | None = None) -> str:
     seed = seed or {}
-    nxt = f"D{max((int(v[1:]) for v in g.vertices if v[1:].isdigit()), default=0) + 1:02d}"
+    nxt = next_id(g)
     return (
         _header("dg add — a new decision vertex", op="add_vertex",
                 project=str(project.find().root))
@@ -264,6 +293,38 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
 
 
 RENDERERS = {"close": render_close, "reopen": render_reopen, "add_vertex": render_add}
+
+
+def supersedes(kind: str, op: dict):
+    """What a revision of `op` takes out of the tray, or None for "nothing".
+
+    Only an `add_vertex` supersedes anything: `close` and `reopen` each parse
+    back to exactly one op, so a revision of either is a swap and nothing else.
+    A vertex's parents are edges, staged as separate ops, and re-stating them in
+    the buffer has to retract the old ones.
+
+    An `add_edge` naming other vertices as well keeps them. Nothing in the tool
+    stages one — every producer writes a single target — but `_apply_one` unions
+    targets and the web API takes an op as data, so dropping such an op whole
+    would lose an attachment the edit never mentioned.
+
+    Lives here rather than in `dg edit` because the browser revises staged ops
+    too, and this is the rule that decides what a revision *retracts* — a
+    second door re-deriving it is how the tray comes to hold both readings of
+    what a vertex rests on and apply their union.
+    """
+    if kind != "add_vertex":
+        return None
+    vid = op.get("id")
+
+    def supersede(other: dict) -> dict | None:
+        if other.get("op") != "add_edge" or vid not in (other.get("to") or []):
+            return other
+        rest = [t for t in other["to"] if t != vid]
+        return {**other, "to": rest} if rest else None
+
+    return supersede
+
 
 
 def render_op(g: Graph, i: int, op: dict) -> str:

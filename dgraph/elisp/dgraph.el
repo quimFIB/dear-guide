@@ -164,13 +164,36 @@
         (message "No ancestors — this is a root decision")
       (message "Rests on: %s" (string-join (sort seen #'string<) " → ")))))
 
-(defun dgraph--target ()
-  "The decision this buffer is composing."
+(defun dgraph--walkable ()
+  "The decision this buffer is composing, or nil if there is nothing to walk.
+
+Four buffer kinds share this file name, and only two of them name a vertex
+that exists: `dg decide' and `dg reopen'.  `dg add' is composing one that does
+not exist yet, and both task buffers belong to a store this file cannot read at
+all.  Returning nil rather than signalling lets the mode decline to *bind* the
+walk keys, so the header and the keymap agree — advertising a key that errors
+is what interface audit F8 was about."
   (save-excursion
     (goto-char (point-min))
-    (if (re-search-forward "^:DGRAPH_VERTEX:[ \t]*\\(D[0-9]+\\)" nil t)
-        (match-string 1)
-      (error "This buffer is not composing a decision"))))
+    (and (re-search-forward "^:DGRAPH_VERTEX:[ \t]*\\(D[0-9]+\\)" nil t)
+         (match-string 1))))
+
+(defun dgraph--target ()
+  "The decision this buffer is composing.  Errors where there is none.
+
+The message names the buffer's own op, because \"not composing a decision\" was
+false in a `dg add' buffer — which is composing one — and unhelpful in a task
+buffer, which is composing something this file has no way to show."
+  (or (dgraph--walkable)
+      (error "%s: this buffer has no premises to walk"
+             (or (dgraph--op) "this buffer"))))
+
+(defun dgraph--op ()
+  "The op this buffer composes, from its properties drawer."
+  (save-excursion
+    (goto-char (point-min))
+    (and (re-search-forward "^:DGRAPH_OP:[ \t]*\\(.*\\)$" nil t)
+         (string-trim (match-string 1)))))
 
 ;;;; Finishing ---------------------------------------------------------------
 
@@ -239,11 +262,13 @@ checks the same things again — a user in another editor never runs this."
     ;; C-c C-c shadows `org-ctrl-c-ctrl-c' in this buffer only, matching what
     ;; git-commit-mode does. C-c C-o is left alone: the dg: link type means
     ;; org-open-at-point already does the right thing.
+    ;;
+    ;; The walk keys are NOT here.  They only work in a buffer naming a vertex
+    ;; that exists, so they are bound per buffer in `dgraph-edit-mode' below —
+    ;; a binding present everywhere and working in half the buffers is the
+    ;; shape F8 reported.
     (define-key m (kbd "C-c C-c") #'dgraph-finish)
     (define-key m (kbd "C-c C-k") #'dgraph-abort)
-    (define-key m (kbd "C-c C-p") #'dgraph-parent)
-    (define-key m (kbd "C-c C-a") #'dgraph-ancestors)
-    (define-key m (kbd "C-c C-v") #'dgraph-visit)
     m)
   "Keymap for `dgraph-edit-mode'.")
 
@@ -267,6 +292,12 @@ nothing."
   "Minor mode for a `dg' editor buffer."
   :lighter " dgraph" :keymap dgraph-edit-mode-map
   (when dgraph-edit-mode
+    ;; Bound only where they can work, and where the header says so.  The two
+    ;; have to agree: the header is the only documentation these keys have.
+    (when (dgraph--walkable)
+      (local-set-key (kbd "C-c C-p") #'dgraph-parent)
+      (local-set-key (kbd "C-c C-a") #'dgraph-ancestors)
+      (local-set-key (kbd "C-c C-v") #'dgraph-visit))
     (setq-local org-startup-folded nil)
     (dgraph--protect-context)
     (org-fold-hide-sublevels 1)
@@ -277,6 +308,15 @@ nothing."
       (forward-line 1)
       (while (looking-at "^[ \t]*#") (forward-line 1)))
     (message "C-c C-c to stage · C-c C-k to abort · C-c C-o follows a dg: link")))
+
+(defun dgraph--advertised-keys ()
+  "The C-c bindings this buffer's own header claims.  Read back for the test."
+  (save-excursion
+    (goto-char (point-min))
+    (let (found)
+      (while (re-search-forward "C-c \\(C-[a-z]\\)" nil t)
+        (push (match-string 0) found))
+      (delete-dups (nreverse found)))))
 
 (defun dgraph--maybe-enable ()
   (when (and buffer-file-name
@@ -291,7 +331,8 @@ nothing."
 (defun dgraph--selftest ()
   "Assert the file loaded coherently.  Run by the test suite."
   (dolist (sym '(dgraph-finish dgraph-abort dgraph-parent dgraph-ancestors
-                 dgraph-visit dgraph-edit-mode))
+                 dgraph-visit dgraph-edit-mode dgraph--walkable dgraph--op
+                 dgraph--advertised-keys))
     (unless (fboundp sym) (error "missing: %s" sym)))
   (unless (org-link-get-parameter "dg" :follow)
     (error "the dg: link type did not register"))

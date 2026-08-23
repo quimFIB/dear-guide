@@ -15,7 +15,8 @@ from datetime import date as _date
 from pathlib import Path
 
 from dgraph import project
-from dgraph.model import UNSETTLED, Edge, Graph, Vertex, status_fault
+from dgraph.model import (SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex,
+                          status_fault)
 from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
@@ -393,6 +394,23 @@ def vet(g: Graph, op: dict) -> None:
                              of=op.get("vertex") or op.get("id"))
         if fault:
             raise ApplyError(fault)
+    # `set_status` is a **derived** op for decisions: `expand` and `repairs`
+    # produce it, and both stamp `derived_from`. The single exception is
+    # re-affirming a PROVISIONAL one, which `compose_confirm` composes and
+    # guards. So an unstamped `set_status` arriving as data is either that —
+    # in which case it must satisfy those guards *now*, at the moment the box
+    # was ticked — or it is a hand-written status change, which no door of this
+    # tool offers and which `apply` would refuse a batch later, naming a
+    # command instead of the act. Audit F2 in the interface pass: the raw op
+    # went into a shared tray and came back as somebody else's refusal.
+    if op.get("op") == "set_status" and "derived_from" not in op:
+        if status != "DECIDED":
+            raise ApplyError(
+                f"a status is not set directly — {status} is derived from a "
+                f"reopen or from settling a premise, and the only status a "
+                f"caller may write is DECIDED, to re-affirm a PROVISIONAL "
+                f"decision")
+        compose_confirm(g, vid=op.get("vertex"))
 
 
 def vet_all(g: Graph, ops: list[dict]) -> None:
@@ -582,6 +600,224 @@ def already(vid: str, same: bool, what: str) -> ApplyError:
         return ApplyError(f"{vid} already exists, and is not what this op would "
                           f"have created — pick another id")
     return ApplyError(f"{vid} already has a decided edge — reopen it first")
+
+
+# ---- composing an add ----------------------------------------------------
+
+
+def compose_add(g: Graph, *, vid: str, title: str, area: str,
+                status: str = "OPEN", after: list[str] | None = None,
+                note: str | None = None,
+                stored: Graph | None = None) -> list[dict]:
+    """The op list that records a new decision, validated against `g`.
+
+    Lives here rather than in `dg add` because it is no longer the only door
+    onto opening a question: the browser has a form, and `POST /api/add` builds
+    the same list through this function. What a second door must not get is a
+    second set of rules — the failure this codebase keeps finding is two
+    surfaces that agree until the day they do not, and an `add` is exactly the
+    shape that hides it, because both doors would produce *something* stageable
+    and only one of them would produce the edges.
+
+    Three things this is responsible for, and each was a bug waiting in the
+    per-door version:
+
+    - **the edges are part of the op list, not a consequence of it.** A vertex
+      staged without them is only a `no_orphans` *warning*, so unlike every
+      other group in this module a half-staged add can be applied and pass.
+    - **`BLOCKED:<id>` stages its edge too.** A block asserts a dependency, and
+      dependency is the edge list — never a second copy in a status field. The
+      blocker joins `after` here so that `dg pending` shows the structure a
+      person is about to write, rather than having it materialise at apply time
+      out of a status string.
+    - **the graph-facing refusals happen before anything is staged**, so a typo
+      is reported by the act that contains it rather than by `apply`, several
+      acts later, in a tray shared with another writer.
+
+    `g` is the *effective* graph — the store with the tray already applied —
+    for the same reason every other check here takes one: a parent staged a
+    minute ago is a legal parent. `stored` is the same graph without the tray,
+    and only sharpens a message: an id taken by an op nobody has applied yet is
+    a different problem from an id taken by the record.
+
+    Raises `ApplyError` with the message the surface should show verbatim.
+    Missing *flags* are not checked here; that is a question about a command
+    line, and `dg add` asks it in typer's own shape before calling this.
+    """
+    after = list(after or [])
+    blank = [name for name, val in (("id", vid), ("title", title),
+                                    ("area", area)) if not (val or "").strip()]
+    if blank:
+        raise ApplyError(f"a decision needs {', '.join(blank)}")
+    if vid in g.vertices:
+        # "already exists" and "already staged" send a person to different
+        # places, and the tray is shared — the id may have been taken by a
+        # terminal a minute ago. `stored` is the store without the tray, so
+        # the two cases can be told apart wherever both are to hand.
+        staged = stored is not None and vid not in stored.vertices
+        raise ApplyError(f"{vid} already exists"
+                         + (" in the staging area — `dg pending` to review"
+                            if staged else ""))
+    if area not in g.areas:
+        raise ApplyError("unknown area. one of: " + ", ".join(g.areas))
+    unknown = [x for x in after if x not in g.vertices]
+    if unknown:
+        raise ApplyError(f"unknown parent(s): {', '.join(unknown)}")
+    fault = status_fault(status, g.vertices, of=vid)
+    if fault is not None:
+        raise ApplyError(
+            f"illegal status {status!r}\n"
+            f"one of {', '.join(sorted(SIMPLE_STATUSES))}, "
+            f"or BLOCKED:<existing id>")
+    if status.startswith("BLOCKED:"):
+        blocker = status.split(":", 1)[1]     # `status_fault` proved it exists
+        if blocker not in after:
+            after.append(blocker)
+    op = {"op": "add_vertex", "id": vid, "title": title,
+          "area": area, "status": status}
+    if note:
+        op["note"] = note
+    return [op] + [{"op": "add_edge", "from": p, "to": [vid]} for p in after]
+
+
+def compose_dep(g: Graph, *, vid: str,
+                after: list[str]) -> tuple[list[dict], list[str], list[str]]:
+    """`(ops, fresh, already)` for recording that `vid` rests on `after`.
+
+    `task_pending.relation_ops`'s opposite number, and the same three-part
+    return for the same reason: what was already held is not a failure and not
+    a no-op, it is something the surface has to say, and a caller that reported
+    "staged" for an edge already in the store sends its reader to `dg pending`
+    looking for an op that is not there.
+
+    Adding a premise to an *answered* question is allowed, and is deliberately
+    not the mirror of `compose_undep` refusing to remove one: recording that an
+    answer also opened something is additive, and every part of the answer
+    still stands. Removing a target says the answer never opened it, which
+    contradicts what was written down.
+    """
+    if vid not in g.vertices:
+        raise ApplyError(f"unknown vertex {vid}")
+    unknown = [p for p in after if p not in g.vertices]
+    if unknown:
+        raise ApplyError(f"unknown premise(s): {', '.join(unknown)}")
+    if vid in after:
+        raise ApplyError(f"{vid} cannot rest on itself")
+    held = g.depends(vid)
+    already = [p for p in after if p in held]
+    fresh = [p for p in after if p not in already]
+    return ([{"op": "add_edge", "from": p, "to": [vid]} for p in fresh],
+            fresh, already)
+
+
+def compose_undep(g: Graph, *, vid: str,
+                  after: list[str]) -> tuple[list[dict], str | None]:
+    """`(ops, blocker_released)` for removing premises of `vid`.
+
+    Only a **bare** edge, one whose source has not been decided. A decided
+    edge's targets are part of its answer, so dropping one claims the answer no
+    longer opens that question — reopen first, and decide again meaning it.
+
+    The `set_status` in the op list is the one repair here with no judgement in
+    it, so it is made rather than asked about: `BLOCKED:P` asserts a dependency
+    on P, and the edge carrying that dependency is being removed, so the status
+    is false the moment this applies. It goes in the **same list**, and
+    therefore the same write, because `block_is_a_premise` is an error and
+    `apply_all` would otherwise refuse the whole batch over an invariant the
+    user did not break — audit F31, and the reason this is composed in one
+    place rather than assembled at each door.
+    """
+    if vid not in g.vertices:
+        raise ApplyError(f"unknown vertex {vid}")
+    held = g.depends(vid)
+    unknown = [p for p in after if p not in held]
+    if unknown:
+        raise ApplyError(f"{vid} does not rest on {', '.join(unknown)}\n"
+                         f"`dg node {vid}` lists its premises")
+    decided = [p for p in after
+               if (e := g.active_edge(p)) is not None and e.decided]
+    if decided:
+        raise ApplyError(
+            f"{', '.join(decided)} is decided, and its targets are part of "
+            f"that answer\n`dg reopen {decided[0]}` first — that strips the "
+            f"payload and leaves the dependency editable — then remove the "
+            f"edge and decide again with the targets you mean")
+    ops = [{"op": "remove_edge", "from": p, "to": [vid]} for p in after]
+    blocker = g.vertices[vid].blocker
+    released = (g.vertices[vid].base_status == "BLOCKED"
+                and blocker in after)
+    if released:
+        ops.append({"op": "set_status", "vertex": vid, "status": "OPEN",
+                    "derived_from": blocker})
+    return ops, (blocker if released else None)
+
+
+def compose_confirm(g: Graph, *, vid: str) -> list[dict]:
+    """The op list that re-affirms a PROVISIONAL decision. `dg confirm`'s.
+
+    PROVISIONAL is the one status this tool can create and could not clear.
+    `set_status` is a derived op everywhere else — `expand` above is its only
+    other producer — so before this existed the only route back to DECIDED was
+    another reopen plus another decide, which files a reversal that never
+    happened. Reversals are the most valuable thing the graph holds, and
+    inventing one to escape a status would be a lie in the record.
+
+    **Two guards, and they are the reason this is not simply an op the caller
+    builds.** Posting a bare `set_status` to a staging route stages happily and
+    is then refused at `apply` — the store is safe either way, but the refusal
+    arrives one act later and names a command rather than the box that was
+    ticked. Both are here so both doors ask them at the same moment:
+
+    - the vertex must actually be PROVISIONAL, or there is nothing to
+      re-affirm;
+    - nothing it rests on may still be under review. While a premise is
+      unsettled, PROVISIONAL is the *accurate* status, and re-affirming would
+      claim a conclusion the graph cannot support.
+
+    Expanded, not bare: settling a vertex releases everything `BLOCKED:` on it,
+    and leaving that to the caller is how a block goes stale and `apply`
+    refuses the whole batch.
+    """
+    v = g.vertices.get(vid)
+    if v is None:
+        raise ApplyError(f"unknown vertex {vid}")
+    if v.base_status != "PROVISIONAL":
+        raise ApplyError(f"{vid} is {v.status}, not PROVISIONAL — there is "
+                         f"nothing to re-affirm")
+    unsettled = g.provisional_because(vid)
+    if unsettled:
+        raise ApplyError(f"{vid} still rests on {', '.join(unsettled)}\n"
+                         f"settle the premise first — until then PROVISIONAL "
+                         f"is the accurate status")
+    return expand(g, {"op": "set_status", "vertex": vid, "status": "DECIDED"})
+
+
+def introduced(g: Graph, ops: list[dict]) -> list[Violation]:
+    """The findings `ops` would **add** to `g`, and not the ones already there.
+
+    A store can be invalid before a correction and still invalid after it for
+    an unrelated reason, and reporting the whole list would blame this act for
+    both. `dg undep` has computed this difference since it was written; it is
+    here so that the browser can show the same set *before* staging rather than
+    after — which is what turns "removing this releases T07" from a message
+    into a thing a person can decline.
+    """
+    before = {(v.check, v.message) for v in g.validate()}
+    try:
+        after = preview_ops(g, ops)
+    except ApplyError:
+        return []
+    return sorted((v for v in after.validate()
+                   if (v.check, v.message) not in before),
+                  key=lambda v: (v.check, v.message))
+
+
+def preview_ops(g: Graph, ops: list[dict]) -> Graph:
+    """`g` with `ops` applied to a copy. Neither the store nor the tray moves."""
+    out = copy.deepcopy(g)
+    for op in ops:
+        _apply_one(out, op)
+    return out
 
 
 # ---- propagation ---------------------------------------------------------

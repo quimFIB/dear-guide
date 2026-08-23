@@ -65,6 +65,133 @@ If you have no graph to hand, `./demo/demo.sh` serves a throwaway six-decision,
 six-task one on the same port and resets it on every run. See
 [`demo/`](../demo/) for a walkthrough.
 
+## What stays in the terminal
+
+One thing, and it is a decision rather than a gap:
+
+| | |
+|---|---|
+| **removing a record** | `dg rm`, `dg task rm` — removal erases rather than supersedes, which is the one thing this model refuses. Friction is the intended behaviour, and a ✕ is the wrong affordance for it |
+
+Everything else the CLI can do, this page can do, and everything staged here
+lands in the same tray `dg pending` reads. Starting or moving a *store* —
+`dg init`, `dg import`, `dg export` — is also terminal-only for the obvious
+reason: a store has to exist before there is anything to serve.
+
+## Opening a question, and recording work
+
+**+ new** in the header. In the decisions or tasks tab it knows which store you
+mean; in **joined** it asks, because the tab has not answered that and guessing
+is how work gets recorded as a decision.
+
+A new decision takes what `dg add` takes — an id (prefilled with the next
+unused one), a title, an area, a status and what it rests on. Choosing
+**BLOCKED** asks which decision it is blocked on and stages that dependency as
+an *edge*, because a block is a dependency and dependency is the edge list.
+
+A new task takes what `dg task add` takes, including the two links into the
+decision store: **because** — the decision this work exists for — and
+**evidence for** — a decision it will inform. Both offer decisions that are
+only *staged*, so a question recorded a minute ago can already be linked to.
+
+The two relation controls are deliberately separate. **After** asserts an order
+and holds the work back; **discovered during** only records where it came from
+and blocks nothing. One control for both would assert an ordering nobody
+claimed.
+
+Nothing is written until Apply, as everywhere else here. Both forms stage the
+same op list `dg add` and `dg task add` stage — same function, one set of rules,
+checked by `tests/test_doors.py`.
+
+## Correcting the structure
+
+**Edit structure** on any panel. A decision offers its premises; a task offers
+prerequisites, provenance, and the two links into the decision store.
+
+Four verbs, and the chips at the top of the form choose between them: add a
+relation, remove one, set a link, remove a link. Ids come from pickers over the
+store, and a removal only offers what the node actually holds — there is no way
+to name something that is not there.
+
+Two rules are worth knowing because the form will refuse them:
+
+- **A decided premise cannot be removed.** Its targets are part of the answer,
+  so dropping one says the answer never opened that question. Reopen first,
+  then remove, then decide again meaning it.
+- **The seam is edited from the task side only.** `because` and `evidence_for`
+  are fields on a task; the decision store never names work.
+
+**A removal says what it sets loose before it stages anything.** Removing a
+prerequisite can make work startable, and dropping a `because` can remove the
+only thing holding it back — so the form asks first and lists what changes,
+along with any new `dg check` finding the removal would introduce. Nothing is
+staged by looking.
+
+Removing a *record* — `dg rm`, `dg task rm` — is still terminal-only, and
+deliberately so: it erases rather than supersedes, which is the one thing this
+model refuses, so it should cost more than a click.
+
+## A decision under review
+
+A `PROVISIONAL` decision is one whose premise went under review. It has **two**
+exits, and the panel offers both:
+
+- **Re-affirm** — the premise settled and this answer still holds. Nothing
+  about it changed, so nothing is superseded. This is the ordinary outcome, and
+  it is the primary button.
+- **Stage reopen** — the answer does not survive what happened. That files a
+  reversal, which is the news rather than the norm.
+
+While a premise is *still* under review the panel says which one and offers no
+re-affirm button, because until that settles `PROVISIONAL` is the accurate
+status and re-affirming would claim a conclusion the graph cannot support.
+
+## Evidence that landed after the answer
+
+Work linked with `evidence for` sometimes finishes *after* the decision it was
+meant to inform is already settled. That is a legitimate way to work — but the
+result may contradict the answer, and nobody reading the store six weeks later
+is told to look.
+
+The panel says so, on the decision: the result, when it finished, and what it
+produced. Three things it can mean, and all three are reachable here:
+
+- **it confirms the answer** — say what it showed and record the reading. This
+  is the common one, and it stages a *task* op, because the reading is stored
+  on the task; the panel says so, and the row appears in the task tray.
+- **it refutes it** — reopen, below.
+- **the answer never needed it** — remove the link, under **Edit structure**.
+
+The note is required for the reason a drop's reason is: without it the entry
+records that somebody clicked a button, not what they found. And a reading is
+per result and per date — work that finishes *later* has not been read, so the
+finding comes back rather than staying silenced.
+
+## Is the store sound?
+
+A chip appears in the header when `dg check` has anything to say, and does not
+when it has nothing — so its appearing is the whole signal. Clicking it lists
+the findings verbatim, remedies included, in two groups: what the record says
+now, and — when something is staged — what `Apply` would leave behind.
+
+Where a decision rests on a premise under review without saying so, the panel
+offers to mark it. That is `dg repair`, and it is the one honesty command that
+maps to a single button: it stages those marks and nothing else.
+
+## Why a decision is where it is
+
+**why…** beside a decision's premises walks the whole chain, not one hop, and
+leads with the reading that matters: whether anything underneath it is still
+unsettled. An answer resting on an unsettled premise is a bet, not a conclusion,
+and that is invisible from a list of ids.
+
+From any premise in that chain, **the chain from here…** shows the path between
+the two — `dg path`, which is a single line of reasoning rather than the
+neighbourhood a click highlights.
+
+**areas** in the header gives counts by area and status, one block per store.
+Never one table: the two stores share their areas and not their vocabularies.
+
 ## Reading the graph
 
 The layout is a layered DAG — rank by longest path from a root, so a node
@@ -146,7 +273,13 @@ explanation.
 ## The trays, and Apply
 
 Staged ops collect in the footer in **two labelled tables**, decisions and
-tasks, with an ✕ on each to drop it. **Apply** validates each batch against a
+tasks, with an ✕ on each to drop it, a ✎ to revise one in the editor, and a
+**clear** per tray that says how many it is about to discard — the trays are
+shared with the CLI, so some of them may not be yours.
+
+Revising *replaces* rather than re-stages, as `dg edit` does: re-staging would
+move the op to the end of the batch, and any derived status change would then
+apply before the change it was derived from. **Apply** validates each batch against a
 copy and only then writes.
 
 The two stay independent all the way through, exactly as `dg apply` treats
@@ -205,5 +338,6 @@ open**. Reload it and the new token comes with it.
 ## Where to go next
 
 - [How it works, and why](how-it-works.md) — the ideas behind the buttons.
-- [The CLI](quickstart-cli.md) — the same operations, scriptable.
+- [The CLI](quickstart-cli.md) — every operation, scriptable, including the
+  ones above that only it has.
 - [The agent plugin](quickstart-agents.md) — for Claude Code and opencode.

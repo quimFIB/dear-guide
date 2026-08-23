@@ -43,7 +43,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from dgraph import applying, cross, editor, pending, project, render, task_pending
+from dgraph import (applying, check, cross, editor, pending, project, render,
+                    task_editor, task_pending)
 from dgraph.model import Graph
 from dgraph import tasks as tasks_mod
 from dgraph.tasks import TaskGraph, stop_label
@@ -84,6 +85,10 @@ def graph_payload(g: Graph) -> dict:
     d["derived"] = {
         vid: {
             "depends": g.depends(vid),
+            # Which premises are still under review. The panel needs it to say
+            # whether a PROVISIONAL decision can be re-affirmed *yet* — and to
+            # say which premise, rather than offering a button that refuses.
+            "provisional_because": g.provisional_because(vid),
             "depth": g.depth(vid),
             "children": g.children(vid),
             # The whole superseded edge, not a one-line epitaph for it. A
@@ -104,6 +109,11 @@ def graph_payload(g: Graph) -> dict:
         for vid in g.vertices
     }
     d["frontier"] = g.frontier()
+    # What the new-decision form prefills. Sent rather than computed in the
+    # page, because `dg add --edit` prefills the same thing from the same
+    # function (`editor.next_id`) and two doors offering different "next" ids
+    # is the disagreement this codebase spends its comments preventing.
+    d["next_id"] = editor.next_id(g)
     return d
 
 
@@ -176,6 +186,9 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
     }
     d["frontier"] = tg.frontier()
     d["counts"] = tg.counts()
+    # `graph_payload`'s twin: what the new-task form prefills, from the same
+    # function `dg task add --edit` prefills it with.
+    d["next_id"] = task_editor.next_id(tg)
     return d
 
 
@@ -206,10 +219,145 @@ def joined_payload(g: Graph | None, tg: TaskGraph | None) -> dict:
         "by_decision": {
             vid: {"rests_on": cross.rests_on(tg, vid),
                   "evidence": cross.evidence(tg, vid),
-                  "pending_evidence": cross.pending_evidence(tg, vid)}
+                  "pending_evidence": cross.pending_evidence(tg, vid),
+                  # Results that landed *after* this answer and have never been
+                  # read against it. `dg check` and `dg brief` have reported
+                  # this since the finding existed; the browser showed only its
+                  # benign opposite (evidence still outstanding), so a store
+                  # holding an answer and a result that contradicts it read
+                  # clean here.
+                  "late_evidence": cross.late_evidence(tg, g, vid)}
             for vid in g.vertices
         }
     }
+
+
+def context_payload(vid: str) -> dict:
+    """The chain of premises behind one decision. `dg context`.
+
+    The panel printed `depends on` and stopped at one hop, which is the
+    neighbourhood rather than the reasoning — and the reading `dg context`
+    exists to give, *is anything in this chain still under review*, was
+    precisely what it could not say. Computed by `context.chain`, the function
+    the CLI uses, because a browser deriving its own premise chain is the drift
+    this tool exists to make into a test failure.
+    """
+    from dgraph import context as _ctx
+    g = Graph.load()
+    if vid not in g.vertices:
+        return {"error": f"unknown decision {vid}"}
+    rows = [
+        {"id": p.id, "title": p.title, "status": p.status, "depth": p.depth,
+         "answer": p.answer, "falsifier": p.falsifier, "source": p.source,
+         "shaky": p.shaky, "also_opened": p.also_opened}
+        for p in _ctx.chain(g, vid)
+    ]
+    return {"id": vid, "chain": rows,
+            # The reading, not just the rows: a chain with an unsettled link
+            # makes everything below it a bet rather than a conclusion.
+            "shaky": [r["id"] for r in rows if r["shaky"]]}
+
+
+def path_payload(a: str, b: str) -> dict:
+    """The chain of evidence between two decisions. `dg path`.
+
+    Clicking a node highlights its neighbourhood, which is not the same
+    question: *how does this rest on that* has one answer and it is a path.
+    """
+    g = Graph.load()
+    for vid in (a, b):
+        if vid not in g.vertices:
+            return {"error": f"unknown decision {vid}"}
+    ids = g.path(a, b)
+    if not ids:
+        return {"from": a, "to": b, "path": [],
+                "error": f"no decision path from {a} to {b}"}
+    out = []
+    for i, vid in enumerate(ids):
+        e = g.active_edge(vid)
+        out.append({
+            "id": vid, "title": g.vertices[vid].title,
+            "status": g.vertices[vid].status,
+            # The step, not the whole answer: what carried the reasoning from
+            # this node to the next one.
+            "because": ((e.answer or "").strip().split("\n")[0]
+                        if e and i < len(ids) - 1 else None),
+        })
+    return {"from": a, "to": b, "path": out}
+
+
+def areas_payload() -> dict:
+    """Counts by area and status, one block per store. `dg areas`.
+
+    Two blocks rather than one, for the reason the command gives two tables:
+    the stores share their areas and not their vocabularies, and a row summing
+    `OPEN` with `TODO` would be counting questions and work as if they were the
+    same thing.
+    """
+    g, tg = _stores()
+    return {
+        "decisions": ({"areas": g.areas, "counts": _by_area_status(
+            {v.id: (v.area, v.status.split(":")[0]) for v in g.vertices.values()})}
+            if g is not None else None),
+        "tasks": ({"areas": tg.areas, "counts": _by_area_status(
+            {t.id: (t.area, t.status) for t in tg.tasks.values()})}
+            if tg is not None else None),
+    }
+
+
+def _by_area_status(rows: dict) -> dict:
+    """`{area: {status: n}}`, from `{id: (area, status)}`."""
+    out: dict[str, dict[str, int]] = {}
+    for area, status in rows.values():
+        out.setdefault(area, {})
+        out[area][status] = out[area].get(status, 0) + 1
+    return out
+
+
+def check_payload() -> dict:
+    """Every invariant, over the store **and the trays**.
+
+    The browser had no way to learn a store was unsound. An invalid one — the
+    merge, rebase, partial checkout or second clone `pending.repairs` exists
+    for — looked entirely normal until an unrelated `Apply` was refused for a
+    reason that had nothing to do with what was staged, with a CLI command as
+    the remedy.
+
+    Two lists, and they answer different questions. `stored` is what
+    `dg check` says about the record as it sits. `staged` is what the batch
+    would leave behind if it applied — which is what a person needs *before*
+    staging more, and what `dg apply` will judge. The findings are printed
+    verbatim, remedy strings included: a second wording here is the two doors
+    disagreeing about one store.
+
+    **`staged` is empty when the tray is**, rather than a second copy of
+    `stored`. With nothing staged the two lists are identical by construction,
+    and showing both would make an unsound store look twice as unsound —
+    teaching the eye to skip a section that matters exactly when the tray is
+    not empty.
+
+    `repairs` is the ops that would clear every propagation finding. It is the
+    one honesty command that maps to a single button, because `dg repair`
+    stages that list and nothing else.
+    """
+    proj = project.find()
+    stored = [_finding(v) for v in check.run(proj)]
+    staged: list[dict] = []
+    if proj.has_decisions and pending.load():
+        eff = pending.preview(Graph.load())
+        staged += [_finding(v) for v in eff.validate()]
+    if proj.has_tasks and pending.load(task_pending.path()):
+        teff = task_pending.preview(TaskGraph.load(proj.tasks))
+        staged += [_finding(v) for v in teff.validate()]
+    fixable = (len(pending.repairs(pending.preview(Graph.load())))
+               if proj.has_decisions else 0)
+    return {"stored": stored, "staged": staged, "repairs": fixable}
+
+
+def _finding(v) -> dict:
+    """One violation, as the page shows it. Nothing is reworded here."""
+    return {"check": v.check, "message": v.message, "severity": v.severity,
+            "origin": v.origin}
 
 
 def health() -> dict:
@@ -376,6 +524,28 @@ def find_payload(q: str) -> dict:
     return out
 
 
+def _clear(path) -> int:
+    """Empty one tray, and say how many ops went. `dg clear`, `dg task clear`."""
+    n = len(pending.load(path))
+    pending.clear(path)
+    return n
+
+
+def _today() -> str:
+    """The local date, as `dg confirm --against` files it.
+
+    Local rather than UTC for the reason the page's `today()` is: near midnight
+    a UTC date disagrees with the one the CLI would write for the same act.
+    """
+    from datetime import date
+    return date.today().isoformat()
+
+
+def _released_note(tg: TaskGraph, g: Graph | None, ops: list[dict]) -> list[str]:
+    """What a removal set loose, as lines. `task_pending.releases`, worded once."""
+    return [f"{t} becomes startable" for t in task_pending.releases(tg, g, ops)]
+
+
 def _stores() -> tuple[Graph | None, TaskGraph | None]:
     """Both stores, each `None` when the project does not have it.
 
@@ -472,6 +642,17 @@ class Handler(BaseHTTPRequestHandler):
                 # did not have to be spelled correctly.
                 self._json(find_payload(parse_qs(
                     urlparse(self.path).query).get("q", [""])[0]))
+            elif urlparse(self.path).path == "/api/context":
+                self._json(context_payload(parse_qs(
+                    urlparse(self.path).query).get("id", [""])[0]))
+            elif urlparse(self.path).path == "/api/path":
+                q = parse_qs(urlparse(self.path).query)
+                self._json(path_payload(q.get("from", [""])[0],
+                                        q.get("to", [""])[0]))
+            elif self.path == "/api/areas":
+                self._json(areas_payload())
+            elif self.path == "/api/check":
+                self._json(check_payload())
             elif self.path == "/api/health":
                 self._json(health())
             elif self.path == "/api/editor":
@@ -530,6 +711,24 @@ class Handler(BaseHTTPRequestHandler):
                         "pending": pending.load(task_pending.path()),
                         "notes": [n for n in (_task_note(eff, o) for o in ops_in)
                                   if n]})
+        elif self.path == "/api/edit":
+            self._edit()
+        elif self.path == "/api/repair":
+            self._repair()
+        elif self.path == "/api/confirm":
+            self._confirm()
+        elif self.path == "/api/read-evidence":
+            self._read_evidence()
+        elif self.path == "/api/dep":
+            self._relate(decisions=True)
+        elif self.path == "/api/task-dep":
+            self._relate(decisions=False)
+        elif self.path == "/api/fallout":
+            self._fallout()
+        elif self.path == "/api/add":
+            self._add()
+        elif self.path == "/api/add-task":
+            self._add_task()
         elif self.path == "/api/compose":
             self._compose()
         elif self.path == "/api/expand":
@@ -607,6 +806,360 @@ class Handler(BaseHTTPRequestHandler):
         wrote = out["applied"] or out["applied_tasks"]
         self._json(out, 500 if wrote else 400)
 
+    def _add(self) -> None:
+        """Open a question from the browser. `dg add`'s twin.
+
+        Every rule and the op list itself are `pending.compose_add`, which the
+        CLI calls too — so the edges that attach the vertex, and the edge a
+        `BLOCKED:` status implies, cannot be present at one door and missing at
+        the other. This method is transport: read the body, hand it over, stage
+        the group as one write.
+        """
+        g = Graph.load()
+        eff = pending.preview(g)
+        body = self._body()
+        try:
+            ops = pending.compose_add(
+                eff, vid=(body.get("id") or "").strip(),
+                title=(body.get("title") or "").strip(),
+                area=(body.get("area") or "").strip(),
+                status=(body.get("status") or "OPEN").strip(),
+                after=[x for x in (body.get("after") or []) if x],
+                note=(body.get("note") or "").strip() or None,
+                stored=g)
+            pending.vet_all(eff, ops)
+            pending.stage_all(ops, against=eff)   # one write, each op stamped
+        except pending.ApplyError as exc:
+            return self._json({"error": str(exc)}, 400)
+        # `ops`, not the tray: every other route reports what *this* act
+        # staged, and the page counts it.
+        self._json({"staged": ops, "pending": pending.load(), "notes": []})
+
+    def _add_task(self) -> None:
+        """Record a piece of work from the browser. `dg task add`'s twin.
+
+        The same shape as `_add`, over the other store and its own composer.
+        The one difference worth naming: a task may be born already pointing at
+        a decision, so the decision store is read here — as its *effective*
+        graph, the tray included, so that a question staged a minute ago is a
+        legal `because`. That is the A3 lesson, and `dg task add` resolves the
+        same field the same way.
+        """
+        proj = project.find()
+        if not proj.has_tasks:
+            return self._json({"error": "this project has no tasks.json — "
+                                        "`dg task init` starts one"}, 400)
+        g = pending.preview(Graph.load()) if proj.has_decisions else None
+        tg = TaskGraph.load(proj.tasks)
+        eff = task_pending.preview(tg)
+        body = self._body()
+        try:
+            ops = task_pending.compose_add(
+                eff, g, tid=(body.get("id") or "").strip(),
+                title=(body.get("title") or "").strip(),
+                area=(body.get("area") or "").strip(),
+                after=[x for x in (body.get("after") or []) if x],
+                discovered_during=[x for x in
+                                   (body.get("discovered_during") or []) if x],
+                because=(body.get("because") or "").strip() or None,
+                evidence_for=(body.get("evidence_for") or "").strip() or None,
+                note=(body.get("note") or "").strip() or None,
+                stored=tg)
+            staged = stage_tasks(eff, ops)
+        except Exception as exc:
+            return self._json({"error": str(exc)}, 400)
+        # No notes: `dg task add` prints none either. The staged-anyway warnings
+        # this app shows belong to acts that make a claim about *state* —
+        # starting abandoned work, deciding ahead of evidence — and recording
+        # that a question exists makes none.
+        self._json({"staged": staged,
+                    "pending": pending.load(task_pending.path()),
+                    "notes": []})
+
+    def _edit(self) -> None:
+        """Revise a staged op in place. `dg edit N`'s twin.
+
+        **Replaces rather than re-stages.** Re-staging moves the op to the end
+        of the batch, and any derived `set_status` would then apply before the
+        change it was derived from — so the whole of this route is
+        `pending.replace_group`, addressed by the op's own id.
+
+        It goes through the editor, because that is where the op's own fields
+        are: `editor.render_op` re-renders a staged op into the same buffer
+        `dg edit` opens, and there is no second parser. A derived op is refused
+        here as it is there — the tray's ✕ is what removes one.
+        """
+        ref = self._body().get("ref")
+        ops = pending.load()
+        try:
+            i = pending.resolve(ops, ref)
+        except LookupError as exc:
+            return self._json({"error": str(exc)}, 400)
+        op = ops[i]
+        kind = op.get("op")
+        if kind not in editor.RENDERERS:
+            return self._json(
+                {"error": f"op {i} is {kind} — derived, not composed; "
+                          f"remove it with the ✕ instead"}, 400)
+        if not _editing.acquire(blocking=False):
+            return self._json(
+                {"error": "an editor is already open for this project"}, 409)
+        try:
+            # Rendered against the batch *without* this op: the others are
+            # context the revision should see, this one is not.
+            eff = pending.preview(Graph.load(), skip=i)
+            new = editor.compose(eff, kind, vertex=op.get("vertex"),
+                                 index=i, op=op, launcher=editor.launch_gui)
+            pending.vet_all(eff, new)
+            pending.replace_group(op.get("ref") or i, new, against=eff,
+                                  supersede=editor.supersedes(kind, op))
+        except editor.EditorAbort as exc:
+            return self._json({"aborted": str(exc), "pending": pending.load()})
+        except (editor.EditorError, pending.ApplyError) as exc:
+            return self._json({"error": str(exc)}, 400)
+        finally:
+            _editing.release()
+        self._json({"staged": new, "pending": pending.load()})
+
+    def _repair(self) -> None:
+        """Stage the PROVISIONAL marks a reopen would have derived. `dg repair`.
+
+        `pending.repairs` is the whole of it and stages nothing else, which is
+        what makes this the one honesty command that maps to a button. It
+        exists because `expand` derives PROVISIONAL from a *reopen op*, and a
+        merge, a rebase or a second clone can land a DECIDED vertex under a
+        REOPENED premise without one ever having been staged here.
+        """
+        g = Graph.load()
+        eff = pending.preview(g)
+        ops = pending.repairs(eff)
+        if not ops:
+            return self._json({"staged": [], "pending": pending.load(),
+                               "notes": ["nothing to repair — no decision "
+                                         "rests on a premise under review "
+                                         "without saying so"]})
+        pending.stage_all(ops, against=eff)
+        self._json({"staged": ops, "pending": pending.load(),
+                    "notes": [f"{len(ops)} decision(s) marked PROVISIONAL"]})
+
+    def _read_evidence(self) -> None:
+        """Record that a late result was read against an answer, and it stands.
+
+        The third exit. A result that lands after a decision is settled can
+        refute the answer (reopen), turn out never to have been needed
+        (unlink), or confirm it — and only the third was unreachable here, so
+        of three exits the browser offered the one that files a reversal.
+
+        Two things this route insists on, both from `dg confirm --against`:
+
+        - **one reading per result.** Each is a separate finding and the note
+          is about *that* result, so answering for several at once with one
+          sentence is the box-tick this record exists not to be.
+        - **the note is required.** Without it the entry records that somebody
+          ran a command, not what they found.
+
+        It stages a **task** op, because the reading is stored on the task. The
+        response says so; the panel repeats it, or the tray gains a row the
+        person who pressed a button on a decision cannot account for.
+        """
+        proj = project.find()
+        if not proj.has_tasks:
+            return self._json({"error": "this project has no tasks.json"}, 400)
+        body = self._body()
+        vid = (body.get("vertex") or "").strip()
+        tid = (body.get("task") or "").strip()
+        note = (body.get("note") or "").strip()
+        if not note:
+            return self._json(
+                {"error": f"reading {tid} against {vid} needs what it showed"},
+                400)
+        g = pending.preview(Graph.load()) if proj.has_decisions else None
+        tg = task_pending.preview(TaskGraph.load(proj.tasks))
+        if g is None or vid not in g.vertices:
+            return self._json({"error": f"unknown decision {vid}"}, 400)
+        if tid not in {t["id"] for t in cross.late_evidence(tg, g, vid)}:
+            return self._json(
+                {"error": f"not evidence awaiting a reading against {vid}: "
+                          f"{tid}"}, 400)
+        op = {"op": "read_evidence", "task": tid, "against": vid,
+              "note": note, "date": _today()}
+        try:
+            stage_tasks(tg, [op])
+        except Exception as exc:
+            return self._json({"error": str(exc)}, 400)
+        self._json({"staged": [op],
+                    "pending": pending.load(task_pending.path()),
+                    "tray": "tasks",
+                    "notes": [f"{vid} read against {tid} — a task op, so it is "
+                              f"in the task tray"]})
+
+    def _confirm(self) -> None:
+        """Re-affirm a PROVISIONAL decision. `dg confirm`'s twin.
+
+        A named act rather than a status control: `set_status` is derived
+        everywhere else, and a browser that could write any status would be a
+        second copy of the propagation rules. This route means *the premise
+        moved and the answer still holds*, and stages exactly that.
+        """
+        g = Graph.load()
+        eff = pending.preview(g)
+        try:
+            ops = pending.compose_confirm(
+                eff, vid=(self._body().get("vertex") or "").strip())
+        except pending.ApplyError as exc:
+            return self._json({"error": str(exc)}, 400)
+        pending.stage_all(ops, against=eff)
+        released = [o["vertex"] for o in ops[1:]]
+        self._json({"staged": ops, "pending": pending.load(),
+                    "notes": ([f"{len(released)} vertex(es) were blocked on "
+                               f"this and are released to OPEN: "
+                               f"{', '.join(released)}"] if released else [])})
+
+    #: Which composer each structural correction reaches, per store. One table,
+    #: because the routes differ only in that and in what they report — and a
+    #: `switch` per route is how one of them would come to skip a guard.
+    #: `link`/`unlink` are decision-facing but write to the *task* store: the
+    #: seam is a field on a task, and only one side of it may be edited.
+    def _relate(self, *, decisions: bool) -> None:
+        """Prerequisites, provenance, and the seam. `dg dep` and its family.
+
+        Every rule lives in the store's own staging module, which the CLI calls
+        too. What is here is transport plus one thing worth naming: a
+        *removing* verb answers with what it set loose, so the panel can show
+        it. `dg task undep`'s help has always promised it "releases this task if
+        it waited only on that", and the browser is where that promise had no
+        way to be read before the act rather than after.
+        """
+        body = self._body()
+        verb = body.get("verb")
+        if verb not in ("dep", "undep", "link", "unlink"):
+            return self._json({"error": f"unknown verb {verb!r}"}, 400)
+        try:
+            if decisions:
+                ops, said = self._decision_relation(verb, body)
+            else:
+                ops, said = self._task_relation(verb, body)
+        except pending.ApplyError as exc:
+            return self._json({"error": str(exc)}, 400)
+        except Exception as exc:
+            return self._json({"error": str(exc)}, 500)
+        path = None if decisions else task_pending.path()
+        return self._json({"staged": ops, "pending": pending.load(path),
+                           "notes": said, "tray": "decisions" if decisions
+                                                 else "tasks"})
+
+    def _decision_relation(self, verb, body):
+        g = Graph.load()
+        eff = pending.preview(g)
+        vid = (body.get("id") or "").strip()
+        after = [x for x in (body.get("after") or []) if x]
+        if verb == "dep":
+            ops, fresh, already = pending.compose_dep(eff, vid=vid, after=after)
+            said = ([f"already rests on {', '.join(already)}"] if already else [])
+            if not fresh:
+                # Nothing staged is not the same as staged, and saying
+                # otherwise sends the reader to `dg pending` for an op that is
+                # not there — the same distinction `dg dep` makes.
+                return [], said
+        elif verb == "undep":
+            ops, blocker = pending.compose_undep(eff, vid=vid, after=after)
+            said = ([f"{vid} was BLOCKED:{blocker} and is released to OPEN — "
+                     f"the block asserted the dependency being removed"]
+                    if blocker else [])
+            said += [f"{v.check} — {v.message}"
+                     for v in pending.introduced(eff, ops)]
+        else:
+            raise pending.ApplyError(
+                f"{verb} is a task verb — the seam is a field on a task, and "
+                f"only that side of it may be edited")
+        pending.stage_all(ops, against=eff)
+        return ops, said
+
+    def _task_relation(self, verb, body):
+        proj = project.find()
+        if not proj.has_tasks:
+            raise pending.ApplyError("this project has no tasks.json — "
+                                     "`dg task init` starts one")
+        g = pending.preview(Graph.load()) if proj.has_decisions else None
+        eff = task_pending.preview(TaskGraph.load(proj.tasks))
+        tid = (body.get("id") or "").strip()
+        after = [x for x in (body.get("after") or []) if x]
+        during = [x for x in (body.get("discovered_during") or []) if x]
+        if verb == "dep":
+            ops, spoke = task_pending.compose_dep(
+                eff, tid=tid, after=after, discovered_during=during)
+            said = [f"already {task_pending.REL[k]['reads']} {', '.join(a)}"
+                    for k, _, a in spoke if a]
+        elif verb == "undep":
+            ops, spoke = task_pending.compose_undep(
+                eff, tid=tid, after=after, discovered_during=during)
+            said = [f"{tid} no longer {task_pending.REL[k]['reads']} "
+                    f"{', '.join(o)}" for k, o in spoke]
+            said += _released_note(eff, g, ops)
+        elif verb == "link":
+            ops = task_pending.compose_link(
+                eff, g, tid=tid,
+                because=(body.get("because") or "").strip() or None,
+                evidence_for=(body.get("evidence_for") or "").strip() or None)
+            said = []
+        else:
+            ops, was = task_pending.compose_unlink(
+                eff, tid=tid, because=bool(body.get("because")),
+                evidence_for=bool(body.get("evidence_for")))
+            said = [f"{tid} unlinked from {', '.join(was)}"]
+            said += _released_note(eff, g, ops)
+        said += [f"{v.check} — {v.message}"
+                 for v in task_pending.introduced(eff, ops)]
+        stage_tasks(eff, ops)
+        return ops, said
+
+    def _fallout(self) -> None:
+        """What a proposed correction would set loose — **without staging it**.
+
+        A read, so the panel can ask before it posts. `askFallout` is the
+        pattern: the question a form is allowed to hold is one it can act on,
+        and acting on it means knowing the answer first. `dg task drop` has had
+        this since audit F2; the removing verbs have not, and a person clicking
+        one in the browser learned what it released by reading the graph
+        afterwards.
+        """
+        body = self._body()
+        verb = body.get("verb")
+        proj = project.find()
+        try:
+            if body.get("store") == "decisions":
+                eff = pending.preview(Graph.load())
+                ops, blocker = pending.compose_undep(
+                    eff, vid=(body.get("id") or "").strip(),
+                    after=[x for x in (body.get("after") or []) if x])
+                return self._json({
+                    "releases": [f"{body['id']} is released to OPEN — it was "
+                                 f"BLOCKED:{blocker}"] if blocker else [],
+                    "findings": [f"{v.check} — {v.message}"
+                                 for v in pending.introduced(eff, ops)]})
+            if not proj.has_tasks:
+                return self._json({"error": "this project has no tasks.json"}, 400)
+            g = pending.preview(Graph.load()) if proj.has_decisions else None
+            eff = task_pending.preview(TaskGraph.load(proj.tasks))
+            tid = (body.get("id") or "").strip()
+            if verb == "undep":
+                ops, _ = task_pending.compose_undep(
+                    eff, tid=tid,
+                    after=[x for x in (body.get("after") or []) if x],
+                    discovered_during=[x for x in
+                                       (body.get("discovered_during") or []) if x])
+            else:
+                ops, _ = task_pending.compose_unlink(
+                    eff, tid=tid, because=bool(body.get("because")),
+                    evidence_for=bool(body.get("evidence_for")))
+        except pending.ApplyError as exc:
+            return self._json({"error": str(exc)}, 400)
+        self._json({
+            "releases": [f"{t} becomes startable"
+                         for t in task_pending.releases(eff, g, ops)],
+            "findings": [f"{v.check} — {v.message}"
+                         for v in task_pending.introduced(eff, ops)]})
+
     def _compose(self) -> None:
         """Open the editor, block until it exits, stage what came back.
 
@@ -659,6 +1212,13 @@ class Handler(BaseHTTPRequestHandler):
             # takes either, and the id is what the page sends when the op has
             # one. Resolved under the tray lock, so a drop lands on the op the
             # page showed even if another writer has applied since. Audit F29.
+            # The whole tray, not one op. `dg clear`'s twin, and it answers
+            # with what it discarded: the tray is shared, so clearing can throw
+            # away something a terminal staged a moment ago.
+            if self.path == "/api/pending":
+                return self._json({"cleared": _clear(None)})
+            if self.path == "/api/task-pending":
+                return self._json({"cleared": _clear(task_pending.path())})
             if self.path.startswith("/api/task-pending/"):
                 try:
                     pending.drop(self.path.rsplit("/", 1)[1],

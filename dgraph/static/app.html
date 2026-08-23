@@ -128,6 +128,13 @@
   .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--dim)}
   .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;
     margin-right:4px;vertical-align:middle}
+  /* The soundness chip. Quiet when the store is clean — it is not shown at
+     all — so its appearing is the whole signal. */
+  .chip.bad{color:var(--bad);border-color:var(--bad)}
+  .chip.warn{color:var(--warn);border-color:var(--warn)}
+  .finding{border-left:2px solid var(--bad);padding-left:9px;margin:9px 0}
+  .finding.warning{border-left-color:var(--warn)}
+  .finding b{font-size:11px;letter-spacing:.3px}
 </style>
 </head>
 <body>
@@ -137,6 +144,9 @@
     <span id="tabs"></span>
     <span class="muted" id="counts"></span>
     <span id="statusChips"></span>
+    <button class="chip" id="newBtn" title="Open a question, or record a piece of work">+ new</button>
+    <button class="chip" id="soundBtn" style="display:none"></button>
+    <button class="chip" id="areasBtn" title="Counts by area and status, one block per store">areas</button>
     <button class="chip" id="frontierOnly">frontier only</button>
     <input id="q" placeholder="find…" title="Same query language as `dg find`: a bare word searches prose, field:value matches one field, is:name asks a derived question, under:D04 scopes to a subgraph. `-` negates, `or` alternates.">
     <span class="muted" id="qnote"></span>
@@ -229,6 +239,7 @@ async function boot(){
   ED = ED || await api("/api/editor").catch(()=>({available:false}));
   if(tab!=="decisions" && !T) tab="decisions";
   bindQuery();
+  await soundness();
   tabs(); chips(); legend(); layout(); draw(); tray();
 }
 let ALL_AREAS=[];
@@ -804,12 +815,279 @@ const editKeys = () => !(ED && ED.available) ? ""
        <kbd>C-c C-c</kbd> stage · <kbd>C-c C-k</kbd> cancel ·
        <kbd>C-c C-o</kbd> follow a <code>dg:</code> link</div>`
     : `<div class="keys">${esc(ED.editor)} opens on the buffer; save and exit to stage.</div>`;
+/* ---- is the store sound? --------------------------------------------------
+
+   The browser had no way to ask. An invalid store — the merge, rebase, partial
+   checkout or second clone `pending.repairs` exists for — looked normal here
+   until an unrelated Apply was refused for a reason that had nothing to do with
+   what was staged, naming a CLI command as the remedy.
+
+   Quiet when clean: the chip is hidden entirely, so its appearing is the whole
+   signal. The `dg brief` treatment, not a wall. */
+
+let SOUND=null;
+
+async function soundness(){
+  try{ SOUND = await api("/api/check"); }
+  catch(err){ SOUND = null; }
+  const chip=$("#soundBtn");
+  if(!SOUND){ chip.style.display="none"; return; }
+  const all=[...SOUND.stored, ...SOUND.staged];
+  if(!all.length){ chip.style.display="none"; return; }
+  const bad=all.some(f=>f.severity!=="warning");
+  chip.style.display="";
+  chip.className="chip "+(bad?"bad":"warn");
+  chip.textContent=`${all.length} finding${all.length===1?"":"s"}`;
+  chip.title="What `dg check` says about this project";
+}
+
+function findingRows(rows){
+  return rows.map(f=>`<div class="finding${f.severity==="warning"?" warning":""}">
+    <b>${esc(f.check)}</b>${f.origin?` <span class="muted">${esc(f.origin)}</span>`:""}
+    <div>${esc(f.message)}</div></div>`).join("");
+}
+
+/* The findings verbatim, remedy strings and all — they already carry them, and
+   a second wording here is the two doors disagreeing about one store. */
+function soundPanel(){
+  if(!SOUND) return;
+  sel=null; tsel=null; NEWKIND=null; RELATING=null; draw();
+  const {stored, staged, repairs} = SOUND;
+  let h=`<h2>What `+"`dg check`"+` says</h2>`;
+  if(!stored.length && !staged.length)
+    h+=`<p class="muted">Every invariant holds, in both stores and in what is
+      staged.</p>`;
+  if(stored.length){
+    h+=`<p class="muted">In the store as it sits — this is what
+      <code>dg check</code> reports and what the commit gate reads.</p>`
+      + findingRows(stored);
+  }
+  if(staged.length){
+    /* A different question from the one above: not "is the record sound" but
+       "would this batch leave it sound", which is what `dg apply` will judge
+       and what a person needs before staging more. */
+    h+=`<p class="muted" style="margin-top:14px">With the trays applied — what
+      <code>Apply</code> would judge.</p>` + findingRows(staged);
+  }
+  if(repairs)
+    h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+      <p class="muted">${repairs} decision(s) rest on a premise under review
+        without saying so — a reopen that reached this store by some route
+        other than <code>dg reopen</code>.</p>
+      <p style="margin:10px 0"><button class="primary" id="doRepair">Mark them PROVISIONAL</button></p>`;
+  h+=`<div class="note" id="note"></div>`;
+  $("#side").innerHTML=h;
+  $("#doRepair")&&($("#doRepair").onclick=async()=>{
+    try{
+      const res=await api("/api/repair",{method:"POST"});
+      PEND=await api("/api/pending"); tray();
+      await soundness();
+      soundPanel();
+      say((res.notes||[]).join(" "), "ok");
+    }catch(err){ say(err.message,"bad"); }
+  });
+}
+
+/* ---- opening a question, and recording a piece of work --------------------
+
+   The graph could be read here and answered here, and never *grown* here: every
+   vertex on screen had been typed at a terminal. That is the whole of audit F1,
+   and it is what made the browser a viewer with buttons rather than an
+   interface — an `OPEN` vertex is the model's reason for existing, and a person
+   who noticed an unrecorded question had to leave to write it down, which is
+   the moment prose wins.
+
+   Neither form validates against the graph itself. `pending.compose_add` and
+   `task_pending.compose_add` own every rule, `dg add` and `dg task add` call
+   the same two functions, and what is checked here is only what a form can
+   check without asking: that the required boxes have something in them. A
+   second set of rules in JavaScript is how the two doors come to disagree
+   about what a legal id is. */
+
+let NEWKIND=null;          /* "decision" | "task" while a form is open */
+
+function newNode(){
+  sel=null; tsel=null; draw();
+  /* In a single-store view the tab has already answered the question. In
+     **joined** it has not, and guessing is how a piece of work gets recorded as
+     a decision — the one confusion the two-store model exists to prevent. So
+     joined asks, and the two options say what each store is for rather than
+     repeating the tab names. */
+  if(tab==="joined" && T) return chooseStore();
+  NEWKIND = tab==="tasks" ? "task" : "decision";
+  NEWKIND==="task" ? newTaskForm() : newDecisionForm();
+}
+
+function chooseStore(){
+  $("#side").innerHTML=`<h2>What are you recording?</h2>
+    <p class="muted">Two stores, and the difference is not which view you are
+      in. A decision is a question with a falsifier; a task is work with an
+      outcome.</p>
+    <p style="margin:10px 0;display:flex;gap:8px">
+      <button class="ghost" id="cD">A question</button>
+      <button class="ghost" id="cT">A piece of work</button></p>`;
+  $("#cD").onclick=()=>{ NEWKIND="decision"; newDecisionForm(); };
+  $("#cT").onclick=()=>{ NEWKIND="task"; newTaskForm(); };
+}
+
+/* The ids a relation control offers. Sorted, and labelled the way every other
+   list here is — id first, because ids never clip and titles do. */
+function idOptions(rows, idKey, titleKey){
+  return rows.map(r=>`<option value="${esc(r[idKey])}">${esc(r[idKey])} — ${
+    esc(r[titleKey])}</option>`).join("");
+}
+
+function newDecisionForm(){
+  const opts = idOptions(G.vertices, "id", "title");
+  const areas = G.areas.map(a=>`<option value="${esc(a)}">${esc(a)}</option>`).join("");
+  /* Every status the store has, plus the one that needs a target. BLOCKED is
+     offered as its own control rather than as free text: `BLOCKED:D04` asserts
+     a dependency, and a person typing the id into a status string is one typo
+     away from a block on a decision that does not exist. */
+  const blockers = idOptions(G.vertices, "id", "title");
+  $("#side").innerHTML = `<h2>A new question</h2>
+    <p class="muted">Nothing is written until Apply, as with everything else here.</p>
+    <label>Id</label><input id="nId" value="${esc(G.next_id||"")}">
+    <label>Title — the question this decision answers, in one line</label>
+    <input id="nTitle" placeholder="e.g. Which index for the served vectors?">
+    <label>Area</label><select id="nArea">${areas}</select>
+    <label>Status</label>
+    <select id="nStatus">
+      <option value="OPEN">OPEN — nobody has answered it yet</option>
+      <option value="BLOCKED">BLOCKED — unanswerable until another is settled</option>
+    </select>
+    <div id="nBlockWrap" style="display:none">
+      <label>Blocked until which decision is settled?</label>
+      <select id="nBlocker">${blockers}</select>
+    </div>
+    <label>Rests on (ctrl-click; none = a root)</label>
+    <select id="nAfter" multiple>${opts}</select>
+    <label>Note — what is undecided, and why (optional)</label>
+    <textarea id="nNote"></textarea>
+    <p style="margin:10px 0;display:flex;gap:8px">
+      <button class="primary" id="nGo">Stage new decision</button>
+      <button class="ghost" id="nNo">Cancel</button></p>
+    <div class="note" id="note"></div>`;
+  /* The blocker control appears only when it means something. A disabled box
+     that is always on screen teaches the eye past it. */
+  const sync=()=>$("#nBlockWrap").style.display =
+    $("#nStatus").value==="BLOCKED" ? "" : "none";
+  $("#nStatus").onchange=sync; sync();
+  $("#nNo").onclick=closeNew;
+  $("#nGo").onclick=stageNewDecision;
+}
+
+async function stageNewDecision(){
+  const id=$("#nId").value.trim(), title=$("#nTitle").value.trim();
+  if(!id || !title){ say("An id and a title are required.","bad"); return; }
+  const status = $("#nStatus").value==="BLOCKED"
+    ? "BLOCKED:"+$("#nBlocker").value : $("#nStatus").value;
+  await postNew("/api/add", {
+    id, title, area:$("#nArea").value, status,
+    after:[...$("#nAfter").selectedOptions].map(o=>o.value),
+    note:$("#nNote").value.trim()||null,
+  }, id);
+}
+
+function newTaskForm(){
+  const tasks = idOptions(T.tasks, "id", "title");
+  const areas = T.areas.map(a=>`<option value="${esc(a)}">${esc(a)}</option>`).join("");
+  /* The frontier first, then everything else: `because` almost always names a
+     question that is still open, and a select whose first entries are the
+     settled ones buries it. A blank first option is what "no link" looks like,
+     and it is the default because most work has neither. */
+  const dec = G ? `<option value=""></option>` + idOptions(G.vertices,"id","title") : "";
+  $("#side").innerHTML = `<h2>A new piece of work</h2>
+    <p class="muted">Nothing is written until Apply, as with everything else here.</p>
+    <label>Id</label><input id="nId" value="${esc(T.next_id||"")}">
+    <label>Title — what doing this means</label>
+    <input id="nTitle" placeholder="e.g. Build the HNSW index and sweep efSearch">
+    <label>Area</label><select id="nArea">${areas}</select>
+    <label>After — work that must be resolved first (ctrl-click)</label>
+    <select id="nAfter" multiple>${tasks}</select>
+    <label>Discovered during — work whose doing turned this up (ctrl-click)</label>
+    <select id="nDuring" multiple>${tasks}</select>
+    <p class="muted" style="margin:4px 0 0">These are different claims. <b>After</b>
+      asserts an order and holds this work back; <b>discovered during</b> only
+      records where it came from and blocks nothing.</p>
+    ${G ? `<label>Because — the decision this work exists because of</label>
+    <select id="nBecause">${dec}</select>
+    <label>Evidence for — a decision this work will inform</label>
+    <select id="nEvidence">${dec}</select>` :
+    `<p class="muted" style="margin:10px 0 0">This project has no decision graph,
+      so there is nothing to link this work to. <code>dg init</code> starts one.</p>`}
+    <label>Note (optional)</label>
+    <textarea id="nNote"></textarea>
+    <p style="margin:10px 0;display:flex;gap:8px">
+      <button class="primary" id="nGo">Stage new task</button>
+      <button class="ghost" id="nNo">Cancel</button></p>
+    <div class="note" id="note"></div>`;
+  $("#nNo").onclick=closeNew;
+  $("#nGo").onclick=stageNewTask;
+}
+
+async function stageNewTask(){
+  const id=$("#nId").value.trim(), title=$("#nTitle").value.trim();
+  if(!id || !title){ say("An id and a title are required.","bad"); return; }
+  await postNew("/api/add-task", {
+    id, title, area:$("#nArea").value,
+    after:[...$("#nAfter").selectedOptions].map(o=>o.value),
+    discovered_during:[...$("#nDuring").selectedOptions].map(o=>o.value),
+    because:$("#nBecause")?$("#nBecause").value||null:null,
+    evidence_for:$("#nEvidence")?$("#nEvidence").value||null:null,
+    note:$("#nNote").value.trim()||null,
+  }, id);
+}
+
+/* One post path for both forms. The reload is the part worth explaining: an
+   `add` changes what every *other* control on this page can offer — a new id to
+   depend on, a new premise to link to — so the graph is re-read rather than
+   patched locally. `panel()` and `taskPanel()` can patch because they change
+   one node; this changes the vocabulary. */
+async function postNew(route, body, id){
+  try{
+    const res = await api(route, {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(body)});
+    const n = (res.staged||[]).length;
+    NEWKIND=null;
+    await boot(); fit(); draw();
+    $("#side").innerHTML=`<p class="muted">Staged ${esc(id)} — ${n} op(s),
+      including the edges that attach it. Nothing is written until Apply.</p>`;
+  }catch(err){ say(err.message,"bad"); }
+}
+
+function closeNew(){
+  NEWKIND=null;
+  $("#side").innerHTML=`<p class="muted">Click a node to inspect it.</p>`;
+}
+
 /* ---- the task panel ------------------------------------------------------
-   Start, Done and Drop, which is the whole of what can be done to a task from
-   here. Structural edits — a prerequisite discovered later, a link recorded
-   against the wrong decision — stay in the CLI: they are corrections, they are
-   rare, and each one wants a sentence of explanation the form has nowhere to
-   put. */
+
+   Two kinds of change, and this panel now offers both. **Status** moves a task
+   along its own machine — start, done, park, drop. **Structure** changes the
+   graph it sits in: a prerequisite discovered later, provenance, and the seam
+   into the decision store.
+
+   Structure used to stay in the CLI, on the argument that these are
+   corrections, that they are rare, and that each wants a sentence of
+   explanation a form has nowhere to put. Only the first of those survived the
+   interface audit (F4). *Rare* was measured on the people who use the CLI —
+   `because` is not rare, it is the tool's central claim, and a browser user
+   meets it on their first task. And the *sentence* is not collected by
+   `dg task dep`, `undep`, `link` or `unlink` either; none of them takes a
+   `--why`, so there was never one to lose.
+
+   What a correction does want is deliberation, and `askFallout` below had
+   already shown a form can hold that: it asks a question per released task and
+   acts on the answers. So the removing verbs ask too — `relateFallout` shows
+   what stops waiting *before* anything is staged, which is the part a
+   confirmation dialog cannot do.
+
+   `rm` is still not here, and that is a stance rather than a gap. Removal
+   erases a record instead of superseding it, which is the one thing this model
+   refuses; friction is the intended behaviour, and a ✕ is the wrong
+   affordance for it. */
 function taskPanel(){
   const x=T.tasks.find(y=>y.id===tsel), d=T.derived[tsel], c=d.cross;
   let h=`<h2>${esc(x.id)} — ${esc(x.title)}</h2>
@@ -888,11 +1166,18 @@ function taskPanel(){
   }else{
     h+=`<p class="muted">${x.status==="DONE"?"Finished":"Dropped"}. Reopening finished work is a correction, and corrections live in <code>dg task</code>.</p>`;
   }
+  /* Offered whatever the status is. A prerequisite recorded against the wrong
+     task, or a link pointing at the wrong decision, is wrong whether or not
+     the work is finished — and `link` after the fact is the *usual* case, since
+     work is what turns the question up. */
+  h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">`
+    + structureBtn("tasks", tsel);
   h+=`<div class="note" id="note"></div>`;
   $("#side").innerHTML=h;
   $("#side").querySelectorAll("a[data-dg]").forEach(a=>a.onclick=ev=>{
     ev.preventDefault(); jump(a.dataset.dg);
   });
+  bindStructure();
   restoreDraft();
   const n=NOTES[tsel]; if(n) say(n.msg, n.cls);
   $("#doStart")&&($("#doStart").onclick=()=>
@@ -918,6 +1203,184 @@ function taskPanel(){
   });
   $("#side").addEventListener("input", captureDraft);
   $("#side").addEventListener("change", captureDraft);
+}
+
+/* ---- structure: prerequisites, provenance, and the seam -------------------
+
+   One builder for both stores, because the shape is the same in each: pick
+   ids, choose what the relation *means*, and — for anything that removes —
+   read what it sets loose before deciding. What differs is the vocabulary,
+   which is the table below and nothing else. */
+
+const REL_FORMS = {
+  tasks: {
+    route: "/api/task-dep", store: "tasks",
+    add: [["after", "After — work that must be resolved first"],
+          ["discovered_during", "Discovered during — work whose doing turned this up"]],
+    seam: [["because", "Because — the decision this work exists for"],
+           ["evidence_for", "Evidence for — a decision this work informs"]],
+  },
+  decisions: {
+    route: "/api/dep", store: "decisions",
+    add: [["after", "Rests on — premises this question depends on"]],
+    seam: [],
+  },
+};
+
+let RELATING=null;   /* {store, id, verb} while a structure form is open */
+
+function structureBtn(store, id){
+  return `<p style="margin:10px 0"><button class="ghost" data-rel="${
+    esc(store)}|${esc(id)}">Edit structure</button></p>`;
+}
+
+function bindStructure(){
+  const b=$("#side").querySelector("button[data-rel]");
+  if(!b) return;
+  b.onclick=()=>{
+    const [store,id]=b.dataset.rel.split("|");
+    RELATING={store, id, verb:"dep"};
+    structureForm();
+  };
+}
+
+/* The ids this node could relate to. Never itself, and for a removal only what
+   it already holds — offering an id that is not there is how "unknown task"
+   became a thing a form could produce. */
+function relCandidates(store, id, field, verb){
+  if(store==="decisions"){
+    const held = G.derived[id] ? G.derived[id].depends : [];
+    const rows = verb==="undep"
+      ? G.vertices.filter(v=>held.includes(v.id))
+      : G.vertices.filter(v=>v.id!==id);
+    return idOptions(rows, "id", "title");
+  }
+  const d = T.derived[id] || {};
+  const held = field==="after" ? (d.prerequisites||[]) : (d.discovered_during||[]);
+  const rows = verb==="undep"
+    ? T.tasks.filter(t=>held.includes(t.id))
+    : T.tasks.filter(t=>t.id!==id);
+  return idOptions(rows, "id", "title");
+}
+
+function structureForm(){
+  const {store, id, verb} = RELATING;
+  const spec = REL_FORMS[store];
+  const removing = verb==="undep" || verb==="unlink";
+  const seam = verb==="link" || verb==="unlink";
+  let h=`<h2>${esc(id)} — structure</h2>
+    <p style="margin:0 0 10px;display:flex;gap:6px;flex-wrap:wrap">`;
+  const verbs = spec.seam.length
+    ? [["dep","add a relation"],["undep","remove a relation"],
+       ["link","set a link"],["unlink","remove a link"]]
+    : [["dep","add a premise"],["undep","remove a premise"]];
+  verbs.forEach(([v,label])=>
+    h+=`<button class="chip${v===verb?" on":""}" data-v="${v}">${label}</button>`);
+  h+=`</p>`;
+
+  if(seam){
+    /* A link is one decision per field, not a multi-select: a task rests on at
+       most one premise and informs at most one question, which is what makes
+       the seam a field rather than an edge. */
+    spec.seam.forEach(([field,label])=>{
+      const now = (T.tasks.find(t=>t.id===id)||{})[field];
+      if(verb==="unlink"){
+        h+=`<label style="display:flex;gap:8px;align-items:center">
+          <input type="checkbox" id="r_${field}" style="width:auto"${
+            now?"":" disabled"}> ${esc(label)}
+          <span class="muted">${now?esc(now):"— not set"}</span></label>`;
+      }else{
+        const opts=`<option value=""></option>`+(G?idOptions(G.vertices,"id","title"):"");
+        h+=`<label>${esc(label)}${now?` <span class="muted">(now ${esc(now)})</span>`:""}</label>
+          <select id="r_${field}">${opts}</select>`;
+      }
+    });
+  }else{
+    spec.add.forEach(([field,label])=>{
+      const opts=relCandidates(store, id, field, verb);
+      h+=`<label>${esc(label)}${removing?" — remove which?":""} (ctrl-click)</label>
+        <select id="r_${field}" multiple>${opts||""}</select>`
+        + (opts?"":`<p class="muted" style="margin:4px 0">Nothing to remove here.</p>`);
+    });
+    if(store==="tasks" && !removing)
+      h+=`<p class="muted" style="margin:6px 0">These are different claims.
+        <b>After</b> asserts an order and holds this work back;
+        <b>discovered during</b> only records where it came from and blocks nothing.</p>`;
+  }
+
+  h+=`<p style="margin:12px 0;display:flex;gap:8px">
+      <button class="primary" id="rGo">${removing?"Check, then stage":"Stage"}</button>
+      <button class="ghost" id="rNo">Cancel</button></p>
+    <div class="note" id="note"></div>`;
+  $("#side").innerHTML=h;
+  $("#side").querySelectorAll("button[data-v]").forEach(b=>b.onclick=()=>{
+    RELATING.verb=b.dataset.v; structureForm();
+  });
+  $("#rNo").onclick=()=>{ RELATING=null; store==="tasks"?taskPanel():panel(); };
+  $("#rGo").onclick=()=>removing?relateFallout():postRelate();
+}
+
+/* What the body of a structure post looks like, read off the form. One reader,
+   so the fallout preview and the staging post cannot describe different acts —
+   which would make the preview a reassurance about something else. */
+function relateBody(){
+  const {store, id, verb} = RELATING;
+  const body={verb, id, store:REL_FORMS[store].store};
+  const spec=REL_FORMS[store];
+  if(verb==="link"||verb==="unlink"){
+    spec.seam.forEach(([f])=>{
+      const el=$("#r_"+f); if(!el) return;
+      body[f] = verb==="unlink" ? !!el.checked : (el.value||null);
+    });
+  }else{
+    spec.add.forEach(([f])=>{
+      const el=$("#r_"+f); if(!el) return;
+      body[f]=[...el.selectedOptions].map(o=>o.value);
+    });
+  }
+  return body;
+}
+
+/* The `askFallout` pattern, for the two verbs that release something. A
+   removal is refused nothing — it is legal — so this is not a gate; it is the
+   sentence a person needs in order to mean it. */
+async function relateFallout(){
+  const body=relateBody();
+  let res;
+  try{ res=await api("/api/fallout",{method:"POST",
+    headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}); }
+  catch(err){ say(err.message,"bad"); return; }
+  if(res.error){ say(res.error,"bad"); return; }
+  const lines=[...(res.releases||[]), ...(res.findings||[])];
+  if(!lines.length) return postRelate();
+  let h=`<p class="warn">Removing this changes more than ${esc(RELATING.id)}:</p>
+    <ul class="muted">${lines.map(l=>`<li>${esc(l)}</li>`).join("")}</ul>
+    <p style="margin:10px 0;display:flex;gap:8px">
+      <button class="primary" id="rYes">Stage it anyway</button>
+      <button class="ghost" id="rBack">Back</button></p>
+    <div class="note" id="note"></div>`;
+  $("#side").innerHTML=h;
+  $("#rBack").onclick=structureForm;
+  $("#rYes").onclick=postRelate;
+}
+
+async function postRelate(){
+  const {store, id} = RELATING;
+  const body=relateBody();
+  try{
+    const res=await api(REL_FORMS[store].route,{method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+    RELATING=null;
+    await boot(); fit(); draw();
+    const n=(res.staged||[]).length;
+    const notes=(res.notes||[]).map(x=>`<li>${esc(x)}</li>`).join("");
+    $("#side").innerHTML = (n
+        ? `<p class="muted">Staged ${n} op(s) for ${esc(id)}. Nothing is
+             written until Apply.</p>`
+        : `<p class="muted">Nothing staged — ${esc(id)} already held what was
+             asked for.</p>`)
+      + (notes?`<ul class="muted">${notes}</ul>`:"");
+  }catch(err){ say(err.message,"bad"); }
 }
 
 /* ---- what a drop leaves standing -------------------------------------
@@ -1062,6 +1525,137 @@ function supersededCard(x){
   return `<details class="edge-card super"><summary>${head}</summary>${b}</details>`;
 }
 
+/* One card per late result, each with its own reading. Per result rather than
+   per decision, because the note is about *that* measurement — answering for
+   two at once with one sentence is the box-tick this record exists not to be,
+   which is why `dg confirm --against` refuses to default to "all of them". */
+function lateEvidence(rows){
+  let h=`<div class="answer"><b class="warn">Evidence read after this was
+    settled.</b> <span class="muted">It has never been read against the
+    answer.</span>`;
+  rows.forEach(t=>{
+    h+=`<div style="margin-top:9px">${dgLink(t.id)}
+      <span class="muted">finished ${esc(t.done||"—")}</span>
+      <div class="muted">${esc(t.outcome||"")}</div>
+      <label>What does it show about the answer?</label>
+      <input id="ev_${esc(t.id)}" placeholder="it confirms the answer, because…">
+      <p style="margin:8px 0"><button class="ghost" data-ev="${esc(t.id)}">It confirms the answer</button></p>
+      <p class="muted" style="margin:0">Or reopen below, if it does not.</p></div>`;
+  });
+  return h+`</div>`;
+}
+
+async function readEvidence(tid){
+  const vid=sel, note=($("#ev_"+tid)||{}).value||"";
+  if(!note.trim()){
+    say("Say what it showed — without that the record says somebody clicked a button.","bad",vid);
+    return;
+  }
+  try{
+    const res=await api("/api/read-evidence",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({vertex:vid, task:tid, note:note.trim()})});
+    TPEND=await api("/api/task-pending"); tray();
+    /* Where it landed, said out loud: this is a *task* op staged from a
+       decision panel, and a tray that gains a row the person cannot account
+       for is worse than the button being absent. */
+    say((res.notes||[]).join(" "), "ok", vid);
+    if(vid===sel) panel();
+  }catch(err){ say(err.message,"bad",vid); }
+}
+
+/* ---- the readings the page did not have ----------------------------------
+
+   `depends on` is one hop, which is the neighbourhood rather than the
+   reasoning. Each of these is computed by the function the CLI uses — a page
+   deriving its own premise chain is the drift this tool exists to catch. */
+
+async function showChain(vid){
+  let r;
+  try{ r=await api("/api/context?id="+encodeURIComponent(vid)); }
+  catch(err){ say(err.message,"bad",vid); return; }
+  if(r.error){ say(r.error,"bad",vid); return; }
+  let h=`<h2>${esc(vid)} — what it rests on</h2>`;
+  if(!r.chain.length) h+=`<p class="muted">Nothing. It is a root.</p>`;
+  /* The reading first, because it is the reading: a chain with an unsettled
+     link makes everything below it a bet rather than a conclusion. */
+  if(r.shaky.length)
+    h+=`<p class="warn">${esc(r.shaky.join(", "))} ${r.shaky.length===1?"is":"are"}
+      not settled — anything resting on ${r.shaky.length===1?"it":"them"} is a
+      bet on the answer, not a conclusion from it.</p>`;
+  else if(r.chain.length)
+    h+=`<p class="muted">Every premise below is settled.</p>`;
+  r.chain.forEach(p=>{
+    h+=`<div class="finding${p.shaky?"":" warning"}" style="border-left-color:${
+      p.shaky?"var(--warn)":"var(--ok)"}">
+      <b>${dgLink(p.id)}</b> ${esc(p.title)}
+      <div class="muted">${esc(p.status)}${
+        p.also_opened.length?` · also opened ${esc(p.also_opened.join(", "))}`:""}</div>
+      ${p.answer?`<div>${md(p.answer)}</div>`:""}
+      ${p.falsifier?`<div class="muted">falsifier — ${esc(p.falsifier)}</div>`:""}
+      ${p.depth < r.chain.length-1
+        ? `<a href="#" class="muted" data-path="${esc(p.id)}|${esc(vid)}">the chain from here…</a>`
+        : ""}</div>`;
+  });
+  h+=`<p style="margin:12px 0"><button class="ghost" id="chBack">Back to ${esc(vid)}</button></p>`;
+  $("#side").innerHTML=h;
+  $("#side").querySelectorAll("a[data-dg]").forEach(a=>a.onclick=ev=>{
+    ev.preventDefault(); jump(a.dataset.dg);
+  });
+  $("#side").querySelectorAll("a[data-path]").forEach(a=>a.onclick=ev=>{
+    ev.preventDefault();
+    const [from,to]=a.dataset.path.split("|"); showPath(from,to);
+  });
+  $("#chBack").onclick=()=>{ sel=vid; panel(); };
+}
+
+/* `dg path`: how one decision rests on another, which the highlight cannot
+   say — it shows a neighbourhood, and this is a single chain. */
+async function showPath(a, b){
+  let r;
+  try{ r=await api(`/api/path?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}`); }
+  catch(err){ say(err.message,"bad"); return; }
+  let h=`<h2>${esc(a)} → ${esc(b)}</h2>`;
+  if(r.error||!r.path.length){
+    h+=`<p class="muted">${esc(r.error||"no path")}</p>`;
+  }else{
+    r.path.forEach((n,i)=>{
+      h+=`<div style="margin:8px 0"><b>${dgLink(n.id)}</b> ${esc(n.title)}
+        <span class="muted">${esc(n.status)}</span></div>`;
+      if(n.because) h+=`<div class="muted" style="margin-left:12px">│ ${esc(n.because)}<br>▼</div>`;
+    });
+  }
+  h+=`<p style="margin:12px 0"><button class="ghost" id="pBack">Back</button></p>`;
+  $("#side").innerHTML=h;
+  $("#side").querySelectorAll("a[data-dg]").forEach(x=>x.onclick=ev=>{
+    ev.preventDefault(); jump(x.dataset.dg);
+  });
+  $("#pBack").onclick=()=>{ sel=a; panel(); };
+}
+
+/* `dg areas`: two blocks, never one table. The stores share their areas and
+   not their vocabularies — a row summing OPEN with TODO would be counting
+   questions and work as if they were the same thing. */
+async function showAreas(){
+  let r;
+  try{ r=await api("/api/areas"); }catch(err){ say(err.message,"bad"); return; }
+  sel=null; tsel=null; NEWKIND=null; RELATING=null; draw();
+  const block=(title, b)=>{
+    if(!b) return "";
+    let out=`<h3 style="font-size:12px;color:var(--dim);margin:14px 0 4px">${title}</h3><table>`;
+    const statuses=[...new Set(Object.values(b.counts).flatMap(c=>Object.keys(c)))].sort();
+    out+=`<tr><th>area</th>${statuses.map(s=>`<th>${esc(s)}</th>`).join("")}</tr>`;
+    b.areas.forEach(a=>{
+      const c=b.counts[a]||{};
+      out+=`<tr><td>${esc(a)}</td>${statuses.map(s=>
+        `<td>${c[s]?esc(c[s]):'<span class="muted">·</span>'}</td>`).join("")}</tr>`;
+    });
+    return out+`</table>`;
+  };
+  $("#side").innerHTML=`<h2>By area</h2>`+block("decisions", r.decisions)
+    +block("work", r.tasks);
+}
+
 function panel(){
   const v=G.vertices.find(x=>x.id===sel), d=G.derived[sel];
   const e=G.edges.find(x=>x.from===sel&&x.active);
@@ -1071,7 +1665,8 @@ function panel(){
     <span class="pill" style="background:${STATUS_COLOR[st]};color:#04121f">${esc(v.status)}</span>
     <span class="muted"> ${esc(v.area)}</span>
     <div class="kv">
-      <div>depends on</div><div>${idList(d.depends)}</div>`;
+      <div>depends on</div><div>${idList(d.depends)}${
+        d.depends.length?` <a href="#" data-chain="${esc(v.id)}" class="muted">why…</a>`:""}</div>`;
   /* Undecided, the targets are all the edge has, so they stay up here with the
      vertex's own facts. Decided, they are part of an answer and move into its
      card — an edge's targets belong to the edge that declared them. */
@@ -1089,18 +1684,46 @@ function panel(){
       j.evidence.map(id=>dgLink(id)+(pend.has(id)?' <span class="muted">(open)</span>':"")).join(", ")}</div>`;
     h+=`</div>`;
   }
+  /* Results that landed after this answer and have never been read against it.
+     The row above says the benign thing — evidence still outstanding — and this
+     says the dangerous one, which the page did not say at all: an answer and a
+     measurement that may contradict it, sitting in the store together while
+     `dg check` reports it and the browser reads clean. */
+  const late = (j && j.late_evidence) || [];
+  if(late.length) h+=lateEvidence(late);
   /* No heading over these: each card says what it is. The old one had to,
      because a strikethrough line on its own does not. */
   d.history.forEach(x=>h+=supersededCard(x));
 
   if(e&&e.answer){
-    h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
-      <label>Why reopen this?</label>
+    h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">`;
+    /* A decision under review has **two** exits, and this panel used to offer
+       one. Re-affirming says the premise moved and the answer still holds;
+       reopening says it does not. Offering only reopen made the browser the
+       interface that manufactures PROVISIONAL and cannot clear it, and the one
+       act it did offer files a reversal that never happened — which
+       `dg confirm`'s docstring calls a lie in the record.
+
+       Which is primary follows which is common: a premise that settles the
+       same way it was heading leaves its conclusions standing, so re-affirming
+       is the ordinary outcome and reopening is the news. */
+    if(st==="PROVISIONAL"){
+      const waiting = (d.provisional_because||[]);
+      h+= waiting.length
+        ? `<p class="wait">Still resting on ${esc(waiting.join(", "))}, which
+             ${waiting.length===1?"is":"are"} under review. Until that settles,
+             PROVISIONAL is the accurate status.</p>`
+        : `<p style="margin:0 0 10px"><button class="primary" id="doConfirm">Re-affirm — the answer still holds</button></p>
+           <p class="muted" style="margin:0 0 10px">Its premise moved and settled.
+             Nothing about this answer changed, so nothing is superseded.</p>`;
+      h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">`;
+    }
+    h+=`<label>${st==="PROVISIONAL"?"Or reopen it — what challenges the answer?":"Why reopen this?"}</label>
       <textarea id="why" placeholder="what new evidence challenges it"></textarea>
       <label>Short label for the superseded answer</label>
       <input id="sumry" placeholder="e.g. 40–80M parameters">
       <p style="margin:10px 0;display:flex;gap:8px;align-items:center">
-        <button class="primary" id="doReopen">Stage reopen</button>
+        <button class="${st==="PROVISIONAL"?"ghost":"primary"}" id="doReopen">Stage reopen</button>
         ${editBtn()}</p>
       ${editKeys()}
       <div class="note" id="note"></div>`;
@@ -1125,12 +1748,18 @@ function panel(){
       ${editKeys()}
       <div class="note" id="note"></div>`;
   }
+  /* Premises, separate from the answer form. Adding one to an *answered*
+     question is legal and additive; removing one is refused where the premise
+     is decided, because a decided edge's targets are part of its answer — both
+     rules are `pending.compose_dep`/`compose_undep`, not this panel. */
+  h+=structureBtn("decisions", sel);
   $("#side").innerHTML=h;
   /* dg: links inside stored prose select that decision, the same jump C-c C-o
      makes in emacs. */
   $("#side").querySelectorAll("a[data-dg]").forEach(a=>a.onclick=ev=>{
     ev.preventDefault(); jump(a.dataset.dg);
   });
+  bindStructure();
   const already=new Set(d.children);
   const holdLinked=()=>$("#opens")&&[...$("#opens").options].forEach(o=>{
     if(already.has(o.value)) o.selected=true;});
@@ -1142,6 +1771,9 @@ function panel(){
   if(n) say(n.msg, n.cls);
   $("#doClose")&&($("#doClose").onclick=stageClose);
   $("#doReopen")&&($("#doReopen").onclick=stageReopen);
+  $("#doConfirm")&&($("#doConfirm").onclick=stageConfirm);
+  $("#side").querySelectorAll("button[data-ev]").forEach(b=>
+    b.onclick=()=>readEvidence(b.dataset.ev));
   $("#doEdit")&&($("#doEdit").onclick=()=>composeIn($("#doReopen")?"reopen":"close"));
   if(EDITING && EDITING.vertex===sel){
     /* One compose path at a time for a given decision: the editor already holds
@@ -1225,6 +1857,24 @@ function stageClose(){
   post({op:"close",vertex:sel,answer:a,source:s,falsifier:f||null,to,
         date:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`});
 }
+/* Its own route, not a status control. `set_status` is derived everywhere else
+   in this store — `pending.expand` and `repairs` produce it and stamp it — so a
+   page that could post any status would be a second copy of the propagation
+   rules. This posts an act: *the premise moved and the answer holds*. */
+async function stageConfirm(){
+  const vid=sel;
+  try{
+    const res=await api("/api/confirm",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({vertex:vid})});
+    PEND=await api("/api/pending"); tray();
+    const notes=(res.notes||[]);
+    say(`Staged ${vid} back to DECIDED.`+(notes.length?" "+notes.join(" "):""),
+        "ok", vid);
+    if(vid===sel) panel();
+  }catch(err){ say(err.message,"bad",vid); }
+}
+
 function stageReopen(){
   const w=$("#why").value.trim();
   if(!w){ say("Say what challenges it.", "bad"); return; }
@@ -1288,8 +1938,15 @@ function opRow(o, i, kind){
     : o.op==="add_dep"||o.op==="remove_dep"?esc((o.after||[]).join(", "))
     : esc(JSON.stringify(o));
   const node = o.vertex||o.task||o.from||o.id||"";
+  /* Revise, and only where it can work: a derived op is not composed and has
+     no buffer, and the editor is offered only where a windowed one exists —
+     the same rule the panel's "Compose in" button follows. */
+  const editable = kind==="d" && ED && ED.available &&
+                   ["close","reopen","add_vertex"].includes(o.op) && o.ref;
   return `<tr><td>${i}</td><td>${esc(o.op)}</td><td>${esc(node)}</td>
-    <td>${det}</td><td><button class="x" data-i="${i}" data-k="${kind}">✕</button></td></tr>`;
+    <td>${det}</td><td style="white-space:nowrap">${
+      editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" title="Revise this op in ${esc(ED.editor||"the editor")}">✎</button>`:""
+    }<button class="x" data-i="${i}" data-k="${kind}">✕</button></td></tr>`;
 }
 
 function trayTable(ops, kind){
@@ -1307,11 +1964,20 @@ function tray(){
   $("#applyBtn").textContent = total ? `Apply ${total}` : "Apply";
   if(!total){ $("#tray").innerHTML=`<span class="muted">Nothing staged.</span>`; return; }
   let h=`<div class="tray-split">`;
-  if(PEND.length) h+=`<div><h3>decisions (${PEND.length})</h3>${trayTable(PEND,"d")}</div>`;
-  if(TPEND.length) h+=`<div><h3>tasks (${TPEND.length})</h3>${trayTable(TPEND,"t")}</div>`;
+  /* A clear per tray. The count is in the button rather than behind it: the
+     trays are shared, so clearing can discard something a terminal staged a
+     minute ago, and the number is the only warning that would have said so. */
+  const clearBtn = (n,k) =>
+    `<button class="chip" data-clear="${k}" style="margin-left:8px">clear ${n}</button>`;
+  if(PEND.length) h+=`<div><h3>decisions (${PEND.length})${clearBtn(PEND.length,"d")}</h3>${trayTable(PEND,"d")}</div>`;
+  if(TPEND.length) h+=`<div><h3>tasks (${TPEND.length})${clearBtn(TPEND.length,"t")}</h3>${trayTable(TPEND,"t")}</div>`;
   h+=`</div>`;
   $("#tray").innerHTML=h;
-  $("#tray").querySelectorAll(".x").forEach(b=>b.onclick=async()=>{
+  $("#tray").querySelectorAll("button[data-clear]").forEach(b=>b.onclick=()=>
+    confirmClear(b.dataset.clear==="t"));
+  $("#tray").querySelectorAll("button[data-edit]").forEach(b=>b.onclick=()=>
+    reviseOp(b.dataset.edit));
+  $("#tray").querySelectorAll(".x[data-i]").forEach(b=>b.onclick=async()=>{
     const task = b.dataset.k==="t";
     const list = task?TPEND:PEND;
     const gone = list[b.dataset.i];
@@ -1356,6 +2022,60 @@ $("#applyBtn").onclick=async()=>{
     $("#tray").innerHTML=`<div class="err">${esc(err.message)}</div>`+$("#tray").innerHTML;
   }
 };
+
+/* Asked in the panel rather than through `confirm()`: a browser modal blocks
+   every subsequent event, and this one is answerable with the count in front
+   of you. */
+function confirmClear(task){
+  const n=(task?TPEND:PEND).length;
+  $("#side").innerHTML=`<h2>Discard ${n} staged op(s)?</h2>
+    <p class="muted">This tray is shared with <code>dg ${task?"task ":""}pending</code>
+      in a terminal, so some of these may not be yours. Nothing that has already
+      been applied is affected.</p>
+    <p style="margin:10px 0;display:flex;gap:8px">
+      <button class="primary" id="clYes">Discard ${n}</button>
+      <button class="ghost" id="clNo">Keep them</button></p>
+    <div class="note" id="note"></div>`;
+  $("#clNo").onclick=()=>{ $("#side").innerHTML=`<p class="muted">Click a node to inspect it.</p>`; };
+  $("#clYes").onclick=async()=>{
+    try{
+      const r=await api(task?"/api/task-pending":"/api/pending",{method:"DELETE"});
+      if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
+      Object.keys(NOTES).forEach(k=>delete NOTES[k]);
+      tray(); await soundness();
+      $("#side").innerHTML=`<p class="muted">Discarded ${esc(r.cleared)} op(s).</p>`;
+    }catch(err){ say(err.message,"bad"); }
+  };
+}
+
+/* `dg edit N`: a replacement, never a re-stage. Re-staging moves the op to the
+   end of the batch and any derived `set_status` would then apply before the
+   change it was derived from — which is why this posts a `ref` and lets
+   `pending.replace_group` do the work. */
+async function reviseOp(ref){
+  EDITING={vertex:ref, kind:"edit"};
+  tray();
+  $("#side").innerHTML=`<p class="wait">${esc(ED.editor||"The editor")} is open on
+    that op. Save and exit to replace it, or leave it empty to cancel.</p>`;
+  try{
+    const r=await api("/api/edit",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ref})});
+    EDITING=null;
+    PEND=r.pending||await api("/api/pending"); tray();
+    await soundness();
+    $("#side").innerHTML= r.aborted
+      ? `<p class="muted">Left unchanged.</p>`
+      : `<p class="muted">Replaced with ${(r.staged||[]).length} op(s).</p>`;
+  }catch(err){
+    EDITING=null; tray();
+    $("#side").innerHTML=`<div class="err">${esc(err.message)}</div>`;
+  }
+}
+
+$("#newBtn").onclick=newNode;
+$("#soundBtn").onclick=soundPanel;
+$("#areasBtn").onclick=showAreas;
 
 boot().then(()=>{ fit(); draw(); });
 </script>

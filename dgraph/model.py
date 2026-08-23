@@ -32,7 +32,8 @@ def status_fault(status: str, ids, of: str | None = None) -> str | None:
     """Why `status` is not a legal status, or None if it is.
 
     **The one implementation, and there were three.** `Graph.validate`'s
-    `status_legal` branch, `cli._status_legal` before staging, and an inline
+    `status_legal` branch, the pre-staging check now in
+    `pending.compose_add`, and an inline
     copy in `pending.vet` — and a fourth route, `dg add --edit`, with no copy at
     all, which was audit F30. Predictably they had drifted:
 

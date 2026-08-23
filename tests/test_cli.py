@@ -1462,7 +1462,7 @@ def test_edit_keeps_a_shared_edge_ops_other_targets(run, store, g):
     """Nothing in the tool stages a multi-target `add_edge`, but `_apply_one`
     unions targets and the web API takes an op as data. Superseding the whole op
     would lose an attachment the edit never mentioned."""
-    from dgraph.cli import _supersedes
+    from dgraph.editor import supersedes as _supersedes
 
     supersede = _supersedes("add_vertex", {"op": "add_vertex", "id": "D07"})
     shared = {"op": "add_edge", "from": "D05", "to": ["D07", "D09"]}
@@ -1475,7 +1475,7 @@ def test_edit_keeps_a_shared_edge_ops_other_targets(run, store, g):
 def test_editing_a_close_supersedes_nothing(run, store, g, stub_editor):
     """The narrowness is the point: `close` and `reopen` each parse back to one
     op, so a revision of either is a swap and must not touch the batch."""
-    from dgraph.cli import _supersedes
+    from dgraph.editor import supersedes as _supersedes
 
     assert _supersedes("close", {"op": "close", "vertex": "D05"}) is None
     write(g)
@@ -1508,8 +1508,11 @@ def test_undep_stages_its_release_in_the_same_write(run, store, g, monkeypatch):
     assert res.exit_code == 0
     assert [len(s) for s in seen] == [2], seen
     assert [o["op"] for o in seen[-1]] == ["remove_edge", "set_status"]
+    # `derived_from` says which settlement produced it — the same stamp
+    # `expand` puts on a propagated status, and what tells `pending.vet` this
+    # is a derived op rather than a status somebody wrote by hand.
     assert bare(seen[-1][1]) == {"op": "set_status", "vertex": "D06",
-                                 "status": "OPEN"}
+                                 "status": "OPEN", "derived_from": "D05"}
     monkeypatch.setattr(pending, "save", real)
     assert run("apply").exit_code == 0
 

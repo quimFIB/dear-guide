@@ -79,6 +79,9 @@ Vertices and edges, nothing else.
 | `dg export ID` | the same data as JSON, for machine reading. `dg import` reads it back unchanged |
 | `dg check` | every invariant, and it names the rule that broke |
 | `dg import FILE` | adopt a `decisions.json` prepared elsewhere or exported from another project, refusing one that breaks invariants |
+| `dg import-md FILE` | rebuild a store from the `decision-graph.md` this tool generated. The recovery path when the *store* is the file that was lost |
+| `dg repair` | stage the PROVISIONAL marks a reopen would have derived. What `dg apply` names when a merge, a rebase or a second clone left a decision resting on a premise under review without saying so |
+| `dg edit N` | revise a staged op in place, rather than dropping it and retyping what was written |
 
 ### Before building on something, or handing it off
 
@@ -115,6 +118,20 @@ The same split runs through `dg show`, `dg task` and both staging trays: one
 line each by default, `--full` for the table with nothing clipped. Titles and
 details get clipped; **ids never do**, so anything named in a short view can be
 looked up from it.
+
+## Starting a graph
+
+The two stores are independent — **either works without the other**, so track
+only decisions, only work, or both.
+
+```sh
+dg init            # decisions.json + decision-graph.md
+dg task init       # tasks.json + tasks.md
+```
+
+Run these before anything else in a project that has no graph. Never write
+`decisions.json` or `tasks.json` by hand: every command below refuses input the
+store would be wrong to hold, and a hand-written file gets none of that.
 
 ## Recording a decision
 
@@ -185,9 +202,12 @@ question with a falsifier. They never share a store.
 
 ```sh
 dg task                                   # outstanding work, and what is startable
+dg task node T14                          # one piece in full, with its premise
 dg task tree                              # the order of it: prerequisites, then what they release
+dg task pending                           # what is staged for this store; `dg pending` is its twin
 dg task add --id T14 --title "Build the HNSW index and sweep efSearch" --area Search \
             --after T09 --because D02
+dg task start T14                         # → DOING, so the graph says it is live
 dg task done T14 --outcome "PR #241"
 dg apply
 ```
@@ -203,6 +223,14 @@ dg apply
   reveals a new question.
 - If work turns up a question nobody had written down: add the decision, then
   link the task to it. Do not leave it in prose.
+
+**Mark work in flight when you pick it up**, with `dg task start T14`. A task
+that goes TODO → DONE never appears as work in progress, and `dg brief` — which
+is what a *second* session or a person reads to find out what is live — has
+nothing to show for the whole time you were doing it. It also prints the one
+warning nobody else will: if a prerequisite was abandoned rather than finished,
+starting is the moment that gets said, and the check that reports it is read by
+whoever runs it, which at that moment is nobody. A note, never a refusal.
 
 **Put work down with `dg task park T14 --why "…"`, not `dg task drop`.** Both
 record why and when, in the same place — `stops`, the one archived record in
@@ -228,6 +256,9 @@ Corrections have commands; never hand-edit `tasks.json`:
 ```sh
 dg task dep T14 --after T09        # a prerequisite discovered later
 dg task undep T14 --after T09      # ...and removing one
+dg task clear                      # unstage every task op; `dg clear` is its twin
+dg task render                     # regenerate tasks.md; `dg render` is its twin
+dg task export / dg task import    # move a backlog between projects
 dg task unlink T14 --because       # drop a link recorded against the wrong decision
 dg dep   D07 --after D03           # a premise discovered later
 dg undep D07 --after D03           # ...and removing one

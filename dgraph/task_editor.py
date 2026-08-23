@@ -48,6 +48,13 @@ def _header(title: str, **props: str) -> str:
     """
     return editor._HEADER.format(
         title=title,
+        # No walk keys, ever. `dgraph.el` reads the decision store and only
+        # that: `dgraph-readonly-commands` is `("export")` and the guard tests
+        # the first argument, so `dg task export` is refused as `dg task` and
+        # the file cannot reach this store at all. Advertising `C-c C-p` here
+        # bound it to "This buffer is not composing a decision", which is both
+        # an error and, in a task buffer, a confusing one.
+        keys=editor._KEYS_ALWAYS,
         todo=" ".join(s for s in STATUSES if s in UNFINISHED),
         done=" ".join(s for s in STATUSES if s in RESOLVED),
         props=editor._props(props),
