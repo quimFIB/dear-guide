@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from dgraph import gate
-from dgraph.check import CHECKS
+from dgraph.check import CHECKS, run as check_run
 from dgraph.cli import app
 from dgraph.model import Graph
 from dgraph.render import write
@@ -99,6 +99,159 @@ def test_skill_mentions_only_subcommands_that_exist():
                  or (second and first in {g.name for g in app.registered_groups})
                  else first)
     assert used <= known, sorted(used - known)
+
+
+#: The gate's account of itself, as the skill has to tell it. One row per
+#: verdict `dg gate` can answer: a live store that earns it, the commands the
+#: paragraph describing it must offer, and the thing it must say outright.
+#:
+#: The point of the table is the **link** between the two halves. Pinning the
+#: word `warn` somewhere near `dg render` discharges nothing — it is satisfied
+#: by prose that is wrong about everything else, which is shape 6 and is how
+#: `H-F2` survived three tests over this file. What is checked here is that the
+#: verdict each cause earns is *computed*, by running `gate.verdict` against a
+#: store built for it, and that the paragraph about that verdict names the
+#: command that can see it.
+#:
+#: `build` receives a project directory holding a rendered demo graph.
+
+
+def _stale_view(d):
+    """A view that lags its store, in a commit that records one of them.
+
+    The `git init` and the `git add` are not scaffolding: the gate says nothing
+    about a generated file a commit has nothing to do with, which is most of
+    what made the old blocking version intolerable. Without them this store
+    earns `allow` and the row would be testing the wrong thing.
+    """
+    subprocess.run(["git", "-C", str(d), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(d), "add", "decisions.json"],
+                   check=True, capture_output=True)
+    (d / "decision-graph.md").write_text("hand-edited\n")
+
+
+def _staged_tray(d):
+    (d / ".dgraph-pending.json").write_text(json.dumps(
+        [{"op": "set_status", "vertex": "D04", "status": "OPEN"}]))
+
+
+def _contradiction(d):
+    store = json.loads((d / "decisions.json").read_text())
+    store["edges"].append({"from": "D01", "to": ["D99"]})
+    (d / "decisions.json").write_text(json.dumps(store))
+
+
+GATE_STORY = [
+    # verdict, builds a store that earns it, commands offered, said outright
+    ("deny",  _contradiction,  ("dg check",),   "refus"),
+    ("ask",   _staged_tray,    ("dg pending",), "cannot see this"),
+    ("warn",  _stale_view,     ("dg render",),  "Not a refusal"),
+    ("allow", lambda d: None,  (),              "nothing is said"),
+]
+
+
+def _gate_section() -> str:
+    """The skill's account of the gate, whatever it is currently titled.
+
+    Found by the command it is about rather than by its heading, because the
+    heading is the half that was wrong: it read *When a commit is refused* over
+    a section describing two things that do not refuse.
+    """
+    sections = re.split(r"^## ", SKILL.read_text(), flags=re.M)
+    hit = [s for s in sections
+           if "dg gate" in s and "commit" in s.split("\n", 1)[0]]
+    assert len(hit) == 1, [s.split("\n", 1)[0] for s in hit]
+    return hit[0]
+
+
+def _paragraph(section: str, verdict: str) -> str:
+    hit = [para for para in section.split("\n\n") if f"`{verdict}`" in para]
+    assert len(hit) == 1, f"{verdict} is described {len(hit)} times"
+    return hit[0]
+
+
+@pytest.mark.parametrize("want,build,offers,says", GATE_STORY,
+                         ids=[r[0] for r in GATE_STORY])
+def test_the_skill_tells_the_truth_about_each_gate_verdict(
+        project_dir, want, build, offers, says):
+    """`H-F2`. The skill is the only prose in this repository written for a
+    machine to act on, and its account of the gate had been describing a
+    severity the gate stopped using. The section predates `warn`; the sweep that
+    fixed the identical error in `dg gate --help` did not open this file; and
+    the three tests over it all check vocabulary rather than claims.
+
+    Two assertions per row, and the first is what makes the second worth having.
+    The verdict is computed against a live store, so a severity that moves fails
+    here — where the message names the row — and takes the prose with it.
+    """
+    from dgraph import gate, project as _project
+
+    build(project_dir)
+    got = gate.verdict("git commit -m x", _project.Project(project_dir))
+    assert got["verdict"] == want, \
+        f"the premise moved: this store now earns {got['verdict']}"
+
+    para = _paragraph(_gate_section(), want)
+    assert says in para, (want, says)
+    for command in offers:
+        assert f"`{command}`" in para, (want, command)
+
+
+def test_the_skill_sends_a_stopped_commit_to_a_command_that_can_see_it():
+    """The sharp half of `H-F2`, kept as its own claim because it is the one
+    that costs work rather than a retry.
+
+    The old section said *"Run `dg check` — it names the rule that broke"* for
+    every case. `dg check` cannot see a staging tray at all: it prints every
+    invariant holding and exits 0 while the ops sit in a gitignored file, one
+    commit from being dropped with nothing in the diff. An agent that believed
+    it would conclude the gate was wrong.
+    """
+    import tempfile
+    from dgraph import gate, project as _project
+    d = Path(tempfile.mkdtemp())
+    shutil.copy(ROOT / "demo" / "decisions.json", d / "decisions.json")
+    write(Graph.load(d / "decisions.json"), d / "decision-graph.md")
+    _staged_tray(d)
+
+    proj = _project.Project(d)
+    assert gate.verdict("git commit -m x", proj)["verdict"] == "ask"
+    # the premise: the command the old prose named reports nothing wrong
+    assert not [v for v in check_run(proj) if v.blocking]
+
+    para = _paragraph(_gate_section(), "ask")
+    assert "`dg pending`" in para or "`dg brief`" in para
+    assert "gitignored" in para                  # why it costs work, not a retry
+
+
+def test_the_skill_accounts_for_every_verdict_the_gate_can_give():
+    """The half that survives a fifth verdict.
+
+    `warn` was added to a gate that had three and this file went on describing
+    the old set for two days. Driven off `gate.RANK`, so a verdict added to the
+    gate and not to `GATE_STORY` fails here — the same property
+    `dg gate --triggers` gives the two fast paths.
+    """
+    from dgraph import gate
+    assert set(gate.RANK) == {row[0] for row in GATE_STORY}, \
+        "GATE_STORY has drifted from gate.RANK"
+    section = _gate_section()
+    for name in gate.RANK:
+        assert f"`{name}`" in section, name
+
+
+def test_the_skill_does_not_call_a_warn_or_an_ask_a_refusal():
+    """The framing, which is where `H-F2` actually lived: a heading reading
+    *When a commit is refused* over two causes that do not refuse.
+
+    Prose is deliberately not asserted anywhere else in this suite. The word
+    *refused* over a `warn` is not prose, it is a claim about behaviour, and it
+    is the claim that was false.
+    """
+    section = _gate_section()
+    heading, _, body = section.partition("\n")
+    assert "refus" not in heading.lower(), heading
+    assert "refus" in _paragraph(body, "deny")          # the one that is
 
 
 def test_skill_does_not_restate_the_check_list():
@@ -612,6 +765,122 @@ def test_precommit_says_so_when_the_gate_times_out(project_dir, tmp_path):
     out = json.loads(r.stdout)
     assert "not checked" in out["systemMessage"]
     assert "hookSpecificOutput" not in out      # no decision either way
+
+
+#: Every way `dg gate` can come back without a verdict, and whether the hook
+#: says so. Driven from one table rather than one test per branch, because
+#: `H-F1` was precisely a case answered and its siblings waved through: the
+#: file held the argument, applied it to the timeout, and let every other
+#: failure look exactly like a directory that has no graph.
+#:
+#: `script` is a `dg` stand-in; `speaks` is whether the user hears about it.
+GATE_FAILURES = [
+    ("a broken install (an editable checkout that moved)",
+     "echo \"ModuleNotFoundError: No module named 'dgraph'\" >&2\nexit 1\n", True),
+    ("a dg that dies on a signal",
+     "kill -TERM $$\n", True),
+    ("exit 0, and something on stdout that is not a verdict",
+     "echo 'not json'\n", True),
+    ("exit 0 and nothing at all on stdout",
+     "exit 0\n", True),
+    # The two silences. A plugin is installed for a user, not for a project.
+    ("a dg too old to know the subcommand",
+     "echo 'No such command' >&2\nexit 2\n", False),
+    ("a dg too old to know --json",
+     "echo 'No such option' >&2\nexit 2\n", False),
+]
+
+
+@pytest.mark.parametrize("what,script,speaks",
+                         GATE_FAILURES, ids=[f[0] for f in GATE_FAILURES])
+def test_a_gate_that_did_not_run_is_never_a_gate_that_allowed(
+        project_dir, tmp_path, what, script, speaks):
+    """`H-F1`. `dg gate` always exits 0 — that is its docstring's promise, and
+    the reason is stated there: *an adapter must be able to tell a refusal from
+    a crash*. Anything else means the gate did not run and the command is about
+    to proceed judged by nothing.
+
+    Two exits can still be a project that never heard of this tool, and those
+    stay silent. Nothing else can, and a silence there is indistinguishable
+    from a clean allow — which is what it was, for every failure but the
+    timeout, until this table existed.
+
+    Never a `permissionDecision` in either direction: a broken `dg` must not
+    block somebody's commit any more than it may wave one through.
+    """
+    (project_dir / ".dgraph-pending.json").write_text(json.dumps(
+        [{"op": "set_status", "vertex": "D04", "status": "OPEN"}]))
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "dg").write_text("#!/bin/sh\n" + script)
+    (fake / "dg").chmod(0o755)
+
+    r = _pre(project_dir, "git commit -m x",
+             env={**os.environ, "PATH": f"{fake}:{os.environ['PATH']}"})
+    assert r.returncode == 0
+    if not speaks:
+        assert r.stdout == "", what
+        return
+    out = json.loads(r.stdout)
+    assert "not checked" in out["systemMessage"], what
+    assert "hookSpecificOutput" not in out, what
+
+
+def test_the_gate_hook_says_so_where_the_real_break_happens(project_dir,
+                                                            tmp_path):
+    """The same finding with no stand-in anywhere: a real `dg`, really broken.
+
+    `README.md` installs with `pip install -e <checkout>`; move the checkout and
+    the console script stays on `PATH` while the import does not. That is the
+    everyday way into `H-F1`, and it is the failure this repository's own
+    restructure produced. Skipped rather than faked when there is no network or
+    no `pip` — the parametrised table above carries the property; this one
+    carries the reachability.
+    """
+    venv = tmp_path / "venv"
+    if subprocess.run([sys.executable, "-m", "venv", str(venv)],
+                      capture_output=True).returncode != 0:
+        pytest.skip("could not build a venv")
+    src = tmp_path / "src"
+    shutil.copytree(ROOT, src, ignore=shutil.ignore_patterns(
+        ".venv", ".git", "node_modules", "*.egg-info", ".pytest_cache"))
+    if subprocess.run([str(venv / "bin/pip"), "install", "-q", "--no-deps",
+                       "-e", str(src)], capture_output=True).returncode != 0:
+        pytest.skip("could not install into the venv")
+    shutil.rmtree(src)                     # the checkout moves out from under it
+
+    probe = subprocess.run([str(venv / "bin/dg"), "gate", "--command",
+                            "git commit -m x", "--json"],
+                           capture_output=True, text=True)
+    assert probe.returncode not in (0, 2), probe.stderr
+
+    r = _pre(project_dir, "git commit -m x",
+             env={**os.environ, "PATH": f"{venv / 'bin'}:{os.environ['PATH']}"})
+    out = json.loads(r.stdout)
+    assert "not checked" in out["systemMessage"]
+
+
+def test_the_brief_hook_says_so_when_dg_is_broken_rather_than_absent(
+        project_dir, tmp_path):
+    """`H-F1`'s quieter half. `hooks/brief.py` classified a failed `dg` by
+    looking for one phrase in stderr, which caught a `dg` too old and nothing
+    else — so a broken install left the plugin silent *permanently*, looking
+    exactly like a plugin correctly doing nothing where there is no graph.
+
+    The cost is context rather than a safeguard, which is why it is one line and
+    not a decision. Exit 2 stays silent unless stderr says why, because exit 2
+    is also "no decisions.json here" and that is the common case.
+    """
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "dg").write_text("#!/bin/sh\necho 'ImportError' >&2\nexit 1\n")
+    (fake / "dg").chmod(0o755)
+    env = {**os.environ, "PATH": f"{fake}:{os.environ['PATH']}"}
+    out = run_hook(ADAPTERS[0], {"cwd": str(project_dir)}, env=env).stdout
+    assert "exited 1" in out and "dg brief" in out
+
+    (fake / "dg").write_text("#!/bin/sh\nexit 2\n")       # no graph here
+    assert run_hook(ADAPTERS[0], {"cwd": str(project_dir)}, env=env).stdout == ""
 
 
 def test_the_hook_budget_outlasts_the_gate_it_calls(project_dir):

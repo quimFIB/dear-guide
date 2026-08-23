@@ -7,8 +7,7 @@ description: >-
   when reversing or revisiting an earlier decision, when a plan touches
   something already settled, when planning or picking up a piece of work, when
   work's premise is reopened and its status must follow, when finished work
-  leaves a question still open, or when a commit is refused because the graph
-  is invalid. Covers the model (explicit status, a mandatory falsifier,
+  leaves a question still open, or when the commit gate stops a commit. Covers the model (explicit status, a mandatory falsifier,
   append-only history), the link between the two graphs, the command table, and
   the staging workflow.
 ---
@@ -301,11 +300,33 @@ finish before a decision that the work exists because of). `dg apply` refuses a
 batch that would create either, names the op, and writes nothing — so the fix is
 always `dg task drop-op <id>` or restating the link, never editing the store.
 
-## When a commit is refused
+## When a commit is stopped
 
-A refusal quotes the violations. Run `dg check` — it names the rule that broke
-and what to do about it. Two common ones: a stale view is fixed by `dg render`,
-and staged work by `dg apply`.
+`dg gate` judges the command before it runs and answers one of four ways. Only
+one of them is a refusal, and the other two that say anything are the common
+ones — so read which you got before deciding what to do.
+
+**`deny` — the commit is refused.** The graph contradicts itself, and committing
+would record the contradiction. The refusal quotes the violations; `dg check`
+names every rule that broke and exits non-zero. Fix the store, then commit.
+
+**`ask` — work is staged and not applied.** Not a refusal: the commit is legal
+and the question is whether you meant it. The staging tray is gitignored, so
+committing now drops those ops with nothing in the diff to show for it. Read
+them with `dg pending` before anything else. If they are yours, `dg apply`; if
+you did not stage them, they belong to whoever did — say so and let them decide,
+because applying somebody else's half-composed batch writes a decision they had
+not finished making, and this tool deliberately makes a decision hard to take
+back. **`dg check` cannot see this at all** — it reports every invariant holding
+while the ops sit in the tray. `dg pending` and `dg brief` are the two readings
+that show it.
+
+**`warn` — a generated view has fallen behind its store.** Not a refusal either;
+the commit proceeds and you are told once on the way past. `dg render` (or
+`dg task render`) rebuilds it, then `git add` the view so store and view land
+together. `dg check` reports this as a warning and still exits 0.
+
+**`allow` — nothing to say**, and nothing is said.
 
 ## Never
 

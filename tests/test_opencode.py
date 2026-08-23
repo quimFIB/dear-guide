@@ -50,18 +50,64 @@ def test_the_opencode_adapter_carries_the_reason_into_the_throw():
     assert "verdict.reason" in body
 
 
-def test_the_opencode_adapter_registers_hooks_that_exist():
-    """Guards against a hook name that quietly never fires. Checked against the
-    installed type definitions when they are there."""
-    types = Path.home() / ".config/opencode/node_modules/@opencode-ai/plugin/dist/index.d.ts"
+#: The opencode hooks this adapter is allowed to register, and why each one.
+#: Four mechanisms, and every one of them is named in the module docstring.
+#:
+#: Here rather than derived, because it is the assertion that runs **everywhere**
+#: — the type definitions below are checked only where opencode happens to be
+#: installed, which is not most machines and is not CI. A hook added to the
+#: adapter fails this and has to be argued for; that is the point of a list that
+#: cannot be generated.
+HOOKS_USED = {
+    "chat.message": "the brief, on the first message of a session",
+    "experimental.session.compacting": "the brief again, surviving a compaction",
+    "event": "forgetting a session's brief once it has been compacted",
+    "tool.execute.before": "the gate",
+}
+
+
+def adapter_hooks() -> set[str]:
+    """Every hook key the adapter registers.
+
+    Both spellings. The first version of this read `"([a-z][a-z.]+)": async`
+    and so required the quotes — which three of the four keys happen to carry
+    and `event` does not, so the guard against a hook that never fires read
+    three of the four things it guards.
+    """
+    return set(re.findall(r'^    "?([a-z][a-z.]*)"?: async',
+                          ADAPTER.read_text(), re.M))
+
+
+def test_the_opencode_adapter_registers_the_hooks_it_means_to():
+    """Guards against a hook name that quietly never fires — a plugin whose
+    typo'd key is simply never called, which looks from the outside exactly like
+    a plugin that is working.
+
+    Equality both ways: a hook registered and not listed here is unargued, and a
+    hook listed and not registered is a mechanism that has silently gone.
+    """
+    assert adapter_hooks() == set(HOOKS_USED), \
+        f"registered {sorted(adapter_hooks())}, expected {sorted(HOOKS_USED)}"
+
+
+def test_every_hook_the_adapter_uses_is_one_opencode_declares(record_property):
+    """The other half, against the real type definitions — the only thing that
+    can say a name is *real* rather than merely intended.
+
+    It can only run where opencode is installed, so it records whether it did.
+    A guard that evaporates on the machines that do not have the dependency is
+    not a weak guard, it is an absent one, and a green suite says nothing about
+    it: that is why `HOOKS_USED` above is checked unconditionally and this is
+    the extra.
+    """
+    types = (Path.home() /
+             ".config/opencode/node_modules/@opencode-ai/plugin/dist/index.d.ts")
+    record_property("checked_against_opencode_types", types.exists())
     if not types.exists():
-        pytest.skip("@opencode-ai/plugin not installed")
+        pytest.skip("@opencode-ai/plugin not installed — HOOKS_USED still ran")
     declared = types.read_text()
-    used = set(re.findall(r'^    "([a-z][a-z.]+)": async', ADAPTER.read_text(),
-                          re.M))
-    assert used, "no hooks found — did the file change shape?"
-    for name in used:
-        assert f'"{name}"?' in declared, name
+    for name in sorted(HOOKS_USED):
+        assert re.search(rf'^\s+"?{re.escape(name)}"?\?:', declared, re.M), name
 
 
 def test_both_hosts_share_one_skill():

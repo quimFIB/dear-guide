@@ -33,6 +33,38 @@ TIMEOUT = 20
 #: `systemMessage` instead. `allow` is absent for the same reason.
 DECISION = {"deny": "deny", "ask": "ask"}
 
+#: Exit codes from `dg gate` that this hook passes over in silence.
+#:
+#: `dg gate` is written never to fail open — it catches everything and denies —
+#: and it **always exits 0**, so that an adapter can tell a refusal from a
+#: crash; its docstring says so, and `tests/test_plugin.py` pins it. Every other
+#: exit therefore means the gate did not run, and the command is about to
+#: proceed having been judged by nothing.
+#:
+#: One question decides whether each of those is worth a word: **could this be a
+#: project that has never heard of the tool?** A plugin is installed for a user,
+#: not for a project, and such a directory must pay nothing at all. Two cases
+#: can be, and they are the two that stay silent — `dg` absent, which
+#: `shutil.which` catches before this, and exit 2, which is typer's code for a
+#: subcommand or an option this `dg` does not know. The plugin and the package
+#: install separately, so that skew is ordinary.
+#:
+#: Nothing else can be. A `dg` that exits 1 is on `PATH`, knows the subcommand,
+#: and broke — an editable install whose checkout moved is the everyday way in —
+#: and its silence is indistinguishable from a clean allow.
+#:
+#: Stated as a class on purpose. This file already held the argument and applied
+#: it to the timeout branch alone for a pass, which is exactly how one failure
+#: mode came to be answered and the rest to be waved through.
+SILENT_EXITS = (2,)
+
+#: What every "the gate did not run" message says, given how it did not run.
+#: One sentence for all of them, because they differ in nothing that matters to
+#: a reader: the command was not checked, and `dg check` is how to find out
+#: whether it should have been.
+UNCHECKED = ("{how} — this command was not checked against the development "
+             "graph. `dg check` says whether it should have been.")
+
 
 def say(message: str) -> None:
     """Show `message` to the user without deciding anything.
@@ -83,36 +115,48 @@ def main() -> int:
             cwd=payload.get("cwd") or os.getcwd(), capture_output=True,
             text=True, errors="replace", timeout=TIMEOUT,
         )
-        verdict = json.loads(r.stdout) if r.returncode == 0 else None
     except subprocess.TimeoutExpired:
-        # Distinguished from every other failure below, and the only one worth
-        # a word. `dg gate` is written never to fail open — it catches
-        # everything and denies — and a timeout here undoes that from the
-        # outside: the commit proceeds having been judged by nothing. Silence
-        # would make it indistinguishable from a project with no graph.
-        say(f"dg gate did not finish within {TIMEOUT}s — this command was not "
-            f"checked against the development graph. `dg check` says whether "
-            f"it should have been.")
+        # The gate's budget expiring undoes "never fail open" from the outside.
+        say(UNCHECKED.format(how=f"dg gate did not finish within {TIMEOUT}s"))
         return 0
     except Exception:
-        # Everything else is a deliberate silence: `dg` not installed, a `dg`
-        # too old to know the subcommand, no graph in this directory. A plugin
-        # is installed for a user, not for a project.
-        verdict = None
-    if not verdict:
+        # `dg` could not be run at all — a shebang pointing at an interpreter
+        # that is gone, a directory that no longer exists. Indistinguishable
+        # here from `dg` never having been installed, so it is treated as that.
         return 0
 
-    if verdict.get("verdict") == "warn":
-        # Not a permission decision: the command runs either way, and the user
-        # is told one thing on the way past. A generated view that has fallen
-        # behind its store is the case this exists for.
-        say(verdict.get("reason", ""))
+    if r.returncode in SILENT_EXITS:
         return 0
-    decision = DECISION.get(verdict.get("verdict"))
+    if r.returncode != 0:
+        say(UNCHECKED.format(how=f"dg gate exited {r.returncode}"))
+        return 0
+    try:
+        verdict = json.loads(r.stdout)
+    except Exception:
+        # Exit 0 is the gate promising a verdict. Something else on stdout is
+        # that promise broken, not a quiet allow.
+        say(UNCHECKED.format(how="dg gate answered with something that is not "
+                                 "a verdict"))
+        return 0
+
+    decision = DECISION.get((verdict or {}).get("verdict"))
     if decision is None:
-        # Allow is silence. Emitting an explicit "allow" would override the
-        # user's own permission rules for every git command they run — a
-        # security regression dressed up as a convenience.
+        # Everything this hook cannot turn into a permission decision, in one
+        # rule: **say it if it carries a reason, and stay silent if it does
+        # not.** That is `warn` — the command runs either way and the user is
+        # told one thing on the way past, a generated view that has fallen
+        # behind its store being the case it exists for. It is also `allow`,
+        # which carries no reason and must stay silent, because an explicit
+        # "allow" would override the user's own permission rules for every git
+        # command they run — a security regression dressed up as a convenience.
+        #
+        # And it is a verdict added to `dg gate` after this hook was written.
+        # `warn` was such a verdict once, and until the hook learned the word
+        # the reason went nowhere. Keying on the reason rather than on the name
+        # means the next one is passed on unread rather than dropped unread.
+        reason = (verdict or {}).get("reason") or ""
+        if reason:
+            say(reason)
         return 0
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
