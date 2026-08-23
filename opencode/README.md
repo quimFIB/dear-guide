@@ -65,14 +65,14 @@ directory. The two mechanisms do not depend on them.
 | `/dg-find <query>` | decisions and work by what they *say* — the only reading that starts from a word, and so the only answer to *was this already decided?* |
 | `/dg-context <id>` | every premise a decision or a task rests on — what to read before dispatching work |
 | `/dg-serve` | the graphs in a browser, started detached so the session keeps its prompt |
-| the commit gate | `dg gate` judges every `bash` call carrying one of `dg gate --triggers`' words — `commit` and `rm` today; a refusal arrives as the tool's error, with the reason and the fix |
+| the commit gate | `dg gate` judges every `bash` call carrying one of `dg gate --triggers`' words — `commit` and `rm` today. It answers four ways: `deny` and `ask` both stop the call and arrive as the tool's error, carrying the reason and the fix, with `ask` saying whose call it is; `warn` stops nothing and is the third limit below; `allow` says nothing |
 | the `dear-guide` skill | loaded by opencode's own `skill` tool when a decision or a piece of work is in play |
 
 `DG_HOOK_OFF=1` in the environment switches off both the brief and the gate. It
 has to be in opencode's own environment, not in front of the command being run —
 the plugin's environment is the host's.
 
-## Two limits worth knowing
+## Three limits worth knowing
 
 - **The gate does not see subagent shell calls.** `tool.execute.before` is not
   invoked for tools run by agents spawned through the `task` tool
@@ -83,3 +83,19 @@ the plugin's environment is the host's.
   future version stops honouring that, `/dg-brief` still works, and
   `experimental.chat.system.transform` is the other candidate — the payload is
   the same string either way.
+- **The `warn` verdict may not reach you, and this has not been checked.** A
+  generated view that has fallen behind its store is worth *mentioning* at the
+  moment a commit records it and is not worth refusing over — so the adapter
+  writes it with `console.error` rather than throwing, since throwing would
+  block the commit, which is the one thing `warn` exists not to do. Whether a
+  plugin's console output reaches the session or only
+  `~/.local/share/opencode/log/` is not something anybody has established. The
+  same notice covers a `dg gate` that exited non-zero, meaning the command ran
+  unchecked.
+
+  Nothing is lost either way: `dg check` reports a lagging view on demand and
+  `dg render` rebuilds it, and every `dg apply` renders before it writes. Both
+  refusing verdicts are thrown and so arrive by construction; it is only the
+  two advisories that ride this channel. If the answer turns out to be the log,
+  `client.tui.showToast` is the supported one — `PluginInput` hands the plugin
+  an `OpencodeClient` for exactly this.
