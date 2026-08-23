@@ -224,23 +224,35 @@ async function api(path, opts){
   return j;
 }
 
+/* Fetched into locals and published in one go, because `boot()` runs again
+   after Apply and after an `add` — over a canvas whose nodes are already on
+   screen and already bound to `select`. Assigning `G` at the top left six
+   awaits during which the old boxes were clickable and `G.xy` belonged to
+   nobody: the click called `draw()`, `xyOf` read a layout that did not exist
+   yet, and the exception took the redraw with it. The window is milliseconds
+   on localhost, which is exactly long enough to hit and far too short to
+   suspect. Nothing is published until every payload is in hand and the layout
+   for it has been computed, so there is no moment when the graph on screen and
+   the graph in `G` disagree. */
 async function boot(){
-  G = await api("/api/graph");
-  T = await api("/api/tasks").catch(()=>null);
-  JOIN = await api("/api/joined").catch(()=>({by_decision:{}}));
+  const g = await api("/api/graph");
+  const t = await api("/api/tasks").catch(()=>null);
+  const join = await api("/api/joined").catch(()=>({by_decision:{}}));
+  const pend = await api("/api/pending");
+  const tpend = t ? await api("/api/task-pending").catch(()=>[]) : [];
+  ED = ED || await api("/api/editor").catch(()=>({available:false}));
+  G = g; T = t; JOIN = join; PEND = pend; TPEND = tpend;
   /* One palette across both stores, so an area is the same colour whichever
      graph you are looking at — that is most of what makes the joined view
      readable. Task-only areas are appended rather than recoloured. */
   const areas=[...new Set([...G.areas, ...(T?T.areas:[])])];
   areas.forEach((a,i)=>AREA_COLOR[a]=PALETTE[i%PALETTE.length]);
   ALL_AREAS = areas;
-  PEND = await api("/api/pending");
-  TPEND = T ? await api("/api/task-pending").catch(()=>[]) : [];
-  ED = ED || await api("/api/editor").catch(()=>({available:false}));
   if(tab!=="decisions" && !T) tab="decisions";
   bindQuery();
+  layout();
   await soundness();
-  tabs(); chips(); legend(); layout(); draw(); tray();
+  tabs(); chips(); legend(); draw(); tray();
 }
 let ALL_AREAS=[];
 
@@ -671,7 +683,12 @@ function drawJoined(){
 /* Quotes included: escaped text is interpolated into attributes (data-dg,
    href, option value), and an unescaped quote there is an attribute breakout —
    stored prose must never reach the DOM as markup. */
-const esc=s=>(s||"").replace(/[<>&"']/g,
+/* `String(...)` and not `s||""`: not every caller hands this a string. A count
+   of 3 arrived here from the areas table and threw — `.replace is not a
+   function` — taking that whole reading down. The form harness stubs `esc` as
+   a coercion, so only the real one was fussy; coercing here is what makes the
+   stub honest. */
+const esc=s=>String(s==null?"":s).replace(/[<>&"']/g,
   c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&#39;"}[c]));
 const isRule=l=>/^\s*\|[-+|\s]*\|\s*$/.test(l);
 /* Org single-marker emphasis, applied only to org-tagged prose and only to
@@ -1758,6 +1775,13 @@ function panel(){
      makes in emacs. */
   $("#side").querySelectorAll("a[data-dg]").forEach(a=>a.onclick=ev=>{
     ev.preventDefault(); jump(a.dataset.dg);
+  });
+  /* `why…` beside the premises. It was drawn from the start and bound by
+     nothing: `showChain` sat in the file as dead code while the link did what
+     an unbound `href="#"` does, which is to look like a control without being
+     one. */
+  $("#side").querySelectorAll("a[data-chain]").forEach(a=>a.onclick=ev=>{
+    ev.preventDefault(); showChain(a.dataset.chain);
   });
   bindStructure();
   const already=new Set(d.children);

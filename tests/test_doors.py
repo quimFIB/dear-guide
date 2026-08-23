@@ -15,6 +15,7 @@ structure. That was audit F28 on the task side and the same trap on this one.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import threading
@@ -1367,3 +1368,104 @@ def test_the_page_asks_the_server_for_all_three(srv):
     html = _page()
     for route in ('"/api/context?id="', '`/api/path?from=', '"/api/areas"'):
         assert route in html, route
+
+
+#: Every `data-<hook>` the page interpolates a value into. An attribute is only
+#: a control once something on the other side reads it — by selector
+#: (`[data-x]`) or off the element it already holds (`dataset.x`) — and
+#: `data-chain` had neither: `why…` was drawn beside every premise, `showChain`
+#: sat in the file as dead code, and the link did what an unbound `href="#"`
+#: does. Nothing failed; the reading was simply never reachable.
+def _rendered_hooks(html):
+    return {m.group(1) for m in re.finditer(r'data-([a-z]+)="\$\{', html)}
+
+
+def test_every_hook_the_page_draws_is_read_somewhere():
+    """The route being reachable is not the reading being reachable. Each of
+    the three readings has a route test above; this asks the other half."""
+    html = _page()
+    assert "chain" in _rendered_hooks(html), "the premise chain lost its door"
+    for hook in _rendered_hooks(html):
+        assert f"[data-{hook}]" in html or f"dataset.{hook}" in html, (
+            f"the page draws data-{hook} and nothing ever reads it — "
+            f"the control is decoration")
+
+
+def test_boot_publishes_the_graph_and_its_layout_together():
+    """`boot()` runs again after Apply and after an `add`, over a canvas whose
+    nodes are already drawn and already bound to `select`. While it is fetching,
+    every one of those boxes is still clickable — so a payload published before
+    the layout for it exists is a window in which a click reads coordinates
+    that belong to the previous graph, or to nothing.
+
+    That window was six awaits wide and threw `xyOf` on a click landing inside
+    it. Stated as the property rather than the symptom: nothing reaches the
+    globals until the fetches are done, and no `await` separates publishing
+    them from laying them out.
+    """
+    body = _page().split("async function boot(){")[1].split("\n}")[0]
+    for name in ("G", "T", "JOIN", "PEND", "TPEND"):
+        assert f"{name} = await" not in body and f"{name}=await" not in body, (
+            f"boot publishes {name} mid-flight — the canvas is clickable "
+            f"while the rest of the payloads are still in the air")
+    published, laid_out = body.index("G = g;"), body.index("layout();")
+    assert published < laid_out < body.index("draw();")
+    assert "await" not in body[published:laid_out], (
+        "an await between publishing the graph and laying it out reopens "
+        "the window")
+
+
+AREAS_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
+// The page's own `esc`, not a stub of it — that substitution is the whole
+// reason this reading could throw with every other test passing. `const`
+// inside `eval` binds only inside it, so both are re-bound as globals.
+let esc, showAreas;
+eval(cut("const esc=s=>String(", "const isRule=").replace("const esc=", "esc="));
+eval(cut("async function showAreas(){", "function panel(){")
+       .replace("async function showAreas(){", "showAreas = async function(){"));
+const R = JSON.parse(process.argv[3]);
+const side = {innerHTML:""};
+const $ = s => side;
+let sel = null, tsel = null, NEWKIND = null, RELATING = null;
+const draw = () => {}, say = () => {};
+const api = async () => R;
+showAreas().then(() => {
+  const h = side.innerHTML;
+  ["decisions", "work"].forEach(b => {
+    if (!h.includes(">" + b + "<")) throw new Error("no " + b + " block");
+  });
+  Object.entries(R).forEach(([, store]) => store && store.areas.forEach(a => {
+    if (!h.includes(">" + a + "<")) throw new Error("area missing: " + a);
+    Object.values(store.counts[a] || {}).forEach(n => {
+      if (!h.includes(">" + n + "<")) throw new Error("count missing: " + n);
+    });
+  }));
+  console.log(h.replace(/<[^>]+>/g, " "));
+}).catch(e => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_areas_reading_renders_its_counts(both, tmp_path):
+    """Rendered with the page's **own** `esc`, which is the part that broke.
+
+    `FORM_HARNESS` stubs `esc` as a coercion, so the areas table passed every
+    test there and threw in a browser: the real one calls `.replace`, and the
+    cells it is handed are counts, not strings. A harness that stubs the very
+    function under suspicion cannot see that, so this one cuts the real
+    `esc` out of the page and runs the table against a real `/api/areas`
+    payload — two blocks, both stores' counts, nothing thrown.
+    """
+    harness = tmp_path / "areas.js"
+    harness.write_text(AREAS_HARNESS, encoding="utf-8")
+    r = subprocess.run(
+        ["node", str(harness), str(server.STATIC / "app.html"),
+         json.dumps(server.areas_payload())],
+        capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    # The harness raises on a missing area or count; this is the other half of
+    # the claim the reading makes — two blocks, never one table.
+    assert "decisions" in r.stdout and "work" in r.stdout
