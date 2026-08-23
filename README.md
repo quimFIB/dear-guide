@@ -112,7 +112,7 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `tasks.json` · `tasks.md` | the task graph and its view — its own store, and usable on its own |
 | `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG` |
-| `demo/` | a runnable graph + walkthrough for the emacs-from-browser flow |
+| `demo/` | a runnable graph holding one of every record this keeps, and a walkthrough over it |
 | `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md); plus [the design behind `dg find`](docs/query-framework.md) |
 | `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
 | `skills/dear-guide/` | the recording discipline, as a skill both agent hosts load |
@@ -356,7 +356,9 @@ the editor exits. Drafts are in memory only, so a reload clears them.
 Clicking **Compose in emacs** in the panel opens the same org buffer described
 below — the browser writes it, waits, and stages what emacs sends back. Anything
 already typed into the form carries over, so switching editors mid-thought costs
-nothing. `demo/` is a self-contained walkthrough:
+nothing. `demo/` is a self-contained walkthrough over a graph arranged so that
+every kind of record here — a reversal, a reopen, a park, a drop, evidence that
+landed late — is in it somewhere:
 
 ```sh
 ./demo/demo.sh          # a throwaway graph on http://127.0.0.1:8765

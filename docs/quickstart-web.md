@@ -61,9 +61,10 @@ In a project with no `tasks.json`, the tasks and joined tabs are disabled rather
 than empty: "this project does not track work" and "this project has no work
 outstanding" are different facts.
 
-If you have no graph to hand, `./demo/demo.sh` serves a throwaway six-decision,
-six-task one on the same port and resets it on every run. See
-[`demo/`](../demo/) for a walkthrough.
+If you have no graph to hand, `./demo/demo.sh` serves a throwaway seven-decision,
+ten-task one on the same port and resets it on every run — a reversal, a reopen,
+a park, a drop and a late result among them, so every panel here has something
+to show. See [`demo/`](../demo/) for a walkthrough.
 
 ## What stays in the terminal
 

@@ -21,6 +21,9 @@ rm -f "$work/.dgraph-pending.json" "$work/.dgraph-task-pending.json" \
 cd "$work"
 dg render >/dev/null
 dg task render >/dev/null
+# Three findings stand in this store on purpose, and all three are warnings,
+# so this exits 0. An *error* here means the copy is broken, and stopping is
+# the right thing: there is nothing worth serving.
 dg check
 
 cat <<TXT
@@ -29,25 +32,32 @@ cat <<TXT
   buffer  : $work/.dgraph-edit.org
   editor  : ${DG_GUI_EDITOR:-emacs}
 
-  Open http://127.0.0.1:$port and click D04 (the red, dashed node).
-  Then "Compose in emacs":
+  Open http://127.0.0.1:$port
 
-    - emacs opens on an org buffer with D04's context already in it
-    - C-c C-o on a dg: link jumps to that decision, fetched live
-    - fill in Answer / Source / Falsifier, tick what D04 opens
-    - C-c C-c stages it and the browser updates; C-c C-k cancels
-    - then press Apply in the browser
+  Seven decisions and ten tasks from an imaginary nearest-neighbour search
+  service, arranged so that every kind of record this tool keeps is in it:
 
-  Or try the other two tabs:
+    D04  the open one — red and dashed. This is the one to decide.
+    D02  decided, and its first answer superseded: IVF-PQ, then HNSW
+    D03  reopened — the falsifier it was written with came true
+    D07  provisional: decided, then D03 went back under review
+    T03  the spike D04 is waiting on;  T04 waits on D05, which is not settled
+    T07  dropped, after being parked;  T10 parked;  T09 evidence that arrived
+         after the answer it was meant to inform
 
-    - "tasks"  : T04 is dashed because its premise D05 is not settled.
-                 T06 is startable. Mark it done with an outcome.
-    - "joined" : the whole chain across both stores, D06 -> T05 -> T03 ->
-                 D04 -> D05 -> T04. The dotted cyan edges are the links.
+  A soundness chip sits in the header, because three findings stand. Each has
+  its exits in the panel, and the same ones in the terminal:
 
-  From a terminal, the same reading as text:
+    D02 was settled on 02-14; T09 measured it on 03-02  →  read it, re-affirm
+    T08 exists because of D07, which is under review    →  settle D03, confirm D07
+    T10 is parked and T04 still waits on it             →  pick it up, or drop it
 
-    dg -C $work context T04
+  From a terminal, against the same store:
+
+    dg -C $work brief
+    dg -C $work node D02        # the reversal, kept forever
+    dg -C $work context T08     # D01 → D03! → D07! → T08, across both stores
+    dg -C $work find recall     # one word, both graphs
 
 TXT
 exec dg serve --port "$port"

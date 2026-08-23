@@ -1,91 +1,66 @@
 {
-  "areas": [
-    "Search",
-    "Serving",
-    "Eval"
-  ],
+  "areas": ["Search", "Serving", "Eval"],
   "tasks": [
-    {
-      "id": "T01",
-      "title": "Build the HNSW index over the 48M-vector corpus",
-      "area": "Search",
-      "status": "DONE",
-      "done": "2026-02-21",
-      "outcome": "index/build_hnsw.py; 61G resident, 4h12m on the batch box",
-      "because": "D02"
-    },
-    {
-      "id": "T02",
-      "title": "Normalise embeddings at write time",
-      "area": "Search",
-      "status": "DONE",
-      "note": "Cosine over unnormalised vectors is a silent wrong answer rather\nthan an error, so this is enforced in the writer and asserted in CI.",
-      "done": "2026-02-24",
-      "outcome": "PR #218 — normalisation moved into the writer",
-      "because": "D03"
-    },
-    {
-      "id": "T03",
-      "title": "Sweep efSearch against the held-out queries",
-      "area": "Serving",
-      "status": "DOING",
-      "note": "The spike behind D04. Sweep 32/64/128/256 and record recall@10\nand p99 for each, against the exact-search baseline from T01.",
-      "evidence_for": "D04"
-    },
-    {
-      "id": "T04",
-      "title": "Wire the shard fan-out and the merge path",
-      "area": "Serving",
-      "status": "TODO",
-      "because": "D05"
-    },
-    {
-      "id": "T05",
-      "title": "Stand up the recall harness on the held-out set",
-      "area": "Eval",
-      "status": "DONE",
-      "done": "2026-02-10",
-      "outcome": "eval/recall.py — the baseline every sweep is scored against",
-      "because": "D06"
-    },
-    {
-      "id": "T06",
-      "title": "Add a CI gate on recall@10 >= 0.95",
-      "area": "Eval",
-      "status": "TODO",
-      "note": "The falsifier on D02 is only real if something checks it.",
-      "because": "D02"
-    }
+    {"id": "T01", "title": "Build the HNSW index over the 48M-vector corpus",
+     "area": "Search", "status": "DONE", "done": "2026-02-21",
+     "outcome": "index/build_hnsw.py -- 61G resident, 4h12m on the batch box",
+     "because": "D02"},
+
+    {"id": "T02", "title": "Normalise embeddings at write time",
+     "area": "Search", "status": "DONE", "done": "2026-02-24",
+     "note": "Cosine over unnormalised vectors is a silent wrong answer rather than an error, so it is enforced in the writer.",
+     "outcome": "PR #218 -- normalisation moved into the writer",
+     "because": "D07"},
+
+    {"id": "T03", "title": "Sweep efSearch against the held-out queries",
+     "area": "Serving", "status": "DOING",
+     "note": "The spike behind D04. Sweep 32/64/128/256 and record recall@10 and p99 for each, against the exact-search baseline from T05.",
+     "evidence_for": "D04"},
+
+    {"id": "T04", "title": "Wire the shard fan-out and the merge path",
+     "area": "Serving", "status": "TODO", "because": "D05"},
+
+    {"id": "T05", "title": "Stand up the recall harness on the held-out set",
+     "area": "Eval", "status": "DONE", "done": "2026-02-10",
+     "outcome": "eval/recall.py -- the baseline every sweep is scored against",
+     "because": "D06"},
+
+    {"id": "T06", "title": "Add a CI gate on recall@10 >= 0.95",
+     "area": "Eval", "status": "TODO",
+     "note": "The falsifier on D02 is only real if something checks it.",
+     "because": "D02"},
+
+    {"id": "T07", "title": "Train the PQ codebook",
+     "area": "Search", "status": "DROPPED", "because": "D02",
+     "stops": [
+       {"why": "the batch box is on the HNSW build until Friday",
+        "date": "2026-02-06"},
+       {"why": "D02 went the other way -- there is no codebook to train",
+        "date": "2026-02-15"}
+     ]},
+
+    {"id": "T08", "title": "Assert unit norm in the writer's tests",
+     "area": "Search", "status": "TODO", "because": "D07",
+     "note": "Turned up while doing T02: the writer normalises, and nothing fails if it stops."},
+
+    {"id": "T09", "title": "Measure resident size under production concurrency",
+     "area": "Serving", "status": "DONE", "done": "2026-03-02",
+     "outcome": "bench/resident.md -- 68G at p99 concurrency, 7G over the figure the sweep recorded",
+     "evidence_for": "D02"},
+
+    {"id": "T10", "title": "Backfill the 2023 corpus shard",
+     "area": "Search", "status": "PARKED", "because": "D02",
+     "stops": [
+       {"why": "the batch box is committed to the re-index until March",
+        "date": "2026-02-27"}
+     ]}
   ],
   "edges": [
-    {
-      "from": "T01",
-      "to": [
-        "T03",
-        "T06"
-      ],
-      "kind": "precedes"
-    },
-    {
-      "from": "T02",
-      "to": [
-        "T06"
-      ],
-      "kind": "precedes"
-    },
-    {
-      "from": "T03",
-      "to": [
-        "T04"
-      ],
-      "kind": "precedes"
-    },
-    {
-      "from": "T05",
-      "to": [
-        "T03"
-      ],
-      "kind": "precedes"
-    }
+    {"from": "T01", "to": ["T03", "T06"], "kind": "precedes"},
+    {"from": "T02", "to": ["T06"], "kind": "precedes"},
+    {"from": "T05", "to": ["T03"], "kind": "precedes"},
+    {"from": "T10", "to": ["T04"], "kind": "precedes"},
+    {"from": "T01", "to": ["T09"], "kind": "prompted"},
+    {"from": "T02", "to": ["T08"], "kind": "prompted"}
   ]
 }

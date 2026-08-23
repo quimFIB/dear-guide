@@ -3,33 +3,63 @@
   "vertices": [
     {"id": "D01", "title": "Exact or approximate search?", "area": "Search",
      "status": "DECIDED"},
+
     {"id": "D02", "title": "Which index structure?", "area": "Search",
      "status": "DECIDED"},
+
     {"id": "D03", "title": "Which distance metric?", "area": "Search",
-     "status": "DECIDED"},
+     "status": "REOPENED",
+     "note": "Encoder v3 dropped its final normalisation layer, so the index has been ranking unnormalised vectors since the rollout on 2026-02-28. The falsifier named this exact event."},
+
     {"id": "D04", "title": "efSearch for the recall target", "area": "Serving",
      "status": "OPEN",
-     "note": "The sweep is in bench/ann-sweep.md but nobody has written down\nwhat it means. This is the decision the demo makes."},
-    {"id": "D05", "title": "How many shards, and how are results merged?", "area": "Serving",
-     "status": "BLOCKED:D04"},
+     "note": "The sweep is running in T03. Nobody has written down what the numbers mean yet -- this is the decision the demo makes."},
+
+    {"id": "D05", "title": "How many shards, and how are results merged?",
+     "area": "Serving", "status": "BLOCKED:D04"},
+
     {"id": "D06", "title": "What is recall measured against?", "area": "Eval",
-     "status": "DECIDED"}
+     "status": "DECIDED"},
+
+    {"id": "D07", "title": "Where is unit norm enforced?", "area": "Search",
+     "status": "PROVISIONAL"}
   ],
   "edges": [
     {"from": "D01", "to": ["D02", "D03"], "active": true,
-     "answer": "Approximate. A brute-force scan over 48M x 768 fp32 reads\n140 GB a query and lands at 400 ms, eight times the latency budget.",
+     "answer": "Approximate. A brute-force scan over 48M x 768 fp32 reads 140 GB a query and lands at 400 ms, eight times the latency budget.",
      "falsifier": "a brute-force scan lands under the 50 ms budget at this corpus size -- a GPU implementation is the candidate",
      "source": "bench/scan-latency.md", "date": "2026-02-03"},
-    {"from": "D02", "to": ["D04"], "active": true,
-     "answer": "*HNSW*, M=32, efConstruction=200.\n\nThe sweep, from [[file:bench/ann-sweep.md][the sweep]]:\n\n| index  | recall@10 | p99 (ms) |  RAM |\n|--------+-----------+----------+------|\n| flat   |     1.000 |      410 | 140G |\n| IVF-PQ |     0.918 |        6 |  12G |\n| HNSW   |     0.962 |       11 |  61G |\n\nIVF-PQ is four points of recall cheaper than we can afford, so =HNSW= it is.\nThis constrains [[dg:D04][D04]]: efSearch is what buys the last of that\nrecall back, and it is paid for in latency.",
+
+    {"from": "D02", "to": ["D04"], "active": false,
+     "summary": "IVF-PQ, nlist=4096, 64 subquantisers",
+     "answer": "*IVF-PQ*, nlist=4096, 64 subquantisers. The only index in the sweep that fits the 16G serving box, and 0.918 recall@10 was judged close enough to the target to buy with.",
      "falsifier": "recall@10 against exact search falls below 0.95 on the held-out queries",
+     "why": "The 0.95 target was not a preference. T05's harness scored IVF-PQ at 0.918 on the frozen query set -- four points under -- and four points is the difference between answering the query and answering a different one. The serving box grows instead.",
+     "replaced_by": "HNSW, M=32, efConstruction=200",
+     "source": "bench/ann-sweep.md", "date": "2026-02-08"},
+
+    {"from": "D02", "to": ["D04"], "active": true, "format": "org",
+     "answer": "*HNSW*, M=32, efConstruction=200.\n\nThe sweep, [[file:bench/ann-sweep.md][in full here]]:\n\n| index  | recall@10 | p99 (ms) |  RAM |\n|--------+-----------+----------+------|\n| flat   |     1.000 |      410 | 140G |\n| IVF-PQ |     0.918 |        6 |  12G |\n| HNSW   |     0.962 |       11 |  61G |\n\nIVF-PQ is four points of recall cheaper than we can afford, so =HNSW= it is,\nand the serving box grows to 72G. This constrains [[dg:D04][D04]]: efSearch is\nwhat buys the last of that recall back, and it is paid for in latency.",
+     "falsifier": "recall@10 against exact search falls below 0.95 on the held-out queries, or resident size passes the 72G the serving box has",
      "source": "bench/ann-sweep.md", "date": "2026-02-14"},
-    {"from": "D03", "to": [], "active": true,
-     "answer": "Cosine, on vectors the encoder has already L2-normalised.\nInner product ranks identically on normalised vectors, and every eval\nscript already assumes cosine.",
+
+    {"from": "D03", "to": ["D07"], "active": false,
+     "summary": "Cosine, on encoder-normalised vectors",
+     "answer": "Cosine, on vectors the encoder has already L2-normalised. Inner product ranks identically on normalised vectors, and every eval script already assumes cosine.",
+     "falsifier": "the encoder stops emitting unit-norm vectors, at which point cosine and inner product no longer agree",
+     "why": "Encoder v3 dropped the final normalisation layer. The falsifier named that exact event, and it happened.",
      "source": "notes/encoder-card.md", "date": "2026-02-16"},
+
+    {"from": "D03", "to": ["D07"], "active": true},
+
     {"from": "D04", "to": ["D05"], "active": true},
+
     {"from": "D06", "to": [], "active": true,
-     "answer": "The exact scan, kept as an offline oracle: top-100 for a frozen\n5k query set, recomputed whenever the encoder changes.",
-     "source": "discussion", "date": "2026-02-20"}
+     "answer": "The exact scan, kept as an offline oracle: top-100 for a frozen 5k query set, recomputed whenever the encoder changes.",
+     "source": "discussion", "date": "2026-02-20"},
+
+    {"from": "D07", "to": [], "active": true,
+     "answer": "In the writer, not the encoder. The writer is the last thing that sees every vector, and an unnormalised one is a silent wrong answer rather than an error -- so the writer normalises, and asserts.",
+     "source": "PR #218", "date": "2026-02-18"}
   ]
 }
