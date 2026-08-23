@@ -480,6 +480,34 @@ def test_a_task_op_staged_in_the_browser_is_the_tray_the_cli_reads(srv, dual):
     assert pending.load(task_pending.path()) == body["pending"]
 
 
+def test_starting_work_in_the_browser_says_what_was_abandoned(srv, dual):
+    """The panel's half of the start-time warning. One helper, two doors: if
+    only `dg task start` said this, the button would stage the same op in
+    silence."""
+    code, body = jreq(srv, "/api/task-pending", "POST",
+                      {"op": "set_status", "task": "T02", "status": "DROPPED",
+                       "why": "obsolete", "date": "2026-03-01"})
+    assert code == 200 and body["notes"] == []       # a drop says nothing here
+    code, body = jreq(srv, "/api/task-pending", "POST",
+                      {"op": "set_status", "task": "T03", "status": "DOING"})
+    assert code == 200 and len(body["notes"]) == 1
+    assert "T02" in body["notes"][0] and "abandoned" in body["notes"][0]
+
+
+def test_starting_ordinary_work_in_the_browser_carries_no_note(srv, dual):
+    code, body = jreq(srv, "/api/task-pending", "POST",
+                      {"op": "set_status", "task": "T02", "status": "DOING"})
+    assert code == 200 and body["notes"] == []       # T01 is DONE
+
+
+def test_the_start_button_shows_the_server_note():
+    """Pinned in the file that holds it: the panel must render what the server
+    sends rather than inventing a second wording, which is how the two doors
+    came to disagree in the first place."""
+    html = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    assert 'const notes=(res&&res.notes)||[];' in html.split("async function postTasks")[1]
+
+
 def test_a_task_op_is_vetted_before_it_is_staged(srv, dual):
     """The CLI's stage-time guard, server side: an op for a task that does not
     exist is refused here rather than staged as a batch-poisoning op that

@@ -32,6 +32,7 @@ from dgraph.tasks import ID_RE as TASK_ID_RE
 # same question; imported under the CLI's old local name so every call site
 # here is unchanged. The server needs it too — see `/api/task-fallout`.
 from dgraph.tasks import fallout as _fallout
+from dgraph.tasks import starting_on_abandoned_work as _start_note
 from dgraph.tasks import MISSING_EDGE, TaskGraph
 
 # ---- how `--help` reads --------------------------------------------------
@@ -2905,10 +2906,20 @@ def task_undep(
 
 @task_app.command("start", rich_help_panel=T_RECORD)
 def task_start(tid: str) -> None:
-    """Stage a task moving to DOING."""
-    _require_task(tid)
+    """Stage a task moving to DOING, and say what it was waiting on.
+
+    Starting is also what clears `released_by_drop`, so a prerequisite that was
+    abandoned rather than finished has to be said *here* or it is never said to
+    the person doing the work — the check is read by whoever runs it, and this
+    is the moment nobody does.
+    """
+    tg = _teff(_tg())
+    _require_task(tid, tg)
     _tstage({"op": "set_status", "task": tid, "status": "DOING"})
     con.print(f"[green]staged[/] {tid} → DOING")
+    note = _start_note(tg, tid)
+    if note:
+        con.print(f"[yellow]note: {note}[/]")
     _twarn_stuck()
 
 

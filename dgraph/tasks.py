@@ -242,6 +242,12 @@ def fallout(tg: TaskGraph, tid: str) -> dict[str, str]:
         # branches ask different questions — this one is about startability,
         # which only live work has, and that one is about provenance, which
         # parked work still needs.
+        #
+        # What the parked dependant gets instead, since silence here must not
+        # mean silence everywhere: `released_by_drop` fires over PARKED as well
+        # as TODO, and `starting_on_abandoned_work` says it again to whoever
+        # picks the task up. Do not widen this filter to cover them — it would
+        # put the question back where it cannot be answered.
         dep = tg.tasks[t]
         if dep.unfinished and not dep.parked and tg.waiting_on(t) == [tid]:
             out[t] = f"released — waited only on {tid}"
@@ -251,6 +257,34 @@ def fallout(tg: TaskGraph, tid: str) -> dict[str, str]:
                 for o in tg.discovered_during(t)):
             out[t] = f"orphaned — discovered during {tid}"
     return out
+
+
+def starting_on_abandoned_work(tg: TaskGraph, tid: str) -> str | None:
+    """The warning for picking `tid` up when what it waited on was abandoned.
+
+    `released_by_drop` says this to whoever reads the store; this says it to
+    whoever is about to do the work, at the moment they commit to doing it —
+    the same split `cross.deciding_ahead_of_evidence` makes against
+    `evidence_after_deciding`, and for the same reason: the check is only read
+    by someone who runs it, and starting work is precisely the moment nobody
+    does.
+
+    It is also the only cover the DOING case has. Starting a task is what
+    *clears* the check — deliberately, since acknowledging it any other way
+    would need a stored field — so once the work has begun the store is silent
+    by design, and the one thing that must not be silent is the transition
+    itself.
+
+    A note, never a refusal: proceeding without an abandoned prerequisite is
+    often exactly right, and which of the two an edge was is knowledge the
+    store does not have.
+    """
+    gone = tg.dropped_prerequisites(tid)
+    if not gone:
+        return None
+    return (f"{tid} waited on {', '.join(gone)}, which was abandoned rather "
+            f"than finished — check the work is still possible without what "
+            f"it would have produced")
 
 
 def matches(t: Task, op: dict) -> bool:
@@ -648,26 +682,41 @@ class TaskGraph:
                     f"dependency was wrong",
                     "warning")
 
-        # What a drop left behind. Both are warnings and both fire only while
-        # the work is still TODO, which is the acknowledgement path — and the
-        # reason there is no `dg task confirm` to match the decision store's
-        # `dg confirm`. That one flips a *stored* status; a task has none to
-        # flip, so acknowledging would need a new field whose only job is to
-        # silence a check, and a stored field that can go stale is exactly what
-        # this store refuses to keep. Starting the work, dropping it, or
-        # removing the edge that is no longer true all clear these, and each is
-        # a real statement about the work rather than a box ticked.
+        # What a drop left behind. Both are warnings and both fire only over
+        # work nobody has picked up — TODO and PARKED — which is the
+        # acknowledgement path, and the reason there is no `dg task confirm` to
+        # match the decision store's `dg confirm`. That one flips a *stored*
+        # status; a task has none to flip, so acknowledging would need a new
+        # field whose only job is to silence a check, and a stored field that
+        # can go stale is exactly what this store refuses to keep. Starting the
+        # work, dropping it, or removing the edge that is no longer true all
+        # clear these, and each is a real statement about the work rather than a
+        # box ticked.
+        #
+        # PARKED is included because otherwise the parked case is covered by
+        # nothing at all. `fallout`'s released branch skips parked dependants
+        # deliberately — a park has no startability to release — so a drop says
+        # nothing about them, and if this gated on TODO alone nothing would say
+        # it afterwards either: nothing in the CLI ever returns a task to TODO
+        # (`dg task start` writes DOING), so a parked task can be picked back up
+        # with its only prerequisite abandoned and no surface saying so.
         for tid, t in sorted(self.tasks.items()):
-            if t.status != "TODO":
+            if t.status not in ("TODO", "PARKED"):
                 continue
             gone = self.dropped_prerequisites(tid)
             if gone:
+                # Two wordings, because "became startable" is false about work
+                # that is not being done: `ready` requires TODO, so a parked
+                # task was not released by the drop, it was undermined by it
+                # while nobody was looking. The remedy is the same either way.
                 add("released_by_drop",
-                    f"{tid} became startable only because "
-                    f"{', '.join(gone)} was abandoned — check the work is "
-                    f"still possible without what it would have produced, then "
-                    f"`dg task start {tid}` or `dg task undep {tid} --after "
-                    f"{gone[0]}`; or drop it too",
+                    (f"{tid} is parked behind {', '.join(gone)}, which was "
+                     f"abandoned" if t.parked else
+                     f"{tid} became startable only because "
+                     f"{', '.join(gone)} was abandoned") +
+                    f" — check the work is still possible without what it "
+                    f"would have produced, then `dg task start {tid}` or "
+                    f"`dg task undep {tid} --after {gone[0]}`; or drop it too",
                     "warning")
             # Not asked of work that carries its own justification: a `because`
             # is something *else* recording why this exists, which is the same

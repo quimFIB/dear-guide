@@ -14,7 +14,8 @@ from typer.testing import CliRunner
 from dgraph import pending, project, task_pending, task_render
 from dgraph.check import CHECKS, run
 from dgraph.cli import app
-from dgraph.tasks import Stop, TaskEdge, TaskGraph
+from dgraph.tasks import (Stop, TaskEdge, TaskGraph,
+                          starting_on_abandoned_work)
 
 runner = CliRunner()
 
@@ -724,6 +725,64 @@ def test_starting_the_work_clears_the_release_warning(tg):
     _drop(tg, "T01")
     tg.tasks["T02"].status = "DOING"
     assert not [v for v in tg.validate() if v.check == "released_by_drop"]
+
+
+def test_parked_work_released_by_a_drop_is_flagged(tg):
+    """The hole SA03's filter left. `fallout`'s released branch skips a parked
+    dependant on purpose — a park has no startability to release — so this
+    check is the only thing that can say it afterwards, and while it gated on
+    TODO alone nothing said it at all: nothing in the CLI returns a task to
+    TODO, so T02 could be picked up months later with its only prerequisite
+    abandoned and every surface silent about it."""
+    _drop(tg, "T01")                              # T02 waited only on T01
+    tg.tasks["T02"].status = "PARKED"
+    tg.tasks["T02"].stops = [Stop(why="no design yet", date="2026-06-01")]
+    hits = [v for v in tg.validate() if v.check == "released_by_drop"]
+    assert len(hits) == 1 and "T02" in hits[0].message
+    # Not the TODO wording: `ready` requires TODO, so a parked task was never
+    # made startable by the drop — it was undermined by it.
+    assert "became startable" not in hits[0].message
+    assert not hits[0].blocking
+
+
+@pytest.mark.parametrize("status", ["TODO", "PARKED", "DOING"])
+def test_no_unfinished_task_takes_up_abandoned_work_in_silence(tg, status):
+    """The whole claim, over every status work can be picked up from: either
+    the store says it while the task sits there, or the door says it at the
+    moment somebody starts it. DOING has only the second — starting is what
+    *clears* the check, deliberately — which is why widening the check alone
+    would not have closed this."""
+    _drop(tg, "T01")
+    tg.tasks["T02"].status = status
+    said = [v.message for v in tg.validate()
+            if v.check == "released_by_drop" and "T02" in v.message]
+    said += [n for n in [starting_on_abandoned_work(tg, "T02")] if n]
+    assert said and all("T01" in m for m in said)
+
+
+def test_the_start_warning_is_silent_where_the_prerequisite_finished(tg):
+    """T01 is DONE in the fixture, so T02 is startable for the ordinary reason
+    and there is nothing to say about it."""
+    assert starting_on_abandoned_work(tg, "T02") is None
+    assert starting_on_abandoned_work(tg, "T04") is None    # no prerequisites
+
+
+def test_starting_work_says_what_was_abandoned(run_cli):
+    """The door. Starting is what clears `released_by_drop`, so a prerequisite
+    that was given up on has to be named here or the person doing the work
+    never hears it."""
+    assert run_cli("task", "drop", "T02", "--why", "obsolete",
+                   "--keep", "T03").exit_code == 0
+    # Read through `_teff`, so the staged-but-unapplied drop counts — the note
+    # and the tray are the same reading of the same store.
+    res = run_cli("task", "start", "T03")
+    assert res.exit_code == 0
+    assert "T02" in res.output and "abandoned" in res.output
+
+
+def test_starting_ordinary_work_says_nothing_about_abandonment(run_cli):
+    res = run_cli("task", "start", "T02")         # T01 is DONE
+    assert res.exit_code == 0 and "abandoned" not in res.output
 
 
 def test_work_orphaned_by_a_drop_is_flagged(tg):

@@ -1196,13 +1196,19 @@ async function postTask(op){ return postTasks([op]); }
 async function postTasks(ops){
   const tid=ops[0].task;    /* pinned: the user may navigate before this returns */
   try{
-    await api("/api/task-pending",{method:"POST",
+    const res=await api("/api/task-pending",{method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify(ops.length===1?ops[0]:ops)});
     TPEND=await api("/api/task-pending"); tray();
     delete DRAFTS[tid];
     const more = ops.length>1 ? ` (+${ops.length-1} dropped with it)` : "";
-    say(`Staged ${ops[0].status} for ${tid}.${more}`, "ok", tid);
+    /* The server's notes, verbatim, as `post` does above:
+       `tasks.starting_on_abandoned_work` is the one helper `dg task start`
+       prints from, and a second wording here is the two doors disagreeing
+       about the same act. */
+    const notes=(res&&res.notes)||[];
+    say(`Staged ${ops[0].status} for ${tid}.${more}` +
+        (notes.length?" "+notes.join(" "):""), notes.length?"warn":"ok", tid);
     if(tid===tsel) taskPanel();
   }catch(err){ say(err.message, "bad", tid); }
 }

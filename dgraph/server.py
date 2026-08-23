@@ -281,6 +281,23 @@ def fallout_payload(tid: str) -> dict:
         for t, why in sorted(out.items())]}
 
 
+def _task_note(tg: TaskGraph, op: dict) -> str | None:
+    """The start-time warning for a task op, or None for anything else.
+
+    The same helper `dg task start` prints from, for the same reason
+    `_decide_note` exists: both doors onto starting work have to say the same
+    thing about a prerequisite that was abandoned rather than finished.
+
+    Read against the *pre-op* graph, tray included, which is where the
+    prerequisite's status lives — the op being staged only moves `tid` itself.
+    """
+    if op.get("op") != "set_status" or op.get("status") != "DOING":
+        return None
+    tid = op.get("task")
+    return (tasks_mod.starting_on_abandoned_work(tg, tid)
+            if tid in tg.tasks else None)
+
+
 def _decide_note(op: dict) -> str | None:
     """The decide-time warning for a close op, or None for anything else."""
     if op.get("op") != "close" or not op.get("vertex"):
@@ -498,12 +515,21 @@ class Handler(BaseHTTPRequestHandler):
             # gives the CLI; half a cascade in the tray says the opposite of
             # what the operator answered.
             ops_in = body if isinstance(body, list) else [body]
+            tg = TaskGraph.load(proj.tasks)
+            # Read against the tray, and read *before* staging, which is what
+            # `dg task start` does through `_teff`. A prerequisite dropped but
+            # not yet applied has to be visible to both doors or to neither.
+            eff = task_pending.preview(tg)
             try:
-                ops = stage_tasks(TaskGraph.load(proj.tasks), ops_in)
+                ops = stage_tasks(tg, ops_in)
             except Exception as exc:
                 return self._json({"error": str(exc)}, 400)
+            # Same shape as `/api/pending` above: notes are staged-anyway
+            # warnings the panel shows verbatim, never a refusal.
             self._json({"staged": ops,
-                        "pending": pending.load(task_pending.path())})
+                        "pending": pending.load(task_pending.path()),
+                        "notes": [n for n in (_task_note(eff, o) for o in ops_in)
+                                  if n]})
         elif self.path == "/api/compose":
             self._compose()
         elif self.path == "/api/expand":
