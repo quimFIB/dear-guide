@@ -3,7 +3,7 @@
 The tool's strongest property is that the CLI and the web app share one apply,
 one staging area and one set of rules, so they cannot disagree about what is
 about to be written. Every test here pins that property for an operation the
-browser gained in the interface audit (`dev-docs/interface-audit.md`), and the
+browser gained when it stopped being a viewer with buttons, and the
 shape is deliberate: **not** "the route stages something", which any half-built
 form passes, but "the route stages *the op list the command stages*".
 
@@ -146,8 +146,11 @@ def test_a_blocked_status_stages_its_edge_from_the_browser(srv, store):
     """`BLOCKED:X` asserts a dependency, and dependency is the edge list.
 
     The status alone would be a second copy of the structure — the one thing
-    both stores refuse to keep — and `dev-docs/TODO.md` names this as the trap
-    for anything that learns to write a block.
+    both stores refuse to keep. `BLOCKED` buys emphasis in `dg show`, not a
+    fact: `waiting_on` and the frontier derive from edges and statuses
+    together, so an OPEN vertex resting on an unsettled premise reads correctly
+    everywhere without it. Anything that learns to write a block stages the
+    edge too, the way `dg add --status BLOCKED:X` already does.
     """
     code, res = post(srv, "/api/add", {
         "id": "D07", "title": "Blocked", "area": "Alpha", "status": "BLOCKED:D04"})
