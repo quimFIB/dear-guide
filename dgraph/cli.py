@@ -27,6 +27,7 @@ from dgraph import integrate as integrate_mod
 from dgraph import task_pending, task_render
 from dgraph import query as _query
 from dgraph.model import Graph
+from dgraph.model import rival_note as model_rival_note
 from dgraph.tasks import done_label
 from dgraph.tasks import ID_RE as TASK_ID_RE
 # Moved to `dgraph/tasks.py`, beside the two after-the-fact readings of the
@@ -825,6 +826,13 @@ def node(
         f"area        {_x(v.area)}",
         f"depends on  {', '.join(g.depends(vid)) or '—'}",
     ]
+    # Before the answer, not after it. `node` exists to show what a question
+    # was answered with, so a second current answer is precisely the thing it
+    # must not omit — and a reader who meets the caveat *below* the answer has
+    # already read the answer as the answer.
+    rivals = g.rival_answers(vid)
+    if rivals:
+        lines += ["", f"[red]{_x(model_rival_note(len(rivals)))}[/]"]
     if e and e.decided:
         lines += [
             f"opens       {', '.join(e.to) or 'TERMINAL'}",
@@ -832,6 +840,18 @@ def node(
             f"source      {_x(e.source)}   ({e.date})",
             "", "[bold]Answer[/]", _x(e.answer),
         ]
+        for other in rivals:
+            # Every one of them, with its own payload — the same rendering a
+            # superseded edge gets, for the same reason: naming a count and
+            # showing one answer still leaves the reader unable to see what
+            # the other said.
+            lines += [
+                "", "[red]also current[/]",
+                f"  opens       {', '.join(other.to) or 'TERMINAL'}",
+                f"  falsifier   {_x(other.falsifier) or '—'}",
+                f"  source      {_x(other.source)}   ({other.date})",
+                f"  {_x(other.answer)}",
+            ]
     else:
         lines += [f"opens       {', '.join(g.children(vid)) or '—'}"]
         if v.note:

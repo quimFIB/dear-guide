@@ -395,6 +395,26 @@ established, and it is cited in commits, in these docs, in `dg why` output
 somebody pasted into a review: renaming it is not churn, it is breaking every
 sentence that names it.
 
+### When the store already holds two answers
+
+`dg integrate` is the way in that cannot produce this. A git text-merge is the
+way in that can: union two clones that each settled the same inherited
+question and the store holds **two active edges**. It loads. `dg check`
+refuses it, blocking, as `one_active_edge` — and every reader that asks for
+the current answer gets the first one and shows it with no sign the other
+exists, so a reader is told something false and cannot tell.
+
+`Graph.active_edge` is still first-wins, because that is right for a
+traversal: `children` needs an answer to follow and any of them will do.
+`Graph.rival_answers` is what anything that *shows* an answer to a person asks
+first — `dg node`, `dg context` in both its forms, `decision-graph.md`, the
+browser panel — and one sentence serves all five, since a caveat five
+renderers each phrase for themselves is one that four of them eventually drop.
+It says the count, the rule, **and that which answer is shown is arbitrary**,
+that last part being the whole point. `dg find` searches the rival answer too:
+answering "nothing" about a sentence sitting in the store is the failure that
+command is shaped to avoid.
+
 ### What is reported and never acted on
 
 The report ends with the warnings the contribution introduces and the records

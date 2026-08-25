@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dgraph import orgmd, project
-from dgraph.model import Edge, Graph
+from dgraph.model import Edge, Graph, rival_note
 
 NONE = "—"
 
@@ -93,6 +93,19 @@ def _section(g: Graph, vid: str) -> str:
         out.append(f"*Source:* {orgmd.to_markdown(e.source)}")
     elif v.note:
         out.append(orgmd.to_markdown(v.note, fmt=v.format).strip())
+
+    # Said in the file too, and for a sharper reason than in `dg node`:
+    # `decision-graph.md` is what a reader opens when they are *not* running
+    # commands, so it is the surface least likely to be read beside a
+    # `dg check` that would have refused this store.
+    rivals = g.rival_answers(vid)
+    if rivals:
+        out.append("")
+        out.append(f"> **{rival_note(len(rivals))}**")
+        for other in rivals:
+            out.append("")
+            out.append(f"*Also current:* "
+                       f"{orgmd.to_markdown(other.answer, fmt=other.format)}")
 
     turned_down = g.rejected(vid)
     if turned_down:

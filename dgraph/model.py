@@ -24,6 +24,21 @@ from dgraph import project
 from dgraph.violation import Violation  # re-exported: callers import it from here
 from dgraph.violation import cycle_from
 
+#: What every reader says when a vertex holds more than one active edge. One
+#: sentence in one place, because four renderers show an answer and four
+#: independent phrasings is how the PARKED reason came to be printed by one of
+#: them and dropped by the other two. It names the count, the rule, and the
+#: fact that what is shown is arbitrary — that last part being the whole
+#: finding: without it a reader concludes the answer they were shown is *the*
+#: answer.
+def rival_note(n: int) -> str:
+    return (f"{n + 1} active edges — this question holds more than one current "
+            f"answer, which no `dg` command can write and `dg check` refuses "
+            f"as `one_active_edge`. Which one is shown below is arbitrary. It "
+            f"is what a git text-merge of two clones leaves behind; "
+            f"`dg integrate` is the way to bring one in that does not.")
+
+
 SIMPLE_STATUSES = {"DECIDED", "OPEN", "REOPENED", "PROVISIONAL"}
 UNSETTLED = {"OPEN", "BLOCKED", "REOPENED"}
 
@@ -226,10 +241,34 @@ class Graph:
     # ---- queries ---------------------------------------------------------
 
     def active_edge(self, vid: str) -> Edge | None:
+        """The current answer, or None. **First wins where there are two.**
+
+        Which is the right behaviour for a traversal — `children` needs an
+        answer to follow and any of them will do — and the wrong one for a
+        reader, which is what `F-F4` is. Anything that *shows* an answer to a
+        person asks `rival_answers` first.
+        """
         for e in self.edges:
             if e.src == vid and e.active:
                 return e
         return None
+
+    def rival_answers(self, vid: str) -> list[Edge]:
+        """The active edges beyond the first, where a store holds more than one.
+
+        Empty in every store this tool can produce: `one_active_edge` refuses
+        two, blocking, so no `dg apply` writes one. What does produce one is a
+        git text-merge of two clones that each settled the same inherited
+        vertex — the store loads, `dg check` refuses it, and every reader that
+        asks `active_edge` shows one answer with no sign the other exists. The
+        reader is told something false and cannot tell.
+
+        So this is not a query anybody has a use for; it is the thing four
+        renderers have to ask before they print an answer, kept in one place
+        so that four of them cannot phrase it four ways — the rule
+        `stop_label` and `done_label` already follow.
+        """
+        return [e for e in self.edges if e.src == vid and e.active][1:]
 
     def history(self, vid: str) -> list[Edge]:
         """Superseded decisions for a vertex, oldest first.

@@ -45,7 +45,7 @@ from urllib.parse import parse_qs, urlparse
 
 from dgraph import (applying, check, cross, editor, pending, project, ranges,
                     render, task_editor, task_pending)
-from dgraph.model import Graph
+from dgraph.model import Graph, rival_note
 from dgraph import tasks as tasks_mod
 from dgraph.tasks import TaskGraph, stop_label
 
@@ -109,6 +109,11 @@ def graph_payload(g: Graph) -> dict:
             # about this project: one says *we changed our mind*, the other
             # says *somebody else answered this and we did not take it*. Sent
             # as its own key so the page cannot merge them by accident.
+            # Sent rather than computed in the page: `Graph.rival_answers` is
+            # where the reading lives, and a page that worked it out from the
+            # edge list would be a second implementation of an invariant.
+            "rival_answers": (rival_note(len(g.rival_answers(vid)))
+                              if g.rival_answers(vid) else None),
             "declined": [
                 {"from_source": h.from_source, "answer": h.answer,
                  "falsifier": h.falsifier, "source": h.source,

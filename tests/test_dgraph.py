@@ -1241,3 +1241,85 @@ def test_a_correction_is_not_stamped_as_leaning_on_the_record(g):
                                 "title": "x"}) == []
     assert "saw" not in pending.stamp(g, {"op": "set_fields", "vertex": "D01",
                                           "title": "x"})
+
+
+# ---- a vertex with two answers (F-F4) ------------------------------------
+#
+# The store *loads*, which is what makes this worse than the duplicate-id case
+# beside it. Union two clones that each settled the same inherited vertex and
+# the result holds two active edges: `dg check` refuses it, blocking — and
+# every reader that asks `active_edge` gets first-wins and shows one answer
+# with no sign the other exists. The reader is told something false and cannot
+# tell.
+
+
+def _two_answers(g):
+    """The store a git text-merge of two clones leaves behind."""
+    from dgraph.model import Edge
+    out = replace(g)
+    out.edges = [e for e in g.edges if e.src != "D01"] + [
+        Edge(src="D01", to=[], answer="OURS: two reviewers, no formal gate.",
+             source="a", falsifier="x", date="2026-06-01"),
+        Edge(src="D01", to=[], answer="THEIRS: one reviewer plus CI.",
+             source="b", falsifier="y", date="2026-06-02"),
+    ]
+    return out
+
+
+def test_two_active_edges_are_readable_as_two(g):
+    """`active_edge` stays first-wins, because that is right for a traversal —
+    `children` needs an answer to follow and any will do. What changes is that
+    there is now a way to ask, so a reader is not stuck with the traversal's
+    answer."""
+    out = _two_answers(g)
+    assert out.active_edge("D01").answer.startswith("OURS")
+    (other,) = out.rival_answers("D01")
+    assert other.answer.startswith("THEIRS")
+    assert g.rival_answers("D01") == []          # the sound store says nothing
+
+
+def test_the_store_still_refuses_it(g):
+    """The finding is about the *readers*, not the invariant: `one_active_edge`
+    already refused this, blocking, and still does."""
+    hits = [v for v in _two_answers(g).validate()
+            if v.check == "one_active_edge"]
+    assert hits and hits[0].blocking
+
+
+def test_every_surface_that_shows_an_answer_says_there_are_two(g, store):
+    """Four renderers show an answer, and one phrasing serves all of them —
+    the rule `stop_label` and `done_label` already follow. Asserted together
+    rather than one test each, because the failure this guards is exactly one
+    of them being left out."""
+    from dgraph import context, render, server
+    from dgraph.model import rival_note
+    out = _two_answers(g)
+    out.save(store / "decisions.json")
+    said = rival_note(1)
+
+    assert said in render.render(out)
+    node = context.decision(out, "D01")
+    assert node["rival_answers"] == said
+    assert said.split(" — ")[0] in context.text(node)
+    assert said.split(" — ")[0] in context.compact(node)
+    payload = server.graph_payload(out)
+    assert payload["derived"]["D01"]["rival_answers"] == said
+
+
+def test_a_rival_answer_is_searchable(g):
+    """`dg find` answering "nothing" about a sentence sitting in the store is
+    the failure that whole command is shaped to avoid, and `active_edge` being
+    first-wins made the second answer unfindable."""
+    from dgraph import query
+    lens = query.decision_lens(_two_answers(g))
+    assert query.select(query.parse("answer:CI"), lens) == ["D01"]
+
+
+def test_the_wording_is_written_down_once(g):
+    """Four surfaces, one sentence. Three renderers picking their own label is
+    how the PARKED reason came to be printed by one of them and dropped by the
+    other two."""
+    import inspect
+    from dgraph import cli, context, render, server
+    for mod in (cli, context, render, server):
+        assert "active edges —" not in inspect.getsource(mod), mod.__name__

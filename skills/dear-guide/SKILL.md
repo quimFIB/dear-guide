@@ -272,6 +272,12 @@ dg undep D07 --after D03           # ...and removing one
 `dg undep` works only on a **bare** edge. A decided edge's targets are part of
 its answer, so `dg reopen` first, then remove, then decide again meaning it.
 
+**If a reading says a question holds more than one current answer, stop.** It
+means the store was text-merged rather than integrated: `dg check` refuses it,
+and which answer you were shown is arbitrary, so anything composed against it
+is composed against a coin flip. Say so and let a person resolve it — the two
+answers are in the store and `dg node` shows both.
+
 **When the commit gate says a contribution is waiting, stop and say so.**
 `dg integrate <ref>` brings another writer's work in as ops and quarantines
 them in `.dgraph-incoming.json` — deliberately not the tray, so nothing you

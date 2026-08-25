@@ -682,6 +682,13 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         e = g.active_edge(vid)
         if e is not None:
             out += _texts([getattr(e, name, None)])
+        # And every *rival* answer, in the store `one_active_edge` refuses.
+        # `active_edge` is first-wins, so without this the second answer is
+        # unsearchable — and `dg find` answering "nothing" about a sentence
+        # that is sitting in the store is the failure this whole command is
+        # shaped to avoid. Empty in every store this tool can write.
+        out += _texts(getattr(other, name, None)
+                      for other in g.rival_answers(vid))
         if name in ("summary", "why") or (archived and name in _ARCHIVED_PROSE):
             out += _texts(getattr(h, name, None) for h in g.history(vid))
         return out

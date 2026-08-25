@@ -42,7 +42,7 @@ import textwrap
 from dataclasses import dataclass, field
 
 from dgraph import compact as _c
-from dgraph.model import Graph
+from dgraph.model import Graph, rival_note
 from dgraph.tasks import TaskGraph, done_label, stop_label
 
 WIDTH = 76
@@ -158,6 +158,11 @@ def decision(g: Graph, vid: str, tg: TaskGraph | None = None) -> dict:
             for h in g.history(vid)
         ],
         "shaky_premises": [p.id for p in premises if p.shaky],
+        # The one an agent needs most, because an agent composes against what
+        # it is told and never opens the file. `None` where the store is
+        # sound, which is every store this tool can write.
+        "rival_answers": (rival_note(len(g.rival_answers(vid)))
+                          if g.rival_answers(vid) else None),
     }
     out["work"] = _work(tg, vid) if tg is not None else None
     return out
@@ -388,6 +393,10 @@ def _decision_text(d: dict) -> str:
                    + (f" · opens {', '.join(d['opens'])}" if d["opens"] else ""))
     elif d["opens"]:
         out.append(f"  a root · opens {', '.join(d['opens'])}")
+    # Before the answer, for the reason `dg node` puts it there: a reader who
+    # meets the caveat below has already read the answer as *the* answer.
+    if d.get("rival_answers"):
+        out += ["", "!! " + d["rival_answers"]]
     if d["answer"]:
         out.append("")
         out += _wrap(d["answer"], "  ", d.get("answer_format"))
@@ -483,6 +492,12 @@ def _task_text(d: dict) -> str:
     p = d["premise"]
     if p:
         out += ["", f"BECAUSE  {p['id']}  {_base(p['status'])}  {p['title']}"]
+        # The sharpest case in the finding: an agent composing against a
+        # premise, told one answer, with no way to know a second exists. It is
+        # said here and not only on the decision's own context, because this
+        # is the reading the agent actually asked for.
+        if p.get("rival_answers"):
+            out += ["", "  !! " + p["rival_answers"]]
         if p["answer"]:
             out += _wrap(p["answer"], "  ", p.get("format"))
         if p["falsifier"]:
@@ -587,6 +602,14 @@ def compact(d: dict) -> str:
     # The node's own answer, or its note where it has no answer yet. One line,
     # and the line a reader wants first: `dg context D02` that does not say
     # what D02 decided is a command you have to follow with `dg node`.
+    # Before that line, because it is a caveat *about* it — and this is the
+    # surface the finding is really about: the compact form is what an agent
+    # reads, and an agent composes against what it is told. Not clipped: the
+    # whole point is that the reader cannot tell from the answer alone, so a
+    # sentence trimmed to a width is a sentence that could lose the reason.
+    if d.get("rival_answers"):
+        out += textwrap.wrap("!! " + d["rival_answers"], COMPACT_WIDTH,
+                             initial_indent="  ", subsequent_indent="     ")
     own = _c.gist(d.get("answer"), d.get("answer_format")) or _c.gist(
         d.get("note"), d.get("format"))
     if own:
@@ -625,6 +648,13 @@ def compact(d: dict) -> str:
         lead = f"BECAUSE  {premise['id']}  {_base(premise['status'])}  "
         out += ["", lead + _c.clip(premise["title"],
                                    COMPACT_WIDTH - len(lead))]
+        # The premise carries the same caveat, and this is where it lands on
+        # somebody who is about to act: they asked what this work rests on,
+        # and the answer they are shown is one of two.
+        if premise.get("rival_answers"):
+            out += textwrap.wrap("!! " + premise["rival_answers"],
+                                 COMPACT_WIDTH, initial_indent="         ",
+                                 subsequent_indent="         ")
         # Not `_premise_row`: the premise arrives as a `decision()` dict, whose
         # answer lives under different keys and which carries no `shaky` flag.
         said = _c.gist(premise["answer"], premise.get("answer_format"))

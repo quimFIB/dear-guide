@@ -1775,6 +1775,11 @@ function panel(){
      card — an edge's targets belong to the edge that declared them. */
   if(!decided) h+=`<div>opens</div><div>${idList(d.children)}</div>`;
   h+=`</div>`;
+  /* Above the answer card, never below it: a reader who meets the caveat
+     after the answer has already read the answer as *the* answer. Red rather
+     than muted — this is a store `dg check` refuses, not a note. */
+  if(d.rival_answers)
+    h+=`<p class="wait" style="border-color:var(--bad)">${esc(d.rival_answers)}</p>`;
   if(decided) h+=edgeCard(e, d.children);
   else if(v.note) h+=`<div class="answer muted">${md(v.note, v.format)}</div>`;
   const j = (JOIN && JOIN.by_decision[sel]) || null;
