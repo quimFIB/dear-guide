@@ -373,10 +373,18 @@ class Finding:
 
     kind: str                      # "contested" | "inapplicable"
     store: str                     # "decisions" | "tasks"
-    at: int                        # the op's index in its side's list
+    at: int                        # the op's index in its side's derived list
     record: str | None
     message: str
     grouped: list[int] = field(default_factory=list)
+    #: The op itself, so that a person can answer *this one* rather than a
+    #: position. Positions do not survive: the ops that reach the file are the
+    #: ones that applied, expanded, so an index into the derived list names a
+    #: different op by the time anybody reads it.
+    op: dict | None = None
+    #: How the person answered it: `"take"` the arriving one, `"keep"` this
+    #: store's. `None` until they do, and adoption refuses while any is None.
+    resolution: str | None = None
     #: Why it would not apply, on a **contested** finding that also refused.
     #: One finding rather than two, because they are one fact seen twice: the
     #: refusal is the consequence of the disagreement, and reporting them as
@@ -501,12 +509,16 @@ def _walk(g, base, ops: list[dict], store: str,
         hit = _contest(probe, base, op, store)
         if hit is not None:
             rid, why = hit
-            contested = Finding("contested", store, i, rid, why)
+            contested = Finding("contested", store, i, rid, why, op=op)
             findings.append(contested)
         # Expanded against the probe rather than against the arriving store:
         # what a reopen drags into PROVISIONAL is a fact about *this* graph,
         # and the arriving side computed it about a different one.
-        group = expand(probe, op) if expand else [op]
+        # Expanded ops inherit their parent's ref: a reopen and the
+        # PROVISIONAL statuses it derives are one act, and answering the act
+        # has to reach all of them.
+        group = [{**one, "iref": op.get("iref")}
+                 for one in (expand(probe, op) if expand else [op])]
         try:
             for one in group:
                 _apply(probe, one, store)
@@ -515,13 +527,23 @@ def _walk(g, base, ops: list[dict], store: str,
                 contested.refusal = str(exc)
                 for s in _subjects(op):
                     by_record.setdefault(s, contested)
+                # **Carried even though it did not apply**, and this is the
+                # difference between a seam and a report. A contested `close`
+                # cannot be replayed onto an answered question — that is the
+                # refusal — but *taking* it is a real choice, and taking it
+                # means replaying it behind the reopen the store would demand
+                # of anybody. An op nobody can name is an op nobody can
+                # choose, so it stays in the file. It is deliberately not
+                # applied to the probe: the graph a person has not adjudicated
+                # yet is the graph as it stands.
+                kept.append(op)
                 continue
             named = _subjects(op) & set(by_record)
             if named:
                 by_record[sorted(named)[0]].grouped.append(i)
                 continue
             rid = next(iter(sorted(_subjects(op))), None)
-            f = Finding("inapplicable", store, i, rid, str(exc))
+            f = Finding("inapplicable", store, i, rid, str(exc), op=op)
             findings.append(f)
             for s in _subjects(op):
                 by_record.setdefault(s, f)
@@ -612,6 +634,16 @@ def plan(ours_g, ours_tg, base_g, base_tg, theirs_g, theirs_tg,
     rep = Report(unexpressible=d.unexpressible + t.unexpressible,
                  derived=len(d.ops) + len(t.ops))
 
+    # Every derived op gets a ref, before anything is replayed. The seam is
+    # per op — adopt this one, keep mine — so a person has to be able to name
+    # one, and a position cannot serve: the ops that reach the file are the
+    # ones that applied, *expanded*, so an index into the derived list names a
+    # different op by the time it is read. Two writers' halves are numbered
+    # apart for the same reason `Report.clean` counts them apart.
+    for side, tag in ((d.ops, "d"), (t.ops, "t")):
+        for i, op in enumerate(side):
+            op["iref"] = f"{tag}{i}"
+
     probe_g, probe_tg = ours_g, ours_tg
     if theirs_g is not None:
         found, probe_g, kept = _walk(ours_g, base_g, d.ops, "decisions",
@@ -687,13 +719,24 @@ def save_incoming(rep: Report, *, source: str, base: str, root=None) -> None:
     # file alone, and a reader that could not see it would read a quarantined
     # contribution as merely unapplied.
     body = {"source": source, "base": base,
-            "contested": [f.message for f in rep.contested],
+            "contested": [{"ref": (f.op or {}).get("iref"), "store": f.store,
+                           "record": f.record, "message": f.message,
+                           "refusal": f.refusal, "op": f.op,
+                           "resolution": None}
+                          for f in rep.contested],
             "inapplicable": [f.message for f in rep.inapplicable],
             "blocking": list(rep.blocking),
             "unexpressible": list(rep.unexpressible),
             "decisions": rep.d_ops, "tasks": rep.t_ops}
     project.write_atomic(path(root),
                          json.dumps(body, indent=2, ensure_ascii=False) + "\n")
+
+
+def write_incoming(raw: dict, root=None) -> None:
+    """The file back to disk after somebody answered part of it."""
+    from dgraph import project
+    project.write_atomic(path(root),
+                         json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
 
 
 def clear_incoming(root=None) -> None:
@@ -713,3 +756,126 @@ def waiting(root=None) -> int:
     except Exception:
         return 0
     return len(raw.get("decisions", [])) + len(raw.get("tasks", []))
+
+
+# ---- the seam ------------------------------------------------------------
+#
+# Eleven of the fifteen ways two writers can disagree are mechanical: there is
+# one correct outcome and a machine reaches it. Three are genuinely semantic —
+# two agents said different things about the same object and nothing but a
+# person knows which is right — and one is invisible to any mechanism at all.
+#
+# A seam that asks about all fifteen is a seam an orchestrator learns to click
+# through, and then the three that mattered go past unread. So the design goal
+# is not "surface conflicts to the user"; it is **spend the human's attention
+# only on the three, and make each arrive as a question with two candidate
+# answers rather than as a merge to resolve.**
+#
+#   H1  two answers to one question      take theirs · keep mine
+#   H2  two completions of one task      take theirs · keep mine
+#   H3  two wordings of one record       take theirs · keep mine
+#
+# H1 is the one that needs a record on the losing side, and it is why the
+# `reject` op exists: when a person keeps this store's answer, the arriving
+# answer and its falsifier survive only in a branch. Filed as an ordinary
+# superseded edge it would read as *we believed this and changed our mind*.
+# Without somewhere honest to put it the seam is a choice between losing an
+# answer and lying about it.
+
+
+def answer_one(raw: dict, ref: str, choice: str) -> str:
+    """Record how a person answered one contested op. Mutates `raw`.
+
+    Returns a line saying what was settled, or raises `LookupError` naming the
+    refs that are open. Nothing is staged here and nothing is dropped: the
+    choice is written down and `adopt_ops` below acts on all of them at once,
+    so a half-answered seam is never half-applied.
+    """
+    for f in raw.get("contested", []):
+        if f.get("ref") == ref:
+            f["resolution"] = choice
+            side = "the arriving one" if choice == "take" else "this store's"
+            return f"{ref}: keeping {side} — {f.get('message', '')}"
+    open_refs = [f.get("ref") for f in raw.get("contested", [])
+                 if not f.get("resolution")]
+    raise LookupError(
+        f"no contested op {ref!r}"
+        + (f" — {', '.join(str(r) for r in open_refs)} are open"
+           if open_refs else " — nothing is contested"))
+
+
+def adopt_ops(raw: dict) -> tuple[list[dict], list[dict], list[str]]:
+    """`(decision ops, task ops, notes)` for a contribution every conflict of
+    which has an answer.
+
+    Built here rather than in the command because the two choices are not
+    symmetric edits to a list. *Take* means the arriving op stays and gains
+    whatever act makes it legal here — an answer cannot be written over an
+    answer, so it needs the reopen the store would demand of anyone. *Keep*
+    means the arriving op goes, and where it carried a claim, a record of it
+    stays behind.
+    """
+    kept = {f["ref"]: f for f in raw.get("contested", [])}
+    notes: list[str] = []
+    out: dict[str, list[dict]] = {"decisions": [], "tasks": []}
+
+    for half in ("decisions", "tasks"):
+        for op in raw.get(half, []):
+            f = kept.get(op.get("iref"))
+            bare = {k: v for k, v in op.items() if k != "iref"}
+            if f is None or f.get("resolution") == "take":
+                if f is not None:
+                    out[half].extend(_enabler(bare, raw))
+                out[half].append(bare)
+                continue
+            # Kept ours. The op does not land, and what it asserted survives
+            # only if this store has a place for it.
+            record = _keepsake(bare, raw)
+            if record is not None:
+                out["decisions"].append(record)
+                notes.append(f"{f['ref']}: the arriving answer is kept as "
+                             f"offered-and-not-adopted on {f['record']}")
+            elif bare.get("op") == "set_status" and bare.get("outcome"):
+                notes.append(
+                    f"{f['ref']}: the arriving outcome is not recorded "
+                    f"anywhere — {bare['outcome']!r}. There is no place in the "
+                    f"task store for a result this work did not produce here; "
+                    f"write it down deliberately if it is worth keeping.")
+            else:
+                notes.append(f"{f['ref']}: the arriving op is dropped")
+    return out["decisions"], out["tasks"], notes
+
+
+def _enabler(op: dict, raw: dict) -> list[dict]:
+    """What has to happen first for an arriving op to be legal here.
+
+    Never a special case in the store: both of these are the ordinary route
+    the tool already demands of anybody. An answer is not written over an
+    answer — you reopen, which keeps the old one as history — and a task is not
+    finished twice, you start it again, which keeps the old completion.
+    """
+    src = raw.get("source", "another writer")
+    if op.get("op") == "close":
+        return [{"op": "reopen", "vertex": op["vertex"],
+                 "why": f"superseded by the answer that arrived from {src}"}]
+    if op.get("op") == "set_status" and op.get("status") == "DONE":
+        return [{"op": "set_status", "task": op["task"], "status": "DOING"}]
+    return []
+
+
+def _keepsake(op: dict, raw: dict) -> dict | None:
+    """The record a declined op leaves behind, where the store has one.
+
+    Only an answer does. A title has no truth value — it is how a question is
+    referred to, not something the question says — so a declined retitle
+    leaves nothing and needs to leave nothing. A declined outcome is a claim
+    and has nowhere to go, which `adopt_ops` says out loud rather than
+    quietly dropping.
+    """
+    if op.get("op") != "close":
+        return None
+    return {"op": "reject", "vertex": op["vertex"], "answer": op["answer"],
+            "source": op["source"], "to": op.get("to", []),
+            "falsifier": op.get("falsifier"), "date": op.get("date"),
+            "format": op.get("format"),
+            "from_source": raw.get("source", "another writer")}

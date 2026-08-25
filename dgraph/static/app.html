@@ -1598,6 +1598,21 @@ function edgeCard(e, children){
    has nothing behind the disclosure; it is drawn flat rather than as a drawer
    that opens on nothing. The archived answer is rendered in this record's
    dialect — see the note on `format` in pending.py's reopen. */
+/* An answer this project was offered and did not take. Its own card, never
+   folded in with the superseded ones: a reversal says the project changed its
+   mind, and this says somebody else answered the same question differently.
+   Drawn as a reversal it would claim the first about a record where only the
+   second happened. */
+function declinedCard(x){
+  let b=`<div class="kv"><div>from</div><div>${esc(x.from_source||"")}</div>`;
+  if(x.source) b+=`<div>source</div><div>${esc(x.source)}</div>`;
+  if(x.falsifier) b+=`<div>falsifier</div><div>${esc(x.falsifier)}</div>`;
+  if(x.to&&x.to.length) b+=`<div>would open</div><div>${idList(x.to)}</div>`;
+  b+=`</div><div class="answer">${md(x.answer||"", x.format)}</div>`;
+  return `<details class="edge-card super"><summary><span class="edge-head">offered and not adopted<span class="when muted">${
+    esc(x.date||"")}</span></span></summary>${b}</details>`;
+}
+
 function supersededCard(x){
   const archived = x.answer && x.answer!==x.summary ? x.answer : null;
   const deep = (x.to&&x.to.length) || x.falsifier || x.source || archived;
@@ -1782,6 +1797,7 @@ function panel(){
   /* No heading over these: each card says what it is. The old one had to,
      because a strikethrough line on its own does not. */
   d.history.forEach(x=>h+=supersededCard(x));
+  (d.declined||[]).forEach(x=>h+=declinedCard(x));
 
   if(e&&e.answer){
     h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">`;

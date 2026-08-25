@@ -105,6 +105,16 @@ def graph_payload(g: Graph) -> dict:
                  "date": h.date, "to": list(h.to)}
                 for h in g.history(vid)
             ],
+            # Kept apart from `history`, because they are different sentences
+            # about this project: one says *we changed our mind*, the other
+            # says *somebody else answered this and we did not take it*. Sent
+            # as its own key so the page cannot merge them by accident.
+            "declined": [
+                {"from_source": h.from_source, "answer": h.answer,
+                 "falsifier": h.falsifier, "source": h.source,
+                 "date": h.date, "to": list(h.to), "format": h.format}
+                for h in g.rejected(vid)
+            ],
         }
         for vid in g.vertices
     }

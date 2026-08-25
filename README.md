@@ -667,7 +667,19 @@ that the skill's command table only names commands that exist.
   unadjudicated op there would have this clone answering `dg node` with a
   title nobody accepted — and the commit gate denies while it is non-empty,
   since that file is gitignored and a commit over it drops the contribution
-  with nothing saying it arrived. `dg incoming --adopt` makes it yours.
+  with nothing saying it arrived.
+
+  Each contested op is answered by ref — `dg incoming --take d1` for the
+  arriving version, `--keep d1` for this store's — and `--adopt` moves the
+  whole contribution into the trays once every one has an answer. It refuses
+  while any is open and there is no `--force`: a flag that adopted everything
+  would answer those three questions by not asking them. Taking an arriving
+  answer inserts the `reopen` the store would demand of anybody, so this
+  store's answer becomes history rather than being overwritten. **Keeping
+  yours records theirs** as *offered and not adopted* — a third kind of edge,
+  with no `why` and no `replaced_by`, because nothing was overturned. Without
+  it the seam would be a choice between losing an answer and claiming the
+  project once believed something it never did.
 
   What this does **not** change is isolation inside one clone: the tray is
   still shared and still has no notion of whose ops are whose. Two agents in

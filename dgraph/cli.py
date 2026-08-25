@@ -878,6 +878,27 @@ def node(
             if h.answer and h.answer != h.summary:
                 body = "\n".join("    " + ln for ln in h.answer.splitlines())
                 lines += ["", "    [dim]archived answer[/]", _x(body)]
+    # Kept apart from the reversals above, and this is the whole point of the
+    # record. A rejected answer filed as history would read as *we believed
+    # this, then changed our mind* — a claim about this project nobody made.
+    # What it says instead is that somebody else answered this differently and
+    # this store did not take it, which is worth exactly as much and is a
+    # different sentence.
+    turned_down = g.rejected(vid)
+    if turned_down and not active:
+        lines += ["", "[bold]Offered and not adopted[/]"]
+        for h in turned_down:
+            lines += [
+                "",
+                f"  from {_x(h.from_source)}   [dim]{h.date or ''}[/]",
+                f"    answer      {_x(h.answer)}",
+            ]
+            if h.falsifier:
+                lines.append(f"    falsifier   {_x(h.falsifier)}")
+            if h.source:
+                lines.append(f"    source      {_x(h.source)}")
+            if h.to:
+                lines.append(f"    would open  {', '.join(h.to)}")
     con.print(Panel("\n".join(lines), title=vid, border_style=_style(v.status)))
 
 
@@ -1876,6 +1897,9 @@ def rm(
         lines.append(f"[yellow]asserts[/] "
                      + ", ".join([f"{p} → {into}" for p in parents]
                                  + [f"{into} → {c}" for c in children]))
+    if eff.rejected(vid):
+        lines.append(f"[yellow]loses[/] {len(eff.rejected(vid))} answer(s) "
+                     f"offered by another writer and not adopted")
     if eff.history(vid):
         lines.append(f"[yellow]loses[/] {len(eff.history(vid))} superseded "
                      f"answer(s) — the record of how this changed")
@@ -1935,6 +1959,30 @@ def pending_cmd(
           heading="STAGED", title="Staged", column="Vertex",
           actions="`dg apply` to write, `dg drop <id>` to unstage",
           expand="dg pending --full")
+    _say_arriving()
+
+
+def _say_arriving() -> None:
+    """Name a waiting contribution wherever a tray is listed.
+
+    Quarantine is what keeps an unadjudicated op out of every reading in this
+    clone, and the cost of that is a batch a reader could miss entirely — the
+    ops are real, they are about to land, and `dg pending` is where somebody
+    looks to find out what is outstanding. So the batch still appears in one
+    place; what does not happen is it appearing *as though it were yours*.
+    """
+    proj = project.find()
+    n = integrate_mod.waiting(proj.root)
+    if not n:
+        return
+    raw = integrate_mod.load_incoming(proj.root)
+    open_now = len([f for f in raw.get("contested", [])
+                    if not f.get("resolution")])
+    con.print(f"[yellow]ARRIVING[/]  {n} op(s) from "
+              f"{_x(raw.get('source', '?'))}, not staged"
+              + (f" — {open_now} contested and unanswered" if open_now else "")
+              + "\n[dim]`dg incoming` to read them. Commits are denied until "
+                "this is settled.[/]")
 
 
 def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
@@ -3489,6 +3537,7 @@ def task_pending_cmd(
           column="Task",
           actions="`dg apply` to write, `dg task drop-op <id>` to unstage",
           expand="dg task pending --full")
+    _say_arriving()
 
 
 _TASK_DETAIL = {
@@ -3850,6 +3899,11 @@ def _integration_report(rep, ref: str, base_ref: str) -> None:
 
 @app.command(rich_help_panel=STORE)
 def incoming(
+    take: str = typer.Option(None, "--take", metavar="REF",
+                             help="settle one contested op in favour of the "
+                                  "arriving answer"),
+    keep: str = typer.Option(None, "--keep", metavar="REF",
+                             help="...or in favour of this store's"),
     adopt: bool = typer.Option(False, "--adopt",
                                help="move it into the trays, to review and "
                                     "apply like your own work"),
@@ -3879,6 +3933,24 @@ def incoming(
         con.print("[red]--adopt and --discard ask for opposite things[/]")
         raise typer.Exit(2)
 
+    for ref, choice in ((take, "take"), (keep, "keep")):
+        if not ref:
+            continue
+        try:
+            said = integrate_mod.answer_one(raw, ref, choice)
+        except LookupError as exc:
+            con.print(f"[red]{_x(exc)}[/]")
+            raise typer.Exit(1) from None
+        integrate_mod.write_incoming(raw, proj.root)
+        con.print(f"[green]settled[/] {_x(said)}")
+    if take or keep:
+        left = [f for f in raw.get("contested", []) if not f.get("resolution")]
+        con.print(f"[dim]{len(left)} contested op(s) still open[/]"
+                  if left else
+                  "[dim]every conflict answered — `dg incoming --adopt`[/]")
+        if not adopt:
+            return
+
     if discard:
         integrate_mod.clear_incoming(proj.root)
         con.print(f"[yellow]refused[/] {len(d_ops) + len(t_ops)} op(s) from "
@@ -3890,33 +3962,42 @@ def incoming(
     con.print(f"[bold]{len(d_ops) + len(t_ops)} op(s) from "
               f"{_x(raw.get('source', '?'))}[/] "
               f"[dim]against {_x(raw.get('base', '?'))}[/]")
+    open_now = [f for f in raw.get("contested", []) if not f.get("resolution")]
+    for f in raw.get("contested", []):
+        mark = ("[green]take[/]" if f.get("resolution") == "take"
+                else "[green]keep[/]" if f.get("resolution") == "keep"
+                else "[yellow]open[/]")
+        con.print(f"  {mark}  [dim]{_x(f.get('ref') or '?')}[/]  "
+                  f"{_x(f.get('message') or '')}")
+        if f.get("refusal") and not f.get("resolution"):
+            con.print(f"        [dim]{_x(f['refusal'])}[/]")
     held = []
-    for label, key in (("contested", "contested"),
-                       ("blocking", "blocking"),
+    for label, key in (("blocking", "blocking"),
                        ("not expressible as an op", "unexpressible")):
         for line in raw.get(key, []):
             held.append((label, line))
     for label, line in held:
         con.print(f"  [yellow]{label}[/]  {_x(line)}")
-    for op in d_ops + t_ops:
-        con.print(f"  [dim]{_x(op.get('op', '?'))}[/]  "
-                  f"{_tray_detail(op, _PENDING_DETAIL if op in d_ops
-                                  else _TASK_DETAIL)}")
+    for half, table in ((d_ops, _PENDING_DETAIL), (t_ops, _TASK_DETAIL)):
+        for op in half:
+            con.print(f"  [dim]{_x(op.get('iref') or '·'):>4}[/]  "
+                      f"{_x(op.get('op', '?'))}  {_tray_detail(op, table)}")
 
     if not adopt:
-        con.print("\n[dim]`dg incoming --adopt` to make it yours, "
-                  "`--discard` to refuse it[/]")
+        con.print("\n[dim]`dg incoming --take <ref>` for the arriving "
+                  "answer, `--keep <ref>` for this store's; then `--adopt`. "
+                  "`--discard` refuses the whole contribution.[/]")
         return
-    if held:
-        # Refused rather than forced. The per-op seam — adopt this one, keep
-        # mine, open a new question because the two answers are to different
-        # questions worded as one — is not built, and a `--force` that adopted
-        # everything would answer those three questions by not asking them.
+    if open_now or held:
+        # Refused rather than forced, and there is no `--force`. These are the
+        # questions only a person can answer, and a flag that adopted
+        # everything would answer them by not asking.
         con.print("\n[red]not adopted[/] [dim]— every line above needs an "
-                  "answer, and answering them one op at a time is not built "
-                  "yet. `--discard` refuses the whole contribution.[/]")
+                  "answer first. `--discard` refuses the whole "
+                  "contribution.[/]")
         raise typer.Exit(1)
 
+    d_ops, t_ops, notes = integrate_mod.adopt_ops(raw)
     if d_ops:
         _vet_all(_eff(_g()), d_ops)
         pending.stage_all(d_ops)
@@ -3925,6 +4006,8 @@ def incoming(
     integrate_mod.clear_incoming(proj.root)
     con.print(f"[green]adopted[/] {len(d_ops) + len(t_ops)} op(s) "
               f"[dim]— `dg pending` to review, `dg apply` to write[/]")
+    for line in notes:
+        con.print(f"  [yellow]note[/] {_x(line)}")
 
 
 @app.command(name="range", rich_help_panel=STORE)

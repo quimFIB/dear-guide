@@ -20,7 +20,7 @@ from dgraph.model import (SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex,
 from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
-       "remove_vertex", "set_status", "set_fields"}
+       "remove_vertex", "set_status", "set_fields", "reject"}
 
 #: What `set_fields` may write, in **both** stores. One tuple, imported by
 #: `task_pending`, because a decision and a task differ in everything except
@@ -1270,6 +1270,40 @@ def _apply_one(g: Graph, op: dict) -> None:
                 old.replaced_by = label
         g.vertices[vid] = _dc_replace(g.vertices[vid], status="DECIDED",
                                       note=None, format=None)
+        return
+
+    if kind == "reject":
+        # An answer this project was offered and did not take, kept because
+        # the alternative is losing it. When somebody keeps this store's
+        # answer at the integration seam, the arriving answer and its
+        # falsifier survive only in a branch — and filing it as an ordinary
+        # superseded edge would have `dg node` say it was once current, which
+        # is a claim about this project's history nobody made.
+        #
+        # It changes nothing about the graph: no status moves, no target is
+        # opened, the active edge is untouched. `children` and `depends` walk
+        # active edges only, so this is invisible to every traversal and shows
+        # up in exactly two places — `Graph.rejected`, and the renderers that
+        # call it.
+        e = g.active_edge(vid)
+        if e is None or not e.decided:
+            raise ApplyError(
+                f"{vid} has no answer of its own, so there is nothing this "
+                f"one was declined in favour of — decide it first, or adopt "
+                f"the answer that arrived")
+        # An op-shape rule, beside `--why` on a reopen: whose answer it was is
+        # the whole record. Without it the edge says only "somebody thought
+        # otherwise", which a later reader can neither act on nor trace.
+        if not op.get("from_source"):
+            raise ApplyError(
+                "a declined answer has to say where it came from: --from")
+        g.edges.append(Edge(
+            src=vid, to=sorted(op.get("to", [])), active=False,
+            answer=op["answer"], falsifier=op.get("falsifier"),
+            source=op["source"], date=op.get("date"),
+            summary=op.get("summary") or _clip(op["answer"]),
+            format=op.get("format"), from_source=op["from_source"],
+        ))
         return
 
     if kind == "reopen":

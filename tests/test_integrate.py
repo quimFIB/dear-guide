@@ -20,6 +20,7 @@ contribution composed elsewhere and arriving whole.
 """
 
 import copy
+import json
 
 import pytest
 
@@ -398,3 +399,156 @@ def test_no_common_history_is_refused_rather_than_guessed(two_writers):
     _git(root, "checkout", "-q", "master")
     res = run("integrate", "stranger")
     assert res.exit_code == 1 and "no common history" in res.output
+
+
+# ---- the seam: three questions, and a place for the losing answer ---------
+
+
+def test_the_three_semantic_conflicts_arrive_together_and_are_answered_one_by_one(
+        two_writers):
+    """Eleven of the fifteen ways two writers disagree are mechanical. Three
+    are not, and a seam that asked about all fifteen is one an orchestrator
+    learns to click through — after which the three that mattered go past
+    unread. So: exactly these three, together, each with two candidate answers.
+    """
+    root, run = two_writers
+    # Both sides answer D01, finish T01, and retitle D01.
+    def diverge(answer, outcome, title):
+        run("decide", "D01", "-a", answer, "-s", "bench", "-f", "x")
+        run("task", "done", "T01", "-o", outcome)
+        run("amend", "D01", "--title", title)
+        run("apply")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-qm", "diverge")
+
+    _git(root, "checkout", "-q", "worker")
+    diverge("HNSW", "recall 0.94", "Which index, at 48M?")
+    _git(root, "checkout", "-q", "master")
+    diverge("IVF-PQ", "recall 0.91", "Which index structure?")
+
+    out = run("integrate", "worker").output
+    assert "3 contested" in out
+    assert "title differs" in out and "answered here too" in out \
+        and "finished here too" in out
+
+    # Unanswered, adoption refuses — and there is no flag that answers them.
+    assert run("incoming", "--adopt").exit_code == 1
+    assert run("incoming", "--take", "nope").exit_code == 1
+
+    # Refs looked up rather than hardcoded: they are positions in the derived
+    # list, which is stable for one report and not across scenarios — and a
+    # test that pinned them would be pinning the derivation order rather than
+    # the seam.
+    raw = integrate.load_incoming(root)
+    ref = {f["op"]["op"]: f["ref"] for f in raw["contested"]}
+    assert run("incoming", "--keep", ref["set_fields"]).exit_code == 0
+    assert run("incoming", "--keep", ref["close"]).exit_code == 0
+    assert run("incoming", "--take", ref["set_status"]).exit_code == 0
+    assert run("incoming", "--adopt").exit_code == 0
+    assert run("apply").exit_code == 0
+
+    g = Graph.load(root / "decisions.json")
+    # Ours stands, and theirs is kept without claiming it ever did.
+    assert g.active_edge("D01").answer == "IVF-PQ"
+    (declined,) = g.rejected("D01")
+    assert declined.answer == "HNSW" and declined.from_source == "worker"
+    assert declined.why is None and declined.replaced_by is None
+    assert g.history("D01") == []          # nothing was overturned
+    assert g.vertices["D01"].title == "Which index structure?"
+
+    # Taking theirs on the task keeps both results, with theirs live.
+    t = TaskGraph.load(root / "tasks.json").tasks["T01"]
+    assert [c.outcome for c in t.completions] == ["recall 0.91", "recall 0.94"]
+    assert t.outcome == "recall 0.94"
+
+
+def test_a_declined_answer_is_not_filed_as_a_reversal(g):
+    """The record `reject` exists for. Filed as an ordinary superseded edge it
+    would render under **Superseded** with an empty `why`, asserting the
+    project once believed something it never did — a claim about its history
+    nobody made. So `history` leaves it out and `rejected` reads it."""
+    out = pending.apply_all(g, [
+        {"op": "reject", "vertex": "D01", "answer": "the other way",
+         "source": "bench/b.md", "from_source": "worker-a",
+         "falsifier": "the corpus changes"}])
+    assert out.history("D01") == [e for e in out.history("D01")
+                                  if e.from_source is None]
+    (declined,) = out.rejected("D01")
+    assert declined.from_source == "worker-a"
+    # The active answer is untouched, and nothing was opened.
+    assert out.active_edge("D01").answer == g.active_edge("D01").answer
+    assert out.children("D01") == g.children("D01")
+
+
+def test_a_declined_answer_needs_a_question_that_has_one(g):
+    """Declined *in favour of what?* A question with no answer of its own has
+    nothing to have preferred, and the record would assert a comparison that
+    never happened."""
+    with pytest.raises(pending.ApplyError, match="nothing this one was"):
+        pending.apply_all(g, [
+            {"op": "reject", "vertex": "D05", "answer": "a",
+             "source": "s", "from_source": "worker"}])
+
+
+def test_a_declined_answer_must_say_whose_it_was(g):
+    with pytest.raises(pending.ApplyError, match="where it came from"):
+        pending.vet(g, {"op": "reject", "vertex": "D01", "answer": "a",
+                        "source": "s"})
+
+
+def test_a_record_that_was_never_current_may_not_carry_history_s_fields(g):
+    """`why` and `replaced_by` say a decision was overturned. This one was
+    declined, and the two are different sentences about the project."""
+    out = pending.apply_all(g, [
+        {"op": "reject", "vertex": "D01", "answer": "a", "source": "s",
+         "from_source": "worker"}])
+    bad = next(e for e in out.edges if e.from_source)
+    bad.why = "it was measured wrong"
+    hits = [v for v in out.validate() if v.check == "rejected_complete"]
+    assert hits and "declined" in str(hits[0])
+
+
+def test_a_waiting_contribution_is_named_where_a_tray_is_listed(two_writers):
+    """Quarantine keeps an unadjudicated op out of every reading here, and the
+    cost of that is a batch a reader could miss entirely. It still appears in
+    one place; what it does not do is appear as though it were yours."""
+    root, run = two_writers
+    run("integrate", "worker")
+    for argv in (("pending",), ("task", "pending")):
+        out = run(*argv).output
+        assert "ARRIVING" in out and "not staged" in out
+
+
+def test_a_declined_answer_survives_the_store_and_a_round_trip(store, g):
+    """Written, read back, exported and re-imported. A record kept forever
+    that a round trip drops is a record kept until somebody moves the store."""
+    from dgraph import json_import
+    out = pending.apply_all(g, [
+        {"op": "reject", "vertex": "D01", "answer": "the other way",
+         "source": "bench/b.md", "from_source": "worker-a",
+         "falsifier": "the corpus changes", "date": "2026-06-01"}])
+    out.save(store / "decisions.json")
+
+    back = Graph.load(store / "decisions.json")
+    (d,) = back.rejected("D01")
+    assert d.answer == "the other way" and d.from_source == "worker-a"
+
+    moved = store / "moved.json"
+    moved.write_text(json.dumps(back.to_dict()), encoding="utf-8")
+    loaded = json_import.read(moved, "decisions")
+    assert loaded.graph.rejected("D01")[0].from_source == "worker-a"
+
+
+def test_the_generated_view_keeps_the_two_records_apart(store, g):
+    """`_superseded` is a table of reversals with a *Replaced by* column. A
+    declined answer has no `replaced_by`, so folding it in would fill that
+    column with "(undecided)" against a question that is decided — and claim a
+    reversal that never happened."""
+    from dgraph import render
+    out = pending.apply_all(g, [
+        {"op": "reject", "vertex": "D01", "answer": "the other way",
+         "source": "bench/b.md", "from_source": "worker-a"}])
+    text = render.render(out)
+    assert "Offered and not adopted" in text and "worker-a" in text
+    table = text.split("## Superseded edges")[1]
+    assert "the other way" not in table

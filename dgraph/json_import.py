@@ -81,7 +81,8 @@ SCHEMA = {
         "optional": ("note", "format"),
         "edge_required": ("from",),
         "edge_optional": ("to", "active", "answer", "falsifier", "source",
-                          "date", "summary", "replaced_by", "why", "format"),
+                          "date", "summary", "replaced_by", "why", "format",
+                          "from_source"),
     },
     "tasks": {
         "collection": "tasks",

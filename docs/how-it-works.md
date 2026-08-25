@@ -346,6 +346,44 @@ three conflicts becomes four round-trips in composition order, and the reader
 cannot see the invariant failure — the thing that might make them reject the
 whole contribution — until they have answered three unrelated questions.
 
+### Three questions, and only three
+
+Of the ways two writers can disagree, most are mechanical: there is one
+correct outcome and the tool reaches it. Three are not, and a seam that asked
+about all of them is one an orchestrator learns to click through — after which
+the three that mattered go past unread.
+
+| | |
+|---|---|
+| two answers to one question | `--take` the arriving one, or `--keep` this store's |
+| two completions of one task | the same, and both survive either way |
+| two wordings of one record | the same; a title has no truth value, so nothing is archived |
+
+Each arrives as a question with two candidate answers rather than as a merge
+to resolve, and each is answered by ref: `dg incoming --take d1`. `--adopt`
+refuses while any is open, and there is no `--force` — a flag that adopted
+everything would answer the three questions by not asking them.
+
+**Taking the arriving answer is the ordinary route, not a special case.** An
+answer is never written over an answer, so taking one inserts the `reopen` the
+store would demand of anybody, and this store's answer becomes history. A task
+is never finished twice, so taking a completion inserts the restart, and both
+outcomes are kept with the status saying which is live.
+
+**Keeping yours needs somewhere to put theirs.** When a person keeps this
+store's answer, the arriving answer and its falsifier otherwise survive only in
+a branch. Filed as an ordinary superseded edge, `dg node` would render it under
+**Superseded** with an empty `why` — asserting the project once believed
+something it never did. So there is a third kind of edge: inactive, with no
+`why` and no `replaced_by`, carrying instead the contribution it came from.
+`dg node` prints it under **Offered and not adopted**, `Graph.history` leaves
+it out, and `Graph.rejected` is how to read it. Without it the seam is a choice
+between losing an answer and lying about it.
+
+A declined *outcome* has no such place, and the command says so out loud rather
+than dropping it quietly. A declined *title* needs none — a title is how a
+question is referred to, not something it says.
+
 ## Taking something back
 
 Four verbs, and picking the wrong one is how a graph loses the thing it is

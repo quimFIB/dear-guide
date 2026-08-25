@@ -279,9 +279,16 @@ read here answers with an op nobody has accepted. While that file is
 non-empty the gate answers `deny` on every commit, because the file is
 gitignored: committing over it drops a second writer's work with nothing
 recording that it arrived. `dg incoming` shows what is in it and what is
-contested. **Do not `--discard` it, and do not adopt a contested one** —
-those are the three questions only a person can answer: two answers to one
-question, two completions of one task, two wordings of one record.
+contested, each contested op with a ref. Answering one is `--take <ref>` for
+the arriving version or `--keep <ref>` for this store's, and `--adopt` moves
+the whole contribution into the trays once every one has an answer — it
+refuses while any is open, and there is no flag that answers them for you.
+
+**Do not answer them yourself.** They are the three only a person can settle:
+two answers to one question, two completions of one task, two wordings of one
+record. Show the report and ask. Where the answer that loses is a *decision*,
+keeping this store's records the other one as **offered and not adopted** —
+kept, and not filed as a reversal, because nothing was overturned.
 
 **One writer at a time, unless somebody has granted this clone a range.**
 `dg range` says whether one has. With no grant, ids come from the whole

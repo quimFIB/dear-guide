@@ -1653,3 +1653,22 @@ def test_the_page_says_why_the_id_could_not_be_prefilled():
     assert src.count("function idFault(") == 1
     assert src.count("${idFault(") == 2          # both new-record forms
     assert "next_id_fault" in src
+
+
+def test_a_declined_answer_reaches_the_browser_as_its_own_kind(srv, store, g):
+    """Never folded in with the superseded ones. A reversal says the project
+    changed its mind; this says somebody else answered the same question and
+    it was not taken. Drawn as a reversal it would claim the first about a
+    record where only the second happened."""
+    out = pending.apply_all(g, [
+        {"op": "reject", "vertex": "D01", "answer": "the other way",
+         "source": "bench/b.md", "from_source": "worker-a"}])
+    out.save(store / "decisions.json")
+    payload = server.graph_payload(Graph.load(store / "decisions.json"))
+    node = payload["derived"]["D01"]
+    assert node["declined"] and node["declined"][0]["from_source"] == "worker-a"
+    assert not [h for h in node["history"] if h.get("answer") == "the other way"]
+
+    src = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    assert src.count("function declinedCard(") == 1
+    assert "d.declined" in src

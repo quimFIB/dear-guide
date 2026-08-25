@@ -94,6 +94,14 @@ def _section(g: Graph, vid: str) -> str:
     elif v.note:
         out.append(orgmd.to_markdown(v.note, fmt=v.format).strip())
 
+    turned_down = g.rejected(vid)
+    if turned_down:
+        out.append("")
+        out.append("*Offered and not adopted:* " + " · ".join(
+            f"{orgmd.to_markdown(h.from_source)} — "
+            f"\u201c{orgmd.to_markdown(h.answer, fmt=h.format)}\u201d"
+            for h in turned_down))
+
     hist = g.history(vid)
     if hist:
         out.append("")
@@ -112,7 +120,12 @@ def _superseded(g: Graph) -> str:
         "| Vertex | Superseded answer | Replaced by | What changed it |",
         "|---|---|---|---|",
     ]
-    inactive: list[Edge] = [e for e in g.edges if not e.active]
+    # History only. A rejected answer has no `replaced_by` and no `why`, so it
+    # would fill this table with "*(undecided)*" against a question that is
+    # decided — and claim a reversal that never happened. `_section` prints it
+    # above, under its own heading.
+    inactive: list[Edge] = [e for e in g.edges
+                            if not e.active and e.from_source is None]
     for e in sorted(inactive, key=lambda e: (e.src, e.date or "")):
         rows.append(
             f"| {e.src} | {_cell(orgmd.to_markdown(e.summary, fmt=e.format))} "

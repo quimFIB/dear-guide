@@ -100,6 +100,23 @@ class Edge:
     summary: str | None = None
     replaced_by: str | None = None  # superseded edges: the answer that won
     why: str | None = None  # superseded edges: what overturned it
+    #: Where an answer came from that was **never current here** — the
+    #: contribution it arrived in, when somebody kept this store's answer at
+    #: the integration seam instead.
+    #:
+    #: The third kind of edge, and it has to be a third rather than reusing
+    #: `active: false`, because an inactive edge means *this was the answer,
+    #: and then it was overturned*. File a rejected one that way and `dg node`
+    #: renders it under **Superseded** with an empty `why`, asserting it was
+    #: once current when it never was — which is a claim about this project's
+    #: history that nobody made. Without somewhere honest to put it, the seam
+    #: is a choice between losing an answer and lying about it.
+    #:
+    #: `active` is False on these too: they are not the answer that stands.
+    #: What separates them from history is that they have no `why` and no
+    #: `replaced_by` — nothing overturned them — and `Graph.history` leaves
+    #: them out for that reason. `Graph.rejected` is how to read them.
+    from_source: str | None = None
     #: Provenance of the prose the views render from this record — the
     #: answer/falsifier of an active edge, the why/summary of a superseded one:
     #: "org" when composed through the editor, else markdown. `replaced_by` is
@@ -164,6 +181,7 @@ class Graph:
                     replaced_by=e.get("replaced_by"),
                     why=e.get("why"),
                     format=e.get("format"),
+                    from_source=e.get("from_source"),
                 )
                 for e in raw["edges"]
             ],
@@ -172,7 +190,8 @@ class Graph:
     def to_dict(self) -> dict:
         def edge_dict(e: Edge) -> dict:
             d: dict = {"from": e.src, "to": e.to, "active": e.active}
-            for k in ("answer", "falsifier", "source", "date", "summary", "replaced_by", "why", "format"):
+            for k in ("answer", "falsifier", "source", "date", "summary",
+                      "replaced_by", "why", "format", "from_source"):
                 v = getattr(e, k)
                 if v is not None:
                     d[k] = v
@@ -213,9 +232,32 @@ class Graph:
         return None
 
     def history(self, vid: str) -> list[Edge]:
-        """Superseded decisions for a vertex, oldest first."""
+        """Superseded decisions for a vertex, oldest first.
+
+        **Not every inactive edge.** An answer that arrived at the integration
+        seam and was not adopted is inactive too, and it is not history: it was
+        never the answer, so nothing overturned it and it has no place in a
+        list of reversals. `rejected` reads those. The separation is what stops
+        `dg node` claiming a project once believed something it never did — and
+        it is what stops `dg integrate` reading a rejected answer as a reopen,
+        since that derivation counts archived edges to recover the acts.
+        """
         return sorted(
-            (e for e in self.edges if e.src == vid and not e.active),
+            (e for e in self.edges
+             if e.src == vid and not e.active and e.from_source is None),
+            key=lambda e: e.date or "",
+        )
+
+    def rejected(self, vid: str) -> list[Edge]:
+        """Answers offered to this question and not adopted, oldest first.
+
+        `history`'s counterpart. A reader needs both and needs them apart: one
+        says *we changed our mind*, the other says *somebody else answered this
+        differently and we did not take it*.
+        """
+        return sorted(
+            (e for e in self.edges
+             if e.src == vid and e.from_source is not None),
             key=lambda e: e.date or "",
         )
 
@@ -426,6 +468,29 @@ class Graph:
                     add("no_dangling_refs", f"edge {e.src} -> unknown vertex {t}")
                 if t == e.src:
                     add("no_dangling_refs", f"{e.src}: edge to itself")
+            if e.from_source is not None:
+                # A record of an answer this project did **not** take. It has
+                # to say whose it was and what it said, or it is an empty
+                # inactive edge asserting nothing — and it must carry neither
+                # `why` nor `replaced_by`, because those are history's fields
+                # and nothing overturned this: it was never current.
+                missing = [f for f in ("answer", "source")
+                           if not getattr(e, f)]
+                if missing:
+                    add("rejected_complete",
+                        f"{e.src}: an answer recorded as not adopted is "
+                        f"missing its {' and '.join(missing)}")
+                stale = [f for f in ("why", "replaced_by") if getattr(e, f)]
+                if stale:
+                    add("rejected_complete",
+                        f"{e.src}: an answer that was never current carries "
+                        f"{' and '.join(stale)} — those say a decision was "
+                        f"overturned, and this one was declined")
+                if e.active:
+                    add("rejected_complete",
+                        f"{e.src}: an answer marked as not adopted is the "
+                        f"active edge — it cannot both stand and have been "
+                        f"declined")
             if e.active:
                 if e.src in seen_active:
                     add(
