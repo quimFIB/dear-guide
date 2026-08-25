@@ -1,45 +1,34 @@
 #!/usr/bin/env bash
-# Scene 1 — the fan-out, and the graph that makes it a plan.
-#
-# Nothing concurrent happens here. It is the scene that earns the other five:
-# the problem is named, the falsifier that reopens it is the one written months
-# earlier, and `dg show` turns "this is too big for one pass" into three
-# questions with an order between them.
+# Scene 1 — the work queue is the assignment.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/story.sh"
 one_checkout
 
-scene "Scene 1 — one hard question, three areas, three agents"
-say "An open-source Go engine, three decisions deep. The maintainer starts
-where anybody picking a project back up starts — by asking the graph what it is
-worried about:"
+scene "Scene 1 — nobody writes the plan"
+say "An open-source Go engine, three decisions deep, with work outstanding
+against two of them. A maintainer is about to put three software agents on it,
+and the first question is what to give them.
 
-M dg check
+They do not ask for it. They ask the graph:"
 
-say "A sponsor has just donated cluster time. That is not a new fact to weigh
-up; it is the fact D01 was *waiting* for. Its falsifier, written on 2026-03-01
-before anybody had reason to think it would fire, says: \"a GPU budget appears,
-or hand-tuning stalls for two releases running\".
+beat_the_queue
 
-So the honest first move is not to argue. It is to reopen:"
+say "Three different jobs came back, and a person wrote none of them.
 
-beat_reopen
+  · **An answer is owed.** T02 measured the binary in March and reported
+    412 KB. Nobody ever wrote down what that meant, so D03 sits unsettled on
+    evidence that already exists. That is not a nag — it is a piece of work,
+    and \`dg check\` is the thing that noticed.
 
-say "And now the graph is the plan:"
+  · **A task is ready.** T01 has no prerequisites and nothing is blocking it.
+    \`ready T01\` is the queue saying so; readiness is computed from the edges,
+    not stored anywhere and not maintained by anyone.
 
-M dg show
+  · **A task cannot start.** T03 waits on D03 — there is nothing to put in a
+    release note until somebody says what ships. It is not blocked by *work*;
+    it is blocked by a *question*, and the graph is the only place that shows
+    both kinds of waiting in one list.
 
-say "Three questions, and an order between them: D01 is decidable now, D02 and
-D03 wait on it. That order is not a rule somebody wrote down — it is the edges,
-recorded when each question was opened.
-
-This is more than one pass can hold, and each question belongs to a different
-area, so the maintainer fans out three agents:
-
-  agent A · Core      D01 — where the weights come from, now that there is a cluster
-  agent B · Tooling   D02 — how a weight change is accepted
-  agent C · Release   D03 — what ships in the release binary
-
-Two of the three are working on a premise nobody has settled yet. That is what
-parallel exploration *is*, and the point of the next five scenes is that the
-graph already knows it."
+So: agent A takes the answer that is owed, agent B takes the ready task, and
+agent C has nothing yet. That is a real state and it is where the next scene
+starts."

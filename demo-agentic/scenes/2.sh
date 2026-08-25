@@ -1,70 +1,29 @@
 #!/usr/bin/env bash
-# Scene 2 — the same fan-out, twice: nobody named, then everybody.
-#
-# The commands are identical in both halves. The only difference is one
-# environment variable, set before the harness launched the agents.
+# Scene 2 — an agent decomposes, and that is what creates the parallelism.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/story.sh"
 one_checkout
-silently beat_reopen
 
-scene "Scene 2 — three agents, one staging tray"
-say "The agents were launched where the problem is: the maintainer's checkout.
-So they share a directory, and a directory is one staging tray.
+scene "Scene 2 — the work opens up, and now there is more of it than there are agents"
+say "Agent B picks up T01 and does the thing an agent actually does first: finds
+out what is in it. Wiring a harness to somebody else's cluster turns out to be
+three things, and two of them are somebody else's to give."
 
-First, the way a harness gets it by forgetting — nobody is named:"
+beat_decompose
+B dg task
 
-anonymous
-beat_a_composes
-beat_b_composes
+say "Read what changed. T01 is DOING and now **waits T04, T05** — B did not
+guess that, B said \`dg task dep T01 --after T04,T05\` and the graph derived the
+rest. T05 waits on T04 because you cannot port a runner to a cluster you have no
+credentials for.
 
-say "Two answers staged, neither applied, and the tray cannot tell them apart:"
+And at the bottom: \`ready T04\`.
 
-C dg pending
+**That line is the whole scene.** A moment ago there was one ready task and
+three agents. B looked at its own work, and in doing so produced startable work
+for somebody else. Nobody scheduled that, nobody split anything up in a prompt,
+and the agent that will pick T04 up has not been told about it — it will find it
+the same way B found T01.
 
-say "Agent C now finishes its own question and does the ordinary thing:"
-
-beat_c_composes
-C dg apply
-
-say "C applied three ops. One was C's. The other two were half-finished answers
-belonging to agents still working on them — and a close is the one op this tool
-deliberately makes hard to take back: the way out is \`dg reopen\`, which files a
-reversal that never happened. Ask A what it has staged:"
-
-A dg pending
-
-say "Nothing. Not \"your work landed\", not \"the ground moved\" — nothing, which
-reads as \"my staging failed\" and invites A to write the answer again.
-
-That is the failure, and it is worth naming precisely: not a broken store,
-which it is not, but an answer published at a moment nobody chose, by a process
-that did not know it was publishing it.
-
-Now the same morning, with \$DG_AGENT set before the agents were launched. Same
-three commands, same order:"
-
-named
-one_checkout
-silently beat_reopen
-beat_a_composes
-beat_b_composes
-beat_c_composes
-C dg pending
-
-say "Same tray, same three answers in a moment — and now each one says whose it
-is. Agent A publishes:"
-
-A dg apply
-
-say "One op written, A's own, and A is told exactly what it left and whose. B
-and C come back to a tray that still holds their work:"
-
-B dg pending
-
-say "One variable, set by whoever launches the agents, and a shared tray stops
-being a place where one agent can publish another's draft.
-
-Nothing here is *isolated*: the three still share one graph, one store and one
-tray, and they can still see each other's work. That is the point rather than
-the problem, and it is what the next scene is about."
+The parallelism in this demo is made by the work. Everything that goes wrong
+from here goes wrong because of that, not because a script arranged it."

@@ -6,11 +6,11 @@
 
     {"id": "D02", "title": "How is a weight change accepted?",
      "area": "Tooling", "status": "OPEN",
-     "note": "Agent A's question. Whatever the answer is, it has to say who or what judges a change and on what evidence."},
+     "note": "Nothing can be merged into the engine until this has an answer, and the answer has to say what evidence a change is judged on. T01 exists to produce that evidence."},
 
     {"id": "D03", "title": "What ships in the release binary?",
      "area": "Release", "status": "OPEN",
-     "note": "Agent B's question. T02 measured the binary already; nobody has written down what the number means."}
+     "note": "T02 has already measured it. Nobody has written down what the number means."}
   ],
   "edges": [
     {"from": "D01", "to": ["D02", "D03"], "active": true,

@@ -1,89 +1,95 @@
 #!/usr/bin/env bash
 # The story, as beats. Sourced by every scene; never run on its own.
 #
-# One day on an open-source Go engine. A sponsor donates cluster time — the
-# exact event `D01`'s falsifier named — and everything about where the
-# evaluation weights come from is back in play at once, across three areas. It
-# is more than one pass can hold, so the maintainer fans out three agents and
-# keeps the graph as the thing that says what each of them may assume.
+# One day on an open-source Go engine, with three software agents on it. The
+# thing that drives every scene is **work**: the task graph says what is ready,
+# an agent picks it up, doing it produces evidence, and evidence is what settles
+# a decision. Nobody in this demo invents an answer — every answer is somebody's
+# task reporting what it found.
+#
+# That ordering is the whole point. A demo in which agents simply announce
+# decisions is a demo about staging races with a graph bolted on; the
+# concurrency problems here arise from three agents doing real work and then
+# having to join it up, which is the only place they arise in practice.
 #
 # **Why the beats are functions.** A scene has to be readable cold — `demo.sh 4`
-# is a thing people run — and the story has to accumulate, or six scenes with
-# one cast are still six unrelated examples. Both, by replaying the earlier
+# is a thing people run — and the story has to accumulate, or seven scenes with
+# one cast are still seven unrelated examples. Both, by replaying the earlier
 # beats with `silently` and playing this one aloud. The state a scene opens on
-# is therefore the state the story actually left, not a fixture that resembles
-# it — which also means a change to an early beat cannot quietly stop matching
-# the prose of a later one.
+# is therefore the state the story really left, not a fixture that resembles it
+# — which also means a change to an early beat cannot quietly stop matching the
+# prose of a later one.
 
-# ---- the fan-out ---------------------------------------------------------
+# ---- the assignment ------------------------------------------------------
+#
+# Nothing is staged here. The graph is asked what is outstanding and three
+# different jobs come back: an answer that is owed (T02 reported and D03 is
+# unsettled), work that is ready (T01), and work that cannot start (T03 waits on
+# D03). Three agents, three jobs, and a person wrote none of it.
 
-beat_reopen() {
+beat_the_queue() {
+  M dg check
+  M dg task
+}
+
+# ---- agent B opens the work up -------------------------------------------
+#
+# The parallelism here is **created by the work**, not by the script. B picks up
+# one ready task, finds it is three, and the moment those subtasks exist there is
+# more startable work than there were agents.
+
+beat_decompose() {
+  B dg task start T01
+  B dg task add --id T04 --title "Get cluster credentials from the sponsor" --area Tooling
+  B dg task add --id T05 --title "Port the SPRT runner to the cluster scheduler" --area Tooling --after T04
+  B dg task dep T01 --after T04,T05
+  B dg apply --mine
+}
+
+# ---- agent C takes what the decomposition freed --------------------------
+
+beat_c_takes_a_subtask() {
+  C dg task start T04
+  C dg apply --mine
+  C dg task done T04 --outcome "sponsor issued a service account; credentials are in the CI secret store"
+  C dg apply --mine
+}
+
+# ---- agent A harvests evidence that was already there --------------------
+#
+# `T02` reported in March. The number has been in the store ever since and
+# nothing was written down about what it *meant* — which is what the opening
+# `evidence_unharvested` is telling somebody to fix.
+
+beat_a_harvests() {
+  A dg decide D03 \
+    --answer "One binary, no runtime files. The weights compile in as a generated header — 412 KB at -Os, so there is nothing to download and nothing to version separately." \
+    --source "T02: bench/size.md" \
+    --falsifier "the weights outgrow what a header can carry, or a release ever needs a second file"
+  A dg apply --mine
+}
+
+# ---- B's work finishes, and the answer follows from it -------------------
+
+beat_b_reports() {
+  B dg task done T05 --outcome "runner ported; a 20k-game batch schedules in 4h"
+  B dg task done T01 --outcome "harness live against the cluster; SPRT verdict lands in the CI log per run"
+  B dg apply --mine
+}
+
+beat_b_answers() {
+  B dg decide D02 \
+    --answer "SPRT against the previous build, 20k games on the volunteer cluster. Every weight has a name and a human can explain it, so a regression is debuggable by reading the diff." \
+    --source "T01: harness live, verdict in the CI log" \
+    --falsifier "a weight change stops being reviewable by reading it"
+  B dg apply --mine
+}
+
+# ---- the premise moves under all of it -----------------------------------
+
+beat_the_sponsor() {
   M dg reopen D01 \
     --why "A sponsor donated cluster time on 2026-03-18. The falsifier named this exact event: the GPU budget appeared." \
     --yes
   M dg apply
-}
-
-# ---- three agents composing at once --------------------------------------
-#
-# Played twice by scene 2 — once with nobody named and once with everybody —
-# and the commands are identical both times. The only difference is whether the
-# harness set `$DG_AGENT` before it launched them.
-
-beat_a_composes() {
-  A dg decide D01 \
-    --answer "A trained net, 40 MB. Six weeks of donated cluster time buys more strength than a year of hand-tuning, and the tuning had stalled twice." \
-    --source bench/net-vs-handtuned.md \
-    --falsifier "the net fails to beat the hand-tuned build by 30 Elo after a full training run"
-}
-
-beat_b_composes() {
-  B dg decide D02 \
-    --answer "SPRT against the previous build, 20k games on the volunteer cluster. Every weight has a name and a human can explain it, so a regression is debuggable by reading the diff." \
-    --source notes/sprt.md \
-    --falsifier "a weight change stops being reviewable by reading it"
-}
-
-# C reasons from `D01` **as the store still has it** — hand-tuned weights, 71 KB
-# of them, measured by `T02`. That is not carelessness: it is the only reading
-# of the premise that exists when C composes, and the graph says so. What makes
-# it stale is A's answer landing afterwards, which is scene 4.
-beat_c_composes() {
-  C dg decide D03 \
-    --answer "One binary, no runtime files. The weights compile in as a generated header — 412 KB at -Os, so there is nothing to download and nothing to version separately." \
-    --source bench/size.md \
-    --falsifier "the weights outgrow what a header can carry, or a release ever needs a second file"
-}
-
-beat_all_three_compose() {
-  beat_a_composes
-  beat_b_composes
-  beat_c_composes
-}
-
-# ---- the day, replayed into a clone --------------------------------------
-#
-# Scene 6 opens on the graph the first five scenes built, not on a fixture that
-# resembles it: `D01` reopened and answered at 40 MB, `D02` settled, `D03`
-# settled on the stale reading and reopened when its falsifier fired. Pushed, so
-# the other clones start from it too.
-#
-# Written as a replay rather than as a second `decisions.json` for the reason
-# `demo.sh` gives about rebuilding: a fixture drifts from the story silently,
-# and a replay cannot.
-beat_the_day_so_far() { # beat_the_day_so_far <dir>
-  local d=$1 keep_M=$M_DIR keep_A=$A_DIR keep_B=$B_DIR keep_C=$C_DIR
-  M_DIR=$d; A_DIR=$d; B_DIR=$d; C_DIR=$d
-  silently beat_reopen
-  silently beat_c_composes
-  silently beat_a_composes
-  silently A dg apply --mine
-  silently beat_b_composes
-  silently B dg apply --mine
-  silently C dg apply --mine
-  silently C dg reopen D03 --why "its falsifier fired: D01 moved to a 40 MB net" --yes
-  silently C dg apply --mine
-  M_DIR=$keep_M; A_DIR=$keep_A; B_DIR=$keep_B; C_DIR=$keep_C
-  git_commit "$d" "the day's work: D01 reopened and re-answered, D02 settled, D03 reopened"
-  push "$d"
 }

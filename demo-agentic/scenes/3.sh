@@ -1,45 +1,26 @@
 #!/usr/bin/env bash
-# Scene 3 — parallel composition, ordered publication.
-#
-# The scene that says what the graph is *for* under a fan-out. Three agents
-# compose at once and nothing stops them; what is ordered is the moment each
-# answer becomes part of the record, and the order is the edges nobody had to
-# remember.
+# Scene 3 — two agents join up without coordinating, because readiness is derived.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/story.sh"
 one_checkout
-silently beat_reopen
+silently beat_decompose
 
-scene "Scene 3 — three answers at once, and the order the graph already knew"
-say "Everybody is named now. All three agents work at the same time, and all
-three finish within a minute of each other:"
+scene "Scene 3 — nobody updates a status, and the work still joins up"
+say "Agent C, which had nothing to do in scene 1, takes the task B's
+decomposition freed:"
 
-beat_all_three_compose
-M dg pending
+beat_c_takes_a_subtask
+C dg task
 
-say "Three answers, three authors, one tray, and none of it written yet.
-Agent B publishes first:"
+say "T04 is done, and look at what moved without anybody touching it:
 
-B dg apply --mine
+  · T05 was \`waits T04\`. It is now **ready**.
+  · T01 was \`waits T04, T05\`. It is now \`waits T05\`.
 
-say "Refused, and read what it says. D02 rests on D01, D01 is REOPENED, so an
-answer to D02 would be an answer standing on a premise under review. B did
-nothing wrong — B was *asked* to answer D02 — and the tool did not guess: that
-edge was recorded when the question was opened, months before any of this.
+C wrote one thing — an outcome for its own task. It did not update T05, did not
+notify B, and does not know B exists. **Blocked is derived, never stored**, so
+there is no status anywhere that could have gone stale and no message that could
+have been missed.
 
-Nothing was written and B's answer is still B's. So the premise goes first:"
-
-A dg apply --mine
-
-say "And now B, unchanged, with the same op it staged before the refusal:"
-
-B dg apply --mine
-
-say "That is the claim this scene makes, and it is the one worth taking away.
-**Composition parallelises; publication is ordered by the dependency.** Nobody
-had to sequence the agents, nobody had to hold a lock, and nobody had to know
-what the others were doing. Three agents ran flat out, one of them was told
-\"not yet\" in a sentence naming the premise and the two ways out, and the graph
-never held a state anybody would have to unpick.
-
-What it does *not* do is make C's answer right, and C is about to apply it."
+This is the part that makes a fan-out survivable. Two agents just handed work to
+each other through the graph, and the handover cost one command by one of them."

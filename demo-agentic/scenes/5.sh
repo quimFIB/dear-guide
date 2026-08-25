@@ -1,73 +1,76 @@
 #!/usr/bin/env bash
-# Scene 5 — two agents, one id, and the two ways that reads.
-#
-# The collision every parallel-agent system has, and it is worth two runs
-# because the two cases need different answers from a person and the tool
-# cannot tell them apart.
+# Scene 5 — three agents, one staging tray.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/story.sh"
+one_checkout
+silently beat_decompose
+silently beat_c_takes_a_subtask
 
-scene "Scene 5a — two agents, one id, two questions"
-own_clones
-say "The maintainer has moved the agents into a clone each — the isolation a
-harness with worktrees gives. Scenes 2 and 3 cannot happen here: separate trays,
-separate stores, nothing shared until a push.
+scene "Scene 5 — three agents, one staging tray"
+say "The agents were launched where the work is: the maintainer's checkout. A
+directory is one staging tray, so everything scenes 2 to 4 composed passed
+through the same file.
 
-Both agents notice a gap while working, neither can see the other's store, and
-both reach for the next free number:"
+Here is that morning again with nobody named — the way a harness gets it by
+forgetting. A is mid-answer and B is mid-report:"
 
-A dg add --id D04 --title "How is the joseki library distributed?" \
-    --area Release --after D01
-B dg add --id D04 --title "Which time control does CI run at?" \
-    --area Tooling --after D01
+anonymous
+A dg decide D03 \
+  --answer "One binary, no runtime files. The weights compile in as a generated header — 412 KB at -Os." \
+  --source "T02: bench/size.md" \
+  --falsifier "the weights outgrow what a header can carry"
+B dg task done T05 --outcome "runner ported; a 20k-game batch schedules in 4h"
+C dg pending
+C dg task pending
 
-A dg apply --mine
-git_commit "$A_DIR" "open D04"
-push "$A_DIR"
-say "A got there first. B pulls and applies:"
+say "Two agents' work across the two trays, and no way to tell whose is
+whose — the stores are separate but the staging is shared. Agent C,
+meanwhile, has noticed a chore of its own while reading T02 — the release note
+will need the verdict format written down somewhere. C records it and applies:"
 
-pull "$B_DIR"
-B dg apply --mine
+C dg task add --id T06 --title "Document the SPRT verdict format for the release note" \
+    --area Release --discovered-during T02
+C dg apply
 
-say "Refused, and nothing was written. Read the sentence: *not what this op
-would have created*. The tool has compared the two and found them different, so
-it knows this is a genuine collision rather than the same record arriving twice
-— and it says what to do, which is pick another id. B's question is still B's
-and still staged.
+say "C wrote its own op and **both of the others**, including an answer A had
+not finished checking and a completion B had not verified. A \`close\` is the op
+this tool deliberately makes hardest to take back: the way out is \`dg reopen\`,
+which files a reversal that never happened. Ask A what it has staged:"
 
-Now the commoner case, and the one that matters."
+A dg pending
 
-scene "Scene 5b — two agents, one id, the same question"
-own_clones
-say "Two agents sharing a brief notice the same missing decision — what becomes
-of the tuning history once the weights are trained rather than tuned. They
-phrase it differently because they are different agents:"
+say "Nothing — which reads as *my staging failed*, and invites A to write the
+answer a second time. B is in the same position about a completion it had not
+finished verifying.
 
-A dg add --id D04 --title "What happens to the hand-tuning history?" \
-    --area Core --after D01
-B dg add --id D04 --title "Do we keep the old tuned weights around?" \
-    --area Core --after D01
+Now the same morning with \$DG_AGENT set before the agents were launched. Same
+commands, same order:"
 
-A dg apply --mine
-git_commit "$A_DIR" "open D04"
-push "$A_DIR"
-pull "$B_DIR"
-B dg apply --mine
+named
+one_checkout
+silently beat_decompose
+silently beat_c_takes_a_subtask
+A dg decide D03 \
+  --answer "One binary, no runtime files. The weights compile in as a generated header — 412 KB at -Os." \
+  --source "T02: bench/size.md" \
+  --falsifier "the weights outgrow what a header can carry"
+B dg task done T05 --outcome "runner ported; a 20k-game batch schedules in 4h"
+C dg pending
+C dg task pending
 
-say "The same refusal, and this time the right move is the opposite one: not a
-fresh id, but drop it — the question is already open, under A's wording. An
-agent that cannot tell 5a from 5b puts two vertices behind one question, which
-is exactly the disorder the unique-id rule exists to prevent.
+say "Same two trays, same two ops, and each now says whose it is. C adds the same
+chore and applies:"
 
-The tool cannot make that call and does not pretend to. What it does is make the
-collision rare enough that the report a person reads stays readable:"
+C dg task add --id T06 --title "Document the SPRT verdict format for the release note" \
+    --area Release --discovered-during T02
+C dg apply
 
-M dg range --set 50-99
-M dg range
+say "C's own op written, and C is told exactly what it left and whose. A's
+answer is still A's to finish:"
 
-say "One grant per clone, and from then on every door allocates inside it and
-refuses an --id outside it. It is prevention, not correctness — the layering
-underneath is that a collision is *caught* at integration and *cheap* to rename
-there. What the grant buys is that the integration report is not a rename line
-per record anybody wrote, which is the volume that trains a reader to stop
-reading it."
+A dg pending
+
+say "One variable, set by whoever launches the agents. Nothing here is
+*isolated* — all three still share one graph, still see each other's work, and
+still hand tasks to one another the way scene 3 showed. What changed is only
+that publishing is now something an agent does to its own work."

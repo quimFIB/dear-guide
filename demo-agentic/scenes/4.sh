@@ -1,76 +1,43 @@
 #!/usr/bin/env bash
-# Scene 4 — the quiet one: a stale premise, still legal.
-#
-# The scene the drift stamp exists for, and the reason this demo is worth
-# having. Everything here is legal, every command succeeds, `dg check` ends
-# clean, and the graph describes a release process that cannot produce a
-# release. One line of output, printed once, is the whole warning.
+# Scene 4 — the loop: work makes evidence, evidence settles a question,
+# and settling it releases work.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/story.sh"
 one_checkout
-silently beat_reopen
-# C is the fastest of the three and finishes first — which is what makes its
-# answer the stale one. It composed against a store in which D01 was still
-# REOPENED and nothing was staged against it, so the reading it stamped is the
-# one the whole project had until A landed.
-silently beat_c_composes
-silently beat_a_composes
-silently A dg apply --mine
-silently beat_b_composes
-silently B dg apply --mine
+silently beat_decompose
+silently beat_c_takes_a_subtask
 
-scene "Scene 4 — the quiet one: a stale premise, still legal"
-say "Carrying straight on from scene 3, with one detail that matters: C was the
-fastest of the three and finished first. Its answer to D03 has been sitting
-staged ever since, while D01 and D02 were settled around it.
+scene "Scene 4 — an answer is a piece of work, and it frees other work"
+say "Agent A's job from scene 1: T02 reported months ago and D03 was never
+settled on it. A reads the outcome and writes down what it meant — citing the
+task, because that is where the number came from:"
 
-Look at what C composed it against. When C wrote it, D01 was REOPENED and
-nobody had staged anything against it, so the only reading available was the one
-the project had had since March — hand-tuned weights, measured by T02 at 71 KB
-inside a 412 KB binary. \"The weights compile in as a generated header\" is the
-right answer to that premise. It is the *only* answer C could have reached.
+beat_a_harvests
+A dg task
 
-A has since settled D01 at 40 MB. C applies:"
+say "\`ready T03, T05\`. **T03 was not ready a moment ago.**
 
-C dg apply --mine
+It was \`waits D03 (undecided)\` — work blocked by a question rather than by
+other work. A answered the question, so the release note became startable, and
+the agent that picks it up will never know why it was blocked or who unblocked
+it. And the link runs the other way too — A's answer cites T02, whose outcome
+is the only reason there was anything to write.
 
-say "There is the whole warning: one line, printed once, to a process that may
-not have been reading. Nothing was refused, because nothing was invalid — D02
-became DECIDED under a settled premise and D03 does too. Ask the graph whether
-it is sound:"
+Now B's side of the same loop. B's subtasks finish, and T01 with them:"
 
+beat_b_reports
+B dg check
+
+say "There it is again, pointed at B: T01 was to inform D02, T01 is DONE, and
+D02 is still unsettled. The graph is asking for the answer the work just earned:"
+
+beat_b_answers
 M dg check
-M dg why D03
 
-say "Four lines apart, in one command's output: \"the weights compile in as a
-generated header\", and \"a trained net, 40 MB\". Underneath them: *every premise
-under this is settled*.
+say "Clean, and the day's shape is now visible. Two questions were settled, and
+neither answer was invented: each one cites the task whose outcome produced it.
+Three tasks were finished by two different agents who never spoke. One question
+being answered turned a blocked task into a ready one.
 
-And read what \`dg check\` did say. One warning, and it is about T01 not having
-reported into D02 — a real thing, worth acting on, and **nothing whatever to do
-with the contradiction**. The graph's honesty machinery is working perfectly and
-pointed somewhere else.
-
-\`dg check\` is not wrong. The structure is valid; the two answers contradict
-each other in the prose, where no invariant can reach. This graph is as clean as
-the tool can certify and it describes a release that cannot be built.
-
-**This is the one concurrency problem a lock cannot touch**, and it is worth
-being exact about why. Scene 2's failure was attribution and closed with a name.
-Scene 3's was ordering and closed with an edge. This one is neither: every op
-was owned, every premise was settled before it was built on, and the batch was
-still composed against a reading of the world that stopped being true while it
-sat there. No amount of isolation helps — a clone of its own would have made it
-*more* likely, not less.
-
-What saves it is the falsifier C wrote before it had any reason to — \"the
-weights outgrow what a header can carry\". They now have, so the exit is a
-command rather than an argument:"
-
-C dg reopen D03 --why "its falsifier fired: D01 moved to a 40 MB net" --yes
-C dg apply --mine
-M dg show
-
-say "The claim is narrow and true. Drift does not prevent the stale answer; it
-is the one chance anybody gets to notice, and the falsifier is what makes it
-findable six months later by somebody who was not here."
+**That is the loop this tool exists for** — and everything from here is what
+happens when it is running and something moves underneath it."

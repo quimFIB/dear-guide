@@ -1,6 +1,6 @@
 """The agentic demo must keep showing what it says it shows.
 
-`demo-agentic/` is one day on a project, told in six scenes, and each scene is a
+`demo-agentic/` is one day on a project, told in seven scenes, and each scene is a
 claim about what happens when several writers meet. Every one of them is a
 quotation from `dg`. That makes it fragile in a way
 `demo/` is not: `demo/`'s prose describes a *store*, which changes when someone
@@ -55,11 +55,15 @@ def _dg_installed():
 
 
 def test_the_store_is_the_shape_every_scene_assumes(tmp_path):
-    """One premise, one child per agent — the smallest shape that can collide.
+    """One premise, a question per area, and the work that answers them.
 
-    Spelled out rather than counted, because the shape is load-bearing: a
-    second premise, or a third child, and half the scenes stop being about two
-    agents meeting over one thing.
+    Spelled out rather than counted, because the shape is what produces the
+    opening assignment. Three different jobs come out of these two files and a
+    person wrote none of them: `T02` is DONE against an unsettled `D03`, so an
+    answer is owed; `T01` has no prerequisites, so work is ready; `T03` is
+    `because D03`, so work is blocked by a question rather than by a task.
+    Change any one of those and scene 1 stops being about the graph handing out
+    the work.
     """
     from dgraph.model import Graph
     from dgraph.tasks import TaskGraph
@@ -73,102 +77,89 @@ def test_the_store_is_the_shape_every_scene_assumes(tmp_path):
         "D02": "OPEN", "D03": "OPEN"}
     assert sorted(g.depends("D02")) == sorted(g.depends("D03")) == ["D01"]
 
-    # Both children carry the evidence link, and T02 is already DONE: that is
-    # what makes the opening `dg check` hand agent A its assignment.
-    assert {t.evidence_for for t in tg.tasks.values()} == {"D02", "D03"}
-    assert tg.tasks["T02"].status == "DONE"
+    # An answer is owed: T02 reported and D03 was never settled on it.
+    assert tg.tasks["T02"].status == "DONE" and tg.tasks["T02"].evidence_for == "D03"
+    assert tg.tasks["T02"].completions, "T02 has to carry a real outcome"
+    # Work is ready: T01 has no prerequisites, and its result is owed to D02.
+    assert tg.tasks["T01"].status == "TODO" and tg.tasks["T01"].evidence_for == "D02"
+    assert "T01" not in tg.blocked_ids(), "T01 has to be startable on day one"
+    # Work is blocked by a question, which is the other polarity of the seam.
+    assert tg.tasks["T03"].because == "D03"
 
 
 def test_d01_carries_the_falsifier_the_whole_demo_turns_on(tmp_path):
-    """`D01`'s falsifier is the plot. Scene 3 is unreadable without it."""
+    """`D01`'s falsifier is the plot. Scenes 6 and 7 are unreadable without it."""
     from dgraph.model import Graph
     edge = Graph.load(DEMO / "decisions.json").active_edge("D01")
     assert edge is not None and edge.decided
     assert "GPU budget" in edge.falsifier      # the event B's reopen cites
 
 
-def test_scene1_turns_a_fired_falsifier_into_a_plan(tmp_path):
-    """The opening move is the graph's, not the maintainer's: the falsifier
-    written in March names the sponsor's cluster, and `dg show` is what turns
-    "this is too big" into three questions with an order between them."""
+def test_scene1_gets_three_jobs_out_of_the_graph(tmp_path):
+    """The assignment is computed, not written. Three different kinds of
+    outstanding thing come back from two commands: an answer that is owed, work
+    that is ready, and work a *question* is blocking."""
     out = run(1, tmp_path)
-    assert "reopen D01" in out
-    assert "D01  REOPENED" in out
-    # The order the fan-out has to respect, and nobody wrote it down as a rule.
-    assert "decidable now" in out
-    assert "waits D01" in out
+    assert "[evidence_unharvested]" in out, "the answer nobody wrote down"
+    assert "ready T01" in out, "the work nobody has started"
+    assert "waits D03 (undecided)" in out, "work blocked by a question, not a task"
 
 
-def test_scene2_names_the_agents_and_stops_publishing_their_drafts(tmp_path):
-    """Both halves, and the second is only meaningful beside the first.
-
-    Unnamed, one agent's apply takes three ops and the others are told `nothing
-    staged`. Named, the same commands leave every other agent's work its own.
-    """
+def test_scene2_makes_the_parallelism_out_of_the_work(tmp_path):
+    """The scene's whole claim: a moment ago there was one ready task and three
+    agents; B decomposed its own task and produced startable work for somebody
+    else. If `ready T04` stops appearing, the demo no longer shows that."""
     out = run(2, tmp_path)
-    assert "applied 3 op(s)" in out, "the unnamed half no longer loses the drafts"
+    assert "waits T04, T05" in out, "T01 no longer waits on its subtasks"
+    assert "ready T04" in out, "the decomposition freed no work"
+
+
+def test_scene3_moves_readiness_without_a_status_update(tmp_path):
+    """`Blocked is derived, never stored` — asserted as the transition, because
+    that is the part a reader has to see. T05 was waiting; one outcome recorded
+    by a different agent, and it is ready."""
+    out = run(3, tmp_path)
+    assert "ready T05" in out
+    assert "waits T05 · evidence for D02" in out, "T01's remaining wait"
+
+
+def test_scene4_closes_the_loop_in_both_directions(tmp_path):
+    """Work → evidence → answer, and answer → released work. The second is the
+    one that surprises: `ready T03, T05` where T03 was blocked by a question."""
+    out = run(4, tmp_path)
+    assert "ready T03, T05" in out, "answering D03 did not release the release note"
+    assert "[evidence_unharvested]" in out, "the graph did not ask B for D02"
+    assert out.rstrip().endswith("running underneath it.") or "all invariants hold" in out
+
+
+def test_scene5_names_the_agents_and_stops_publishing_their_drafts(tmp_path):
+    """Both halves, and the second is only meaningful beside the first."""
+    out = run(5, tmp_path)
+    assert "applied 3 op(s)" in out, "the unnamed half no longer takes the others' work"
     assert "nothing staged" in out, "agent A's only signal, and it is the defect"
-    # ...and the same morning, with identities.
-    # The column, not the exact spacing: `compact.listing` pads the aside to
-    # the widest row, so pinning the run of spaces would fail on a reworded
-    # answer rather than on a lost stamp.
     assert "by A" in out and "by B" in out
-    assert "applied 1 op(s)" in out
     assert "op(s) left staged, by" in out
 
 
-def test_scene3_orders_publication_by_the_edge(tmp_path):
-    """Three agents compose at once and one is told to wait, by a refusal that
-    names the premise and both exits. Then the same op applies unchanged."""
-    out = run(3, tmp_path)
-    assert "STAGED  3 op(s)" in out
-    assert "[propagation] D02 is DECIDED but rests on D01 (REOPENED)" in out
-    assert "aborted, nothing written" in out
-    # The premise lands, and B's refused op then applies with nothing changed.
-    assert out.count("applied 1 op(s)") >= 2
-
-
-def test_scene4_reports_the_drift_and_then_certifies_the_contradiction(tmp_path):
-    """The one no lock reaches. The drift line is the whole warning; `dg check`
-    then calls the result clean, because it is."""
-    out = run(4, tmp_path)
-    assert "D01 moved since this batch was staged (REOPENED → DECIDED)" in out
-    assert "all invariants hold" in out
-    # Both readings, in one command's output, four lines apart.
-    assert "compile in as a generated header" in out
-    assert "A trained net, 40 MB" in out
-    assert "every premise under this is settled" in out
-
-
-def test_scene4_ends_by_using_the_falsifier(tmp_path):
-    """The exit is a command rather than a judgement call, and that is only true
-    because the falsifier was written before there was any reason to."""
-    out = run(4, tmp_path)
-    assert "its falsifier fired" in out
-    assert "D03  REOPENED" in out
-
-
-def test_scene5_refuses_both_collisions_the_same_way(tmp_path):
-    """Two agents, one id, twice — and the refusal is identical while the right
-    answer is opposite. That is the scene's whole claim, and it is a claim about
-    what the tool deliberately does *not* decide."""
-    out = run(5, tmp_path)
-    assert out.count("D04 already exists, and is not what this op would have "
-                     "created") == 2
-    assert "50-99" in out, "the grant that makes the collision rare"
-
-
-def test_scene6_cannot_be_merged_by_git_and_is_refused_at_composition(tmp_path):
-    """6a is what a text merge does with two additions; 6b is what it must never
-    be allowed to do with two answers."""
+def test_scene6_puts_every_answer_under_review_at_once(tmp_path):
+    """One fact, and the whole fan-out's output is provisional. The count is the
+    point: both answers, computed rather than remembered."""
     out = run(6, tmp_path)
-    assert "CONFLICT (content): Merge conflict in decisions.json" in out
-    assert "all invariants hold" in out, "6a resolves to a store dg will vouch for"
-    # 6b: refused before anything is staged, let alone merged.
-    assert "D50 already has an answer, and is DECIDED" in out
-    # ...and the day it closes on is the day the first five scenes built.
-    assert "A trained net, 40 MB" in out
-    assert "D03  REOPENED" in out
+    assert "2 decided descendant(s) rest on it and become PROVISIONAL" in out
+    assert "PROVISIONAL 2" in out
+    assert "unfinished task(s) rest on a premise under review" in out
+
+
+def test_scene7_reports_the_two_it_cannot_prevent(tmp_path):
+    """7a: a question left with no route to an answer, visible only at the seam.
+    7b: drift, then a clean check over a contradiction, then the falsifier."""
+    out = run(7, tmp_path)
+    assert "[evidence_stalled]" in out
+    assert "waits on evidence nobody is producing" in out
+    # 7b — and `its answer changed` is the case, not a status move.
+    assert "D01 moved since this batch was staged (its answer changed)" in out
+    assert "all invariants hold" in out
+    assert "its falsifier fired" in out
 
 
 def test_the_demo_refuses_a_work_directory_it_did_not_make(tmp_path):

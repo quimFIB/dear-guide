@@ -1,9 +1,10 @@
 {
-  "areas": ["Tooling", "Release"],
+  "areas": ["Core", "Tooling", "Release"],
   "tasks": [
     {"id": "T01", "title": "Wire the SPRT harness to the volunteer cluster",
-     "area": "Tooling", "status": "DOING",
-     "evidence_for": "D02"},
+     "area": "Tooling", "status": "TODO",
+     "evidence_for": "D02",
+     "note": "Whatever D02's answer turns out to be, it has to rest on this. Nobody has looked at what it involves."},
 
     {"id": "T02", "title": "Measure the binary with the weights inlined",
      "area": "Release", "status": "DONE",
@@ -11,7 +12,12 @@
        {"date": "2026-03-05",
         "outcome": "bench/size.md -- 412 KB at -Os, of which the weights are 71 KB"}
      ],
-     "evidence_for": "D03"}
+     "evidence_for": "D03"},
+
+    {"id": "T03", "title": "Draft the release note",
+     "area": "Release", "status": "TODO",
+     "because": "D03",
+     "note": "Cannot start: there is nothing to say until D03 is answered."}
   ],
   "edges": []
 }

@@ -2379,7 +2379,13 @@ def _scope(ops, task_ops, *, all_: bool, mine: bool):
         return ops, task_ops, ""
     keep = keep if ops is not None else None
     tkeep = tkeep if task_ops is not None else None
-    who = ", ".join(sorted({str(o.get("by")) for o in (*theirs, *ttheirs)}))
+    # "unowned" rather than `None`: an op with no `by` was staged by somebody
+    # who set no identity — the supervisor, or a door that stages as nobody —
+    # and printing the Python value there tells a reader nothing they can act
+    # on. Named this way in both directions, so `--mine` from an unowned caller
+    # and a refusal naming unowned work use one word for one thing.
+    who = ", ".join(sorted({str(o["by"]) if o.get("by") else "unowned"
+                            for o in (*theirs, *ttheirs)}))
     n = len(theirs) + len(ttheirs)
     if not mine and pending.owner() is None:
         con.print(f"[red]✗ nothing written — {n} staged op(s) belong to "

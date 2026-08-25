@@ -644,9 +644,10 @@ that the skill's command table only names commands that exist.
   is what a single writer has always had.
 
   All of that is runnable rather than asserted — [`demo-agentic/`](demo-agentic/)
-  is one day on a project with three agents on it, six scenes in the order the
-  day ran into them, and each one ends where this paragraph says it does:
-  `./demo-agentic/demo.sh`. Four of the six close with the tool doing something;
+  is a day's work on one graph with three agents on it, driven by the *task*
+  side: the queue says what is ready, an agent picks it up, doing it produces
+  evidence, and evidence settles a question. The concurrency problems arrive out
+  of joining that work up rather than as the subject. `./demo-agentic/demo.sh`. Four of the six close with the tool doing something;
   the fifth is the stale premise, which no locking discipline reaches and which
   the falsifier is there for.
 

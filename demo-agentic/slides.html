@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>One Question, Three Agents</title>
+<title>Three Agents, One Graph</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap">
@@ -383,7 +383,7 @@ kbd {
   <header class="rail">
     <span class="rail__mark">dear&#8209;guide · demo&#8209;agentic</span>
     <div class="rail__dots" id="dots" role="tablist" aria-label="Slides"></div>
-    <span class="rail__count" id="count">1 / 9</span>
+    <span class="rail__count" id="count">1 / 10</span>
     <button class="rail__theme" id="theme" type="button">theme</button>
   </header>
 
@@ -391,22 +391,24 @@ kbd {
 
   <!-- ==================================================================== -->
   <section class="slide" data-title="Title">
-    <p class="eyebrow">A demo you can run · one day · six scenes · no model in any of them</p>
-    <h1>One hard question,<br>three agents.</h1>
+    <p class="eyebrow">A demo you can run · one day · seven scenes · no model in any of them</p>
+    <h1>Three agents,<br>one graph,<br>a day's work.</h1>
     <p class="lede">
       <strong>dear&#8209;guide</strong> keeps a project's decisions and the work that
-      follows from them in two linked stores. These six scenes are one day on a
-      project: a question too big for one pass, three agents let loose on it, and
-      the concurrency problems that day runs into — in the order it runs into them.
+      follows from them in two linked stores. Here three software agents are put
+      on one graph, and <strong>the work is what drives everything</strong>: the task
+      graph says what is ready, an agent picks it up, doing it produces evidence,
+      and evidence is what settles a question.
     </p>
     <p>
-      Every line of terminal output on these slides is verbatim from running the
-      scripts. Four of the six end with the tool doing something about it.
-      <strong>One does not, and it is the reason the other five are worth having.</strong>
+      Nobody in this demo invents an answer. The concurrency problems arrive the
+      way they actually do — out of three agents doing real work and then having
+      to join it up. Every line of terminal output is verbatim from running the
+      scripts.
     </p>
     <div class="runbox">
       <span class="mut">$</span> ./demo-agentic/demo.sh<br>
-      <span class="mut">$</span> ./demo-agentic/demo.sh 4 &nbsp;&nbsp;<span class="mut"># just the one that matters</span>
+      <span class="mut">$</span> ./demo-agentic/demo.sh 7 &nbsp;&nbsp;<span class="mut"># the two nothing prevents</span>
     </div>
     <p class="nav__hint" style="margin-top:1.2rem">
       <kbd>&rarr;</kbd> to advance a step, <kbd>&larr;</kbd> to go back.
@@ -418,15 +420,14 @@ kbd {
     <p class="eyebrow">The setup</p>
     <h2>An open-source Go engine, three decisions deep</h2>
     <p class="lede">
-      One premise and a question hanging off it in each of two areas — plus a
-      third agent on the premise itself, which is what makes the other two wait.
-      The smallest shape in which separate work still collides.
+      One premise, a question in each of two areas, and the work outstanding
+      against them. The <em class="q">work</em> is the half that makes this a day
+      rather than a diagram.
     </p>
 
     <div class="graph">
       <div class="vtx vtx--premise">
         <span class="vtx__id">D01</span> <span class="chip chip--decided">DECIDED</span>
-        <span class="chip chip--a">agent A</span>
         <div class="vtx__q">Where do the evaluation weights come from?</div>
         <div class="vtx__ans">&ldquo;Hand-tuned, by us. Three strong players on the team and no GPU budget, so the cheap thing is also the only thing.&rdquo;</div>
         <div class="vtx__fals">falsifier &nbsp;a GPU budget appears, or hand-tuning stalls for two releases running</div>
@@ -435,175 +436,221 @@ kbd {
       <div class="kids">
         <div class="vtx vtx--b">
           <span class="vtx__id">D02</span> <span class="chip chip--open">OPEN</span>
-          <span class="chip chip--b">agent B</span>
           <div class="vtx__q">How is a weight change accepted?</div>
+          <div class="vtx__fals">T01 &nbsp;will produce the evidence &nbsp;· <span style="color:var(--ink-faint)">not started</span></div>
         </div>
         <div class="vtx vtx--c">
           <span class="vtx__id">D03</span> <span class="chip chip--open">OPEN</span>
-          <span class="chip chip--c">agent C</span>
           <div class="vtx__q">What ships in the release binary?</div>
+          <div class="vtx__fals">T02 &nbsp;<span style="color:var(--ok)">already reported</span> &nbsp;· nobody wrote down what it meant</div>
         </div>
       </div>
 
       <div class="tasks">
-        T01 &nbsp;Wire the SPRT harness to the volunteer cluster &nbsp;&nbsp;<span style="color:var(--ink-faint)">DOING &nbsp;· evidence for D02</span><br>
-        T02 &nbsp;Measure the binary with the weights inlined &nbsp;&nbsp;<span style="color:var(--ok)">DONE</span> <span style="color:var(--ink-faint)">&nbsp;· evidence for D03 &nbsp;→ 412&nbsp;KB at -Os, weights 71&nbsp;KB of it</span>
+        T01 &nbsp;Wire the SPRT harness to the volunteer cluster &nbsp;&nbsp;<span style="color:var(--ink-faint)">TODO &nbsp;· evidence for D02 &nbsp;· nothing blocks it</span><br>
+        T02 &nbsp;Measure the binary with the weights inlined &nbsp;&nbsp;<span style="color:var(--ok)">DONE</span> <span style="color:var(--ink-faint)">&nbsp;· evidence for D03 &nbsp;→ 412&nbsp;KB at -Os, weights 71&nbsp;KB of it</span><br>
+        T03 &nbsp;Draft the release note &nbsp;&nbsp;<span style="color:var(--ink-faint)">TODO &nbsp;· <b>because D03</b> — blocked by a question, not by work</span>
       </div>
     </div>
 
     <div class="kicker">
-      <p>Every vertex here is a question the <em class="q">team</em> answers in a design
-      discussion — where the weights are sourced, how a change gets reviewed,
-      what the release artefact is. None of it is anything the engine does while
-      playing. <strong>This graph guides the development of a system; it is not a
-      model of one.</strong></p>
+      <p>Three different kinds of outstanding thing, and <strong>a person wrote none
+      of them down as a plan</strong>. An answer is owed, a task is ready, and a task
+      is blocked by an unanswered question. That is scene 1.</p>
     </div>
   </section>
 
   <!-- ==================================================================== -->
   <section class="slide" data-title="Scene 1">
-    <p class="eyebrow">Scene 1 · one hard question, three areas</p>
-    <h2>The falsifier fires, and the graph becomes the plan</h2>
+    <p class="eyebrow">Scene 1 · nobody writes the plan</p>
+    <h2>The queue is the assignment</h2>
     <p class="lede">
-      A sponsor donates cluster time. That is not a new fact to weigh up — it is
-      the fact D01 was <em class="q">waiting</em> for.
+      The maintainer is about to put three agents on this. They do not ask for
+      work; they ask the graph.
     </p>
 
     <div class="lanes">
-      <div class="lanehead lanehead--a">the maintainer</div>
-      <div class="lanehead lanehead--mid">the graph</div>
-      <div class="lanehead lanehead--b">what it produces</div>
+      <div class="lanehead lanehead--a">what is asked</div>
+      <div class="lanehead lanehead--mid">→</div>
+      <div class="lanehead lanehead--b">what comes back</div>
 
       <div class="step step--a" data-step="1">
         <div class="card">
           <div class="card__cmd">$ <b>dg check</b></div>
-          <pre class="term wrap"><span class="dr">! [evidence_unharvested]</span> T02 is DONE and was to inform D03, which is still unsettled</pre>
+          <pre class="term wrap"><span class="dr">! [evidence_unharvested]</span> T02 is DONE and was to inform D03, which is still unsettled — record what it showed with `dg decide D03`</pre>
         </div>
-        <p class="note">The first move is asking the graph what it is worried about.</p>
+        <p class="note"><b>An answer is owed.</b> T02 measured the binary in March;
+        nobody ever wrote down what the number meant.</p>
       </div>
 
-      <div class="step step--a" data-step="2">
+      <div class="step step--b" data-step="2">
         <div class="card">
-          <div class="card__cmd">$ <b>dg reopen D01</b> --why 'A sponsor donated cluster time on 2026-03-18&hellip;'</div>
-          <pre class="term">Its answer becomes superseded;
-its dependencies stay.</pre>
+          <div class="card__cmd">$ <b>dg task</b></div>
+          <pre class="term">TASKS  2 outstanding of 3
+  T01 TODO  <span class="hiB">evidence for D02</span>
+  T03 TODO  <span class="hi">waits D03 (undecided)</span>
+<span class="hiA">ready T01</span></pre>
         </div>
-        <p class="note">The falsifier, written <b>2026-03-01</b>, said: <em>a GPU budget
-        appears</em>. Nobody has to argue — they reopen.</p>
-      </div>
-
-      <div class="step step--b" data-step="3">
-        <div class="card">
-          <div class="card__cmd">$ <b>dg show</b></div>
-          <pre class="term">FRONTIER  3 not settled of 3
-  D01 <span class="hi">REOPENED</span>  <span class="hiA">decidable now</span>
-  D02 OPEN      <span class="hiB">waits D01</span>
-  D03 OPEN      <span class="hiB">waits D01</span></pre>
-        </div>
-        <p class="note note--flag">Three questions, and <b>an order between them</b> — not a
-        rule anybody wrote down, but the edges, recorded when each question was
-        opened.</p>
+        <p class="note"><b>A task is ready</b> — computed from the edges, stored
+        nowhere. And <b>a task is blocked by a question</b>, not by other work.</p>
       </div>
     </div>
 
-    <div class="kicker" data-step="4">
-      <p>This is more than one pass can hold and each question belongs to a
-      different area, so three agents are launched onto it: <b class="q">A</b> on
-      the premise, <b class="q">B</b> on Tooling, <b class="q">C</b> on Release.</p>
-      <p><strong>Two of the three are about to work on a premise nobody has
-      settled. That is what parallel exploration is — and the graph already knows
-      it.</strong></p>
+    <div class="kicker" data-step="3">
+      <p>Agent <b class="q">A</b> takes the answer that is owed. Agent
+      <b class="q">B</b> takes the ready task. Agent <b class="q">C</b> has
+      nothing yet — <strong>which is a real state, and where scene 2 starts.</strong></p>
     </div>
   </section>
 
   <!-- ==================================================================== -->
   <section class="slide" data-title="Scene 2">
-    <p class="eyebrow">Scene 2 · three agents, one staging tray</p>
-    <h2>Who staged what, and who may apply it</h2>
+    <p class="eyebrow">Scene 2 · the work opens up</p>
+    <h2>Decomposition is what makes the parallelism</h2>
     <p class="lede">
-      The agents were launched where the problem is: the maintainer's checkout.
-      A directory is one staging tray. Played twice, with the same commands both
-      times.
+      B picks up T01 and does what an agent actually does first: finds out what
+      is in it.
     </p>
 
-    <div class="lanes lanes--3">
-      <div class="lanehead lanehead--a">agent A · Core</div>
-      <div class="lanehead lanehead--c">agent C · Release</div>
-      <div class="lanehead lanehead--b">agent B · Tooling</div>
+    <div class="lanes">
+      <div class="lanehead lanehead--a">agent B · Tooling</div>
+      <div class="lanehead lanehead--mid">the queue</div>
+      <div class="lanehead lanehead--b">what changed</div>
 
       <div class="step step--a" data-step="1">
         <div class="card">
-          <div class="card__cmd">$ <b>dg decide D01</b> --answer 'A trained net, 40&nbsp;MB&hellip;'</div>
-          <pre class="term">staged 1 op(s)</pre>
+          <div class="card__cmd">$ <b>dg task add</b> T04 &nbsp;·&nbsp; <b>dg task add</b> T05 --after T04<br>$ <b>dg task dep T01</b> --after T04,T05</div>
+          <pre class="term">✓ applied 6 op(s) → tasks.json</pre>
         </div>
-        <p class="note">Staged, <b>not applied</b>. A means to look it over.</p>
+        <p class="note">Wiring a harness to somebody else's cluster is three
+        things, and two of them are somebody else's to give.</p>
       </div>
 
-      <div class="step step--b" data-step="1">
+      <div class="step step--b" data-step="2">
         <div class="card">
-          <div class="card__cmd">$ <b>dg decide D02</b> --answer 'SPRT against the previous build&hellip;'</div>
-          <pre class="term">staged 1 op(s)</pre>
+          <div class="card__cmd">$ <b>dg task</b></div>
+          <pre class="term">T01 DOING  <span class="hi">waits T04, T05</span>
+T04 TODO   unblocks T01, T05
+T05 TODO   waits T04
+<span class="hiA">ready T04</span></pre>
         </div>
-        <p class="note">So does B.</p>
-      </div>
-
-      <div class="step step--c" data-step="2">
-        <div class="card">
-          <div class="card__cmd">$ <b>dg apply</b> <span style="color:var(--ink-faint)">(nobody named)</span></div>
-          <pre class="term"><span class="ok">✓ applied 3 op(s)</span></pre>
-        </div>
-        <p class="note note--flag">One was C's. <b>Two were half-finished answers</b>
-        belonging to agents still working on them.</p>
-      </div>
-
-      <div class="step step--a" data-step="3">
-        <div class="card">
-          <div class="card__cmd">$ <b>dg pending</b></div>
-          <pre class="term"><span class="mut">nothing staged</span></pre>
-        </div>
-        <p class="note note--flag">A's <b>only</b> signal — which reads as
-        <em>my staging failed</em>, and invites A to write it again.</p>
-      </div>
-
-      <div class="step step--wide" data-step="4">
-        <div class="card">
-          <div class="card__cmd">$ <b>export DG_AGENT=A</b> &nbsp;<span style="color:var(--ink-faint)"># and B, and C — set by whoever launches them</span></div>
-          <pre class="term">STAGED  3 op(s)
-  0  gqrv  close  D01  A trained net, 40 MB&hellip;                      <span class="hiA">·  by A</span>
-  1  syum  close  D02  SPRT against the previous build&hellip;           <span class="hiB">·  by B</span>
-  2  hbnp  close  D03  One binary, no runtime files&hellip;              <span class="hiC">·  by C</span></pre>
-        </div>
-        <p class="note">Same tray, same three answers — and now each says whose it is.</p>
-      </div>
-
-      <div class="step step--wide" data-step="5">
-        <div class="card">
-          <div class="card__cmd">$ <b>dg apply</b> <span style="color:var(--ink-faint)">(as A)</span></div>
-          <pre class="term"><span class="ok">✓ applied 1 op(s)</span> → decisions.json + decision-graph.md
-<span class="hi">2 op(s) left staged, by B, C</span></pre>
-        </div>
-        <p class="note">A's own op written; A is told exactly what it left and whose.</p>
+        <p class="note note--flag">A moment ago there was <b>one</b> ready task and
+        three agents.</p>
       </div>
     </div>
 
-    <div class="kicker" data-step="6">
-      <p><strong>One variable, and a shared tray stops being a place where one agent
-      can publish another's draft.</strong> A <code>close</code> is the op this tool
-      deliberately makes hard to take back — the way out is <code>dg reopen</code>,
-      which files a reversal that never happened.</p>
-      <p>Nothing here is <em class="q">isolated</em>. The three still share one graph and
-      can still see each other's work, and that is the point rather than the
-      problem.</p>
+    <div class="kicker" data-step="3">
+      <p><strong>B looked at its own work, and in doing so produced startable work
+      for somebody else.</strong> Nobody scheduled that. The agent that picks T04 up
+      has not been told about it — it will find it the way B found T01.</p>
+      <p>Everything that goes wrong from here goes wrong because of that, and not
+      because a script arranged it.</p>
     </div>
   </section>
 
   <!-- ==================================================================== -->
   <section class="slide" data-title="Scene 3">
-    <p class="eyebrow">Scene 3 · three answers at once</p>
-    <h2>Composition parallelises; publication is ordered</h2>
+    <p class="eyebrow">Scene 3 · no status is updated</p>
+    <h2>and the work still joins up</h2>
     <p class="lede">
-      All three compose at the same time and nothing stops them. What is ordered
-      is the moment each answer becomes part of the record.
+      Agent C, which had nothing to do in scene 1, takes the task B's
+      decomposition freed.
+    </p>
+
+    <div class="lanes">
+      <div class="lanehead lanehead--a">agent C writes one thing</div>
+      <div class="lanehead lanehead--mid">→</div>
+      <div class="lanehead lanehead--b">and two others move</div>
+
+      <div class="step step--a" data-step="1">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg task done T04</b> --outcome 'sponsor issued a service account&hellip;'</div>
+          <pre class="term"><span class="ok">✓ applied 1 op(s)</span></pre>
+        </div>
+        <p class="note">C did not update T05, did not notify B, and does not know
+        B exists.</p>
+      </div>
+
+      <div class="step step--b" data-step="2">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg task</b></div>
+          <pre class="term">T01 DOING  <span class="hi">waits T05</span>   <span class="mut">(was: waits T04, T05)</span>
+T05 TODO   unblocks T01
+<span class="hiA">ready T05</span>       <span class="mut">(was: waits T04)</span></pre>
+        </div>
+        <p class="note"><b>Blocked is derived, never stored.</b> No status could
+        have gone stale; no message could have been missed.</p>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="3">
+      <p><strong>Two agents just handed work to each other through the graph, and
+      the handover cost one command by one of them.</strong> This is the part that
+      makes a fan-out survivable at all.</p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Scene 4">
+    <p class="eyebrow">Scene 4 · the loop</p>
+    <h2>An answer is a piece of work, and it frees other work</h2>
+
+    <div class="lanes lanes--3">
+      <div class="lanehead lanehead--a">agent A · Core</div>
+      <div class="lanehead lanehead--c">the graph</div>
+      <div class="lanehead lanehead--b">agent B · Tooling</div>
+
+      <div class="step step--a" data-step="1">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg decide D03</b> --source <span class="hi">'T02: bench/size.md'</span></div>
+          <pre class="term"><span class="ok">✓ applied 1 op(s)</span></pre>
+        </div>
+        <p class="note">The answer <b>cites the task</b> whose outcome produced it.
+        Nothing is invented.</p>
+      </div>
+
+      <div class="step step--c" data-step="2">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg task</b></div>
+          <pre class="term"><span class="hiA">ready T03, T05</span></pre>
+        </div>
+        <p class="note note--flag"><b>T03 was not ready a moment ago.</b> It was
+        <code>waits D03 (undecided)</code>.</p>
+      </div>
+
+      <div class="step step--b" data-step="3">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg task done T01</b> &nbsp;·&nbsp; $ <b>dg check</b></div>
+          <pre class="term wrap"><span class="dr">! [evidence_unharvested]</span> T01 is DONE and was to inform D02, which is still unsettled</pre>
+        </div>
+        <p class="note">The graph asks B for the answer the work just earned.</p>
+      </div>
+
+      <div class="step step--b" data-step="4">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg decide D02</b> --source <span class="hi">'T01: harness live, verdict in the CI log'</span></div>
+          <pre class="term"><span class="ok">✓ 3 vertices, 3 edges; 5 tasks, all invariants hold</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="5">
+      <p>Two questions settled, and neither answer was invented — each cites the
+      task whose outcome produced it. Three tasks finished by two agents who
+      never spoke. <strong>One question being answered turned a blocked task into a
+      ready one.</strong></p>
+      <p>That is the loop this tool exists for. Everything from here is what
+      happens when it is running and something moves underneath it.</p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Scene 5">
+    <p class="eyebrow">Scene 5 · three agents, one staging tray</p>
+    <h2>Whose op is whose</h2>
+    <p class="lede">
+      The agents were launched where the work is. A directory is one staging
+      tray, so everything scenes 2 to 4 composed went through the same file.
     </p>
 
     <div class="lanes lanes--3">
@@ -613,237 +660,172 @@ its dependencies stay.</pre>
 
       <div class="step step--wide" data-step="1">
         <div class="card">
-          <div class="card__cmd">$ <b>dg pending</b></div>
-          <pre class="term">STAGED  3 op(s)   <span class="mut">— three answers, three authors, none of it written</span></pre>
+          <div class="card__cmd"><span style="color:var(--ink-faint)"># nobody named — the way a harness gets it by forgetting</span></div>
+          <pre class="term">A: <span class="hiA">dg decide D03</span>   <span class="mut">staged, still checking it</span>
+B: <span class="hiB">dg task done T05</span>   <span class="mut">staged, not yet verified</span>
+C: <span class="hiC">dg task add T06</span>  <span class="mut">a chore C noticed</span></pre>
         </div>
       </div>
 
-      <div class="step step--b" data-step="2">
+      <div class="step step--c" data-step="2">
         <div class="card">
-          <div class="card__cmd">$ <b>dg apply --mine</b></div>
-          <pre class="term wrap"><span class="no">✗ aborted, nothing written</span>
-<span class="no">[propagation] D02 is DECIDED but rests on D01 (REOPENED)</span> — `dg repair` marks it PROVISIONAL, or settle the premise with `dg decide D01`</pre>
+          <div class="card__cmd">$ <b>dg apply</b></div>
+          <pre class="term"><span class="ok">✓ applied 1 op(s)</span> → decisions.json
+<span class="ok">✓ applied 3 op(s)</span> → tasks.json</pre>
         </div>
-        <p class="note note--flag">B did nothing wrong. <b>B was asked to answer D02.</b>
-        Nothing was written and B's answer is still B's.</p>
+        <p class="note note--flag">C wrote its own op <b>and both of the others</b>
+        — an answer A had not finished checking, a completion B had not verified.</p>
       </div>
 
       <div class="step step--a" data-step="3">
         <div class="card">
-          <div class="card__cmd">$ <b>dg apply --mine</b></div>
-          <pre class="term"><span class="ok">✓ applied 1 op(s)</span></pre>
+          <div class="card__cmd">$ <b>dg pending</b></div>
+          <pre class="term"><span class="mut">nothing staged</span></pre>
         </div>
-        <p class="note">The premise goes first.</p>
-      </div>
-
-      <div class="step step--b" data-step="4">
-        <div class="card">
-          <div class="card__cmd">$ <b>dg apply --mine</b> <span style="color:var(--ink-faint)">(the same op, unchanged)</span></div>
-          <pre class="term"><span class="ok">✓ applied 1 op(s)</span></pre>
-        </div>
-        <p class="note">Nothing was re-composed. It simply became legal.</p>
-      </div>
-    </div>
-
-    <div class="kicker" data-step="5">
-      <p><strong>Nobody sequenced the agents, nobody held a lock, and nobody had to
-      know what the others were doing.</strong> Three agents ran flat out, one was
-      told <em>not yet</em> in a sentence naming the premise and both exits, and the
-      graph never held a state anybody would have to unpick.</p>
-      <p>The order was the edge — recorded months earlier, when the question was
-      opened.</p>
-    </div>
-  </section>
-
-  <!-- ==================================================================== -->
-  <section class="slide" data-title="Scene 4">
-    <p class="eyebrow">Scene 4 · the quiet one &nbsp;·&nbsp; <b>the one to read</b></p>
-    <h2>A stale premise, still legal</h2>
-    <p class="lede">
-      Agent C was the fastest and finished first, so its answer sat staged while
-      the others landed. Everything here is legal, every command succeeds, and
-      <code>dg check</code> ends clean.
-    </p>
-
-    <div class="lanes">
-      <div class="lanehead lanehead--a">what C composed against</div>
-      <div class="lanehead lanehead--mid">then</div>
-      <div class="lanehead lanehead--b">what the store says now</div>
-
-      <div class="step step--a" data-step="1">
-        <div class="card">
-          <pre class="term wrap">D01  <span class="hi">REOPENED</span>, nothing staged against it
-"Hand-tuned, by us&hellip;"
-T02: 412 KB at -Os, weights 71 KB</pre>
-        </div>
-        <p class="note">The only reading available when C wrote. <b>&ldquo;The weights
-        compile in as a generated header&rdquo; is the only answer C could have
-        reached.</b></p>
-      </div>
-
-      <div class="step step--b" data-step="2">
-        <div class="card">
-          <pre class="term wrap">D01  <span class="ok">DECIDED</span>
-"A trained net, <span class="hi">40 MB</span>."</pre>
-        </div>
-        <p class="note">A settled it while C's answer sat there.</p>
-      </div>
-
-      <div class="step step--wide" data-step="3">
-        <div class="card">
-          <div class="card__cmd">$ <b>dg apply --mine</b> <span style="color:var(--ink-faint)">(agent C)</span></div>
-          <pre class="term wrap"><span class="dr">· D01 moved since this batch was staged (REOPENED → DECIDED) — op 0 (close D03) rests on it</span>
-<span class="ok">✓ applied 1 op(s)</span></pre>
-        </div>
-        <p class="note note--flag">One line. Printed once. To a process that may not
-        have been reading.</p>
+        <p class="note note--flag">Which reads as <em>my staging failed</em>, and
+        invites A to write the answer a second time.</p>
       </div>
 
       <div class="step step--wide" data-step="4">
         <div class="card">
-          <div class="card__cmd">$ <b>dg check</b> &nbsp;·&nbsp; $ <b>dg why D03</b></div>
-          <pre class="term wrap"><span class="ok">✓ 3 vertices, 4 edges; 2 tasks, all invariants hold, 1 warning(s)</span>
-
-D03  "the weights compile in as a generated header"
-D01  "A trained net, 40 MB"
-<span class="ok">→ every premise under this is settled</span></pre>
+          <div class="card__cmd">$ <b>export DG_AGENT=A</b> &nbsp;<span style="color:var(--ink-faint)"># and B, and C. Same commands, same order.</span></div>
+          <pre class="term">STAGED  1 op(s)
+  0  rfbj  close  D03  One binary, no runtime files&hellip;   <span class="hiA">·  by A</span>
+STAGED TASKS  1 op(s)
+  0  ngfq  set_status  T05  → DONE                    <span class="hiB">·  by B</span></pre>
         </div>
-        <p class="note">The one warning is about T01 and <b>has nothing to do with the
-        contradiction</b>. The honesty machinery is working and pointed elsewhere.</p>
+      </div>
+
+      <div class="step step--wide" data-step="5">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg apply</b> <span style="color:var(--ink-faint)">(as C)</span></div>
+          <pre class="term"><span class="ok">✓ applied 2 op(s)</span> → tasks.json
+<span class="hi">2 op(s) left staged, by A, B</span></pre>
+        </div>
+        <p class="note">C's own chore written; A's answer is still A's to finish.</p>
       </div>
     </div>
 
-    <div class="kicker" data-step="5">
-      <p><code>dg check</code> is not wrong. The structure is valid; the two answers
-      contradict each other <strong>in the prose, where no invariant can reach</strong>.
-      This graph is as clean as the tool can certify and it describes a release
-      that cannot be built.</p>
-      <p>Scene 2's failure was <em class="q">attribution</em> and closed with a name.
-      Scene 3's was <em class="q">ordering</em> and closed with an edge. This is
-      neither — every op was owned and every premise was settled before it was
-      built on. <strong>A clone of its own would have made it more likely, not
-      less.</strong></p>
-      <p>What saves it is the falsifier C wrote before it had any reason to —
-      <em>&ldquo;the weights outgrow what a header can carry&rdquo;</em>. They now have, so the
-      exit is a command rather than an argument.</p>
-    </div>
-  </section>
-
-  <!-- ==================================================================== -->
-  <section class="slide" data-title="Scene 5">
-    <p class="eyebrow">Scene 5 · two agents, one id</p>
-    <h2>The same refusal, needing opposite answers</h2>
-    <p class="lede">
-      The agents are in a clone each now. Scenes 2 and 3 cannot happen here —
-      separate trays, separate stores, nothing shared until a push.
-    </p>
-
-    <div class="lanes">
-      <div class="lanehead lanehead--a">5a · different questions</div>
-      <div class="lanehead lanehead--mid">the refusal</div>
-      <div class="lanehead lanehead--b">5b · the same question</div>
-
-      <div class="step step--a" data-step="1">
-        <div class="card">
-          <pre class="term wrap">A: D04 "How is the joseki library distributed?"
-B: D04 "Which time control does CI run at?"</pre>
-        </div>
-        <p class="note">Two gaps, two agents, one next free number.</p>
-      </div>
-
-      <div class="step step--b" data-step="1">
-        <div class="card">
-          <pre class="term wrap">A: D04 "What happens to the hand-tuning history?"
-B: D04 "Do we keep the old tuned weights around?"</pre>
-        </div>
-        <p class="note">One gap, two agents, two wordings. <b>The commoner case.</b></p>
-      </div>
-
-      <div class="step step--mid" data-step="2">
-        <div class="spinecard"><b>identical</b>both times</div>
-      </div>
-
-      <div class="step step--wide" data-step="2">
-        <div class="card">
-          <div class="card__cmd">$ <b>dg apply --mine</b> <span style="color:var(--ink-faint)">(after a pull)</span></div>
-          <pre class="term wrap"><span class="no">✗ aborted, nothing written</span>
-<span class="no">D04 already exists, and is not what this op would have created</span> — pick another id</pre>
-        </div>
-      </div>
-
-      <div class="step step--a" data-step="3">
-        <p class="note">→ take a fresh id. The questions really are different.</p>
-      </div>
-      <div class="step step--b" data-step="3">
-        <p class="note note--flag">→ <code>dg drop</code> it. The question is already
-        open, under A's wording.</p>
-      </div>
-    </div>
-
-    <div class="kicker" data-step="4">
-      <p>An agent that cannot tell 5a from 5b <strong>puts two vertices behind one
-      question</strong>, which is the disorder the unique-id rule exists to prevent.
-      The tool cannot make that call and does not pretend to.</p>
-      <p>What <code>dg range --set 50-99</code> does is make the collision <em class="q">rare</em>
-      — so the integration report a person reads is not a rename line per record
-      anybody wrote, which is the volume that trains a reader to stop reading it.</p>
+    <div class="kicker" data-step="6">
+      <p>A <code>close</code> is the op this tool deliberately makes hardest to take
+      back — the way out is <code>dg reopen</code>, which files a reversal that never
+      happened.</p>
+      <p>Nothing here is <em class="q">isolated</em>. All three still share one graph and
+      still hand tasks to each other the way scene 3 showed. <strong>What changed is
+      only that publishing is now something an agent does to its own work.</strong></p>
     </div>
   </section>
 
   <!-- ==================================================================== -->
   <section class="slide" data-title="Scene 6">
-    <p class="eyebrow">Scene 6 · bringing the parallel work back</p>
-    <h2>What git cannot merge, and the seam</h2>
+    <p class="eyebrow">Scene 6 · one fact arrives</p>
+    <h2>and every agent's answer is under review</h2>
     <p class="lede">
-      Isolation did not remove the race. It moved it.
+      The day's work is done. Two questions settled on evidence two agents
+      produced, three tasks finished, one blocked task released. Then the
+      maintainer gets a mail.
     </p>
 
     <div class="lanes">
-      <div class="lanehead lanehead--a">6a · two additions</div>
-      <div class="lanehead lanehead--mid">git</div>
-      <div class="lanehead lanehead--b">6b · two answers</div>
+      <div class="lanehead lanehead--a">the maintainer</div>
+      <div class="lanehead lanehead--mid">→</div>
+      <div class="lanehead lanehead--b">the whole day, re-ranked</div>
 
       <div class="step step--a" data-step="1">
         <div class="card">
-          <div class="card__cmd">$ <b>git pull</b></div>
-          <pre class="term wrap"><span class="no">CONFLICT (content): Merge conflict in decisions.json</span></pre>
+          <div class="card__cmd">$ <b>dg reopen D01</b> --why 'A sponsor donated cluster time&hellip;'</div>
+          <pre class="term"><span class="hi">2 decided descendant(s) rest on it
+and become PROVISIONAL:
+  D02, D03</span>
+
+<span class="hi">1 unfinished task(s) rest on a
+premise under review:
+  T03</span></pre>
         </div>
-        <p class="note">Two unrelated questions, different ids, valid batches, clean
-        applies — and a JSON array merges as text.</p>
+        <p class="note">The falsifier, written <b>2026-03-01</b>, said: <em>a GPU
+        budget appears</em>. Nobody has to argue.</p>
       </div>
 
-      <div class="step step--a" data-step="2">
+      <div class="step step--b" data-step="2">
         <div class="card">
-          <div class="card__cmd">$ <b>dg render</b> &nbsp;·&nbsp; $ <b>dg check</b></div>
-          <pre class="term"><span class="ok">✓ all invariants hold</span></pre>
+          <div class="card__cmd">$ <b>dg show</b></div>
+          <pre class="term">FRONTIER  <span class="hi">PROVISIONAL 2</span>  REOPENED 1
+  D02 PROVISIONAL  · D01
+  D03 PROVISIONAL  · D01</pre>
         </div>
-        <p class="note">A union handles two additions. <b>This step is what makes it
-        safe rather than merely merged.</b></p>
+        <p class="note note--flag">Three agents worked in parallel on a premise,
+        and <b>one fact put all of it under review at once</b>.</p>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="3">
+      <p>The maintainer did not work that set out. <code>dg reopen</code> computed it
+      and <code>dg check</code> refuses a store where it was not applied. <strong>What a
+      fan-out costs, stated exactly — and what the graph gives you is the
+      list.</strong></p>
+      <p>Nothing is lost. Both answers are still there, still cite the tasks that
+      produced them, and <code>dg confirm</code> is what says <em>re-read under the new
+      premise and it still holds</em>.</p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Scene 7">
+    <p class="eyebrow">Scene 7 · the two nothing prevents &nbsp;·&nbsp; <b>the one to read</b></p>
+    <h2>A quiet agent, and a stale answer</h2>
+
+    <div class="lanes">
+      <div class="lanehead lanehead--a">7a · an agent stops</div>
+      <div class="lanehead lanehead--mid">·</div>
+      <div class="lanehead lanehead--b">7b · the world moves</div>
+
+      <div class="step step--a" data-step="1">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg task park T01</b> --why 'cluster queue is six days deep&hellip;'</div>
+          <pre class="term wrap"><span class="dr">! [evidence_stalled]</span> D02 is OPEN and waits on evidence nobody is producing — T01 is parked and no other task meant to inform it is still going</pre>
+        </div>
+        <p class="note note--flag">Not about B at all. <b>A question with no route
+        to an answer</b> — visible only at the seam: the task store knows T01
+        stopped, the decision store knows D02 is open, and only the link says
+        those are one problem.</p>
+      </div>
+
+      <div class="step step--b" data-step="2">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg apply --mine</b> <span style="color:var(--ink-faint)">(A, returning to a staged answer)</span></div>
+          <pre class="term wrap"><span class="dr">· D01 moved since this batch was staged (its answer changed) — op 0 (close D03) rests on it</span>
+<span class="ok">✓ applied 1 op(s)</span></pre>
+        </div>
+        <p class="note"><b><em>Its answer changed.</em></b> Not the status, not the
+        structure. The premise still says what kind of thing it is; it now says
+        something else about it.</p>
       </div>
 
       <div class="step step--b" data-step="3">
         <div class="card">
-          <div class="card__cmd">$ <b>dg decide D50</b> <span style="color:var(--ink-faint)">(B, after pulling A's answer)</span></div>
-          <pre class="term wrap"><span class="no">D50 already has an answer, and is DECIDED</span> — `dg reopen` it first</pre>
-        </div>
-        <p class="note note--flag">Refused <b>before anything is staged</b>, let alone
-        merged.</p>
-      </div>
+          <div class="card__cmd">$ <b>dg check</b> &nbsp;·&nbsp; $ <b>dg why D03</b></div>
+          <pre class="term wrap"><span class="ok">✓ 3 vertices, 3 edges; 5 tasks, all invariants hold</span>
 
-      <div class="step step--mid" data-step="4">
-        <div class="spinecard"><b>a union</b>would pick one<br>silently</div>
+D03  "the weights compile in as a generated header"
+D01  "A trained net, 40 MB"
+<span class="ok">→ every premise under this is settled</span></pre>
+        </div>
+        <p class="note note--flag">Four lines apart, in one command's output.</p>
       </div>
     </div>
 
-    <div class="kicker" data-step="5">
-      <p>A text merge would put both edges in the file and <code>dg check</code> would
-      refuse the result. <strong>A union keyed by id would pick one silently, which
-      is worse than either.</strong></p>
-      <p>Two answers to one question is not a merge problem to be resolved. It is
-      a disagreement between two agents, and only a person who knows which is
-      right can settle it — which is what <code>dg integrate</code> and
-      <code>dg incoming --take/--keep/--split</code> are for: every conflict collected
-      first, then one person answers a list once.</p>
+    <div class="kicker" data-step="4">
+      <p><code>dg check</code> is not wrong. The structure is valid; the two answers
+      contradict each other <strong>in the prose, where no invariant can reach.</strong></p>
+      <p>Scene 5 was attribution and closed with a name. Scene 3 was coordination
+      and closed because readiness is derived. Scene 6 was propagation and closed
+      because reopen computes the set. <strong>This is none of those</strong> — A owned
+      its op, cited real evidence, and the world moved while the answer sat in a
+      tray. Giving A a clone of its own would have made it <em class="q">more</em>
+      likely, not less.</p>
+      <p>What saves it is the falsifier A wrote before it had any reason to —
+      <em>&ldquo;the weights outgrow what a header can carry&rdquo;</em>. They now have, so the
+      exit is a command rather than an argument.</p>
     </div>
   </section>
 
@@ -855,15 +837,16 @@ B: D04 "Do we keep the old tuned weights around?"</pre>
     <div class="cols">
       <div>
         <h3>What it shows</h3>
-        <p>What <code>dg</code> does when several writers meet: which contradictions it
-        refuses, which it merely reports, and which are left to you. One day, six
-        scenes, reproducible to the line.</p>
+        <p>What <code>dg</code> does when several agents work one graph: how the work
+        is handed out, how it joins back up, and which contradictions are
+        refused, reported, or left to you. One day, seven scenes, reproducible
+        to the line.</p>
       </div>
       <div>
         <h3>What it does not</h3>
         <p>There is <strong>no model in this demo</strong>. The agents are shell scripts,
         because a race has to be deterministic to be a demo and this has to run
-        offline in CI. Whether an agent <em class="q">reads</em> the drift line in scene 4 and
+        offline in CI. Whether an agent <em class="q">reads</em> the drift line in scene 7 and
         acts on it is the question these scenes cannot answer.</p>
       </div>
       <div>
@@ -871,7 +854,7 @@ B: D04 "Do we keep the old tuned weights around?"</pre>
         <p>Several agents on one graph is a configuration this tool <strong>copes
         with</strong>, not one it guarantees. Attribution is closed, ordering is closed,
         collisions are refused and made rare, two answers to one question go to a
-        person. <strong>Scene 4 is not closed, and no locking discipline closes it</strong>
+        person. <strong>Scene 7 is not closed, and no locking discipline closes it</strong>
         — which is why the falsifier does the most work under a fan-out.</p>
       </div>
       <div>
@@ -888,7 +871,7 @@ B: D04 "Do we keep the old tuned weights around?"</pre>
       <span class="mut"># the whole thing, about a minute</span><br>
       $ ./demo-agentic/demo.sh<br><br>
       <span class="mut"># or one scene, cold</span><br>
-      $ ./demo-agentic/demo.sh 4<br><br>
+      $ ./demo-agentic/demo.sh 7<br><br>
       <span class="mut"># a scene run alone replays the beats before it, quietly, so it</span><br>
       <span class="mut"># opens on the state the story really left. Everything happens</span><br>
       <span class="mut"># under /tmp/dg-demo-agentic; nothing in there can be a mistake.</span>
@@ -921,8 +904,8 @@ B: D04 "Do we keep the old tuned weights around?"</pre>
 
   // Steps are ordered by their data-step value, not by document order: on the
   // wide slides a mid-column card and a lane card share a number so they
-  // appear together, and scene 4's `dg check` sits below both lanes while
-  // belonging to C's turn.
+  // appear together, and scene 5's tray listings sit below all three lanes
+  // while belonging to one agent's turn.
   var steps = slides.map(function (s) {
     var els = Array.prototype.slice.call(s.querySelectorAll("[data-step]"));
     var max = els.reduce(function (m, e) {

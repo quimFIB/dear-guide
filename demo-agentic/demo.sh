@@ -22,34 +22,35 @@ command -v dg >/dev/null || {
 
 want=${1:-all}
 case $want in
-  all) scenes=(1 2 3 4 5 6) ;;
-  [1-6]) scenes=("$want") ;;
-  *) echo "usage: $(basename "$0") [1|2|3|4|5|6]" >&2; exit 2 ;;
+  all) scenes=(1 2 3 4 5 6 7) ;;
+  [1-7]) scenes=("$want") ;;
+  *) echo "usage: $(basename "$0") [1|2|3|4|5|6|7]" >&2; exit 2 ;;
 esac
 
 if [ "$want" = all ]; then
   cat <<'TXT'
 
-  One hard question, three agents, one development graph.
+  Three software agents, one development graph, and a day's work.
 
-  An imaginary open-source Go engine, three decisions deep. A sponsor donates
-  cluster time -- the exact event the oldest decision's falsifier named -- so
-  where the evaluation weights come from is back in play, and it touches Core,
-  Tooling and Release at once. Too much for one pass, so the maintainer fans
-  out three agents onto it.
+  An imaginary open-source Go engine. The graph holds three decisions and the
+  work outstanding against them, and that work is what drives every scene: the
+  task graph says what is ready, an agent picks it up, doing it produces
+  evidence, and evidence is what settles a question. Nobody here invents an
+  answer.
 
-  What follows is one day, in order, and each scene is a concurrency problem
-  that day runs into:
+  The concurrency problems arrive the way they actually do -- out of three
+  agents doing real work and then having to join it up:
 
-    1  one hard question, three areas            the graph is the plan
-    2  three agents, one staging tray            who staged what, and who may apply it
-    3  three answers at once                     composition parallelises; publication is ordered
-    4  the quiet one: a stale premise            <- the one a lock cannot reach
-    5  two agents, one id                        twice, and they need opposite answers
-    6  bringing the parallel work back           what git cannot merge, and the seam
+    1  nobody writes the plan                the queue is the assignment
+    2  the work opens up                     decomposition makes the parallelism
+    3  no status is updated                  and the work still joins up
+    4  an answer is a piece of work          and answering frees other work
+    5  three agents, one staging tray        whose op is whose
+    6  one fact arrives                      and every answer is under review
+    7  the two nothing prevents              a quiet agent, and a stale answer
 
-  Scenes 2, 3, 5 and 6 end with the tool doing something about it. Scene 4 is
-  the one that does not, and it is the reason the other five are worth having.
+  Scenes 1 to 4 are the loop working. 5 and 6 are what a fan-out costs and what
+  the tool does about it. 7 is what it does not, which is why the rest matter.
 
   The agents are shell scripts. There is no model here and nothing in it is a
   claim about how one behaves -- what it shows is what `dg` does when several
