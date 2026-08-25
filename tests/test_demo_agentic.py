@@ -198,3 +198,61 @@ def test_demo_json_is_hand_editable():
         json.loads(raw)
         assert "\t" not in raw
         assert raw.endswith("\n")
+
+
+# ---- the deck ------------------------------------------------------------
+#
+# `slides.html` is the demo's other surface and nothing checked it, which is how
+# it came to be a five-scene deck describing a six-scene demo. `B-F1` is the
+# precedent and the warning: three controls were *drawn*, bound to nothing, and
+# every test passed. These are structural rather than visual — they cannot say
+# the deck looks right — but each one pins a way it can silently stop working.
+
+import re
+
+SLIDES = (DEMO / "slides.html").read_text(encoding="utf-8")
+_CSS, _BODY = SLIDES.split("</style>", 1)
+
+
+def test_the_deck_covers_every_scene_the_demo_has():
+    """The failure this file was written after: the deck kept describing five
+    scenes while the demo had six, and nothing said so."""
+    titles = re.findall(r'<section class="slide" data-title="([^"]+)"', _BODY)
+    scenes = sorted(int(t.split()[1]) for t in titles if t.startswith("Scene "))
+    on_disk = sorted(int(p.stem) for p in (DEMO / "scenes").glob("[0-9].sh"))
+    assert scenes == on_disk, f"deck has {scenes}, demo has {on_disk}"
+
+
+def test_the_slide_counter_matches_the_slides():
+    """Hand-written, and read by nobody until it is wrong."""
+    said = re.search(r'id="count">\s*1\s*/\s*(\d+)\s*<', _BODY).group(1)
+    assert int(said) == len(re.findall(r'<section class="slide"', _BODY))
+
+
+def test_every_class_the_deck_uses_has_a_rule():
+    """A class name with no rule renders as unstyled text, which on a terminal
+    card means a refusal that is no longer red. Caught one — `warn`, which the
+    stylesheet spells `dr`."""
+    used = {c for g in re.findall(r'class="([^"]+)"', _BODY) for c in g.split()}
+    missing = sorted(c for c in used if f".{c}" not in _CSS
+                     and not c.startswith("is-"))
+    assert not missing, f"no CSS rule for: {missing}"
+
+
+def test_no_slide_skips_a_step():
+    """The stepper reveals `data-step` 1..max and stops when `on >= max`, so a
+    gap is a keypress that does nothing and a reader who thinks the deck hung."""
+    for m in re.finditer(r'<section class="slide" data-title="([^"]+)"(.*?)</section>',
+                         _BODY, re.S):
+        steps = {int(n) for n in re.findall(r'data-step="(\d+)"', m.group(2))}
+        if steps:
+            assert steps == set(range(1, max(steps) + 1)), \
+                f"{m.group(1)} has steps {sorted(steps)}"
+
+
+def test_the_third_agent_lane_is_only_used_where_it_exists():
+    """`.step--c` occupies the middle column, which is the spine in a two-lane
+    slide. Used without `.lanes--3` it silently lands on top of the divider."""
+    for m in re.finditer(r'<div class="lanes([^"]*)">(.*?)\n    </div>', _BODY, re.S):
+        if "step--c" in m.group(2) or "lanehead--c" in m.group(2):
+            assert "lanes--3" in m.group(1), "agent C's lane outside .lanes--3"

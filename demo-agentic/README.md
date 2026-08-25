@@ -49,9 +49,9 @@ Everything happens under `/tmp/dg-demo-agentic` (`$DG_DEMO_DIR` to move it), and
 the work directory has to prove it is the demo's before anything in it is
 removed. Nothing you do here can be a mistake.
 
-**Or watch it first.** [`slides.html`](slides.html) walks the scenes as a deck —
-one lane per agent, stepping through the interleaving with the real output at
-each turn. Open it in a browser; no server, no build.
+**Or watch it first.** [`slides.html`](slides.html) walks the same six scenes as
+a deck — a lane per agent, stepping through the interleaving with the real
+output at each turn. Open it in a browser; no server, no build.
 
 ```sh
 xdg-open demo-agentic/slides.html
@@ -329,4 +329,4 @@ most work under a fan-out.
 | `scenes/lib.sh` | the work directory, and who-ran-what narration |
 | `scenes/union.py` | scene 6a's hand-resolution, so it can run unattended |
 | `gitignore.txt` | what `dg` would add itself, committed up front so no scene's diff is about it |
-| `slides.html` | a deck of the earlier five-scene cut — **not yet updated to this story** |
+| `slides.html` | the same six scenes as a deck, for reading before running |
