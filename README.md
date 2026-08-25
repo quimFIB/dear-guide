@@ -179,6 +179,7 @@ dg confirm D12 --against T14 --note "…"  # ...or a late result read against it
 dg repair                                # a store a merge broke: stage the missing propagation
 dg pending                               # review; `--full` for the table
 dg apply                                 # validate, then write both files
+dg apply --mine                          # ...only what this writer staged
 dg check                                 # every invariant
 dg serve                                 # web app on 127.0.0.1:8765
 dg edit <id>                             # revise a staged op
@@ -623,12 +624,24 @@ that the skill's command table only names commands that exist.
   hold: the locks work across processes, the atomic writes hold, a collision is
   always a refusal and never a corrupt store, and an op refused because somebody
   else applied it says so rather than reading as "your work failed". What does
-  **not** hold is isolation — there is one staging tray per project with no
-  notion of whose ops are whose, so two agents apply each other's
-  half-composed batches and the graph that results can be wrong in a way no
-  mechanism is positioned to notice. One person in two terminals, or a browser
-  and a terminal, is fine and is what `commands/serve.md` describes: that is
-  two writers with one intent. Two agents are two intents.
+  **not** hold is isolation — the staging tray is one file per project, and
+  what two agents can still do is refuse each other's guards and reason about a
+  graph the other is halfway through changing. One person in two terminals, or
+  a browser and a terminal, is fine and is what `commands/serve.md` describes:
+  that is two writers with one intent. Two agents are two intents.
+
+  What has stopped happening is the silent half of that. **Set `$DG_AGENT` and
+  each staged op records who staged it**, `dg apply` writes yours and leaves the
+  rest, and an unowned `dg apply` refuses a tray holding somebody else's work
+  rather than sweeping their draft into the store — `--all` and `--mine` say
+  which you meant. That mattered most for a `close`: applied by mistake it is a
+  decision, and the only way back is a `reopen` that files a reversal nobody
+  made. The tray deliberately stays **one file**, so `dg brief`'s "staged and
+  about to be lost" still counts everybody's; splitting it per agent would push
+  every conflict from stage time — where the second answer is refused before it
+  is written — to apply time, where it is refused after. Unset the variable and
+  none of this exists: every op is unowned and every apply takes the tray, which
+  is what a single writer has always had.
 
   All of that is runnable rather than asserted — [`demo-agentic/`](demo-agentic/)
   is five interleavings of two agents over one graph, and each one ends where

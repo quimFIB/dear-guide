@@ -55,6 +55,18 @@ STATIC = Path(__file__).resolve().parent / "static"
 #: is the conservative direction to fail in.
 TOKEN = secrets.token_urlsafe(24)
 TOKEN_HEADER = "X-DG-Token"
+
+#: How a caller that is *not* a person names itself. Absent on every request the
+#: page makes, which is the point: the browser is a person's door and a person is
+#: the supervisor, so what it stages is unowned.
+#:
+#: Without this the identity would be inherited, and inheriting is wrong here.
+#: `dg serve --detach` is a `subprocess.Popen`, so an agent that set `$DG_AGENT`
+#: and started the server would hand its own identity to every person who later
+#: clicked in that browser — and that person's terminal `dg apply`, being
+#: unowned, would then refuse to apply what they had just staged through it.
+#: Doing nothing gets this wrong, which is why it is stated rather than assumed.
+AGENT_HEADER = "X-DG-Agent"
 TOKEN_MARK = "__DG_TOKEN__"
 
 #: Reads that require the token anyway, because the caller chooses what they
@@ -607,6 +619,16 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code: int = 200) -> None:
         self._send(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json")
 
+    def _staging_as(self):
+        """Who this request stages as: nobody, unless it says otherwise.
+
+        An agent driving this API passes `X-DG-Agent`; the page never does. See
+        `AGENT_HEADER`, and `pending.as_owner` for why the environment is not
+        consulted here.
+        """
+        return pending.as_owner((self.headers.get(AGENT_HEADER) or "").strip()
+                                or None)
+
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(n) or b"{}")
@@ -695,14 +717,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(exc)}, 500)
 
     def do_POST(self) -> None:
-        if not self._host_ok():
-            return
-        if not self._authed():
-            return
-        try:
-            self._post()
-        except Exception as exc:
-            self._json({"error": str(exc)}, 500)
+        with self._staging_as():
+            if not self._host_ok():
+                return
+            if not self._authed():
+                return
+            try:
+                self._post()
+            except Exception as exc:
+                self._json({"error": str(exc)}, 500)
 
     def _post(self) -> None:
         if self.path == "/api/pending":
@@ -1246,39 +1269,40 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"staged": staged, "pending": pending.load()})
 
     def do_DELETE(self) -> None:
-        if not self._host_ok():
-            return
-        if not self._authed():
-            return
-        try:
-            # The trailing segment is an op id or an index — `pending.resolve`
-            # takes either, and the id is what the page sends when the op has
-            # one. Resolved under the tray lock, so a drop lands on the op the
-            # page showed even if another writer has applied since. Audit F29.
-            # The whole tray, not one op. `dg clear`'s twin, and it answers
-            # with what it discarded: the tray is shared, so clearing can throw
-            # away something a terminal staged a moment ago.
-            if self.path == "/api/pending":
-                return self._json({"cleared": _clear(None)})
-            if self.path == "/api/task-pending":
-                return self._json({"cleared": _clear(task_pending.path())})
-            if self.path.startswith("/api/task-pending/"):
-                try:
-                    pending.drop(self.path.rsplit("/", 1)[1],
-                                 task_pending.path())
-                except LookupError as exc:
-                    return self._json({"error": str(exc)}, 400)
-                self._json(pending.load(task_pending.path()))
-            elif self.path.startswith("/api/pending/"):
-                try:
-                    pending.drop(self.path.rsplit("/", 1)[1])
-                except LookupError as exc:
-                    return self._json({"error": str(exc)}, 400)
-                self._json(pending.load())
-            else:
-                self._json({"error": "not found"}, 404)
-        except Exception as exc:
-            self._json({"error": str(exc)}, 500)
+        with self._staging_as():
+            if not self._host_ok():
+                return
+            if not self._authed():
+                return
+            try:
+                # The trailing segment is an op id or an index — `pending.resolve`
+                # takes either, and the id is what the page sends when the op has
+                # one. Resolved under the tray lock, so a drop lands on the op the
+                # page showed even if another writer has applied since. Audit F29.
+                # The whole tray, not one op. `dg clear`'s twin, and it answers
+                # with what it discarded: the tray is shared, so clearing can throw
+                # away something a terminal staged a moment ago.
+                if self.path == "/api/pending":
+                    return self._json({"cleared": _clear(None)})
+                if self.path == "/api/task-pending":
+                    return self._json({"cleared": _clear(task_pending.path())})
+                if self.path.startswith("/api/task-pending/"):
+                    try:
+                        pending.drop(self.path.rsplit("/", 1)[1],
+                                     task_pending.path())
+                    except LookupError as exc:
+                        return self._json({"error": str(exc)}, 400)
+                    self._json(pending.load(task_pending.path()))
+                elif self.path.startswith("/api/pending/"):
+                    try:
+                        pending.drop(self.path.rsplit("/", 1)[1])
+                    except LookupError as exc:
+                        return self._json({"error": str(exc)}, 400)
+                    self._json(pending.load())
+                else:
+                    self._json({"error": "not found"}, 404)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 500)
 
 
 # ---- running it detached -------------------------------------------------

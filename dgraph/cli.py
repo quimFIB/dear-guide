@@ -2059,23 +2059,39 @@ def _tray_listing(ops: list[dict], *, details: dict, subject: str,
     kinds = [_x(o.get("op") or "?") for o in ops]
     kw = max(len(compact.visible(k)) for k in kinds)
     iw = len(str(len(ops) - 1))
+    # `by` only where somebody is named, and never a column of its own. A tray
+    # nobody owns must read exactly as it did before ownership existed — that
+    # is the whole claim a single writer is owed — and an "Owner" column of
+    # dashes would break it for every project that will never set an identity.
     _say(compact.listing(
         [(f"{i:>{iw}}  {o.get('ref') or '—'}",
           compact.pad(k, kw) + "  " + _op_subject(o, subject),
-          _tray_detail(o, details), "")
+          _tray_detail(o, details), _by(o))
          for i, (o, k) in enumerate(zip(ops, kinds))],
         width=_width(), markup=True))
 
 
+def _by(o: dict) -> str:
+    """Who staged this op, where anybody did. Empty otherwise — see the note in
+    `_tray_listing` about a column of dashes."""
+    return f"by {_x(o['by'])}" if o.get("by") else ""
+
+
 def _tray_table(ops: list[dict], *, details: dict, subject: str,
                 heading: str, title: str, column: str) -> None:
-    """The detailed tray: every detail in full, every field its own column."""
+    """The detailed tray: every detail in full, every field its own column.
+
+    The owner column appears only when the tray has one, for the reason
+    `_tray_listing` gives.
+    """
     t = Table(header_style="bold", title=title)
-    for c in ("#", "id", "Op", column, "Detail"):
+    owned = any(o.get("by") for o in ops)
+    for c in ("#", "id", "Op", column, "Detail", *(["By"] if owned else [])):
         t.add_column(c)
     for i, o in enumerate(ops):
         t.add_row(str(i), o.get("ref") or "—", _x(o.get("op") or "?"),
-                  _op_subject(o, subject), _tray_detail(o, details))
+                  _op_subject(o, subject), _tray_detail(o, details),
+                  *([_x(o.get("by") or "—")] if owned else []))
     con.print(t)
 
 
@@ -2258,7 +2274,13 @@ def clear() -> None:
 
 
 @app.command(rich_help_panel=STAGE)
-def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
+def apply(
+    dry_run: bool = typer.Option(False, "--dry-run", "-n"),
+    all_: bool = typer.Option(False, "--all",
+                              help="apply every staged op, whoever staged it"),
+    mine: bool = typer.Option(False, "--mine",
+                              help="apply only what this writer staged"),
+) -> None:
     """Validate everything staged and write it.
 
     One verb for both stores, but two independent batches: each is validated
@@ -2289,6 +2311,16 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
         if not ops and not task_ops:
             con.print("[dim]nothing staged[/]")
             return
+        if all_ and mine:
+            con.print("[red]--all and --mine ask for opposite things[/]")
+            raise typer.Exit(2)
+        scoped = _scope(ops, task_ops, all_=all_, mine=mine)
+        if scoped is None:
+            raise typer.Exit(1)
+        ops, task_ops, left = scoped
+        if not ops and not task_ops and not (ops is None or task_ops is None):
+            con.print(f"[dim]nothing of yours staged — {left}[/]")
+            return
         # One lock span across both batches, not one per batch. They stay
         # independent — either can be refused while the other is written, which
         # is the whole point of two `_apply_*` calls — but the *pair on disk* is
@@ -2300,11 +2332,62 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
                 ok = _apply_decisions(ops, dry_run) and ok
             if task_ops:
                 ok = _apply_tasks(task_ops, dry_run) and ok
+        if left:
+            con.print(f"[dim]{left}[/]")
     if not ok or ops is None or task_ops is None:
         # Something was refused, or one tray could not even be read. Exit
         # nonzero so nothing downstream reads this as "everything staged is now
         # written" — but only after both batches have had their turn.
         raise typer.Exit(1)
+
+
+def _scope(ops, task_ops, *, all_: bool, mine: bool):
+    """Which of the staged ops this caller may apply, and what it is leaving.
+
+    `(ops, task_ops, note)`, or `None` having refused. `note` is empty when
+    nothing was left behind, which is every single-writer run.
+
+    The three configurations, and the first is not a code path:
+
+    - **nothing owned** — `mine` takes the lot, whoever is asking, because an
+      unowned caller owns the unowned ops. A project that never sets
+      `$DG_AGENT` therefore behaves exactly as it did before ownership existed,
+      and cannot reach the refusal below.
+    - **an owned caller** — applies its own and says what it left. Another
+      agent's half-composed batch is not this one's to write, which is `C-F16`:
+      a draft `close` applied by somebody else is a DECIDED answer whose only
+      exit is a `reopen`, filing a reversal that never happened.
+    - **an unowned caller, somebody else's work in the tray** — refused, and
+      this is the case that must not be silent. The supervisor is usually right
+      to apply everything, and `--all` says so in one word; but a `dg apply`
+      that quietly swept up an agent's draft is the same failure wearing the
+      supervisor's clothes.
+
+    `--mine` is offered from an unowned caller too, where it means the unowned
+    ops: a person tidying their own work out of a tray an agent is also using.
+    """
+    # `None` is a tray that could not be read, and it stays `None` all the way
+    # through: `apply` reports it separately and owns the exit code for the
+    # pair, and a tray nobody can parse must not stop the other batch. Scoping
+    # it as if it were empty would take a decision batch down with an
+    # unreadable task tray, which is `C-F22` exactly.
+    if all_ or (ops is None and task_ops is None):
+        return ops, task_ops, ""
+    keep, theirs = pending.mine(ops or [])
+    tkeep, ttheirs = pending.mine(task_ops or [])
+    if not theirs and not ttheirs:
+        return ops, task_ops, ""
+    keep = keep if ops is not None else None
+    tkeep = tkeep if task_ops is not None else None
+    who = ", ".join(sorted({str(o.get("by")) for o in (*theirs, *ttheirs)}))
+    n = len(theirs) + len(ttheirs)
+    if not mine and pending.owner() is None:
+        con.print(f"[red]✗ nothing written — {n} staged op(s) belong to "
+                  f"{_x(who)}[/]\n"
+                  f"[dim]`dg apply --all` writes theirs too, `dg apply --mine` "
+                  f"only yours; `dg pending` shows who staged what[/]")
+        return None
+    return keep, tkeep, f"{n} op(s) left staged, by {_x(who)}"
 
 
 def _staged_ops(path: pathlib.Path, discard: str) -> list[dict] | None:

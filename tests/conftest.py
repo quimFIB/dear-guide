@@ -43,9 +43,10 @@ FIXTURE = {
 
 #: What the tray adds to an op that is not part of the op: `saw` is
 #: `pending.stamp`'s drift fingerprint, `ref` is the stable id `dg drop` and
-#: `dg edit` address it by. A test comparing a staged op against the dict it
-#: wrote is otherwise comparing against the tray's own bookkeeping.
-TRAY_KEYS = ("saw", "ref")
+#: `dg edit` address it by, and `by` is who staged it. A test comparing a staged
+#: op against the dict it wrote is otherwise comparing against the tray's own
+#: bookkeeping.
+TRAY_KEYS = ("saw", "ref", "by")
 
 
 def bare(ops):

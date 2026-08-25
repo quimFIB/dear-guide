@@ -7,8 +7,11 @@ a tool that can corrupt the source of truth is worse than no tool.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
+import os
+import threading
 from collections.abc import Callable
 from dataclasses import replace as _dc_replace
 from datetime import date as _date
@@ -39,7 +42,7 @@ FIELDS = ("title", "area", "note", "format")
 #: `{"op": "set_fields", "vertex": "D01", "answer": "…"}` would otherwise stage
 #: cleanly, report success and write nothing of the sort, which is a worse
 #: failure than the refusal it is trying to get past.
-FIELD_KEYS = ("op", "vertex", "task", "ref", "saw")
+FIELD_KEYS = ("op", "vertex", "task", "ref", "saw", "by")
 
 #: How a removal reconnects what the vertex sat between.
 #:
@@ -143,6 +146,69 @@ REF_ALPHABET = "abcdefghjkmnpqrstuvwxyz"
 REF_LEN = 4
 
 
+#: Who this process stages as, when nothing says otherwise. An **env var** so a
+#: launcher can hand each agent an identity without every command growing a
+#: flag, and **unset means nobody** — which is what keeps a single-writer
+#: project on exactly the path it was always on. Same construction as
+#: `.dgraph-range.json`: absent, and nothing here fires.
+AGENT_ENV = "DG_AGENT"
+
+#: An explicit identity for this thread, overriding the environment. Thread-
+#: local because `dg serve` is a `ThreadingHTTPServer` and one request must not
+#: set the identity of another; and needed at all because a *process*-wide
+#: setting cannot express what the browser needs — see `as_owner`.
+_as = threading.local()
+_INHERIT = object()
+
+
+def owner() -> str | None:
+    """Who is staging, or `None` for nobody.
+
+    `None` is not a lesser identity, it is the supervisor: a person, at whichever
+    door. `dg apply` from an unowned caller is the one that may take a whole
+    tray, and the one that is refused when somebody else's work is in it.
+    """
+    named = getattr(_as, "name", _INHERIT)
+    if named is not _INHERIT:
+        return named
+    return (os.environ.get(AGENT_ENV) or "").strip() or None
+
+
+@contextlib.contextmanager
+def as_owner(name: str | None):
+    """Stage as `name` for the duration of a block, whatever the environment says.
+
+    Exists for one case, and it is not a convenience. `dg serve --detach` is a
+    `subprocess.Popen` and inherits its environment, so an agent that set
+    `$DG_AGENT` and launched the server would hand its own identity to every
+    person who later clicked in that browser — and that person's terminal
+    `dg apply`, being unowned, would then refuse to apply what they had just
+    staged. The browser is a person's door, so it stages as nobody unless a
+    request says otherwise. See `server.Handler`.
+    """
+    prev = getattr(_as, "name", _INHERIT)
+    _as.name = name
+    try:
+        yield
+    finally:
+        if prev is _INHERIT:
+            del _as.name
+        else:
+            _as.name = prev
+
+
+def mine(ops: list[dict], me=_INHERIT) -> tuple[list[dict], list[dict]]:
+    """`ops` split into the caller's and everybody else's.
+
+    An unowned caller owns the unowned ops, which is what makes a single-writer
+    tray whole: nothing in it carries `by`, so `theirs` is empty and every
+    caller in that project takes the lot.
+    """
+    me = owner() if me is _INHERIT else me
+    return ([o for o in ops if o.get("by") == me],
+            [o for o in ops if o.get("by") != me])
+
+
 def _new_ref(taken: set[str]) -> str:
     """An id no op in this tray is using.
 
@@ -165,10 +231,24 @@ def _with_refs(ops: list[dict], current: list[dict]) -> list[dict]:
     reference to what it staged is not surprised by a key appearing in it.
     """
     taken = {o["ref"] for o in current if o.get("ref")}
+    who = owner()
     out = []
     for op in ops:
         if not op.get("ref") or op["ref"] in taken:
             op = {**op, "ref": _new_ref(taken)}
+        # `by` joins `ref` and `saw`: tray bookkeeping, and of `saw`'s family
+        # rather than a derived field — a record of who staged this, which
+        # nothing can later make untrue. Set **once**, here, and never
+        # rewritten: `discard` takes applied ops out of the tray *by value*, so
+        # a stamp that moved between staging and applying would make that match
+        # nothing and leave an applied op staged. An op that already carries one
+        # keeps it, which is what makes `dg edit` and `replace_group` safe.
+        #
+        # Absent, not null, where nobody is named. Every existing project's tray
+        # then stays byte-identical, and the whole ownership path is unreachable
+        # in a project that never sets an identity.
+        if who is not None and not op.get("by"):
+            op = {**op, "by": who}
         taken.add(op["ref"])
         out.append(op)
     return out

@@ -63,6 +63,29 @@ Vertices and edges, nothing else.
 8. **Update the graph in the same commit** as the work that changed it, and
    commit `decisions.json` and `decision-graph.md` together.
 
+## Sharing a clone with another writer
+
+Only where something has actually put two of you in one checkout. In an
+ordinary project none of this fires and there is nothing to set.
+
+The staging tray is **one file that everybody shares**, and `dg apply` writes
+what is in it. So a draft you left staged is a draft somebody else's `dg apply`
+can turn into a decision — and a decision is the one thing this graph makes
+hard to take back.
+
+**Set `$DG_AGENT` to a name that is yours** whenever you were launched
+alongside other writers. Then:
+
+- `dg apply` writes **your** ops and leaves everyone else's staged, saying how
+  many it left and whose.
+- `dg pending` shows who staged each op.
+- With no `$DG_AGENT` you are the supervisor: `dg apply` takes the whole tray,
+  and **refuses** if it holds work somebody else staged. `dg apply --all`
+  writes theirs too; `dg apply --mine` writes only yours.
+
+Unset means supervisor, so an agent that forgets to set it is one. Set it
+before you stage anything.
+
 ## Reading
 
 | Command | Gives |
