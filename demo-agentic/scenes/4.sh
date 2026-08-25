@@ -1,85 +1,76 @@
 #!/usr/bin/env bash
-# Scene 4 — the loud one, and the two collisions.
+# Scene 4 — the quiet one: a stale premise, still legal.
 #
-# Three interleavings that all end in a refusal, and the refusals are three
-# different sentences on purpose. 4a is the same race as scene 3 one notch
-# further; 4b and 4c are the same collision, and an agent that cannot tell them
-# apart puts two vertices behind one question.
+# The scene the drift stamp exists for, and the reason this demo is worth
+# having. Everything here is legal, every command succeeds, `dg check` ends
+# clean, and the graph describes a release process that cannot produce a
+# release. One line of output, printed once, is the whole warning.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/story.sh"
+one_checkout
+silently beat_reopen
+# C is the fastest of the three and finishes first — which is what makes its
+# answer the stale one. It composed against a store in which D01 was still
+# REOPENED and nothing was staged against it, so the reading it stamped is the
+# one the whole project had until A landed.
+silently beat_c_composes
+silently beat_a_composes
+silently A dg apply --mine
+silently beat_b_composes
+silently B dg apply --mine
 
-scene "Scene 4a — the dangerous case aborts"
-two_clones
-say "Scene 3 again, except B stops at reopening: the sponsor mail has arrived,
-the training run has not. A, meanwhile, is settling the question that rests on
-it — and does not know either fact."
+scene "Scene 4 — the quiet one: a stale premise, still legal"
+say "Carrying straight on from scene 3, with one detail that matters: C was the
+fastest of the three and finished first. Its answer to D03 has been sitting
+staged ever since, while D01 and D02 were settled around it.
 
-A dg decide D02 \
-  --answer "SPRT against the previous build, 20k games on the volunteer cluster. Every weight has a name and a human can explain it, so a regression is debuggable by reading the diff." \
-  --source notes/sprt.md \
-  --falsifier "a weight change stops being reviewable by reading it"
+Look at what C composed it against. When C wrote it, D01 was REOPENED and
+nobody had staged anything against it, so the only reading available was the one
+the project had had since March — hand-tuned weights, measured by T02 at 71 KB
+inside a 412 KB binary. \"The weights compile in as a generated header\" is the
+right answer to that premise. It is the *only* answer C could have reached.
 
-B dg reopen D01 --why "A sponsor donated cluster time on 2026-03-18." --yes
-B dg apply
-git_commit "$B_DIR" "reopen D01"
-push "$B_DIR"
+A has since settled D01 at 40 MB. C applies:"
 
-pull "$A_DIR"
-A dg apply
+C dg apply --mine
 
-say "Nothing written, the premise named, two exits offered. Put this beside
-scene 3 and the boundary shows: the same race, one notch different, and the
-tool goes from a one-line note to a refusal.
+say "There is the whole warning: one line, printed once, to a process that may
+not have been reading. Nothing was refused, because nothing was invalid — D02
+became DECIDED under a settled premise and D03 does too. Ask the graph whether
+it is sound:"
 
-The boundary is whether the resulting structure is legal — and that does not
-track how wrong the answer is. \"A human can explain every weight\" under a
-40 MB net is refused. \"412 KB, compiled into the binary\" under the same net
-lands clean, which is scene 3. A reader who sees why is a reader who knows
-where they have to supply the judgement themselves."
+M dg check
+M dg why D03
 
-scene "Scene 4b — two agents, one id, two questions"
-two_clones
-say "The id race every parallel-agent system has. Both agents notice a gap,
-neither can see the other's store, and both reach for the next free number."
+say "Four lines apart, in one command's output: \"the weights compile in as a
+generated header\", and \"a trained net, 40 MB\". Underneath them: *every premise
+under this is settled*.
 
-A dg add --id D04 --title "How is the opening book distributed?" \
-    --area Release --after D01
-B dg add --id D04 --title "Which time control does CI run at?" \
-    --area Tooling --after D01
+And read what \`dg check\` did say. One warning, and it is about T01 not having
+reported into D02 — a real thing, worth acting on, and **nothing whatever to do
+with the contradiction**. The graph's honesty machinery is working perfectly and
+pointed somewhere else.
 
-B dg apply
-git_commit "$B_DIR" "open D04"
-push "$B_DIR"
-say "B got there first. A pulls and applies:"
+\`dg check\` is not wrong. The structure is valid; the two answers contradict
+each other in the prose, where no invariant can reach. This graph is as clean as
+the tool can certify and it describes a release that cannot be built.
 
-pull "$A_DIR"
-A dg apply
+**This is the one concurrency problem a lock cannot touch**, and it is worth
+being exact about why. Scene 2's failure was attribution and closed with a name.
+Scene 3's was ordering and closed with an edge. This one is neither: every op
+was owned, every premise was settled before it was built on, and the batch was
+still composed against a reading of the world that stopped being true while it
+sat there. No amount of isolation helps — a clone of its own would have made it
+*more* likely, not less.
 
-scene "Scene 4c — two agents, one id, the same question"
-two_clones
-say "The commoner case, and the one that matters. Two agents sharing a brief
-notice the same missing decision — what becomes of the tuning history once the
-eval is replaced — and file it identically."
+What saves it is the falsifier C wrote before it had any reason to — \"the
+weights outgrow what a header can carry\". They now have, so the exit is a
+command rather than an argument:"
 
-A dg add --id D05 \
-    --title "What happens to the tuning history when the eval is replaced?" \
-    --area Core --after D01
-B dg add --id D05 \
-    --title "What happens to the tuning history when the eval is replaced?" \
-    --area Core --after D01
+C dg reopen D03 --why "its falsifier fired: D01 moved to a 40 MB net" --yes
+C dg apply --mine
+M dg show
 
-B dg apply
-git_commit "$B_DIR" "open D05"
-push "$B_DIR"
-
-pull "$A_DIR"
-A dg apply
-
-say "The same collision as 4b, and it must not read the same. An agent that
-takes this one as \"my work failed\" re-files under a fresh id, and the graph
-ends up with one question and two vertices — the failure nothing downstream can
-detect, because both vertices are individually valid.
-
-So the message spends four lines saying nothing of yours was lost, and names
-the one op to drop rather than the batch to abandon. This is the tool written
-for a reader who cannot ask a follow-up question, which is the only real
-difference between an agent using it and a person."
+say "The claim is narrow and true. Drift does not prevent the stale answer; it
+is the one chance anybody gets to notice, and the falsifier is what makes it
+findable six months later by somebody who was not here."

@@ -50,8 +50,9 @@ if [ -t 1 ]; then
   bold=$(tput bold 2>/dev/null || true); off=$(tput sgr0 2>/dev/null || true)
   dim=$(tput dim 2>/dev/null || true)
   hueA=$(tput setaf 4 2>/dev/null || true); hueB=$(tput setaf 5 2>/dev/null || true)
+  hueC=$(tput setaf 2 2>/dev/null || true); hueM=$(tput setaf 3 2>/dev/null || true)
 else
-  bold=""; off=""; dim=""; hueA=""; hueB=""
+  bold=""; off=""; dim=""; hueA=""; hueB=""; hueC=""; hueM=""
 fi
 
 scene() { printf '\n%s%s%s\n%s\n' "$bold" "$*" "$off" \
@@ -80,13 +81,26 @@ _typed() {
 
 _run() {
   local who=$1 colour=$2 dir=$3; shift 3
+  if [ -n "${QUIET-}" ]; then ( cd "$dir" && "$@" >/dev/null 2>&1 ) || true; return; fi
   printf '\n%s%s ▸ %s%s\n' "$colour" "$bold" "$who" "$off"
   printf '%s  $ %s%s\n' "$dim" "$(_typed "$@")" "$off"
   ( cd "$dir" && "$@" 2>&1 ) | sed 's/^/  /' || true
 }
 
-A() { _run "agent A" "$hueA" "$A_DIR" "$@"; }
-B() { _run "agent B" "$hueB" "$B_DIR" "$@"; }
+# The three agents, and the maintainer who launched them. `DG_AGENT` is what
+# makes a shared tray safe to work in: every op it stages records who staged it,
+# so nobody applies anybody else's half-written answer. The maintainer sets
+# nothing, which is what makes them the supervisor — an unowned `dg apply` takes
+# the whole tray, and is refused when it holds work an agent staged.
+A() { DG_AGENT=${A_AS-A} _run "agent A · Core"    "$hueA" "$A_DIR" "$@"; }
+B() { DG_AGENT=${B_AS-B} _run "agent B · Tooling" "$hueB" "$B_DIR" "$@"; }
+C() { DG_AGENT=${C_AS-C} _run "agent C · Release" "$hueC" "$C_DIR" "$@"; }
+M() { _run "the maintainer" "$hueM" "$M_DIR" "$@"; }
+
+# The same agents with nobody named — the configuration a harness gets by
+# forgetting, and what scene 2 exists to show the cost of.
+anonymous() { A_AS=""; B_AS=""; C_AS=""; }
+named()     { unset A_AS B_AS C_AS; }
 
 # The same, without the banner — for setup steps that are not part of the story.
 quietly() { ( cd "$1" && shift && "$@" >/dev/null 2>&1 ); }
@@ -114,7 +128,8 @@ git_commit() { # git_commit <dir> <message>
 
 build_base() {
   claim_work
-  rm -rf "$work/base" "$work/origin.git" "$work/shared" "$work/A" "$work/B"
+  rm -rf "$work/base" "$work/origin.git" "$work/shared" \
+         "$work/A" "$work/B" "$work/C"
   mkdir -p "$work/base"
   cp -f "$here/decisions.json" "$here/tasks.json" "$work/base/"
   cp -f "$here/gitignore.txt" "$work/base/.gitignore"
@@ -130,23 +145,39 @@ build_base() {
   quietly "$work" git clone -q --bare base origin.git
 }
 
-# One project, two agents in it. The unsupported configuration.
-one_project() {
+# One checkout, everybody in it. What a fan-out gets by default: the agents
+# were launched in the maintainer's working directory, because that is where the
+# problem is.
+one_checkout() {
   build_base
   quietly "$work" git clone -q origin.git shared
   identify "$work/shared" "the project" project
   A_DIR="$work/shared"; B_DIR="$work/shared"
+  C_DIR="$work/shared"; M_DIR="$work/shared"
+  named
 }
 
-# One clone each. What a harness with worktree isolation gives you.
-two_clones() {
+# A clone each. What a harness with worktree isolation gives instead, and it
+# trades one set of problems for another rather than removing them.
+own_clones() {
   build_base
-  quietly "$work" git clone -q origin.git A
-  quietly "$work" git clone -q origin.git B
-  identify "$work/A" "agent A" agent-a
-  identify "$work/B" "agent B" agent-b
-  A_DIR="$work/A"; B_DIR="$work/B"
+  for who in A B C; do
+    quietly "$work" git clone -q origin.git "$who"
+    identify "$work/$who" "agent $who" "agent-$who"
+  done
+  A_DIR="$work/A"; B_DIR="$work/B"; C_DIR="$work/C"; M_DIR="$work/A"
+  named
 }
+
+# Backwards-compatible names for the two shapes above.
+one_project() { one_checkout; }
+two_clones()  { own_clones; }
+
+# Replay an earlier beat with its output suppressed, so a scene run on its own
+# still starts from the state the story left it in. `demo.sh 4` and
+# `demo.sh all` therefore show the same scene 4, which is the whole reason the
+# beats are functions rather than prose inlined in six files.
+silently() { QUIET=1 "$@"; }
 
 push()  { quietly "$1" git push -q origin HEAD:main; }
 pull()  { quietly "$1" git pull -q --no-rebase origin main; }

@@ -1,81 +1,45 @@
 #!/usr/bin/env bash
-# Scene 3 — the quiet one: a stale premise, still legal.
+# Scene 3 — parallel composition, ordered publication.
 #
-# The scene the drift stamp exists for, and the reason this demo is worth
-# having. Everything here is legal, every command succeeds, `dg check` ends
-# clean, and the graph ends up describing a release process that cannot produce
-# a release. One line of output, printed once, is the whole warning.
+# The scene that says what the graph is *for* under a fan-out. Three agents
+# compose at once and nothing stops them; what is ordered is the moment each
+# answer becomes part of the record, and the order is the edges nobody had to
+# remember.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-two_clones
+source "$(dirname "${BASH_SOURCE[0]}")/story.sh"
+one_checkout
+silently beat_reopen
 
-scene "Scene 3 — the quiet one: a stale premise, still legal"
-say "One clone each now: the isolation a harness gives parallel agents. Separate
-trays, separate worktrees, no shared staging area. Scene 1 cannot happen here.
+scene "Scene 3 — three answers at once, and the order the graph already knew"
+say "Everybody is named now. All three agents work at the same time, and all
+three finish within a minute of each other:"
 
-This is where both agents start:"
+beat_all_three_compose
+M dg pending
 
-A dg check
+say "Three answers, three authors, one tray, and none of it written yet.
+Agent B publishes first:"
 
-say "That warning is agent A's assignment, and it came from the tool rather
-than from a prompt: T02 measured the binary, D03 is still unsettled, so somebody
-has to write down what the number meant. A does exactly that, reasoning from
-D01 as it stands — hand-tuned weights, 71 KB of them."
+B dg apply --mine
 
-A dg decide D03 \
-  --answer "One binary, no runtime files. The weights compile in as a generated header — 412 KB at -Os, so there is nothing to download and nothing to version separately." \
-  --source bench/size.md \
-  --falsifier "the weights outgrow what a header can carry, or a release ever needs a second file"
+say "Refused, and read what it says. D02 rests on D01, D01 is REOPENED, so an
+answer to D02 would be an answer standing on a premise under review. B did
+nothing wrong — B was *asked* to answer D02 — and the tool did not guess: that
+edge was recorded when the question was opened, months before any of this.
 
-say "Staged, not applied. In the other clone, B has the sponsor mail — and this
-time B does not stop at reopening. B settles it the other way:"
+Nothing was written and B's answer is still B's. So the premise goes first:"
 
-B dg reopen D01 \
-  --why "A sponsor donated cluster time on 2026-03-18. The falsifier named this exact event: the GPU budget appeared." \
-  --yes
-B dg apply
+A dg apply --mine
 
-say "B applies the reopen on its own, before it has anything to put in its
-place — so the two halves of the reversal are two records, in the order they
-were actually known. Six weeks later the training run comes back:"
+say "And now B, unchanged, with the same op it staged before the refusal:"
 
-B dg decide D01 \
-  --answer "A trained net, 40 MB. Six weeks of donated cluster time buys more strength than a year of hand-tuning, and the tuning had stalled twice." \
-  --source bench/net-vs-handtuned.md \
-  --falsifier "the net fails to beat the hand-tuned build by 30 Elo after a full training run" \
-  --opens D02,D03
-B dg apply
+B dg apply --mine
 
-git_commit "$B_DIR" "D01: a trained net"
-push "$B_DIR"
-say "B commits and pushes. A, still holding the batch it composed before any of
-that existed, pulls and applies:"
+say "That is the claim this scene makes, and it is the one worth taking away.
+**Composition parallelises; publication is ordered by the dependency.** Nobody
+had to sequence the agents, nobody had to hold a lock, and nobody had to know
+what the others were doing. Three agents ran flat out, one of them was told
+\"not yet\" in a sentence naming the premise and the two ways out, and the graph
+never held a state anybody would have to unpick.
 
-pull "$A_DIR"
-A dg apply
-
-say "There is the whole warning: one line. D01 never left DECIDED, so no
-invariant fired and the batch landed. Now ask the graph whether it is sound —"
-
-A dg check
-A dg why D03
-
-say "Four lines apart, in one command's output: \"the weights compile in as a
-generated header\", and \"a trained net, 40 MB\". Underneath them, every premise
-under this is settled. Not one warning stands — the evidence_unharvested this
-scene opened with is gone, because A did harvest it.
-
-\`dg check\` is not wrong. The structure is valid; the two answers contradict
-each other in the prose, where no invariant can reach. This graph is as clean as
-the tool can certify and it describes a release process that cannot produce a
-release.
-
-What saves it is the falsifier A wrote before it had any reason to — \"the
-weights outgrow what a header can carry\". They now have, so the exit is a
-command rather than a judgement call:"
-
-A dg reopen D03 --why "its falsifier fired: D01 moved to a 40 MB net" --yes
-A dg apply
-
-say "The claim this scene makes is narrow and true. Drift does not prevent the
-stale answer; it is the one chance anybody gets to notice — printed once, at
-apply time, to a process that may not have been reading."
+What it does *not* do is make C's answer right, and C is about to apply it."

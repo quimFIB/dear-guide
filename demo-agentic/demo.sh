@@ -4,8 +4,10 @@
 #   ./demo-agentic/demo.sh        every scene, in order
 #   ./demo-agentic/demo.sh 3      one scene, on its own
 #
-# Every scene rebuilds the project from scratch, so none of them inherits the
-# last one's graph and any one can be read cold. Nothing outside the work
+# The six scenes are one continuous day, and each one is also readable cold:
+# a scene replays the beats before it with their output suppressed (see
+# `scenes/story.sh`), so `demo.sh 4` opens on the state scene 3 really left
+# rather than on a fixture that resembles it. Nothing outside the work
 # directory is touched, and the work directory has to prove it is ours before
 # anything in it is removed -- see `scenes/lib.sh`.
 #
@@ -20,28 +22,37 @@ command -v dg >/dev/null || {
 
 want=${1:-all}
 case $want in
-  all) scenes=(1 2 3 4 5) ;;
-  [1-5]) scenes=("$want") ;;
-  *) echo "usage: $(basename "$0") [1|2|3|4|5]" >&2; exit 2 ;;
+  all) scenes=(1 2 3 4 5 6) ;;
+  [1-6]) scenes=("$want") ;;
+  *) echo "usage: $(basename "$0") [1|2|3|4|5|6]" >&2; exit 2 ;;
 esac
 
 if [ "$want" = all ]; then
   cat <<'TXT'
 
-  Two agents, one development graph.
+  One hard question, three agents, one development graph.
 
-  An imaginary open-source chess engine, three decisions deep. One premise --
-  where the evaluation weights come from -- with a question hanging off it in
-  each of two agents' areas. Every scene is that shape plus an interleaving.
+  An imaginary open-source Go engine, three decisions deep. A sponsor donates
+  cluster time -- the exact event the oldest decision's falsifier named -- so
+  where the evaluation weights come from is back in play, and it touches Core,
+  Tooling and Release at once. Too much for one pass, so the maintainer fans
+  out three agents onto it.
 
-    1  the tray has no idea whose ops are whose      one project, two agents
-    2  what one writer at a time actually costs      the supported path
-    3  a stale premise, still legal                  <- the one to read
-    4  the loud one, and the two collisions          a refusal, twice over
-    5  isolation moves the race, it does not remove it
+  What follows is one day, in order, and each scene is a concurrency problem
+  that day runs into:
+
+    1  one hard question, three areas            the graph is the plan
+    2  three agents, one staging tray            who staged what, and who may apply it
+    3  three answers at once                     composition parallelises; publication is ordered
+    4  the quiet one: a stale premise            <- the one a lock cannot reach
+    5  two agents, one id                        twice, and they need opposite answers
+    6  bringing the parallel work back           what git cannot merge, and the seam
+
+  Scenes 2, 3, 5 and 6 end with the tool doing something about it. Scene 4 is
+  the one that does not, and it is the reason the other five are worth having.
 
   The agents are shell scripts. There is no model here and nothing in it is a
-  claim about how one behaves -- what it shows is what `dg` does when two
+  claim about how one behaves -- what it shows is what `dg` does when several
   writers meet, which is a property of the tool and reproducible to the line.
 
 TXT

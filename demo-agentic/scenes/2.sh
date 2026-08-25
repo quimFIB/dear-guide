@@ -1,32 +1,70 @@
 #!/usr/bin/env bash
-# Scene 2 — what one writer at a time actually costs.
+# Scene 2 — the same fan-out, twice: nobody named, then everybody.
 #
-# The short scene, and the only one where nothing goes wrong. It is here so the
-# demo is a description of a limit rather than an argument against the tool:
-# the protocol that avoids scene 1 exists, is one command, and is a discipline
-# — which is exactly why it does not survive two autonomous agents.
+# The commands are identical in both halves. The only difference is one
+# environment variable, set before the harness launched the agents.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-one_project
+source "$(dirname "${BASH_SOURCE[0]}")/story.sh"
+one_checkout
+silently beat_reopen
 
-scene "Scene 2 — what one writer at a time actually costs"
-say "Scene 1 again, played the supported way. A stages, as before:"
+scene "Scene 2 — three agents, one staging tray"
+say "The agents were launched where the problem is: the maintainer's checkout.
+So they share a directory, and a directory is one staging tray.
 
-A dg decide D02 \
-  --answer "SPRT against the previous build, 20k games on the volunteer cluster. Every weight has a name and a human can explain it, so a regression is debuggable by reading the diff." \
-  --source notes/sprt.md \
-  --falsifier "a weight change stops being reviewable by reading it"
+First, the way a harness gets it by forgetting — nobody is named:"
 
-say "B, before staging anything of its own, looks at the tray it is about to
-stage into:"
+anonymous
+beat_a_composes
+beat_b_composes
+
+say "Two answers staged, neither applied, and the tray cannot tell them apart:"
+
+C dg pending
+
+say "Agent C now finishes its own question and does the ordinary thing:"
+
+beat_c_composes
+C dg apply
+
+say "C applied three ops. One was C's. The other two were half-finished answers
+belonging to agents still working on them — and a close is the one op this tool
+deliberately makes hard to take back: the way out is \`dg reopen\`, which files a
+reversal that never happened. Ask A what it has staged:"
+
+A dg pending
+
+say "Nothing. Not \"your work landed\", not \"the ground moved\" — nothing, which
+reads as \"my staging failed\" and invites A to write the answer again.
+
+That is the failure, and it is worth naming precisely: not a broken store,
+which it is not, but an answer published at a moment nobody chose, by a process
+that did not know it was publishing it.
+
+Now the same morning, with \$DG_AGENT set before the agents were launched. Same
+three commands, same order:"
+
+named
+one_checkout
+silently beat_reopen
+beat_a_composes
+beat_b_composes
+beat_c_composes
+C dg pending
+
+say "Same tray, same three answers in a moment — and now each one says whose it
+is. Agent A publishes:"
+
+A dg apply
+
+say "One op written, A's own, and A is told exactly what it left and whose. B
+and C come back to a tray that still holds their work:"
 
 B dg pending
 
-say "— and stops, because that op is not B's. That is the whole protocol.
-\`dg pending\` costs nothing, needs no flag, and turns scene 1 into a
-non-event.
+say "One variable, set by whoever launches the agents, and a shared tray stops
+being a place where one agent can publish another's draft.
 
-It is also a habit, and the README is already clear about what happens to
-habits: \"Nothing a host can observe reveals that something was settled.\"
-Nothing observable reveals that an agent skipped this look, either. Two people
-in two terminals keep it because they are one intent with two hands. Two agents
-are two intents, and the honest answer stays: one writer at a time."
+Nothing here is *isolated*: the three still share one graph, one store and one
+tray, and they can still see each other's work. That is the point rather than
+the problem, and it is what the next scene is about."

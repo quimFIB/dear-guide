@@ -1,60 +1,45 @@
 #!/usr/bin/env bash
-# Scene 1 — the tray has no idea whose ops are whose.
+# Scene 1 — the fan-out, and the graph that makes it a plan.
 #
-# One project, two agents. A stages and means to review before applying; B,
-# working on something else entirely, applies. Nothing here is a bug: every
-# command does exactly what it says, the store stays valid, and A's model of
-# it goes wrong anyway.
+# Nothing concurrent happens here. It is the scene that earns the other five:
+# the problem is named, the falsifier that reopens it is the one written months
+# earlier, and `dg show` turns "this is too big for one pass" into three
+# questions with an order between them.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-one_project
+source "$(dirname "${BASH_SOURCE[0]}")/story.sh"
+one_checkout
 
-scene "Scene 1 — the tray has no idea whose ops are whose"
-say "One project, two agents in it. Agent A is settling how a weight change
-gets accepted; agent B is watching for anything that moves the premise
-underneath. They share a directory, so they share a staging tray."
+scene "Scene 1 — one hard question, three areas, three agents"
+say "An open-source Go engine, three decisions deep. The maintainer starts
+where anybody picking a project back up starts — by asking the graph what it is
+worried about:"
 
-A dg decide D02 \
-  --answer "SPRT against the previous build, 20k games on the volunteer cluster. Every weight has a name and a human can explain it, so a regression is debuggable by reading the diff." \
-  --source notes/sprt.md \
-  --falsifier "a weight change stops being reviewable by reading it"
+M dg check
 
-say "A has staged it, not applied it. Meanwhile the sponsor mail arrives, and
-agent B does the obvious right thing:"
+say "A sponsor has just donated cluster time. That is not a new fact to weigh
+up; it is the fact D01 was *waiting* for. Its falsifier, written on 2026-03-01
+before anybody had reason to think it would fire, says: \"a GPU budget appears,
+or hand-tuning stalls for two releases running\".
 
-B dg reopen D01 \
-  --why "A sponsor donated cluster time on 2026-03-18. The falsifier named this exact event: the GPU budget appeared." \
-  --yes
+So the honest first move is not to argue. It is to reopen:"
 
-say "Read that box again. D02 is OPEN in the store — it is decided only in the
-tray, by A, and unapplied. B's command has just described a consequence of work
-that is not B's, does not exist yet, and that B has never seen. B has no way to
-tell: \`dg reopen\` correctly reasons over the effective graph, and the
-effective graph is shared."
+beat_reopen
 
-B dg pending
+say "And now the graph is the plan:"
 
-say "Three ops, two authors, and nothing in the tray records which is which.
-B applies what B believes is B's batch:"
+M dg show
 
-B dg apply
+say "Three questions, and an order between them: D01 is decidable now, D02 and
+D03 wait on it. That order is not a rule somebody wrote down — it is the edges,
+recorded when each question was opened.
 
-say "The graph that results is correct. D02 is PROVISIONAL, the propagation is
-right, \`dg check\` is clean, nothing is corrupt. What went wrong is that A's
-answer was published at a moment A did not choose, by a process that did not
-know it was publishing it."
+This is more than one pass can hold, and each question belongs to a different
+area, so the maintainer fans out three agents:
 
-A dg pending
+  agent A · Core      D01 — where the weights come from, now that there is a cluster
+  agent B · Tooling   D02 — how a weight change is accepted
+  agent C · Release   D03 — what ships in the release binary
 
-say "That is the failure: no signal at all. Not that the work landed, not that
-the ground moved under it. The obvious reading of \"nothing staged\" is 'my
-staging failed', and the obvious repair is to do it again —"
-
-A dg decide D02 \
-  --answer "SPRT against the previous build, 20k games on the volunteer cluster. Every weight has a name and a human can explain it, so a regression is debuggable by reading the diff." \
-  --source notes/sprt.md \
-  --falsifier "a weight change stops being reviewable by reading it"
-
-say "— and here the tool catches it. The refusal is accurate and names both
-exits. So the honest reading of this scene is not that the store breaks, because
-it does not. It is that the store stays right while an agent's model of it goes
-wrong, and the agent finds out only by trying to write. One writer at a time."
+Two of the three are working on a premise nobody has settled yet. That is what
+parallel exploration *is*, and the point of the next five scenes is that the
+graph already knows it."

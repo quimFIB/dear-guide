@@ -1,7 +1,8 @@
 """The agentic demo must keep showing what it says it shows.
 
-`demo-agentic/` is five claims about what happens when two writers meet, and
-every one of them is a quotation from `dg`. That makes it fragile in a way
+`demo-agentic/` is one day on a project, told in six scenes, and each scene is a
+claim about what happens when several writers meet. Every one of them is a
+quotation from `dg`. That makes it fragile in a way
 `demo/` is not: `demo/`'s prose describes a *store*, which changes when someone
 edits a JSON file, while this demo's prose describes *messages*, which change
 when someone rewords an exception. The reword is the likely event and it leaves
@@ -86,93 +87,88 @@ def test_d01_carries_the_falsifier_the_whole_demo_turns_on(tmp_path):
     assert "GPU budget" in edge.falsifier      # the event B's reopen cites
 
 
-def test_scene1_shows_one_tray_with_two_authors(tmp_path):
-    """B's reopen reasons over A's unapplied op, B's apply publishes it, and A
-    is told nothing until it tries to write."""
+def test_scene1_turns_a_fired_falsifier_into_a_plan(tmp_path):
+    """The opening move is the graph's, not the maintainer's: the falsifier
+    written in March names the sponsor's cluster, and `dg show` is what turns
+    "this is too big" into three questions with an order between them."""
     out = run(1, tmp_path)
-    # B's reopen describes A's staged work as an existing consequence.
-    assert "1 decided descendant(s) rest on it and become PROVISIONAL" in out
-    # Three ops, two authors, one tray.
-    assert "STAGED  3 op(s)" in out
-    assert "applied 3 op(s)" in out
-    # A's only signal, and the refusal that finally corrects it.
-    assert "nothing staged" in out
-    assert "already has an answer, and is PROVISIONAL" in out
+    assert "reopen D01" in out
+    assert "D01  REOPENED" in out
+    # The order the fan-out has to respect, and nobody wrote it down as a rule.
+    assert "decidable now" in out
+    assert "waits D01" in out
 
 
-def test_scene2_shows_the_protocol_that_avoids_it(tmp_path):
-    """One op in the tray, and it is not B's. The whole supported path."""
-    out = run(2, tmp_path)
-    assert "STAGED  1 op(s)" in out
-    assert "applied" not in out, "scene 2 must not write anything"
+def test_scene2_names_the_agents_and_stops_publishing_their_drafts(tmp_path):
+    """Both halves, and the second is only meaningful beside the first.
 
-
-def test_scene3_reports_the_drift_and_then_certifies_the_contradiction(tmp_path):
-    """The demo's central claim, in three parts.
-
-    The drift line is printed; the batch lands anyway; and `dg check` then calls
-    the result sound. If a future invariant *did* catch this, the third
-    assertion fails — which is the right failure, because the README would then
-    be wrong and somebody has to rewrite the scene rather than quietly keep it.
+    Unnamed, one agent's apply takes three ops and the others are told `nothing
+    staged`. Named, the same commands leave every other agent's work its own.
     """
+    out = run(2, tmp_path)
+    assert "applied 3 op(s)" in out, "the unnamed half no longer loses the drafts"
+    assert "nothing staged" in out, "agent A's only signal, and it is the defect"
+    # ...and the same morning, with identities.
+    # The column, not the exact spacing: `compact.listing` pads the aside to
+    # the widest row, so pinning the run of spaces would fail on a reworded
+    # answer rather than on a lost stamp.
+    assert "by A" in out and "by B" in out
+    assert "applied 1 op(s)" in out
+    assert "op(s) left staged, by" in out
+
+
+def test_scene3_orders_publication_by_the_edge(tmp_path):
+    """Three agents compose at once and one is told to wait, by a refusal that
+    names the premise and both exits. Then the same op applies unchanged."""
     out = run(3, tmp_path)
+    assert "STAGED  3 op(s)" in out
+    assert "[propagation] D02 is DECIDED but rests on D01 (REOPENED)" in out
+    assert "aborted, nothing written" in out
+    # The premise lands, and B's refused op then applies with nothing changed.
+    assert out.count("applied 1 op(s)") >= 2
 
-    # It opens by handing agent A its assignment.
-    assert "[evidence_unharvested]" in out
 
-    # The one warning anyone gets, and it does not stop the write.
-    assert "D01 moved since this batch was staged (its answer changed)" in out
-    assert "op 0 (close D03) " in out.replace("\n", " ")
-
-    # ...and the graph that results is certified clean, with the opening
-    # warning gone: A harvested it.
-    assert "3 vertices, 3 edges; 2 tasks, all invariants hold" in out
-    clean = out.index("3 vertices, 3 edges; 2 tasks, all invariants hold")
-    assert "warning(s)" not in out[clean:clean + 80]
-
-    # Both contradicting answers, in one `dg why`, with the verdict under them.
+def test_scene4_reports_the_drift_and_then_certifies_the_contradiction(tmp_path):
+    """The one no lock reaches. The drift line is the whole warning; `dg check`
+    then calls the result clean, because it is."""
+    out = run(4, tmp_path)
+    assert "D01 moved since this batch was staged (REOPENED → DECIDED)" in out
+    assert "all invariants hold" in out
+    # Both readings, in one command's output, four lines apart.
     assert "compile in as a generated header" in out
     assert "A trained net, 40 MB" in out
     assert "every premise under this is settled" in out
 
 
-def test_scene3_ends_by_using_the_falsifier(tmp_path):
-    """The exit is a command, and it is only available because the falsifier
-    was written before there was any reason to write it."""
-    out = run(3, tmp_path)
-    assert "reopen D03" in out
-    assert "its falsifier fired" in out
-
-
-def test_scene4_says_three_different_things(tmp_path):
-    """A refusal, and two collisions that must not read alike.
-
-    The distinction between 4b and 4c is the whole argument in
-    `pending.already()`: an agent that reads "identical to the op staged" as
-    "my work failed" puts two vertices behind one question.
-    """
+def test_scene4_ends_by_using_the_falsifier(tmp_path):
+    """The exit is a command rather than a judgement call, and that is only true
+    because the falsifier was written before there was any reason to."""
     out = run(4, tmp_path)
-
-    # 4a — the structural case, refused, naming the premise and both exits.
-    assert "aborted, nothing written" in out
-    assert "[propagation] D02 is DECIDED but rests on D01 (REOPENED)" in out
-
-    # 4b — a genuine clash of ids.
-    assert "already exists, and is not what this op would have created" in out
-
-    # 4c — the same id, the same intent, somebody else's write.
-    assert "identical to the op staged" in out
-    assert "Nothing of yours was lost" in out
+    assert "its falsifier fired" in out
+    assert "D03  REOPENED" in out
 
 
-def test_scene5_conflicts_in_git_and_is_resolved_by_check(tmp_path):
-    """Isolation moves the race into git, and `dg check` is the merge test."""
+def test_scene5_refuses_both_collisions_the_same_way(tmp_path):
+    """Two agents, one id, twice — and the refusal is identical while the right
+    answer is opposite. That is the scene's whole claim, and it is a claim about
+    what the tool deliberately does *not* decide."""
     out = run(5, tmp_path)
+    assert out.count("D04 already exists, and is not what this op would have "
+                     "created") == 2
+    assert "50-99" in out, "the grant that makes the collision rare"
+
+
+def test_scene6_cannot_be_merged_by_git_and_is_refused_at_composition(tmp_path):
+    """6a is what a text merge does with two additions; 6b is what it must never
+    be allowed to do with two answers."""
+    out = run(6, tmp_path)
     assert "CONFLICT (content): Merge conflict in decisions.json" in out
-    # The generated view conflicts too, and is never resolved by hand.
-    assert "CONFLICT (content): Merge conflict in decision-graph.md" in out
-    # Both agents' questions survive the union, and the result validates.
-    assert "5 vertices" in out and "all invariants hold" in out
+    assert "all invariants hold" in out, "6a resolves to a store dg will vouch for"
+    # 6b: refused before anything is staged, let alone merged.
+    assert "D50 already has an answer, and is DECIDED" in out
+    # ...and the day it closes on is the day the first five scenes built.
+    assert "A trained net, 40 MB" in out
+    assert "D03  REOPENED" in out
 
 
 def test_the_demo_refuses_a_work_directory_it_did_not_make(tmp_path):

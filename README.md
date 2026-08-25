@@ -644,8 +644,11 @@ that the skill's command table only names commands that exist.
   is what a single writer has always had.
 
   All of that is runnable rather than asserted — [`demo-agentic/`](demo-agentic/)
-  is five interleavings of two agents over one graph, and each one ends where
-  this paragraph says it does: `./demo-agentic/demo.sh`.
+  is one day on a project with three agents on it, six scenes in the order the
+  day ran into them, and each one ends where this paragraph says it does:
+  `./demo-agentic/demo.sh`. Four of the six close with the tool doing something;
+  the fifth is the stale premise, which no locking discipline reaches and which
+  the falsifier is there for.
 
   One class of collision is now off the table, though, and it is worth naming
   because it was the worst-behaved: two clones of one graph both computed the
