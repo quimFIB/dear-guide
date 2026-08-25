@@ -3820,7 +3820,13 @@ def integrate(
         # denies every commit in the repository with a hand-edit as the only
         # exit. `guard_pair` rather than the two one-sided guards, because
         # each half has to be judged against what the other half will hold.
-        guard=cross.guard_pair())
+        guard=cross.guard_pair(),
+        # The allocator for class M's renames, passed in for the reason the
+        # guard is: this clone's id range is `ranges`' business and this
+        # module must not learn where a free id comes from. A renamed record
+        # lands **in the receiving clone's range**, or the rename
+        # reintroduces the collision it just resolved.
+        next_free=_free_id)
     _integration_report(rep, ref, base_ref)
 
     if rep.derived == 0:
@@ -3852,6 +3858,17 @@ def _pair(ref: str, base_ref: str, name: str, builder):
     return theirs, base
 
 
+def _free_id(prefix: str, taken) -> str:
+    """An id nothing here holds, inside this clone's grant if it has one.
+
+    `taken` carries the ids earlier renames in the same contribution have just
+    claimed, so two arriving records that both collide do not both land on the
+    same replacement.
+    """
+    numbers = [int(i[1:]) for i in taken if i[1:].isdigit()]
+    return f"{prefix}{ranges.next_number(prefix, numbers):02d}"
+
+
 def _integration_report(rep, ref: str, base_ref: str) -> None:
     """One report, once, after everything has been collected.
 
@@ -3865,6 +3882,13 @@ def _integration_report(rep, ref: str, base_ref: str) -> None:
               f"[dim]against {_x(base_ref[:12])}[/] — "
               f"{rep.clean} clean, {len(rep.contested)} contested, "
               f"{len(rep.blocking)} blocking")
+    if rep.renamed:
+        con.print("\n[cyan]renamed[/] [dim]— the id was taken here, so the "
+                  "arriving record got a free one. Mechanical, and never a "
+                  "question: it is done inside the contribution, where an "
+                  "edge still knows which vertex it meant.[/]")
+        for line in rep.renamed:
+            con.print(f"  {line}")
     if rep.contested:
         con.print("\n[yellow]contested[/] [dim]— it applies, but this graph "
                   "says otherwise. Only a person can say which is right.[/]")
@@ -3892,6 +3916,22 @@ def _integration_report(rep, ref: str, base_ref: str) -> None:
                   "the store may not hold[/]")
         for line in rep.blocking:
             con.print(f"  {_x(line)}")
+    if rep.warnings:
+        # Advisory *and* arrival-order-sensitive, said as one sentence,
+        # because the second half is what stops somebody automating on them:
+        # several of these fire in one integration order and not the other,
+        # and a signal that depends on who integrated first is not a signal to
+        # act on.
+        con.print("\n[dim]warnings this contribution introduces — advisory, "
+                  "and several of them depend on which side integrated "
+                  "first. Nothing should key off them.[/]")
+        for line in rep.warnings:
+            con.print(f"  [dim]{_x(line)}[/]")
+    if rep.touched:
+        # What was integrated, not only what was found wrong. A clean
+        # `dg check` afterwards is not evidence that the work arrived.
+        con.print(f"\n[dim]touched {len(rep.touched)} record(s): "
+                  f"{_x(', '.join(rep.touched))}[/]")
     if rep.ok and rep.derived:
         con.print("[green]nothing contested[/] [dim]— every op applies and "
                   "the result is valid[/]")
@@ -3904,6 +3944,15 @@ def incoming(
                                   "arriving answer"),
     keep: str = typer.Option(None, "--keep", metavar="REF",
                              help="...or in favour of this store's"),
+    split: str = typer.Option(None, "--split", metavar="REF",
+                              help="...or neither: the two answers are to "
+                                   "different questions worded as one"),
+    as_id: str = typer.Option(None, "--as", metavar="ID",
+                              help="the id for the question --split opens"),
+    title: str = typer.Option(None, "--title",
+                              help="its wording (default: this one's)"),
+    area: str = typer.Option(None, "--area",
+                             help="its area (default: this one's)"),
     adopt: bool = typer.Option(False, "--adopt",
                                help="move it into the trays, to review and "
                                     "apply like your own work"),
@@ -3933,6 +3982,34 @@ def incoming(
         con.print("[red]--adopt and --discard ask for opposite things[/]")
         raise typer.Exit(2)
 
+    if split:
+        if not as_id:
+            con.print("[red]--split needs an id for the question it opens: "
+                      "--as D51[/]\n[dim]`dg range` says which are yours[/]")
+            raise typer.Exit(2)
+        g = _g()
+        was = next((f for f in raw.get("contested", [])
+                    if f.get("ref") == split), None)
+        vid = ((was or {}).get("op") or {}).get("vertex")
+        here = g.vertices.get(vid) if vid else None
+        # The refusals a new vertex would meet at `apply`, met here instead:
+        # a split that turns out illegal several commands later is a seam
+        # answered against a graph that could not hold the answer.
+        bad = ranges.fault("D", as_id)
+        if as_id in g.vertices or bad:
+            con.print(f"[red]{_x(bad or f'{as_id} already exists')}[/]")
+            raise typer.Exit(1)
+        try:
+            said = integrate_mod.split_one(
+                raw, split, as_id,
+                title=title or (here.title if here else as_id),
+                area=area or (here.area if here else (g.areas or ["General"])[0]))
+        except (LookupError, ValueError) as exc:
+            con.print(f"[red]{_x(exc)}[/]")
+            raise typer.Exit(1) from None
+        integrate_mod.write_incoming(raw, proj.root)
+        con.print(f"[green]settled[/] {_x(said)}")
+
     for ref, choice in ((take, "take"), (keep, "keep")):
         if not ref:
             continue
@@ -3943,7 +4020,7 @@ def incoming(
             raise typer.Exit(1) from None
         integrate_mod.write_incoming(raw, proj.root)
         con.print(f"[green]settled[/] {_x(said)}")
-    if take or keep:
+    if take or keep or split:
         left = [f for f in raw.get("contested", []) if not f.get("resolution")]
         con.print(f"[dim]{len(left)} contested op(s) still open[/]"
                   if left else
@@ -3964,9 +4041,9 @@ def incoming(
               f"[dim]against {_x(raw.get('base', '?'))}[/]")
     open_now = [f for f in raw.get("contested", []) if not f.get("resolution")]
     for f in raw.get("contested", []):
-        mark = ("[green]take[/]" if f.get("resolution") == "take"
-                else "[green]keep[/]" if f.get("resolution") == "keep"
-                else "[yellow]open[/]")
+        mark = {"take": "[green]take[/]", "keep": "[green]keep[/]",
+                "split": "[green]split[/]"}.get(f.get("resolution"),
+                                                "[yellow]open[/]")
         con.print(f"  {mark}  [dim]{_x(f.get('ref') or '?')}[/]  "
                   f"{_x(f.get('message') or '')}")
         if f.get("refusal") and not f.get("resolution"):
@@ -3985,7 +4062,9 @@ def incoming(
 
     if not adopt:
         con.print("\n[dim]`dg incoming --take <ref>` for the arriving "
-                  "answer, `--keep <ref>` for this store's; then `--adopt`. "
+                  "answer, `--keep <ref>` for this store's, or "
+                  "`--split <ref> --as <id>` where the two answers turn out "
+                  "to be to different questions; then `--adopt`. "
                   "`--discard` refuses the whole contribution.[/]")
         return
     if open_now or held:

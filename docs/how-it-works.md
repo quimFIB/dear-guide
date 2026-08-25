@@ -355,14 +355,55 @@ the three that mattered go past unread.
 
 | | |
 |---|---|
-| two answers to one question | `--take` the arriving one, or `--keep` this store's |
-| two completions of one task | the same, and both survive either way |
-| two wordings of one record | the same; a title has no truth value, so nothing is archived |
+| two answers to one question | `--take` the arriving one, `--keep` this store's, or `--split` because they answer different questions |
+| two completions of one task | take or keep, and both survive either way |
+| two wordings of one record | take or keep; a title has no truth value, so nothing is archived |
 
-Each arrives as a question with two candidate answers rather than as a merge
-to resolve, and each is answered by ref: `dg incoming --take d1`. `--adopt`
+Each arrives as a question with candidate answers rather than as a merge to
+resolve, and each is answered by ref: `dg incoming --take d1`. `--adopt`
 refuses while any is open, and there is no `--force` — a flag that adopted
 everything would answer the three questions by not asking them.
+
+**The third door is not a convenience.** Take and keep both assume the two
+answers are to *one* question. When the question was worded loosely enough
+that two people answered different things, taking one supersedes an answer
+nothing contradicted, and keeping the other files a record saying this project
+turned down an answer it never disagreed with. `--split <ref> --as D51` moves
+the arriving answer to a question of its own, carrying its falsifier, its
+source and its targets — and gives it **no edge**, because attaching it under
+the original's premises would assert a dependency nobody wrote. It lands as a
+root, `no_orphans` says so, and `dg dep` is how a person attaches it once they
+know what it rests on.
+
+### What is never asked
+
+An arriving record whose id this store already holds for something else is not
+a question. There is one correct outcome, and a seam that asked would spend
+the attention the three semantic conflicts needed on bookkeeping — which
+matters most exactly when it matters at all, because two clones on a shared
+base pick the same id for *every* record either adds.
+
+The rename happens **inside the arriving contribution**, where the association
+between an edge and its vertex is still intact, and it follows the id into
+every place it hides: an edge's `from` and `to`, a `BLOCKED:<id>` status,
+and `because` / `evidence_for` in the *other* store's file. On a flattened
+file — one array, two `D50`s, four bare id strings — repair is guesswork. That
+is why there is no `dg renumber` and never will be.
+
+Only what the merge *introduces* is renamed. An id both sides already hold is
+established, and it is cited in commits, in these docs, in `dg why` output
+somebody pasted into a review: renaming it is not churn, it is breaking every
+sentence that names it.
+
+### What is reported and never acted on
+
+The report ends with the warnings the contribution introduces and the records
+it touched. Both are deliberate. Several of those warnings — work released by
+a drop, a park holding something up — fire in one integration order and not
+the other, so they are stated as advisory: **a signal that depends on who
+integrated first is not a signal to act on.** And the list of what was touched
+is there because a clean `dg check` after an integration is not evidence that
+the work arrived.
 
 **Taking the arriving answer is the ordinary route, not a special case.** An
 answer is never written over an answer, so taking one inserts the `reopen` the

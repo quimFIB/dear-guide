@@ -552,3 +552,158 @@ def test_the_generated_view_keeps_the_two_records_apart(store, g):
     assert "Offered and not adopted" in text and "worker-a" in text
     table = text.split("## Superseded edges")[1]
     assert "the other way" not in table
+
+
+# ---- class M: renamed, never asked about ---------------------------------
+
+
+def test_a_taken_id_is_renamed_rather_than_put_to_a_person(g):
+    """One correct outcome, so no question. A seam that asked about this would
+    spend the attention the three semantic conflicts needed on bookkeeping —
+    and under a shared base two clones pick the same id for *every* record
+    either adds, so the volume is the whole problem."""
+    theirs = replay(g, [{"op": "add_vertex", "id": "D07", "title": "theirs",
+                         "area": "Alpha", "status": "OPEN"}])
+    ours = replay(g, [{"op": "add_vertex", "id": "D07", "title": "mine",
+                       "area": "Alpha", "status": "OPEN"}])
+    rep = integrate.plan(ours, None, g, None, theirs, None,
+                         next_free=lambda p, taken: f"{p}99")
+    assert rep.renamed and "D07 → D99" in rep.renamed[0]
+    assert rep.contested == [] and rep.inapplicable == []
+    assert ours.vertices["D07"].title == "mine"      # ours is untouched
+
+
+def test_a_rename_carries_every_place_the_id_hid(g):
+    """The two that are easy to forget are the two that fail *silently*: a
+    `BLOCKED:<id>` status is a dependency written into a string, and
+    `because` / `evidence_for` are ids in the **other** store's file — which is
+    where a decision-id collision crosses over and quietly rewrites what a
+    task's premise points at."""
+    d_ops = [
+        {"op": "add_vertex", "id": "D07", "title": "t", "area": "Alpha",
+         "status": "OPEN"},
+        {"op": "add_vertex", "id": "D08", "title": "u", "area": "Alpha",
+         "status": "BLOCKED:D07"},
+        {"op": "add_edge", "from": "D07", "to": ["D08"]},
+    ]
+    t_ops = [{"op": "add_task", "id": "T90", "title": "w", "area": "Alpha",
+              "because": "D07"}]
+    ours = replay(g, [{"op": "add_vertex", "id": "D07", "title": "mine",
+                       "area": "Alpha", "status": "OPEN"}])
+    integrate.rename_collisions(d_ops, t_ops, ours, None,
+                                lambda p, taken: f"{p}99")
+    assert d_ops[0]["id"] == "D99"
+    assert d_ops[1]["status"] == "BLOCKED:D99"
+    assert d_ops[2]["from"] == "D99" and d_ops[2]["to"] == ["D08"]
+    assert t_ops[0]["because"] == "D99"
+
+
+def test_an_id_both_sides_already_hold_is_left_alone(g):
+    """Only what this merge *introduces*. An established id is cited in
+    commits, in docs, in `dg why` output somebody pasted into a review —
+    renaming it is not churn, it is breaking every sentence that names it."""
+    theirs = replay(g, [{"op": "set_fields", "vertex": "D02",
+                         "title": "reworded"}])
+    rep = integrate.plan(copy.deepcopy(g), None, g, None, theirs, None,
+                         next_free=lambda p, taken: f"{p}99")
+    assert rep.renamed == []
+    assert rep.d_ops[0]["vertex"] == "D02"
+
+
+# ---- class R: reported, and never acted on -------------------------------
+
+
+def test_the_report_says_what_was_integrated_not_only_what_was_wrong(g):
+    """A clean `dg check` after an integration is not evidence that the work
+    arrived."""
+    theirs = replay(g, [{"op": "add_vertex", "id": "D50", "title": "new",
+                         "area": "Alpha", "status": "OPEN"},
+                        {"op": "add_edge", "from": "D05", "to": ["D50"]}])
+    rep = integrate.plan(copy.deepcopy(g), None, g, None, theirs, None)
+    assert "D50" in rep.touched and "D05" in rep.touched
+
+
+def test_warnings_the_contribution_introduces_are_separated_from_refusals(g):
+    """Advisory, and several of them fire in one integration order and not the
+    other. A signal that depends on who integrated first is a note."""
+    theirs = replay(g, [{"op": "add_vertex", "id": "D50", "title": "loose",
+                         "area": "Alpha", "status": "OPEN"}])
+    rep = integrate.plan(copy.deepcopy(g), None, g, None, theirs, None)
+    assert rep.blocking == []
+    assert any("no_orphans" in w and "D50" in w for w in rep.warnings)
+
+
+def test_a_warning_the_store_already_had_is_not_blamed_on_the_contribution(g):
+    """Introduced findings only, the rule `guard_decisions` states at length:
+    a store that is already imperfect must not have every arriving
+    contribution reported as the cause."""
+    ours = replay(g, [{"op": "add_vertex", "id": "D40", "title": "lonely",
+                       "area": "Alpha", "status": "OPEN"}])
+    theirs = replay(g, [{"op": "set_fields", "vertex": "D02", "title": "x"}])
+    rep = integrate.plan(ours, None, g, None, theirs, None)
+    assert not [w for w in rep.warnings if "D40" in w]
+
+
+# ---- H1's third door -----------------------------------------------------
+
+
+def test_two_answers_can_turn_out_to_be_to_two_questions(two_writers):
+    """The door the other two cannot stand in for. Take, and an answer nothing
+    contradicted becomes history; keep, and this store files a record saying it
+    turned down an answer it never disagreed with. Neither is honest when the
+    question was worded loosely enough that two people answered different
+    things."""
+    root, run = two_writers
+    _git(root, "checkout", "-q", "worker")
+    run("decide", "D01", "-a", "HNSW for the served path", "-s", "bench/a.md",
+        "-f", "the corpus passes 10M")
+    run("apply")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "theirs")
+    _git(root, "checkout", "-q", "master")
+    run("decide", "D01", "-a", "IVF-PQ for the batch path", "-s", "bench/b.md",
+        "-f", "memory drops")
+    run("apply")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "mine")
+
+    run("integrate", "worker")
+    raw = integrate.load_incoming(root)
+    ref = next(f["ref"] for f in raw["contested"] if f["op"]["op"] == "close")
+    res = run("incoming", "--split", ref, "--as", "D51",
+              "--title", "How do we index the batch path?")
+    assert res.exit_code == 0
+    assert run("incoming", "--adopt").exit_code == 0
+    assert run("apply").exit_code == 0
+
+    out = Graph.load(root / "decisions.json")
+    assert out.active_edge("D01").answer == "IVF-PQ for the batch path"
+    assert out.active_edge("D51").answer == "HNSW for the served path"
+    assert out.active_edge("D51").falsifier == "the corpus passes 10M"
+    # Nothing superseded and nothing declined: neither answer lost.
+    assert out.history("D01") == [] and out.rejected("D01") == []
+    # And no edge was invented — attaching it under D01's premises would
+    # assert a dependency nobody wrote.
+    assert out.depends("D51") == []
+
+
+def test_splitting_needs_an_id_and_only_means_something_for_an_answer(
+        two_writers):
+    root, run = two_writers
+    run("amend", "D01", "--title", "mine")
+    run("apply")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "mine")
+    _git(root, "checkout", "-q", "worker")
+    run("amend", "D01", "--title", "theirs")
+    run("apply")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "theirs")
+    _git(root, "checkout", "-q", "master")
+
+    run("integrate", "worker")
+    raw = integrate.load_incoming(root)
+    ref = raw["contested"][0]["ref"]
+    assert run("incoming", "--split", ref).exit_code == 2        # no --as
+    res = run("incoming", "--split", ref, "--as", "D51")
+    assert res.exit_code == 1 and "not two answers" in res.output

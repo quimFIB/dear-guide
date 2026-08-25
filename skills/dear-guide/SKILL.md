@@ -280,8 +280,11 @@ non-empty the gate answers `deny` on every commit, because the file is
 gitignored: committing over it drops a second writer's work with nothing
 recording that it arrived. `dg incoming` shows what is in it and what is
 contested, each contested op with a ref. Answering one is `--take <ref>` for
-the arriving version or `--keep <ref>` for this store's, and `--adopt` moves
-the whole contribution into the trays once every one has an answer — it
+the arriving version, `--keep <ref>` for this store's, or — where two answers
+turn out to be to two different questions worded as one —
+`--split <ref> --as <id>`, which moves the arriving answer to a question of its
+own. `--adopt` moves the whole contribution into the trays once every one has
+an answer — it
 refuses while any is open, and there is no flag that answers them for you.
 
 **Do not answer them yourself.** They are the three only a person can settle:

@@ -578,6 +578,19 @@ class Report:
     findings: list[Finding] = field(default_factory=list)
     unexpressible: list[str] = field(default_factory=list)
     blocking: list[str] = field(default_factory=list)
+    #: Warnings the contribution introduces. **Reported, never acted on.**
+    #: `released_by_drop`, `parked_holding_work` and their kind fire in one
+    #: integration order and not the other, so a signal that depends on who
+    #: integrated first is not a signal to act on — it is a note.
+    warnings: list[str] = field(default_factory=list)
+    #: Class M's renames: an arriving id that was taken here, given a free one
+    #: inside the arriving contribution. Reported, never asked about.
+    renamed: list[str] = field(default_factory=list)
+    #: What the arriving side touched, whether or not anything was wrong with
+    #: it. A clean `dg check` after an integration is not evidence that the
+    #: work arrived, so the report says what *was integrated* and not only
+    #: what was found wrong.
+    touched: list[str] = field(default_factory=list)
     derived: int = 0
 
     @property
@@ -604,7 +617,7 @@ class Report:
 
 
 def plan(ours_g, ours_tg, base_g, base_tg, theirs_g, theirs_tg,
-         guard=None) -> Report:
+         guard=None, next_free=None) -> Report:
     """Everything `dg integrate` knows before it writes anything.
 
     Derives both halves, replays each onto its own store collecting rather
@@ -634,6 +647,14 @@ def plan(ours_g, ours_tg, base_g, base_tg, theirs_g, theirs_tg,
     rep = Report(unexpressible=d.unexpressible + t.unexpressible,
                  derived=len(d.ops) + len(t.ops))
 
+    # Class M first, before anything is replayed and before any ref is handed
+    # out: a renamed op is the op a person will be shown, and renaming after
+    # the refs were issued would hand somebody a ref for an id that no longer
+    # exists.
+    if next_free is not None:
+        rep.renamed = rename_collisions(d.ops, t.ops, ours_g, ours_tg,
+                                        next_free)
+
     # Every derived op gets a ref, before anything is replayed. The seam is
     # per op — adopt this one, keep mine — so a person has to be able to name
     # one, and a position cannot serve: the ops that reach the file are the
@@ -659,11 +680,24 @@ def plan(ours_g, ours_tg, base_g, base_tg, theirs_g, theirs_tg,
     # already applied to a probe, so what is left is to ask whether the graphs
     # they produce are ones the store may hold — including the two cross-store
     # rules, which is the half neither store can ask alone.
-    for graph in (probe_g, probe_tg):
+    was = set()
+    for graph in (ours_g, ours_tg):
         if graph is not None:
-            rep.blocking += [str(p) for p in graph.validate() if p.blocking]
+            was |= {str(p) for p in graph.validate()}
+    for graph in (probe_g, probe_tg):
+        if graph is None:
+            continue
+        for p in graph.validate():
+            if p.blocking:
+                rep.blocking.append(str(p))
+            elif str(p) not in was:
+                rep.warnings.append(str(p))
     if guard is not None and probe_g is not None and probe_tg is not None:
-        rep.blocking += [str(p) for p in guard(probe_g, probe_tg) if p.blocking]
+        for p in guard(probe_g, probe_tg):
+            (rep.blocking if p.blocking else rep.warnings).append(str(p))
+
+    rep.touched = sorted({s for op in [*rep.d_ops, *rep.t_ops]
+                          for s in _subjects(op)})
     return rep
 
 
@@ -823,6 +857,15 @@ def adopt_ops(raw: dict) -> tuple[list[dict], list[dict], list[str]]:
         for op in raw.get(half, []):
             f = kept.get(op.get("iref"))
             bare = {k: v for k, v in op.items() if k != "iref"}
+            if f is not None and f.get("resolution") == "split":
+                out["decisions"].extend(_split_ops(bare, f, raw))
+                notes.append(
+                    f"{f['ref']}: {f['split_id']} opens nothing and rests on "
+                    f"nothing — `dg dep {f['split_id']} --after …` once you "
+                    f"have decided what it follows from. Its title is the "
+                    f"arriving side's wording of the question; `dg amend` it "
+                    f"if that is not what was answered.")
+                continue
             if f is None or f.get("resolution") == "take":
                 if f is not None:
                     out[half].extend(_enabler(bare, raw))
@@ -844,6 +887,23 @@ def adopt_ops(raw: dict) -> tuple[list[dict], list[dict], list[str]]:
             else:
                 notes.append(f"{f['ref']}: the arriving op is dropped")
     return out["decisions"], out["tasks"], notes
+
+
+def _split_ops(op: dict, f: dict, raw: dict) -> list[dict]:
+    """The new question, and the arriving answer on it.
+
+    The title is the arriving side's wording of the original — the closest
+    thing on record to the question they were actually answering. Guessing a
+    better one is not this function's to do, and `adopt_ops` says so where a
+    person will read it.
+    """
+    vid = f["split_id"]
+    return [
+        {"op": "add_vertex", "id": vid, "title": f["split_title"],
+         "area": f["split_area"], "status": "OPEN"},
+        {**{k: v for k, v in op.items() if k != "vertex"},
+         "vertex": vid, "to": []},
+    ]
 
 
 def _enabler(op: dict, raw: dict) -> list[dict]:
@@ -879,3 +939,117 @@ def _keepsake(op: dict, raw: dict) -> dict | None:
             "falsifier": op.get("falsifier"), "date": op.get("date"),
             "format": op.get("format"),
             "from_source": raw.get("source", "another writer")}
+
+
+# ---- class M: mechanical, and never asked about ---------------------------
+#
+# An arriving record whose id this store already holds for something else is
+# **not** a question for a person. There is one correct outcome — give the
+# arriving record an id that is free here — and a seam that asked would spend
+# the attention the three semantic conflicts needed on bookkeeping.
+#
+# The rename is safe here and nowhere else, and the reason is worth stating as
+# policy: it happens inside the *arriving contribution*, where the association
+# between an edge and its vertex is still intact. On a flattened file — one
+# array, two `D50`s, four bare id strings, nothing saying which edge meant
+# which vertex — repair is guesswork. That is why there is no `dg renumber`
+# command and never will be.
+#
+# **Only what this merge introduces.** An id is renamed when the arriving side
+# *creates* it and this store already has it; an id both sides share is
+# established and is left alone. That distinction is not a nicety: there are
+# hundreds of decision-id citations outside any store in a repository of this
+# kind, so renaming an established id is not churn, it is breaking every
+# sentence that names it.
+
+
+def rename_collisions(d_ops: list[dict], t_ops: list[dict], ours_g, ours_tg,
+                      next_free) -> list[str]:
+    """Renumber arriving records whose ids are taken here. Mutates the ops.
+
+    `next_free(prefix, taken)` is the caller's allocator — this module must not
+    learn where a clone's id range comes from — and `taken` is every id already
+    spoken for, including the ones earlier renames in this same contribution
+    have just claimed.
+    """
+    mapping: dict[str, str] = {}
+    claimed = {"D": set(ours_g.vertices) if ours_g else set(),
+               "T": set(ours_tg.tasks) if ours_tg else set()}
+    notes = []
+    for ops, prefix, held in ((d_ops, "D", claimed["D"]),
+                              (t_ops, "T", claimed["T"])):
+        creates = "add_vertex" if prefix == "D" else "add_task"
+        for op in ops:
+            rid = op.get("id")
+            if op.get("op") != creates or rid not in held:
+                continue
+            fresh = next_free(prefix, held)
+            mapping[rid] = fresh
+            held.add(fresh)
+            notes.append(f"{rid} → {fresh}  [dim]{rid} is taken here[/]")
+    if mapping:
+        for ops in (d_ops, t_ops):
+            for op in ops:
+                _rewrite(op, mapping)
+    return notes
+
+
+#: Every place an id can hide in an op. Spelled out rather than found by
+#: walking values, because the two that are easy to forget are the two that
+#: fail *silently*: a `BLOCKED:<id>` status is a dependency written into a
+#: string, and `because` / `evidence_for` are ids in the **other** store's
+#: file — which is where a decision-id collision crosses over and quietly
+#: rewrites what a task's premise points at.
+_ID_KEYS = ("id", "vertex", "task", "from", "against", "because",
+            "evidence_for", "into")
+
+
+def _rewrite(op: dict, mapping: dict[str, str]) -> None:
+    for key in _ID_KEYS:
+        if op.get(key) in mapping:
+            op[key] = mapping[op[key]]
+    if isinstance(op.get("to"), list):
+        op["to"] = [mapping.get(t, t) for t in op["to"]]
+    status = op.get("status")
+    if isinstance(status, str) and status.startswith("BLOCKED:"):
+        blocker = status.split(":", 1)[1]
+        if blocker in mapping:
+            op["status"] = f"BLOCKED:{mapping[blocker]}"
+
+
+def split_one(raw: dict, ref: str, new_id: str, *, title: str,
+              area: str) -> str:
+    """Answer one contested op with *these are two questions*. Mutates `raw`.
+
+    H1's third door, and it is load-bearing rather than a convenience. The
+    other two answers both assume the two answers are to **one** question —
+    take theirs and ours becomes history, keep ours and theirs is recorded as
+    declined. Neither is honest when the question was worded loosely enough
+    that two people answered different things: taking one would supersede an
+    answer nothing contradicted, and declining the other would file a record
+    saying this project turned down an answer it never disagreed with.
+
+    So the arriving answer moves to a question of its own, carrying its
+    falsifier, its source and its targets. What it does **not** get is an
+    edge: attaching it under the original's premises would assert a dependency
+    nobody wrote, which is the one claim this model never manufactures — the
+    same reason `--splice` and `--into` are gated to a human. It lands as a
+    root, `no_orphans` says so as a warning, and `dg dep` is how a person
+    attaches it once they have decided what it rests on.
+    """
+    for f in raw.get("contested", []):
+        if f.get("ref") != ref:
+            continue
+        op = f.get("op") or {}
+        if op.get("op") != "close":
+            raise ValueError(
+                f"{ref} is not two answers to one question — splitting only "
+                f"means anything for an answer, and this is "
+                f"{op.get('op', 'something else')!r}")
+        f["resolution"] = "split"
+        f["split_id"] = new_id
+        f["split_title"] = title
+        f["split_area"] = area
+        return (f"{ref}: the arriving answer moves to {new_id}, and this "
+                f"store's stands on {op.get('vertex')}")
+    raise LookupError(f"no contested op {ref!r}")

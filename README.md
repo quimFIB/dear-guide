@@ -670,8 +670,10 @@ that the skill's command table only names commands that exist.
   with nothing saying it arrived.
 
   Each contested op is answered by ref — `dg incoming --take d1` for the
-  arriving version, `--keep d1` for this store's — and `--adopt` moves the
-  whole contribution into the trays once every one has an answer. It refuses
+  arriving version, `--keep d1` for this store's, or `--split d1 --as D51`
+  where the two answers turn out to be to two different questions worded as
+  one — and `--adopt` moves the whole contribution into the trays once every
+  one has an answer. It refuses
   while any is open and there is no `--force`: a flag that adopted everything
   would answer those three questions by not asking them. Taking an arriving
   answer inserts the `reopen` the store would demand of anybody, so this
@@ -680,6 +682,15 @@ that the skill's command table only names commands that exist.
   with no `why` and no `replaced_by`, because nothing was overturned. Without
   it the seam would be a choice between losing an answer and claiming the
   project once believed something it never did.
+
+  An arriving id this store already holds is **not** one of the three: it is
+  renamed inside the contribution, where an edge still knows which vertex it
+  meant, and reported rather than asked about. Only ids the merge introduces
+  move — an established one is cited in commits and docs this store cannot
+  reach. And the report ends with the warnings the contribution introduces
+  and the records it touched: several of those warnings depend on which side
+  integrated first, so they are advisory and nothing should key off them, and
+  a clean `dg check` afterwards is not evidence that the work arrived.
 
   What this does **not** change is isolation inside one clone: the tray is
   still shared and still has no notion of whose ops are whose. Two agents in
