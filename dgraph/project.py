@@ -451,6 +451,18 @@ def stores(proj, *, wait: float = LOCK_WAIT):
         depth[key] -= 1
 
 
+#: Which paths this thread already holds, so `held` below can nest. Per-thread
+#: for the reason `_pairs` is, and separate from it because the unit differs: a
+#: pair is keyed by project, a lock by the file it names.
+_singles = threading.local()
+
+
+def _single_depth() -> dict[str, int]:
+    if not hasattr(_singles, "depth"):
+        _singles.depth = {}
+    return _singles.depth
+
+
 @contextlib.contextmanager
 def held(path: Path, *, wait: float = LOCK_WAIT):
     """Hold `path` for a read-modify-write, so two writers cannot lose one.
@@ -463,7 +475,41 @@ def held(path: Path, *, wait: float = LOCK_WAIT):
 
     The in-process lock is taken first and always succeeds, so two threads are
     separated even when the file lock is unavailable.
+
+    **Nests**, exactly as `stores` does and for the same reason. Every act this
+    tool has to make atomic is a *route* that owns a lock its own callees also
+    take: `applying.trays` holds the tray across an apply whose `pending.discard`
+    takes it again, and `integrate.adopt` holds the quarantine file while calling
+    `pending.stage_all`, which takes the trays. Without nesting the first is a
+    deadlock against itself — the in-process lock is a plain `threading.Lock` —
+    and the file lock would be worse: the inner release would delete the outer
+    holder's lock file and admit a third writer, which is precisely what
+    `_release` checks the pid to avoid doing to somebody else. Audit W-F2.
+
+    The depth is per thread because the lock it guards is: `dg serve` is a
+    `ThreadingHTTPServer`, and two Apply clicks are two threads that must not
+    see each other's depth.
     """
+    key, depth = str(path), _single_depth()
+    if depth.get(key):
+        depth[key] += 1
+        try:
+            yield
+        finally:
+            depth[key] -= 1
+        return
+    depth[key] = 1
+    try:
+        with _one_holder(path, wait):
+            yield
+    finally:
+        depth[key] -= 1
+
+
+@contextlib.contextmanager
+def _one_holder(path: Path, wait: float):
+    """The acquisition itself, once. Split from `held` only so the nesting
+    bookkeeping above reads as bookkeeping."""
     lock = path.with_name(path.name + ".lock")
     with _thread_lock(path):
         fd = _take(lock, wait)

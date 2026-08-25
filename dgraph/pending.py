@@ -251,8 +251,13 @@ def stage_all(ops: list[dict], path: Path | None = None, *,
         # an id — one of them answers `/api/graph` on every page load, so
         # bumping there would burn an id per refresh. And here rather than in
         # each command because this is the one staging function, for both trays
-        # and every door. Outside the lock's purpose but inside its scope, so
-        # two writers in one clone cannot interleave a read and a write of it.
+        # and every door.
+        #
+        # The lock held here is **not** what protects it, and a comment here
+        # used to claim it was: the tray's lock is one of two, and the range
+        # file is one file that both trays write. `ranges.issue` takes its own.
+        # Audit W-F3.
+        #
         # The root from the tray's own directory when one was passed, not
         # from `project.find()`: a caller that named a tray outside the current
         # project would otherwise raise this clone's watermark for somebody

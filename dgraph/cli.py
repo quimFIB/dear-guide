@@ -2271,24 +2271,35 @@ def apply(dry_run: bool = typer.Option(False, "--dry-run", "-n")) -> None:
     exit code for the pair.
     """
     proj = project.find()
-    ops = _staged_ops(proj.pending, "dg clear")
-    task_ops = _staged_ops(proj.task_pending, "dg task clear")
-    if ops is None and task_ops is None:
-        raise typer.Exit(1)
-    if not ops and not task_ops:
-        con.print("[dim]nothing staged[/]")
-        return
     ok = True
-    # One lock span across both batches, not one per batch. They stay
-    # independent — either can be refused while the other is written, which is
-    # the whole point of two `_apply_*` calls — but the *pair on disk* is never
-    # observable half-applied by another writer, or by a reader that takes the
-    # same lock. A dry run writes nothing and needs none. Audit F27.
-    with contextlib.nullcontext() if dry_run else applying.writing(proj):
-        if ops:
-            ok = _apply_decisions(ops, dry_run) and ok
-        if task_ops:
-            ok = _apply_tasks(task_ops, dry_run) and ok
+    # The trays are held **across the read**, not merely re-taken at the end.
+    # These two `_staged_ops` calls used to sit outside every lock, so a
+    # `dg drop` landing between them and `pending.discard` was a drop that
+    # succeeded, named its op, and watched the op reach the store anyway —
+    # both commands reporting success over one op. Audit W-F2, and the reason
+    # this span starts here rather than three lines down.
+    #
+    # Outside `writing()`, because trays-then-stores is the one lock order every
+    # writer in the tool uses; see `applying.trays`.
+    with applying.trays(proj):
+        ops = _staged_ops(proj.pending, "dg clear")
+        task_ops = _staged_ops(proj.task_pending, "dg task clear")
+        if ops is None and task_ops is None:
+            raise typer.Exit(1)
+        if not ops and not task_ops:
+            con.print("[dim]nothing staged[/]")
+            return
+        # One lock span across both batches, not one per batch. They stay
+        # independent — either can be refused while the other is written, which
+        # is the whole point of two `_apply_*` calls — but the *pair on disk* is
+        # never observable half-applied by another writer, or by a reader that
+        # takes the same lock. A dry run writes nothing and needs none. Audit
+        # F27.
+        with contextlib.nullcontext() if dry_run else applying.writing(proj):
+            if ops:
+                ok = _apply_decisions(ops, dry_run) and ok
+            if task_ops:
+                ok = _apply_tasks(task_ops, dry_run) and ok
     if not ok or ops is None or task_ops is None:
         # Something was refused, or one tray could not even be read. Exit
         # nonzero so nothing downstream reads this as "everything staged is now
@@ -3993,6 +4004,19 @@ def incoming(
     a tray every writer here shares.
     """
     proj = project.find()
+    # One `dg incoming` is one act on the quarantine file: it reads it, may
+    # answer part of it, prints what it then holds, and may adopt or discard the
+    # whole thing. Held across all of that, so a second writer cannot answer a
+    # conflict between this command's read and its write — which used to leave
+    # both of them told they had settled it. The routes below take the same lock
+    # and it nests, so they cost nothing here. Audit W-F1.
+    with integrate_mod.held(proj.root):
+        return _incoming(proj, take, keep, split, as_id, title, area,
+                         adopt, discard)
+
+
+def _incoming(proj, take, keep, split, as_id, title, area, adopt, discard):
+    """The body of `dg incoming`, with the quarantine file already held."""
     raw = integrate_mod.load_incoming(proj.root)
     if not raw:
         con.print("[dim]nothing arriving[/]")
@@ -4020,25 +4044,29 @@ def incoming(
             con.print(f"[red]{_x(bad or f'{as_id} already exists')}[/]")
             raise typer.Exit(1)
         try:
-            said = integrate_mod.split_one(
-                raw, split, as_id,
+            said = integrate_mod.split(
+                proj.root, split, as_id,
                 title=title or (here.title if here else as_id),
                 area=area or (here.area if here else (g.areas or ["General"])[0]))
         except (LookupError, ValueError) as exc:
             con.print(f"[red]{_x(exc)}[/]")
             raise typer.Exit(1) from None
-        integrate_mod.write_incoming(raw, proj.root)
+        raw = integrate_mod.load_incoming(proj.root)
         con.print(f"[green]settled[/] {_x(said)}")
 
     for ref, choice in ((take, "take"), (keep, "keep")):
         if not ref:
             continue
         try:
-            said = integrate_mod.answer_one(raw, ref, choice)
+            # The route, not `answer_one` plus a write: the load has to be
+            # inside the lock, and it happens in there. `Answered` is the
+            # second writer's refusal and is a `LookupError`, so this `except`
+            # already catches it. Audit W-F1.
+            said = integrate_mod.answer(proj.root, ref, choice)
         except LookupError as exc:
             con.print(f"[red]{_x(exc)}[/]")
             raise typer.Exit(1) from None
-        integrate_mod.write_incoming(raw, proj.root)
+        raw = integrate_mod.load_incoming(proj.root)
         con.print(f"[green]settled[/] {_x(said)}")
     if take or keep or split:
         left = [f for f in raw.get("contested", []) if not f.get("resolution")]
@@ -4096,13 +4124,22 @@ def incoming(
                   "contribution.[/]")
         raise typer.Exit(1)
 
-    d_ops, t_ops, notes = integrate_mod.adopt_ops(raw)
-    if d_ops:
-        _vet_all(_eff(_g()), d_ops)
-        pending.stage_all(d_ops)
-    if t_ops:
-        _tstage_all(t_ops)
-    integrate_mod.clear_incoming(proj.root)
+    def stage(d_ops, t_ops):
+        if d_ops:
+            _vet_all(_eff(_g()), d_ops)
+            pending.stage_all(d_ops)
+        if t_ops:
+            _tstage_all(t_ops)
+
+    # Staging and clearing as one act, so two adopters cannot each stage the
+    # whole contribution and each delete the only record that it arrived.
+    # `stage` is passed in because it runs this store's stage-time vetting and
+    # `integrate` must not learn what either store means. Audit W-F1.
+    landed = integrate_mod.adopt(proj.root, stage)
+    if landed is None:
+        con.print("[dim]nothing arriving[/]")
+        return
+    d_ops, t_ops, notes = landed
     con.print(f"[green]adopted[/] {len(d_ops) + len(t_ops)} op(s) "
               f"[dim]— `dg pending` to review, `dg apply` to write[/]")
     for line in notes:

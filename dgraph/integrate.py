@@ -736,6 +736,30 @@ def path(root=None):
     return (root or project.find().root) / project.INCOMING_NAME
 
 
+def held(root=None, *, wait: float = 5.0):
+    """Hold the quarantine file across a read-modify-write.
+
+    Every route onto this file is load, mutate, write — answering a conflict,
+    splitting one, adopting the contribution, discarding it — and none of them
+    held anything. Two writers therefore lost each other's work the way the
+    trays used to before `pending.held`, except that what is lost here is worse:
+    this file holds the class of conflict `consistency-policy-proposal.md`
+    reserves for a person (*"Class H — semantic. Always ask, and ask well"*), so
+    a lost write is a lost human judgement, and both writers were told they had
+    settled it. Audit W-F1.
+
+    `wait` is longer than a tray's because adopting stages into both trays while
+    holding this, and shorter than an apply's because nothing here validates or
+    renders.
+
+    A lock *inside* `answer_one` or `write_incoming` would close nothing — the
+    load that has to be in the critical section happens in the caller — which is
+    why the routes below exist rather than a lock on the primitives.
+    """
+    from dgraph import project
+    return project.held(path(root), wait=wait)
+
+
 def load_incoming(root=None) -> dict:
     p = path(root)
     if not p.exists():
@@ -836,6 +860,76 @@ def answer_one(raw: dict, ref: str, choice: str) -> str:
         f"no contested op {ref!r}"
         + (f" — {', '.join(str(r) for r in open_refs)} are open"
            if open_refs else " — nothing is contested"))
+
+
+def answer(root, ref: str, choice: str) -> str:
+    """Answer one contested op, as **one act** on the quarantine file.
+
+    `answer_one` above records the choice in a dict the caller loaded, which is
+    the half of this that can be tested against a graph. This is the half that
+    can be run twice at once: load, refuse a ref somebody has already answered,
+    record, write — all under `held`.
+
+    The refusal matters as much as the lock. Serialising the two writes alone
+    still leaves both writers told they settled it, with the file holding one
+    answer and the other agent about to act on the opposite — and `take` on a
+    contested `close` reopens this store's decision and writes the arriving
+    answer over it, leaving a permanent `replaced_by` record of a reversal
+    nobody chose. A second answer is a person disagreeing with a person, which
+    is the one thing this file exists to surface rather than settle.
+    """
+    with held(root):
+        raw = load_incoming(root)
+        for f in raw.get("contested", []):
+            if f.get("ref") == ref and f.get("resolution"):
+                raise Answered(
+                    f"{ref} was already answered — {f['resolution']}. Somebody "
+                    f"else adjudicated it; `dg incoming` shows the contribution "
+                    f"as it now stands")
+        said = answer_one(raw, ref, choice)
+        write_incoming(raw, root)
+        return said
+
+
+def split(root, ref: str, new_id: str, *, title: str, area: str) -> str:
+    """`--split`, as one act. `answer`'s sibling, and locked for its reasons."""
+    with held(root):
+        raw = load_incoming(root)
+        said = split_one(raw, ref, new_id, title=title, area=area)
+        write_incoming(raw, root)
+        return said
+
+
+def adopt(root, stage) -> tuple[list[dict], list[dict], list[str]] | None:
+    """Adopt the whole contribution: derive its ops, stage them, clear the file.
+
+    `None` where nothing is arriving, which is what a second adopter sees.
+
+    Three writes and a delete, and they used to be four unsynchronised acts: two
+    adopters each loaded the file, each staged the whole contribution into both
+    trays, and each cleared it. The trays then held everything twice — the
+    duplicate refused loudly at apply, which is right, but with the task half
+    landed, the decision half refused, and the only record that the contribution
+    ever arrived deleted by both. `dg check` called the result clean. Audit W-F1.
+
+    `stage(d_ops, t_ops)` is the caller's, for the reason `plan`'s `guard` is:
+    staging runs the receiving store's stage-time vetting, and this module must
+    not learn what either store means. Called under the lock, so the contribution
+    is in the trays before the file that recorded it is gone.
+    """
+    with held(root):
+        raw = load_incoming(root)
+        if not raw:
+            return None
+        d_ops, t_ops, notes = adopt_ops(raw)
+        stage(d_ops, t_ops)
+        clear_incoming(root)
+        return d_ops, t_ops, notes
+
+
+class Answered(LookupError):
+    """A conflict a second writer answered first. A `LookupError` so the one
+    `except LookupError` each caller already has keeps catching it."""
 
 
 def adopt_ops(raw: dict) -> tuple[list[dict], list[dict], list[str]]:

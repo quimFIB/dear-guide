@@ -28,6 +28,13 @@ decisions from the store while `discard` took its ops out of the tray. An
 *applied* batch, reported as applied, gone with no error and nothing in any
 diff. So the whole sequence is held: see `_writing` below.
 
+And the tray is half of that sequence, which took a second finding to see. The
+store is re-read under its lock; the **tray was read by the host before any lock
+existed**, so an unstaging arriving between that read and `discard` succeeded,
+named the op it removed, and watched it land anyway. `trays()` below is the
+other half, and the two together give the whole act one order: trays, then
+stores, from the read through the discard.
+
 That order lived twice — once in `cli.py`, once inlined in `server.py` — and a
 third copy was about to appear when the browser learned to apply task ops. It
 lives here now. Nothing in this module prints or exits; it returns a `Result`
@@ -91,6 +98,49 @@ def writing(proj: project.Project | None = None):
     return project.stores(proj or project.find(), wait=APPLY_WAIT)
 
 
+@contextlib.contextmanager
+def trays(proj: project.Project | None = None, *, wait: float = APPLY_WAIT):
+    """Hold both staging trays across a **read, apply and discard**.
+
+    What a host wraps `dg apply` in, *outside* `writing()`, and the half of the
+    lock story `writing()` is not.
+
+    `writing()` closed the store side: the batch is re-read under the lock
+    because "a graph loaded before the lock was taken is a graph another writer
+    may already have moved past". The tray had the identical problem and never
+    got the identical treatment — both hosts read their trays before taking any
+    lock, and `pending.held` was first taken at the very end, inside `discard`.
+    Everything in between ran on a snapshot any writer could legally change, so
+    a `dg drop` arriving in that window **succeeded, named the op it removed,
+    and the op landed anyway**: two commands reporting success over one op, with
+    nothing in any diff. `dg edit` was the same window with a worse landing —
+    the stale wording in the store and the correction stranded in a tray that
+    can never apply it. Audit W-F2.
+
+    What this does **not** promise is that a dropped op never lands. A drop that
+    arrives before the read leaves the op unapplied; one that arrives after the
+    discard is *correctly* refused, because by then the op really is in the
+    store. Arrival order decides between those two and both are right. What is
+    closed is the third outcome, where the two reports contradict each other.
+
+    **Ordering.** Trays before stores, everywhere, so two holders cannot deadlock
+    against each other — `apply_decisions` takes its own tray before `_writing`
+    for that reason alone, and both acquisitions are no-ops inside this span
+    because `project.held` nests. `discard`, not `clear`, still applies: work
+    staged *while* an apply runs belongs to the next batch, and holding the tray
+    makes such a writer **wait**, never lose the op.
+
+    Trays the project does not have are still held: a tray is created by staging,
+    so unlike a store its absence is not a reason to skip the lock — the writer
+    this is guarding against may be the one about to create it.
+    """
+    proj = proj or project.find()
+    with contextlib.ExitStack() as stack:
+        for path in (proj.pending, proj.task_pending):
+            stack.enter_context(pending.held(path, wait=wait))
+        yield
+
+
 @dataclass(frozen=True)
 class Result:
     """What happened, in enough detail for either host to report it.
@@ -142,7 +192,13 @@ def apply_decisions(ops: list[dict], dry_run: bool = False,
         return Result(len(ops), True, proj.store.name, proj.view.name,
                       graph=pending.apply_all(g, ops, cross.guard_decisions()),
                       drift=tuple(pending.drift(g, ops)))
-    with _writing(proj):
+    # The tray before the stores, and its own even when a host already holds it
+    # through `trays()` — `project.held` nests, so the inner take is free, and
+    # taking it here is what gives every writer in the tool one lock order.
+    # Without it this function is store-then-tray (`_writing`, then `discard`)
+    # while a host is tray-then-store, which is a deadlock between two writers
+    # rather than a lost update. Audit W-F2.
+    with pending.held(proj.pending, wait=APPLY_WAIT), _writing(proj):
         # Re-read under the lock, whatever the caller passed. `g` was loaded
         # before this function was called and therefore before the lock was
         # taken, so applying to it would write a result computed from a store
@@ -183,7 +239,7 @@ def apply_tasks(ops: list[dict], dry_run: bool = False,
         tg = TaskGraph.load(proj.tasks) if tg is None else tg
         return Result(len(ops), True, proj.tasks.name, proj.task_view.name,
                       graph=task_pending.apply_all(tg, ops, cross.guard_tasks()))
-    with _writing(proj):
+    with pending.held(proj.task_pending, wait=APPLY_WAIT), _writing(proj):
         tg = TaskGraph.load(proj.tasks)     # under the lock; see apply_decisions
         out = task_pending.apply_all(tg, ops, cross.guard_tasks())
         view_text = task_render.render(out)

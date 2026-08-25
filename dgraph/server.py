@@ -785,6 +785,17 @@ class Handler(BaseHTTPRequestHandler):
         cannot drift on the order that makes it safe.
         """
         proj = project.find()
+        # Held across the read, exactly as `dg apply` does and for the same
+        # reason: these two loads used to sit outside every lock, so a
+        # `DELETE /api/pending/<ref>` — or a `dg drop` in the terminal the user
+        # was told to keep open beside this — could unstage an op, report which
+        # one, and watch it land. Audit W-F2. The span reaches `discard`, which
+        # is inside `applying.apply_*`, so it wraps the whole loop below.
+        with applying.trays(proj):
+            return self._apply_held(proj)
+
+    def _apply_held(self, proj) -> None:
+        """The body of `_apply`, with both trays already held."""
         ops = pending.load(proj.pending) if proj.has_decisions else []
         task_ops = (pending.load(task_pending.path())
                     if proj.has_tasks else [])

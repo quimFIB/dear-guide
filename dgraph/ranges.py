@@ -230,13 +230,26 @@ def issue(prefix: str, n: int, root: Path | None = None) -> None:
     Silent where there is no grant, and where the id sits outside one — an id
     outside the range is `vet`'s refusal to make, and a watermark that followed
     it would move the mark somewhere the grant does not reach.
+
+    **Locked here, on its own terms.** This is a load-modify-save, and it used
+    to inherit whatever lock its caller happened to hold — which is
+    `pending.stage_all`, holding *a tray*. There are two trays and one range
+    file: a decision stage holds `.dgraph-pending.json.lock` and a task stage
+    holds `.dgraph-task-pending.json.lock`, so the two of them serialise against
+    nothing and the later save carries the earlier one's mark away. Two
+    different locks over one file is no lock at all, and the mark going
+    backwards is the one failure this file exists to prevent — after a
+    checkout, `next_number` re-offers an id the grant has already issued.
+    Audit W-F3.
     """
-    grants = load(root)
-    g = grants.get(prefix)
-    if g is None or not g.holds(n) or (g.issued is not None and n <= g.issued):
-        return
-    grants[prefix] = Grant(g.lo, g.hi, n)
-    save(grants, root)
+    with project.held(path(root)):
+        grants = load(root)
+        g = grants.get(prefix)
+        if g is None or not g.holds(n) or (g.issued is not None
+                                           and n <= g.issued):
+            return
+        grants[prefix] = Grant(g.lo, g.hi, n)
+        save(grants, root)
 
 
 def note_ops(ops, root: Path | None = None) -> None:
