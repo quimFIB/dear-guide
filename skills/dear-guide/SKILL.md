@@ -232,8 +232,12 @@ starting is the moment that gets said, and the check that reports it is read by
 whoever runs it, which at that moment is nobody. A note, never a refusal.
 
 **Put work down with `dg task park T14 --why "…"`, not `dg task drop`.** Both
-record why and when, in the same place — `stops`, the one archived record in
-this store, which nothing ever clears. They differ *downstream*: dropping says
+record why and when, in the same place — `stops`, one of this store's two
+archived records, which nothing ever clears. (`completions` is the other:
+finishing work appends a dated outcome, so a task finished, picked back up and
+finished again keeps both results. Finishing work that is already `DONE` is
+refused — `dg task start` first, and the second completion is then a deliberate
+record rather than an overwrite.) They differ *downstream*: dropping says
 the work is not needed, so it releases everything that waited on it and demands
 a verdict on each one; parking says nobody is doing this right now, so it
 settles nothing and its dependants go on waiting. Reach for `drop` only when
@@ -259,12 +263,25 @@ dg task clear                      # unstage every task op; `dg clear` is its tw
 dg task render                     # regenerate tasks.md; `dg render` is its twin
 dg task export / dg task import    # move a backlog between projects
 dg task unlink T14 --because       # drop a link recorded against the wrong decision
+dg amend D07 --title "..."         # a typo'd or since-clarified wording
+dg task amend T14 --area Eval      # ...the same op, in the other store
 dg dep   D07 --after D03           # a premise discovered later
 dg undep D07 --after D03           # ...and removing one
 ```
 
 `dg undep` works only on a **bare** edge. A decided edge's targets are part of
 its answer, so `dg reopen` first, then remove, then decide again meaning it.
+
+**`dg amend` reaches a title, an area and a note, and nothing else.** That is
+the line, and it is worth knowing which side of it a field is on: those three
+are how a record is *referred to* and where it is filed, so nothing is
+superseded when one changes and nothing is archived — a changed title leaves no
+record, deliberately. An answer, a falsifier, an outcome and a reason work
+stopped are dated claims about what happened, and none of them is ever edited
+in place: `dg reopen` and decide again, or `dg task start` and finish again.
+Before this op existed a retitle had no legal route at all, which made an
+ordinary correction one of the hand-edits everything else here works to
+prevent.
 
 **Never reach for `dg rm` or `dg task rm` yourself.** They erase a record
 instead of superseding it, they are for things that should never have been

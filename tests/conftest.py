@@ -55,6 +55,20 @@ def bare(ops):
     return [bare(o) for o in ops]
 
 
+def finished(t, date, outcome, status="DONE"):
+    """Set a task up as finished, the way an applied op leaves it.
+
+    A helper rather than three lines in twenty tests, because `done` and
+    `outcome` are derived — the pair a test wants to state lives in a
+    `Completion`, and the status is what makes it live. Appends, so calling it
+    twice is the second-completion case rather than a rewrite of the first.
+    """
+    from dgraph.tasks import Completion
+    t.status = status
+    t.completions.append(Completion(date=date, outcome=outcome))
+    return t
+
+
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     """A project directory holding the fixture graph."""

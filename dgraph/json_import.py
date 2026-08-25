@@ -87,8 +87,12 @@ SCHEMA = {
         "collection": "tasks",
         "record": "task",
         "required": ("id", "title", "area"),
-        "optional": ("status", "note", "done", "outcome", "why", "format",
-                     "because", "evidence_for"),
+        # `done` and `outcome` are still accepted, though the store holds
+        # neither: `tasks._task` folds a legacy pair into a one-entry
+        # `completions` list, so a document written against the old shape is
+        # still adoptable and says so by loading rather than by an error.
+        "optional": ("status", "note", "completions", "done", "outcome",
+                     "why", "format", "because", "evidence_for"),
         "edge_required": ("from",),
         # `kind` is required by the store and deliberately not checked here:
         # `tasks._edge` refuses an absent one with a message that also names

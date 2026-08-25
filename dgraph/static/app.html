@@ -1132,7 +1132,19 @@ function taskPanel(){
   if(x.done) h+=`<div>done</div><div>${esc(x.done)}</div>`;
   h+=`</div>`;
   if(x.note) h+=`<div class="answer muted">${md(x.note, x.format)}</div>`;
-  if(x.outcome) h+=`<div class="answer"><b>outcome</b> — ${md(x.outcome, x.format)}</div>`;
+  /* Every completion, and no status guard — the same reading as the stops
+     below. Work finished, restarted and finished again has two results, and
+     only the last of them can be the live one, and only while the status still
+     claims one. `done_label` comes from the server for the reason the stop
+     label does: a fourth renderer choosing its own word is how the last one
+     drifted. */
+  (x.completions||[]).forEach((c,i)=>{
+    const live = i===(x.completions.length-1) && !!d.done_label;
+    const tag = live
+      ? ` <span class="pill" style="background:${TASK_COLOR[x.status]};color:#04121f">${
+          esc(d.done_label)}</span>` : "";
+    h+=`<div class="answer"><b>outcome</b> <span class="muted">${esc(c.date)}</span>${tag} — ${md(c.outcome, x.format)}</div>`;
+  });
   /* Only where the status supports it — see `task_render._section`. A store
      cannot hold a `why` under work in progress any more, but a view is drawn
      from broken stores too. */
@@ -1188,7 +1200,8 @@ function taskPanel(){
      the work is finished — and `link` after the fact is the *usual* case, since
      work is what turns the question up. */
   h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">`
-    + structureBtn("tasks", tsel);
+    + structureBtn("tasks", tsel)
+    + amendForm(T.areas, x);
   h+=`<div class="note" id="note"></div>`;
   $("#side").innerHTML=h;
   $("#side").querySelectorAll("a[data-dg]").forEach(a=>a.onclick=ev=>{
@@ -1197,6 +1210,7 @@ function taskPanel(){
   bindStructure();
   restoreDraft();
   const n=NOTES[tsel]; if(n) say(n.msg, n.cls);
+  $("#doAmend")&&($("#doAmend").onclick=()=>postTask(amendOp("task", tsel)));
   $("#doStart")&&($("#doStart").onclick=()=>
     postTask({op:"set_status",task:tsel,status:"DOING"}));
   $("#doPark")&&($("#doPark").onclick=()=>{
@@ -1245,6 +1259,51 @@ const REL_FORMS = {
 };
 
 let RELATING=null;   /* {store, id, verb} while a structure form is open */
+
+/* Correcting how a record is worded or filed — `dg amend` and `dg task amend`,
+   the same `set_fields` op through the same rules (`pending.vet_fields`), which
+   is why there is one form here and not one per store. Collapsed by default: a
+   correction is rare beside the acts above it, and an open form on every panel
+   would compete with them for the eye.
+
+   **Prefilled as placeholders, not as values, and that is not cosmetic.**
+   `captureDraft` sweeps every input on the panel and treats a non-empty one as
+   unconfirmed work, so a form carrying the record's current title would make
+   every node a person merely *looked at* into a draft. Empty means unchanged,
+   which also makes the op literal: only what somebody typed is written. The
+   cost is that a note cannot be emptied from here — `dg amend D07 --note ""`
+   can, and clearing prose is rare enough not to earn a second control. */
+function amendForm(areas, rec){
+  const opts=areas.map(a=>
+    `<option value="${esc(a)}">${esc(a)}</option>`).join("");
+  return `<details><summary class="muted">Reword this record</summary>
+    <label>Title — blank leaves it as it is</label>
+    <input id="amTitle" placeholder="${esc(rec.title)}">
+    <label>Area</label>
+    <select id="amArea"><option value="">— unchanged (${esc(rec.area)}) —</option>${opts}</select>
+    <label>Note — replaces the one above</label>
+    <textarea id="amNote" placeholder="blank leaves it as it is"></textarea>
+    <p style="margin:10px 0"><button class="ghost" id="doAmend">Stage the correction</button></p>
+    <p class="muted">A title, an area and a note are how this record is referred
+      to and where it is filed, so nothing is superseded and the old wording is
+      not kept — citations of it elsewhere are not updated, and nothing can find
+      them. An answer, an outcome or a reason work stopped is a dated claim and
+      is never edited in place.</p></details>`;
+}
+
+/* The op the form describes. Built from what was typed rather than from the
+   whole form, so a field somebody read and left alone does not arrive as a
+   write — and an op that changes nothing is refused by the server, which is
+   the same reading `dg amend` makes: the caller has usually lost track. */
+function amendOp(key, id){
+  const op={op:"set_fields", [key]:id};
+  const title=$("#amTitle").value.trim(), area=$("#amArea").value,
+        note=$("#amNote").value.trim();
+  if(title) op.title=title;
+  if(area) op.area=area;
+  if(note) op.note=note;
+  return op;
+}
 
 function structureBtn(store, id){
   return `<p style="margin:10px 0"><button class="ghost" data-rel="${
@@ -1770,6 +1829,7 @@ function panel(){
      is decided, because a decided edge's targets are part of its answer — both
      rules are `pending.compose_dep`/`compose_undep`, not this panel. */
   h+=structureBtn("decisions", sel);
+  h+=amendForm(G.areas, v);
   $("#side").innerHTML=h;
   /* dg: links inside stored prose select that decision, the same jump C-c C-o
      makes in emacs. */
@@ -1794,6 +1854,7 @@ function panel(){
   const n=NOTES[sel];
   if(n) say(n.msg, n.cls);
   $("#doClose")&&($("#doClose").onclick=stageClose);
+  $("#doAmend")&&($("#doAmend").onclick=()=>post(amendOp("vertex", sel)));
   $("#doReopen")&&($("#doReopen").onclick=stageReopen);
   $("#doConfirm")&&($("#doConfirm").onclick=stageConfirm);
   $("#side").querySelectorAll("button[data-ev]").forEach(b=>
@@ -1863,7 +1924,9 @@ async function postTasks(ops){
        prints from, and a second wording here is the two doors disagreeing
        about the same act. */
     const notes=(res&&res.notes)||[];
-    say(`Staged ${ops[0].status} for ${tid}.${more}` +
+    /* `status` where there is one, else the op's own name: `set_fields` has
+       no status, and the line used to read "Staged undefined for T04". */
+    say(`Staged ${ops[0].status||ops[0].op} for ${tid}.${more}` +
         (notes.length?" "+notes.join(" "):""), notes.length?"warn":"ok", tid);
     if(tid===tsel) taskPanel();
   }catch(err){ say(err.message, "bad", tid); }

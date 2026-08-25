@@ -16,6 +16,7 @@ from dgraph.check import run
 from dgraph.cli import app
 from dgraph.model import Graph
 from dgraph.render import write
+from conftest import finished
 from dgraph.tasks import Reading, Stop, Task, TaskGraph
 
 runner = CliRunner()
@@ -187,8 +188,7 @@ def test_evidence_is_derived_in_reverse(both):
     tg.tasks["T04"].evidence_for = "D05"
     assert cross.evidence(tg, "D05") == ["T04"]
     assert cross.pending_evidence(tg, "D05") == ["T04"]   # DOING
-    tg.tasks["T04"].status, tg.tasks["T04"].done = "DONE", "2026-01-09"
-    tg.tasks["T04"].outcome = "notes/bench.md"
+    finished(tg.tasks["T04"], "2026-01-09", "notes/bench.md")
     assert cross.pending_evidence(tg, "D05") == []
 
 
@@ -1028,7 +1028,8 @@ def _evidence(root, status, done=None, outcome=None):
     t = tg.tasks["T04"]
     t.evidence_for = "D01"
     t.status = status
-    t.done, t.outcome = done, outcome
+    if done or outcome:
+        finished(t, done or "", outcome or "", status=status)
     t.stops = ([Stop(why="stopped", date="2026-02-01")]
                if status in ("PARKED", "DROPPED") else [])
     tg.save(root / "tasks.json")
@@ -1119,8 +1120,10 @@ def test_a_later_result_brings_the_finding_back(both):
     _evidence(both, "DONE", done="2026-06-01", outcome="a number")
     _read(both, date="2026-07-01")
     tg = TaskGraph.load(both / "tasks.json")
-    tg.tasks["T04"].done = "2026-09-01"
-    tg.tasks["T04"].outcome = "re-run on the new corpus: it does not hold"
+    # A genuine second completion, which is what a later result *is*: the
+    # first one stays in the record and the new one is the live reading.
+    finished(tg.tasks["T04"], "2026-09-01",
+             "re-run on the new corpus: it does not hold")
     tg.save(both / "tasks.json")
     hits = [v for v in run() if v.check == "evidence_after_deciding"]
     assert len(hits) == 1 and "re-run on the new corpus" in str(hits[0])
@@ -1132,8 +1135,8 @@ def test_a_reading_covers_only_the_evidence_it_was_about(both):
     tg = TaskGraph.load(both / "tasks.json")
     for tid in ("T03", "T04"):
         t = tg.tasks[tid]
-        t.evidence_for, t.status = "D01", "DONE"
-        t.done, t.outcome = "2026-06-01", f"{tid} measured something"
+        t.evidence_for = "D01"
+        finished(t, "2026-06-01", f"{tid} measured something")
     tg.save(both / "tasks.json")
     _read(both, tid="T04", date="2026-07-01")
     hits = [v for v in run() if v.check == "evidence_after_deciding"]
@@ -1155,8 +1158,8 @@ def test_the_finding_names_every_late_task_in_its_advice(both):
     tg = TaskGraph.load(both / "tasks.json")
     for tid in ("T03", "T04"):
         t = tg.tasks[tid]
-        t.evidence_for, t.status = "D01", "DONE"
-        t.done, t.outcome = "2026-06-01", "a number"
+        t.evidence_for = "D01"
+        finished(t, "2026-06-01", "a number")
     tg.save(both / "tasks.json")
     said = str([v for v in run() if v.check == "evidence_after_deciding"][0])
     assert "--against T03,T04" in said and "unlink T03,T04" in said

@@ -385,6 +385,43 @@ def test_why_reads_the_stop_record(tg):
     assert m.field == "stopped earlier because"
 
 
+def test_outcome_reads_every_completion_and_says_which_is_live(tg):
+    """`why:`'s twin, and the same reason: the term outlived the field.
+
+    A result the work produced an earlier time round is still a result, and
+    still the thing somebody types a word from. It is labelled as past so an
+    answer cannot be read as current."""
+    from conftest import finished
+    finished(tg.tasks["T02"], "2026-01-09", "HNSW 12ms p50")
+    tg.tasks["T02"].status = "DOING"
+    finished(tg.tasks["T02"], "2026-03-01", "IVF-PQ 40ms")
+    lens = query.task_lens(tg)
+
+    assert query.select(query.parse("outcome:HNSW"), lens) == ["T02"]
+    (m,) = query.explain(query.parse("outcome:HNSW"), lens, "T02")
+    assert m.field == "produced earlier"
+    (m,) = query.explain(query.parse("outcome:IVF"), lens, "T02")
+    assert m.field == "outcome"
+
+
+def test_done_asks_when_this_work_is_finished_not_when_it_ever_was(tg):
+    """The one place the completion list is deliberately not read.
+
+    `done:>=` asks when this work was finished. Answering it out of a
+    completion the status no longer claims would change what every existing
+    date query means — the same reason a decision's `date` is not read from
+    its superseded edges."""
+    from conftest import finished
+    finished(tg.tasks["T02"], "2026-01-09", "a number")
+    tg.tasks["T02"].status = "DOING"           # picked back up
+    lens = query.task_lens(tg)
+    assert "T02" not in query.select(query.parse("done:>=2026-01-01"), lens)
+
+    tg.tasks["T02"].status = "DONE"              # finished again
+    assert "T02" in query.select(query.parse("done:>=2026-01-01"),
+                                 query.task_lens(tg))
+
+
 # ---- structure -----------------------------------------------------------
 
 

@@ -297,7 +297,7 @@ fails if the two have drifted apart.
 
 ## Taking something back
 
-Three verbs, and picking the wrong one is how a graph loses the thing it is
+Four verbs, and picking the wrong one is how a graph loses the thing it is
 for.
 
 **`dg reopen`** is for an answer that turned out wrong, and **`dg task drop`**
@@ -318,6 +318,29 @@ leaves the dependency editable:
 dg reopen D01 --why "..."      # the edge becomes payload-free
 dg undep  D02 --after D01      # legal now; no answer is being rewritten
 dg decide D01 --opens D03 ...  # restate it, knowing the new target set
+```
+
+**`dg amend`** (and `dg task amend`) is for a record that says the right thing
+in the wrong words — a typo, a question since clarified, work filed under the
+wrong area. It is the only command that edits an applied record in place, and
+what it can reach is exactly the part that carries no claim: `title`, `area`
+and `note`. A title is how a question is *referred to*, not something the
+question says, so nothing is superseded when one changes and **nothing is
+archived**. That last part is decided rather than skipped: the reason to keep
+old titles is that they are quoted — in commits, in these docs, in `dg why`
+output somebody pasted into a review — and a `titles[]` list records the old
+wording inside the store, which is not where any of those citations are. The
+benefit is uncollectable, so the cost is not paid, and the command says so at
+the moment it stages.
+
+Before it existed, correcting a typo had no legal route at all: no op wrote
+those fields, so the only way through was editing `decisions.json` by hand —
+which made an *ordinary edit* one of the bypasses this tool's whole safety
+story says do not exist.
+
+```sh
+dg amend D07 --title "Which index structure, at 48M vectors?"
+dg task amend T14 --area Eval
 ```
 
 **`dg rm`** (and `dg task rm`) is for a record that should never have been
@@ -350,7 +373,7 @@ Tasks get their own graph, which is a different thing on purpose:
 | answers | a question | nothing; it produces something |
 | finished when | somebody settles it, with evidence | the work is done |
 | carries | an answer, a source, a **falsifier** | an **outcome** |
-| reversed by | new evidence, kept forever as a reversal | nothing — work that stops is `PARKED` or `DROPPED`, and every stoppage is kept |
+| reversed by | new evidence, kept forever as a reversal | nothing — a later result does not overturn an earlier one, and every completion and every stoppage is kept |
 | status | explicit, never inferred | blocked is *derived* from what precedes it |
 
 The test for which store an entry belongs in: **can you write a falsifier for

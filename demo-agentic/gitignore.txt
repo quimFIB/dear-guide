@@ -1,0 +1,5 @@
+# dear-guide: staging, locks and temp files
+.dgraph-*
+*.dg-tmp
+decisions.json.lock
+tasks.json.lock

@@ -20,7 +20,26 @@ from dgraph.model import (SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex,
 from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
-       "remove_vertex", "set_status"}
+       "remove_vertex", "set_status", "set_fields"}
+
+#: What `set_fields` may write, in **both** stores. One tuple, imported by
+#: `task_pending`, because a decision and a task differ in everything except
+#: these four and a second copy is how one store came to accept a field the
+#: other refused — the shape most of this tool's audit findings took.
+#:
+#: What is deliberately absent is everything that is a *claim*: an answer, a
+#: falsifier, an outcome, a reason work stopped. Those are dated assertions
+#: with an archival record behind them, and rewriting one in place is the act
+#: this whole model exists to refuse. A title and an area are not claims — a
+#: title is how a question is referred to, not something the question says.
+FIELDS = ("title", "area", "note", "format")
+
+#: Everything else a `set_fields` op may carry: which record it addresses, and
+#: the tray's own bookkeeping. Named so that any *other* key can be refused —
+#: `{"op": "set_fields", "vertex": "D01", "answer": "…"}` would otherwise stage
+#: cleanly, report success and write nothing of the sort, which is a worse
+#: failure than the refusal it is trying to get past.
+FIELD_KEYS = ("op", "vertex", "task", "ref", "saw")
 
 #: How a removal reconnects what the vertex sat between.
 #:
@@ -403,6 +422,11 @@ def vet(g: Graph, op: dict) -> None:
     # tool offers and which `apply` would refuse a batch later, naming a
     # command instead of the act. Audit F2 in the interface pass: the raw op
     # went into a shared tray and came back as somebody else's refusal.
+    if op.get("op") == "set_fields":
+        # `_apply_one` above proved it resolves, and by the same two keys.
+        v = g.vertices[op.get("vertex") or op.get("from")]
+        vet_fields(op, areas=g.areas, record="decision",
+                   current={k: getattr(v, k) for k in FIELDS})
     if op.get("op") == "set_status" and "derived_from" not in op:
         if status != "DECIDED":
             raise ApplyError(
@@ -411,6 +435,61 @@ def vet(g: Graph, op: dict) -> None:
                 f"caller may write is DECIDED, to re-affirm a PROVISIONAL "
                 f"decision")
         compose_confirm(g, vid=op.get("vertex"))
+
+
+def _and_(names: list[str]) -> str:
+    """`a`, `a and b`, `a, b and c` — for a refusal naming several fields."""
+    return (names[0] if len(names) == 1
+            else " and ".join([", ".join(names[:-1]), names[-1]]))
+
+
+def vet_fields(op: dict, *, areas: list[str], current: dict,
+               record: str) -> None:
+    """The stage-time floor for a `set_fields` op, shared by both stores.
+
+    Here rather than in each store's `vet` for the reason `already` and
+    `matches` are shared: the four fields are the same four, and a rule applied
+    in one store and not its twin is the shape most of this tool's audit
+    findings took.
+
+    Refused at *stage* time rather than left to `validate`, though `area_known`
+    would catch an unknown area at apply. Two reasons. A tray may be shared, so
+    an op that cannot apply wedges it for every other writer until somebody
+    drops it — audit `F30`, and the argument for `vet_all` existing at all. And
+    there is no invariant at all for a blank title: nothing in either store's
+    `validate` reads one, so an op that empties a title would land, and the
+    record would then be referred to by nothing.
+
+    `current` is what the record holds now, so that an op writing the values
+    already there is refused rather than staged. The caller is often an agent
+    that has lost track, which is the same reading the no-op status guard makes.
+    """
+    # Before "nothing to change", so that an op naming only a field this one
+    # cannot write is told *that* rather than told it named nothing — the
+    # caller reached for the field it meant and needs to hear why it is not
+    # here, not that its op was empty.
+    extra = sorted(set(op) - set(FIELDS) - set(FIELD_KEYS))
+    if extra:
+        raise ApplyError(
+            f"a {record} is not amended in {_and_(extra)} — this op writes "
+            f"{', '.join(FIELDS)} and nothing else. An answer, an outcome and "
+            f"a reason work stopped are dated records: they are superseded by "
+            f"a new one, never edited")
+    named = [k for k in FIELDS if k in op]
+    if not named:
+        raise ApplyError(
+            f"nothing to change — name at least one of {', '.join(FIELDS)}")
+    if "title" in op and not (op["title"] or "").strip():
+        raise ApplyError(
+            f"a {record} needs a title — it is what every other record, and "
+            f"every reader, refers to it by")
+    if "area" in op and op["area"] not in areas:
+        raise ApplyError("unknown area. one of: " + ", ".join(areas))
+    if all(op[k] == current.get(k) for k in named):
+        one = len(named) == 1
+        raise ApplyError(
+            f"{op.get('vertex') or op.get('task')} already has "
+            f"{'that ' + named[0] if one else 'those values'}")
 
 
 def vet_all(g: Graph, ops: list[dict]) -> None:
@@ -494,6 +573,15 @@ def premises(g: Graph, op: dict) -> list[str]:
     A `close` leans on the vertex it settles *and* on that vertex's premises —
     the second being the case this exists for: an answer composed under
     `D01 DECIDED` and applied after somebody reopened it.
+
+    **`set_fields` is deliberately not here**, and the reason is `fingerprint`
+    rather than the op. A retitle leans on the wording it is replacing, and a
+    fingerprint records a status and a digest of an answer — so listing the
+    vertex would make `drift` report a status change under an op that does not
+    care about the status, and go on missing the one thing that op does care
+    about. Widening the fingerprint to cover wording would change what every
+    stamp already in a tray means. Two writers giving one record different
+    titles is a real case; it is the seam's, not this function's.
     """
     kind = op.get("op")
     if kind == "close":
@@ -513,28 +601,52 @@ def stamp(g: Graph, op: dict) -> dict:
 
 
 def drift(g: Graph, ops: list[dict]) -> list[dict]:
-    """What moved between staging this batch and applying it.
+    """What **another writer** moved between staging this batch and applying it.
 
-    Compared against `g`, which apply has re-read under the lock. An id that is
-    not in the store is skipped rather than reported: it was stamped against the
-    *effective* graph, so it may be a vertex this very batch is about to create.
+    `g` is the store, which apply has re-read under the lock. An id that is not
+    in it is skipped rather than reported: ops are stamped against the
+    *effective* graph, so `saw` may name a vertex this very batch is about to
+    create.
+
+    **Walked incrementally, not against the bare store**, and that is the whole
+    subtlety. `stamp` records what op `i` was composed against, which is the
+    store *plus everything already in the tray* — so the honest baseline for op
+    `i` is the store plus `ops[:i]`, not the store alone. Comparing against the
+    store alone reports a batch's own earlier ops as a stranger's work: `dg
+    reopen D01` followed by `dg add --after D01`, one writer, one process, no
+    contention, printed `D01 moved since this batch was staged (REOPENED →
+    DECIDED)` — the batch's own reopen, with the direction backwards.
+
+    That was not cosmetic. This report is the only thing that says a premise
+    moved under an answer already composed, `demo-agentic/` rests a scene on
+    somebody reading one, and a line that also fires on the commonest
+    single-writer batch in the tool is a line agents learn to skip.
+
+    An op that will not apply to the running copy stops the walk. Nothing is
+    lost by it: `apply_all` is about to refuse the same batch and write
+    nothing, so there is no apply for the rest of this report to describe.
     """
     out = []
+    so_far = copy.deepcopy(g)
     for i, op in enumerate(ops):
         for vid, was in sorted((op.get("saw") or {}).items()):
-            if vid not in g.vertices or was is None:
+            if vid not in so_far.vertices or was is None:
                 continue
-            now = fingerprint(g, vid)
+            now = fingerprint(so_far, vid)
             if now == was:
                 continue
             before, _, _ = was.partition("|")
-            after = g.vertices[vid].status
+            after = so_far.vertices[vid].status
             out.append({
                 "op": i, "kind": op.get("op"),
                 "subject": op.get("vertex") or op.get("from"),
                 "premise": vid, "was": before, "now": after,
                 "answer_changed": before == after,
             })
+        try:
+            _apply_one(so_far, op)
+        except ApplyError:
+            break
     return out
 
 
@@ -1028,6 +1140,34 @@ def _apply_one(g: Graph, op: dict) -> None:
 
     if kind == "set_status":
         g.vertices[vid] = _dc_replace(g.vertices[vid], status=op["status"])
+        return
+
+    if kind == "set_fields":
+        # The only op that edits an applied record's wording, and audit `F-F6`
+        # is what it is for: `title` and `area` were mutable fields with no
+        # mutator, so an agent finding a typo had no legitimate move — it
+        # hand-edited `decisions.json`, which is the one route this
+        # architecture exists to make unnecessary, or it left the record wrong.
+        #
+        # **A retitle leaves no record**, and that is decided rather than
+        # overlooked. The case for archiving old titles is that they are
+        # quoted — in commits, in `docs/`, in `dg why` output somebody pasted
+        # into a review — and a changed title makes those citations describe
+        # something that no longer reads that way. But a `titles[]` list
+        # reaches none of them: it records the old wording *inside the store*,
+        # which is not where the stale citation is. The citation problem is the
+        # same wall that is the reason there is no `dg renumber`, and it is
+        # unsolvable from in here. So an archive would pay for a fourth
+        # archival list to render, diff and explain, and collect none of the
+        # benefit. What would reopen it: citations becoming resolvable.
+        v = g.vertices[vid]
+        out = _dc_replace(v, **{k: op[k] for k in FIELDS if k in op})
+        if not out.note:
+            # The tag describes the note; without one it describes nothing.
+            # `add_vertex` applies the same rule above, and this op is the only
+            # other way a note reaches a vertex.
+            out = _dc_replace(out, format=None)
+        g.vertices[vid] = out
         return
 
     if kind == "add_edge":

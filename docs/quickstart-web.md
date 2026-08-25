@@ -259,10 +259,23 @@ them apart.
 - **Drop it** says the work is not happening, and releases what waited on it.
   That is the only difference between the two buttons.
 
+**Reword this record**, folded shut under the buttons, corrects the title, the
+area or the note — `dg amend`'s op, through the same rules. Blank fields are
+left alone, so only what you type is written. It reaches nothing that carries a
+claim: an answer, an outcome and a reason work stopped are dated records, and
+those are superseded by a new one rather than edited.
+
 Both need a reason, and both write the same record: a dated entry appended to
 the task, never cleared. **Pick it up again** keeps it, so work stopped three
 times shows all three, the last tagged *still* or *abandoned* while the status
-claims it. It is the one record here that outlives the state describing it.
+claims it.
+
+**Mark done** writes the same kind of record. Each outcome is appended with its
+date and the last is tagged *the result* while the status claims one, so work
+finished, picked back up and finished again shows both — the first result is
+not overwritten by the second, and neither is deleted by a restart. These two
+lists are what outlive the state describing them; every other field on the
+panel is current-state.
 
 Parked work is offered one button, **Pick it up again**: finishing or dropping
 work nobody is doing skips a step somebody has to take deliberately.

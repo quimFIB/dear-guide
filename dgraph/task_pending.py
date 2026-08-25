@@ -24,14 +24,15 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dgraph import project
-from dgraph.pending import ApplyError, already
+from dgraph.pending import FIELDS, ApplyError, already, vet_fields
 from dgraph.model import Graph
 from dgraph.tasks import (ID_RE, KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
-                          Reading, Stop, Task, TaskEdge, TaskGraph, matches)
+                          Completion, Reading, Stop, Task, TaskEdge,
+                          TaskGraph, matches)
 from dgraph.violation import Violation
 
 OPS = {"add_task", "add_dep", "remove_dep", "remove_task", "set_status",
-       "set_link", "read_evidence"}
+       "set_link", "read_evidence", "set_fields"}
 
 #: An extra validator over a proposed task graph — see `apply_all`.
 Checker = Callable[[TaskGraph], list[Violation]]
@@ -207,6 +208,25 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
                                   against=did))
         return
 
+    if kind == "set_fields":
+        # `pending._apply_one`'s twin, and audit `F-F6` is what both are for:
+        # `title` and `area` were mutable fields with no mutator in either
+        # store, so correcting a typo meant editing `tasks.json` by hand.
+        #
+        # One difference from the decision store, and it is the records
+        # differing rather than the rule: a vertex's `format` describes its
+        # note and is dropped with it, while a task's covers its whole record —
+        # the note *and* every outcome — so emptying the note here leaves the
+        # dialect alone. `task_render` converts both through the one field.
+        tid = op["task"]
+        if tid not in tg.tasks:
+            raise ApplyError(f"unknown task {tid!r}")
+        t = tg.tasks[tid]
+        for fld in FIELDS:
+            if fld in op:
+                setattr(t, fld, op[fld])
+        return
+
     if kind == "set_status":
         tid = op["task"]
         if tid not in tg.tasks:
@@ -234,20 +254,34 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
                     f"{'parking' if t.parked else 'dropping'} {tid} needs a "
                     f"reason: --why")
             t.stops.append(Stop(why=op["why"], date=op["date"]))
-        if was == "DONE" and t.status != "DONE":
-            # The date and the outcome describe a completion that no longer
-            # holds. Task readiness is derived and cannot go stale; this and
-            # the stop record are the only things the task store keeps, and
-            # unlike a stop this one *can* be contradicted by a later status —
-            # so it is cleared here rather than left to rot. Nothing clears
-            # `stops`: a stoppage that happened stays happened.
-            t.done = t.outcome = None
         wrote_prose = False
-        # `why` is not among these: it is not a field any more. A reason
-        # travels in the op under that name and goes to `stops` above, which is
-        # the whole of what folding the two together bought — there is no live
-        # copy left to fall out of step with the status.
-        for fld in ("done", "outcome", "note"):
+        if t.status == "DONE":
+            # The same shape as the stop above, and refused for the same
+            # reason. Finishing work that is already finished cannot be told
+            # from amending the outcome of the one completion there was, and
+            # this record is kept forever — but unlike a stop the way forward
+            # is a real one, so the refusal names it rather than only saying no.
+            if was == "DONE":
+                raise ApplyError(
+                    f"{tid} is already DONE ({t.done}, {t.outcome!r}) — "
+                    f"`dg task start {tid}` first, then finish it again to "
+                    f"record a second completion; both are kept, and the "
+                    f"later one is the live result")
+            # An op-shape rule, beside `--why` above and `--note` on a reading,
+            # not the record-completeness rule `validate` keeps: without an
+            # outcome there is nothing to append, and no later op in the batch
+            # can supply one now that a second `set_status DONE` is refused.
+            if not op.get("outcome"):
+                raise ApplyError(
+                    f"finishing {tid} needs what it produced: --outcome")
+            t.completions.append(Completion(date=op["done"],
+                                            outcome=op["outcome"]))
+            wrote_prose = True
+        # Neither `done` nor `outcome` is among these, and `why` is not either:
+        # all three travel in the op under those names and go to an appended
+        # record above. There is no live copy of any of them left to fall out
+        # of step with the status.
+        for fld in ("note",):
             if op.get(fld) is not None:
                 setattr(t, fld, op[fld])
                 wrote_prose = wrote_prose or fld in PROSE
@@ -579,8 +613,18 @@ def vet(tg: TaskGraph, op: dict) -> None:
     status = op.get("status")
     if status is not None and status not in STATUSES:
         raise ApplyError(f"illegal status {status!r} — one of {', '.join(STATUSES)}")
+    if op.get("op") == "set_fields":
+        t = tg.tasks[op["task"]]
+        vet_fields(op, areas=tg.areas, record="task",
+                   current={k: getattr(t, k) for k in FIELDS})
+    # `outcome` is not among the fields that exempt an op from this: it used to
+    # be, and that is half of how a second `dg task done` reached the store —
+    # the op was let past by virtue of carrying the very field it was about to
+    # destroy. A repeat DONE is now refused by `_apply_one` above, before this
+    # line, and an outcome on a status that is not DONE is not a reason to
+    # accept a no-op either.
     if (op.get("op") == "set_status" and status == tg.tasks[op["task"]].status
-            and not any(op.get(f) for f in ("outcome", "note", "why"))):
+            and not any(op.get(f) for f in ("note", "why"))):
         # A no-op that reads like progress. Refused with the current status
         # named, since the caller is often an agent that has lost track.
         raise ApplyError(f"{op['task']} is already {status}")

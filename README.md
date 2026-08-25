@@ -78,12 +78,15 @@ the point:
   are resolved, so there is no status to keep up to date and none to go stale.
   Decisions keep status explicit because a decision can have consequences and
   still be under review; readiness genuinely *is* a function of dependencies.
-- **Supersession in one place only, and no falsifier.** One question here can
-  stop being true and still be worth having — *why is this work not being
-  done* — so every stoppage appends to the task and nothing ever clears it;
-  work put down three times says so. Every other field is current-state. An
-  outcome is a record of what happened, not a claim about the world, so nothing
-  can falsify it.
+- **Supersession in two places, and no falsifier.** Two questions here can stop
+  being *current* and still be worth having — *why is this work not being done*
+  and *what did it produce* — so every stoppage and every completion appends to
+  the task and nothing ever clears either; work put down three times says so,
+  and work finished twice keeps both results. Which entry is live is derived
+  from the status, never stored, which is what stops a record outliving the
+  claim it supported. Every other field is current-state. An outcome is a
+  record of what happened, not a claim about the world, so nothing can falsify
+  it — and a later outcome does not falsify an earlier one either.
 - **Two ways to stop, differing downstream and not in the record.** `PARKED` is
   work nobody is doing; `DROPPED` is work nobody is going to do. Both write the
   same entry. What separates them is whether the work that waited on this is
@@ -169,6 +172,7 @@ dg find 'is:decidable' --ids             # ...ids alone, for a pipe
 dg find 'brute force' --active           # ...skipping answers since overturned
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
+dg amend  D06 --title "..."              # correct a wording; nothing else is touched
 dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
 dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds
@@ -282,6 +286,7 @@ dg task park T02 --why "stuck on the upstream bug"   # put down, not given up on
                                          # ...both keep the reason; only drop releases
 dg task done T02 --outcome "PR #241"
 dg task drop T02 --why "the index ships with the library"
+dg task amend T02 --title "Build the HNSW index over the 48M corpus"
 dg task pending                          # the task tray; `dg task clear` empties it
 dg task export                           # the backlog as JSON
 dg task import backlog.json              # adopt a backlog prepared elsewhere
@@ -316,7 +321,9 @@ Three views behind the tabs in the header:
 work — a graph you can answer but not grow is a viewer with buttons, and the
 moment you have to leave to write something down is the moment prose wins.
 **Edit structure** corrects premises, prerequisites, provenance and the seam,
-and a removal says what it sets loose *before* it stages anything. A
+and a removal says what it sets loose *before* it stages anything. **Reword
+this record** corrects a title, an area or a note — `dg amend`'s op, the same
+rules, on both panels. A
 `PROVISIONAL` decision can be **re-affirmed** as well as reopened, so the
 interface that manufactures the status can also clear it. A soundness chip
 appears when `dg check` has anything to say and stages `dg repair` when that is
@@ -499,7 +506,8 @@ premises are settled again.
 
 **The work.** The same well-formedness — ids, statuses, areas, no dangling
 reference, acyclic — plus: an edge says which kind it is · a `DONE` task has a
-date and an outcome, and did not finish before its own prerequisite · a `PARKED`
+completion with a date and an outcome, and did not finish before its own
+prerequisite · a `PARKED`
 or `DROPPED` task records why · a reading records its date, note and the
 decision it was read against, and is reported if the link it named has since
 moved. Three warnings, each about what stopping work left behind: something
@@ -621,6 +629,10 @@ that the skill's command table only names commands that exist.
   mechanism is positioned to notice. One person in two terminals, or a browser
   and a terminal, is fine and is what `commands/serve.md` describes: that is
   two writers with one intent. Two agents are two intents.
+
+  All of that is runnable rather than asserted — [`demo-agentic/`](demo-agentic/)
+  is five interleavings of two agents over one graph, and each one ends where
+  this paragraph says it does: `./demo-agentic/demo.sh`.
 - **Whether the store stays per-repo.** Probably: decisions are about a codebase.
   A cross-project view would need a different addressing scheme.
 - **Whether the falsifier can be checked rather than merely recorded.** A

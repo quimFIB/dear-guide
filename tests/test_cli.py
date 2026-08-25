@@ -1833,3 +1833,114 @@ def test_the_order_inside_a_panel_is_the_order_you_meet_them(tmp_path):
                            ("import", "export"), ("pending", "apply"),
                            ("show", "areas"), ("check", "render")):
         assert at(earlier) < at(later), f"{earlier} should read before {later}"
+
+
+# ---- a store git merged into duplicate ids (F-F2) ------------------------
+
+
+@pytest.fixture
+def duplicated(store):
+    """The fixture store with `D02` present twice — what a git merge makes.
+
+    Not contrived. `decisions.json` is a JSON array, so two clones that each
+    add a vertex merge without a conflict whenever the additions sit far enough
+    apart in the file, and the result is a store holding one id twice with
+    nothing in git having said a word. `Graph.load` refuses it; the question
+    these tests ask is what each command does with the refusal.
+    """
+    path = store / "decisions.json"
+    raw = json.loads(path.read_text())
+    twin = dict(raw["vertices"][1], title="The same id, another question")
+    raw["vertices"].append(twin)
+    path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    return store
+
+
+@pytest.mark.parametrize("cmd", (["show"], ["node", "D02"], ["tree"]))
+def test_an_unreadable_store_is_reported_not_raised(run, duplicated, cmd):
+    """The two commands an agent reaches for first after a merge must not
+    answer a broken store with a Python traceback.
+
+    `dg check` names the fault, `dg brief` heads its payload `(store
+    unreadable)`, `dg why` and `dg task tree` print a clean error — and `dg
+    show` and `dg node` raised through `_g`, which reads as *the tool broke*
+    rather than *your store did*, at the one moment the distinction decides
+    what the reader does next.
+    """
+    r = run(*cmd)
+    assert r.exit_code != 0
+    assert r.exception is None or isinstance(r.exception, SystemExit)
+    assert "duplicate vertex id(s): D02" in r.output
+    assert "dg check" in r.output
+
+
+def test_the_unreadable_report_names_the_store_it_could_not_read(run, duplicated):
+    """Which file, since a project has two and only one of them is broken."""
+    assert "decisions.json" in run("show").output
+
+
+# ---- audit F-F6: an ordinary edit stops needing a hand edit ---------------
+#
+# `Vertex.title`, `Vertex.area`, `Task.title` and `Task.area` were mutable
+# fields with no mutator. No op wrote them: the decision store's `set_status` is
+# clamped to DECIDED, the task store's writes only `note`, `dg edit` revises a
+# *staged* op, and both imports refuse a non-empty store. So an agent that found
+# a typo'd or since-clarified title had no legitimate move — it hand-edited the
+# JSON, which is the one route the architecture exists to make unnecessary, or
+# it left the record wrong. That made an *ordinary edit* one of the bypasses,
+# which is the claim the whole safety story rests on.
+
+
+def test_a_title_can_be_corrected_through_the_tool(run, store):
+    """The finding, closed. Staged, applied, and in the store."""
+    assert run("amend", "D05", "--title", "Which shard count?").exit_code == 0
+    assert run("apply").exit_code == 0
+    assert Graph.load(store / "decisions.json").vertices["D05"].title \
+        == "Which shard count?"
+
+
+def test_the_correction_says_what_it_replaces_and_what_it_cannot_reach(run):
+    """Old and new, per field — and the one thing the store cannot do about it.
+
+    A changed title is not archived, deliberately: a `titles[]` list records the
+    old wording *inside the store*, and every stale citation of it is outside
+    one. Since the benefit is uncollectable the cost is not paid — so what is
+    left is telling whoever makes the change, at the moment they make it."""
+    out = run("amend", "D05", "--title", "Which shard count?").output
+    assert "Still open" not in out or "→" in out
+    assert "→" in out and "Which shard count?" in out
+    assert "citations of the old title" in out
+
+
+def test_an_area_change_does_not_carry_the_citation_warning(run):
+    """Printed only where it holds. A line on every correction is a line
+    nobody reads by the time it matters."""
+    assert "citations" not in run("amend", "D05", "--area", "Alpha").output
+
+
+@pytest.mark.parametrize("args,says", [
+    (("amend", "D05"), "nothing to change"),
+    (("amend", "D05", "--title", "  "), "needs a title"),
+    (("amend", "D05", "--area", "Nope"), "unknown area"),
+    (("amend", "D99", "--title", "x"), "unknown decision"),
+])
+def test_the_correction_is_refused_where_it_would_not_hold(run, args, says):
+    res = run(*args)
+    assert res.exit_code == 1 and says in res.output
+
+
+def test_writing_the_value_already_there_is_refused(run, g):
+    """The same reading the no-op status guard makes: the caller is usually an
+    agent that has lost track, and telling it so is more use than a second op
+    in the tray that changes nothing."""
+    res = run("amend", "D05", "--title", g.vertices["D05"].title)
+    assert res.exit_code == 1 and "already has that title" in res.output
+
+
+def test_the_tray_shows_the_correction_as_fields_not_as_json(run):
+    """A row a reviewer cannot read is a row the review cannot act on, and the
+    fallback rendering for an op with no entry is the raw dict."""
+    run("amend", "D05", "--title", "Which shard count?", "--area", "Alpha")
+    out = run("pending", "--full").output
+    assert "title Which shard count?" in out and "area Alpha" in out
+    assert '{"op"' not in out

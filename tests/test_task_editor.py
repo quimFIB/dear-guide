@@ -186,7 +186,7 @@ def test_the_store_honours_format_for_an_outcome_not_only_a_note(tg):
     as markdown."""
     task_pending._apply_one(tg, {"op": "set_status", "task": "T02",
                                  "status": "DONE", "outcome": "*bold*",
-                                 "format": "org"})
+                                 "done": "2026-01-09", "format": "org"})
     assert tg.tasks["T02"].format == "org"
 
 

@@ -2,14 +2,22 @@
   "areas": ["Search", "Serving", "Eval"],
   "tasks": [
     {"id": "T01", "title": "Build the HNSW index over the 48M-vector corpus",
-     "area": "Search", "status": "DONE", "done": "2026-02-21",
-     "outcome": "index/build_hnsw.py -- 61G resident, 4h12m on the batch box",
+     "area": "Search", "status": "DONE",
+     "completions": [
+       {"date": "2026-02-21",
+        "outcome": "index/build_hnsw.py -- 61G resident, 4h12m on the batch box"},
+       {"date": "2026-02-26",
+        "outcome": "rebuilt over the normalised vectors from T02 -- 59G resident, 3h58m"}
+     ],
      "because": "D02"},
 
     {"id": "T02", "title": "Normalise embeddings at write time",
-     "area": "Search", "status": "DONE", "done": "2026-02-24",
+     "area": "Search", "status": "DONE",
      "note": "Cosine over unnormalised vectors is a silent wrong answer rather than an error, so it is enforced in the writer.",
-     "outcome": "PR #218 -- normalisation moved into the writer",
+     "completions": [
+       {"date": "2026-02-24",
+        "outcome": "PR #218 -- normalisation moved into the writer"}
+     ],
      "because": "D07"},
 
     {"id": "T03", "title": "Sweep efSearch against the held-out queries",
@@ -21,8 +29,11 @@
      "area": "Serving", "status": "TODO", "because": "D05"},
 
     {"id": "T05", "title": "Stand up the recall harness on the held-out set",
-     "area": "Eval", "status": "DONE", "done": "2026-02-10",
-     "outcome": "eval/recall.py -- the baseline every sweep is scored against",
+     "area": "Eval", "status": "DONE",
+     "completions": [
+       {"date": "2026-02-10",
+        "outcome": "eval/recall.py -- the baseline every sweep is scored against"}
+     ],
      "because": "D06"},
 
     {"id": "T06", "title": "Add a CI gate on recall@10 >= 0.95",
@@ -44,8 +55,11 @@
      "note": "Turned up while doing T02: the writer normalises, and nothing fails if it stops."},
 
     {"id": "T09", "title": "Measure resident size under production concurrency",
-     "area": "Serving", "status": "DONE", "done": "2026-03-02",
-     "outcome": "bench/resident.md -- 68G at p99 concurrency, 7G over the figure the sweep recorded",
+     "area": "Serving", "status": "DONE",
+     "completions": [
+       {"date": "2026-03-02",
+        "outcome": "bench/resident.md -- 68G at p99 concurrency, 7G over the figure the sweep recorded"}
+     ],
      "evidence_for": "D02"},
 
     {"id": "T10", "title": "Backfill the 2023 corpus shard",

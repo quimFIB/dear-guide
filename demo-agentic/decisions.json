@@ -1,0 +1,21 @@
+{
+  "areas": ["Core", "Tooling", "Release"],
+  "vertices": [
+    {"id": "D01", "title": "Where do the evaluation weights come from?",
+     "area": "Core", "status": "DECIDED"},
+
+    {"id": "D02", "title": "How is a weight change accepted?",
+     "area": "Tooling", "status": "OPEN",
+     "note": "Agent A's question. Whatever the answer is, it has to say who or what judges a change and on what evidence."},
+
+    {"id": "D03", "title": "What ships in the release binary?",
+     "area": "Release", "status": "OPEN",
+     "note": "Agent B's question. T02 measured the binary already; nobody has written down what the number means."}
+  ],
+  "edges": [
+    {"from": "D01", "to": ["D02", "D03"], "active": true,
+     "answer": "Hand-tuned, by us. Three strong players on the team and no GPU budget, so the cheap thing is also the only thing.",
+     "falsifier": "a GPU budget appears, or hand-tuning stalls for two releases running",
+     "source": "notes/eval-plan.md", "date": "2026-03-01"}
+  ]
+}

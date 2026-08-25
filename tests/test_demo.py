@@ -80,6 +80,21 @@ def test_demo_holds_one_of_every_record(demo):
         "TODO", "DOING", "PARKED", "DONE", "DROPPED"}
 
 
+def test_demo_holds_work_finished_more_than_once(demo):
+    """The record `F-F5` exists for, in the store a reader actually opens.
+
+    A completion is archived exactly as a stop is, and a demo showing only
+    once-finished work shows the list as a formality — the reader has no reason
+    to notice that the first result was kept, because nothing was superseded.
+    T01 was built, T02 changed what it was built over, and it was built again."""
+    tg = TaskGraph.load(demo / "tasks.json")
+    twice = [t for t in tg.tasks.values() if len(t.completions) > 1]
+    assert twice, "no task in the demo was finished more than once"
+    t = twice[0]
+    assert t.outcome == t.completions[-1].outcome     # the live one is the last
+    assert t.completions[0].outcome != t.outcome      # and the first was kept
+
+
 def test_demo_holds_both_kinds_of_reversal(demo):
     """A finished reversal and one still open — the record this model exists for.
 

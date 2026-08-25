@@ -619,7 +619,7 @@ _UNSEARCHABLE = {"decisions": ("src", "to", "active", "format", "replaced_by"),
                  # also what a person searching would name. Offering it as a
                  # field that always returns nothing is the drift `_excluded`
                  # exists to prevent, arriving by the front door.
-                 "tasks": ("format", "stops")}
+                 "tasks": ("format", "stops", "completions")}
 
 
 def _excluded(kind: str, *classes) -> frozenset:
@@ -748,33 +748,44 @@ def task_lens(tg, *, predicates=None, structural=None, arg_kind=None,
 
     hidden = set(hide)
     out_of = _excluded("tasks", Task)
-    # `why` is the one name here that is not a field on `Task`. Every reason a
-    # task stopped lives in `stops`, and a searcher asking "why is this not
-    # being done" types `why:` — so the term is offered and answered out of the
-    # list. Withholding it because the dataclass lost the field would retire a
-    # working query to reflect a refactor, which is the vocabulary drifting
-    # from what people actually ask.
-    names = tuple(f for f in (*_fields_of(Task), "why")
+    # `why`, `outcome` and `done` are the names here that are not fields on
+    # `Task`. Every reason a task stopped lives in `stops` and every result it
+    # produced lives in `completions`, and a searcher asking "why is this not
+    # being done" types `why:` — so each term is offered and answered out of
+    # the list behind it. Withholding one because the dataclass lost the field
+    # would retire a working query to reflect a refactor, which is the
+    # vocabulary drifting from what people actually ask.
+    names = tuple(f for f in (*_fields_of(Task), "why", "outcome", "done")
                   if f not in hidden and f not in out_of)
 
     def values(tid: str, name: str) -> list[str]:
         if name == "id":
             return [tid]
-        out = _texts([getattr(tg.tasks[tid], name, None)])
-        # `why` is not a stored field any more — every reason lives in `stops`
-        # — so this is where the term gets its values at all. A hit in an entry
-        # that is not the live one is labelled as past, the way a decision's
-        # superseded answer is: both are reasons that stopped being true and
-        # are worth finding anyway.
+        t = tg.tasks[tid]
+        # A hit in an entry that is not the live one is labelled as past, the
+        # way a decision's superseded answer is: both are things that stopped
+        # being current and are worth finding anyway.
         if name == "why":
-            out += _texts(k.why for k in tg.tasks[tid].stops)
-        return out
+            return _texts(k.why for k in t.stops)
+        if name == "outcome":
+            return _texts(c.outcome for c in t.completions)
+        # `done` is deliberately not read from the list, for the reason
+        # `_ARCHIVED_PROSE` leaves a decision's `date` out: `done:>=` asks when
+        # this work was finished, and answering it from a completion the status
+        # no longer claims would quietly change what every existing date query
+        # means. The derived property is the live reading, and it is None for
+        # work that was finished and picked back up — which is the right answer
+        # to "is this done", not a gap.
+        return _texts([getattr(t, name, None)])
 
     def label(tid: str, name: str, text: str) -> str:
-        """`why:` reads a list, and only its last entry can be the live one."""
-        if name != "why" or tg.tasks[tid].stopped_because == text:
-            return name
-        return "stopped earlier because"
+        """`why:` and `outcome:` read lists; only the last entry can be live."""
+        t = tg.tasks[tid]
+        if name == "why" and t.stopped_because != text:
+            return "stopped earlier because"
+        if name == "outcome" and t.outcome != text:
+            return "produced earlier"
+        return name
 
     preds: dict[str, Callable[[str], bool]] = {
         "outstanding": lambda tid: tg.tasks[tid].unfinished,

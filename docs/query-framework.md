@@ -155,14 +155,24 @@ Decisions: `id title area status note answer falsifier source date summary why`.
 
 Tasks: `id title area status note done outcome readings why`.
 
-`why` is the exception that proves the rule, and it arrived when parking did.
-It is no longer a field on `Task` — every reason work stopped lives in `stops`,
-appended and never cleared — but a searcher asking *why is this not being done*
-types `why:`, so the term is kept and answered out of that list. A hit in an
-entry that is not the live one is labelled `stopped earlier because`, exactly as
-a decision's archived answer is labelled `superseded answer`: both are reasons
-that stopped being true and are worth finding anyway. Retiring a working query
-to reflect a refactor would be the vocabulary drifting from what people ask.
+`why`, `outcome` and `done` are the exceptions that prove the rule, and each
+arrived the same way: the store folded a scalar into an archival list, and the
+term outlived the field. Every reason work stopped lives in `stops` and every
+result it produced lives in `completions`, both appended and never cleared —
+but a searcher asking *why is this not being done* types `why:`, and one
+looking for a measurement types a word from it, so both terms are kept and
+answered out of the list behind them. A hit in an entry that is not the live
+one is labelled `stopped earlier because` or `produced earlier`, exactly as a
+decision's archived answer is labelled `superseded answer`: all three are
+things that stopped being current and are worth finding anyway. Retiring a
+working query to reflect a refactor would be the vocabulary drifting from what
+people ask.
+
+`done` is the one that deliberately does **not** read the list. `done:>=` asks
+when this work *is* finished, so it reads the derived live value and answers
+`no` for work that was finished and then picked back up — the same reason a
+decision's `date` is not read from its superseded edges, where answering from
+an overturned record would quietly change what every existing date query means.
 
 The two link fields are **not** in that list. `because` and `evidence_for` are
 withheld from the generic field table and re-offered as the structural terms

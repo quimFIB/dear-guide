@@ -26,6 +26,7 @@ from dgraph import cross, editor, pending, project, render, task_editor
 from dgraph import task_pending, task_render
 from dgraph import query as _query
 from dgraph.model import Graph
+from dgraph.tasks import done_label
 from dgraph.tasks import ID_RE as TASK_ID_RE
 # Moved to `dgraph/tasks.py`, beside the two after-the-fact readings of the
 # same question; imported under the CLI's old local name so every call site
@@ -66,7 +67,7 @@ LAYOUT = (
     (READ, ("show", "find", "brief", "node", "why/context", "tree", "path",
             "areas")),
     (HONEST, ("check", "gate", "render")),
-    (RECORD, ("add", "decide", "reopen", "confirm", "repair",
+    (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
               "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
     (STORE, ("init", "import", "import-md", "export")),
@@ -98,8 +99,8 @@ T_STORE = "Starting a backlog, and moving one"
 TASK_LAYOUT = (
     (T_READ, ("node", "tree")),
     (T_HONEST, ("render",)),
-    (T_RECORD, ("add", "start", "park", "done", "drop", "link", "unlink",
-                "dep", "undep", "rm")),
+    (T_RECORD, ("add", "start", "park", "done", "drop", "amend", "link",
+                "unlink", "dep", "undep", "rm")),
     (T_STAGE, ("pending", "drop-op", "clear")),
     (T_STORE, ("init", "import", "export")),
 )
@@ -249,13 +250,35 @@ STATUS_STYLE = {
 }
 
 
+#: A store that will not load. Narrow on purpose: `apply_all` raises
+#: `ApplyError` for a batch that does not fit, and these are the ways the file
+#: underneath it fails instead — absent or unreadable (`OSError`), malformed
+#: JSON or a duplicate id (`ValueError`), a field the schema does not have
+#: (`TypeError`). Caught rather than allowed to propagate because a traceback
+#: out of one batch takes the other one with it, which is the whole point of
+#: `_apply_decisions` and `_apply_tasks` returning instead of exiting.
+UNREADABLE = (OSError, ValueError, TypeError)
+
+
 def _g() -> Graph:
     proj = project.find()
     if not proj.has_decisions:
         con.print(f"[red]no decisions.json under {proj.root}[/]\n"
                   f"[dim]run `dg init` there, or pass --project PATH[/]")
         raise typer.Exit(2)
-    return Graph.load()
+    try:
+        return Graph.load()
+    except UNREADABLE as exc:
+        # A store can be well-formed JSON and still refuse to load — the case
+        # this exists for is a git merge that took both sides of a parallel
+        # `dg add` and left one id twice, which conflicts in no file and is
+        # reported by nothing until something tries to read it. `dg check` and
+        # `dg brief` already say so plainly; these commands raised through, and
+        # a traceback reads as *the tool broke* rather than *your store did* at
+        # the one moment the difference decides what the reader does next.
+        con.print(f"[red]{proj.store.name} could not be read[/]\n{_x(exc)}\n"
+                  f"[dim]`dg check` reports it against both stores[/]")
+        raise typer.Exit(1) from None
 
 
 def _eff(g: Graph, skip: int | None = None) -> Graph:
@@ -1574,6 +1597,70 @@ def add(
     _warn_stuck()
 
 
+#: What `dg amend` and `dg task amend` say when a title changes, once, at the
+#: moment it changes. The store cannot reach a citation of the old wording —
+#: not a commit message, not a line in `docs/`, not `dg why` output somebody
+#: pasted into a review — and archiving the old title inside the store would
+#: not reach them either, which is the argument for not archiving it. What is
+#: left is telling whoever is making the change, here, where it can be acted on.
+CITED = ("[dim]citations of the old title elsewhere — commits, docs, a pasted "
+         "`dg why` — are not updated, and nothing can find them[/]")
+
+
+def _amended(record, op: dict) -> list[str]:
+    """One line per field this op changes, old and new. Both stores' twin."""
+    return [f"{k:<7} {_x(getattr(record, k) or '—')} → {_x(op[k] or '—')}"
+            for k in pending.FIELDS if k in op]
+
+
+@app.command(rich_help_panel=RECORD)
+def amend(
+    vid: str,
+    title: str = typer.Option(None, "--title", "-t"),
+    area: str = typer.Option(None, "--area"),
+    note: str = typer.Option(None, "--note", "-n",
+                             help="what is undecided, and why"),
+) -> None:
+    """Correct how a decision is worded or filed: its title, area or note.
+
+    The op every other repair already had. Until it existed, an agent finding a
+    typo'd or since-clarified title had no legitimate move — it hand-edited
+    `decisions.json`, which is the one route this architecture exists to make
+    unnecessary, or it left the record wrong. Audit `F-F6`.
+
+    **It cannot touch an answer**, and that is the line it is drawn along. A
+    title and an area are not claims — a title is how a question is *referred
+    to*, not something the question says — so nothing is superseded when one
+    changes and nothing is archived. An answer and a falsifier are dated
+    assertions, and rewriting one in place is the act this whole model refuses:
+    `dg reopen` first, then decide again meaning it.
+    """
+    g = _g()
+    eff = _eff(g)
+    if vid not in eff.vertices:
+        con.print(f"[red]unknown decision {vid}[/]")
+        raise typer.Exit(1)
+    op = {"op": "set_fields", "vertex": vid}
+    op.update({k: v for k, v in (("title", title), ("area", area),
+                                 ("note", note)) if v is not None})
+    lines = _amended(eff.vertices[vid], op)
+    try:
+        # `pending.vet` holds every rule — a blank title, an unknown area, an
+        # op that changes nothing — because the browser can post this op as
+        # data and a rule only the CLI ran would not be a rule.
+        pending.vet(eff, op)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    pending.stage_all([op], against=eff)
+    con.print(f"[green]staged[/] {vid}")
+    for line in lines:
+        con.print(f"  [dim]{line}[/]")
+    if "title" in op:
+        con.print(CITED)
+    _warn_stuck()
+
+
 def _archived(store: pathlib.Path) -> str | None:
     """Why this store is *not* safely removable from, or None if it is.
 
@@ -1958,6 +2045,18 @@ def _op_summary(o: dict, details: dict, subject: str) -> str:
             + (f"  {detail}" if detail else ""))
 
 
+def _fields_detail(o: dict) -> str:
+    """A `set_fields` op as the fields it writes, for either tray.
+
+    One function in both tables, because it is one op in both stores and a
+    second rendering is how two doors come to describe the same thing
+    differently — which is the drift this file's comments spend most of their
+    length preventing.
+    """
+    return ", ".join(f"{k} {_x(o[k] or '—')}"
+                     for k in pending.FIELDS if k in o)
+
+
 _PENDING_DETAIL = {
     "close": lambda o: _x((o.get("answer") or "")[:70]),
     "reopen": lambda o: _x(o.get("why", "")),
@@ -1969,6 +2068,7 @@ _PENDING_DETAIL = {
     "remove_vertex": lambda o: f"✗ removed ({_x(o.get('mode', 'sever'))}"
                               + (f" → {_x(o['into'])}" if o.get("into") else "")
                               + ")",
+    "set_fields": _fields_detail,
 }
 
 
@@ -2130,16 +2230,6 @@ def _staged_ops(path: pathlib.Path, discard: str) -> list[dict] | None:
         con.print(f"[red]{path.name} could not be read[/]\n{_x(exc)}\n"
                   f"[dim]inspect it by hand, or discard it with `{discard}`[/]")
         return None
-
-
-#: A store that will not load. Narrow on purpose: `apply_all` raises
-#: `ApplyError` for a batch that does not fit, and these are the ways the file
-#: underneath it fails instead — absent or unreadable (`OSError`), malformed
-#: JSON or a duplicate id (`ValueError`), a field the schema does not have
-#: (`TypeError`). Caught rather than allowed to propagate because a traceback
-#: out of one batch takes the other one with it, which is the whole point of
-#: `_apply_decisions` and `_apply_tasks` returning instead of exiting.
-UNREADABLE = (OSError, ValueError, TypeError)
 
 
 def _report_drift(r: applying.Result) -> None:
@@ -2662,6 +2752,42 @@ def _tasks_resting_on(dids: list[str]) -> list[str]:
         return []
 
 
+@task_app.command("amend", rich_help_panel=T_RECORD)
+def task_amend(
+    tid: str,
+    title: str = typer.Option(None, "--title", "-t"),
+    area: str = typer.Option(None, "--area"),
+    note: str = typer.Option(None, "--note", "-n",
+                             help="what this work involves"),
+) -> None:
+    """Correct how a task is worded or filed: its title, area or note.
+
+    `dg amend`'s twin, and the same op — see there for what it will not touch
+    and why. Here the line falls in the same place: a title and an area are how
+    the work is referred to, while an outcome and a reason it stopped are dated
+    records of what happened, and those are appended, never edited.
+
+    To correct an outcome, `dg task start` and finish it again: the new one is
+    recorded beside the old rather than over it, which is the whole of what
+    `completions` is for.
+    """
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    op = {"op": "set_fields", "task": tid}
+    op.update({k: v for k, v in (("title", title), ("area", area),
+                                 ("note", note)) if v is not None})
+    lines = _amended(tg.tasks[tid], op)
+    # `_tstage` vets, and `task_pending.vet` holds every rule for the same
+    # reason the decision store's does: the browser can post this op as data.
+    _tstage(op)
+    con.print(f"[green]staged[/] {tid}")
+    for line in lines:
+        con.print(f"  [dim]{line}[/]")
+    if "title" in op:
+        con.print(CITED)
+    _twarn_stuck()
+
+
 @task_app.command("link", rich_help_panel=T_RECORD)
 def task_link(
     tid: str,
@@ -3141,8 +3267,13 @@ def task_rm(
         if before or after:
             lines.append(f"{label:<12}{', '.join(before) or '—'}  "
                          f"→ {', '.join(after) or '—'}")
-    if t.status == "DONE" and t.outcome:
-        lines.append(f"[yellow]loses[/] the outcome: {_x(t.outcome)}")
+    if t.completions:
+        # Every completion, not the live one: they are archived exactly as
+        # `stops` are, so a removal takes the whole account of what this work
+        # produced — including the results of earlier goes at it, which the
+        # status no longer shows and nothing else records.
+        lines.append(f"[yellow]loses[/] {len(t.completions)} completion(s), "
+                     f"latest: {_x(t.completions[-1].outcome)}")
     if t.stops:
         # The one record here that a removal cannot supersede — `dg task drop`
         # keeps it, `dg task rm` does not, which is the difference between the
@@ -3205,8 +3336,17 @@ def task_node(tid: str) -> None:
         lines.append(f"informs     {t.evidence_for}")
     if t.done:
         lines.append(f"done        {t.done}")
-    if t.outcome:
-        lines += ["", "[bold]Outcome[/]", _x(t.outcome)]
+    if t.completions:
+        # Every completion, whatever the status is now, and drawn like the
+        # stops below: the same record, kept for the same reason. The live one
+        # is the last, and only while the status still claims one — `done_label`
+        # decides that, so this panel cannot disagree with the store.
+        lines += ["", "[bold]Outcome[/]"]
+        label = done_label(t.status)
+        last = len(t.completions) - 1
+        for i, c in enumerate(t.completions):
+            tag = f"  [dim]({label})[/]" if label and i == last else ""
+            lines.append(f"  [dim]{c.date}[/]  {_x(c.outcome)}{tag}")
     if t.stops:
         # Kept whatever the status is now — work picked up again is the
         # ordinary case, and the list of what kept stopping it is the record
@@ -3327,6 +3467,7 @@ _TASK_DETAIL = {
     "remove_task": lambda o: f"✗ removed ({_x(o.get('mode', 'sever'))}"
                             + (f" → {_x(o['into'])}" if o.get("into") else "")
                             + ")",
+    "set_fields": _fields_detail,
 }
 
 

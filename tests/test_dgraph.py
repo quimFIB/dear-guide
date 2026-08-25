@@ -1151,3 +1151,93 @@ def test_vet_all_lets_a_group_build_on_itself(g, store):
     with pytest.raises(pending.ApplyError):
         pending.vet(g, ops[1])                    # ...but alone it would
     assert pending.load() == [], "vet_all stages nothing"
+
+
+# ---- drift is about other writers, not about your own batch (F-F1) -------
+
+
+def test_drift_is_silent_within_one_writers_own_batch(g):
+    """A batch that reopens a premise and then attaches to it must report
+    nothing. Nobody else has written.
+
+    This is the ordinary shape of decomposing a reversal into work — `dg reopen`
+    then `dg add --after` on the vertex just reopened — and both stage against
+    the *effective* graph, where the reopen has already taken effect. Comparing
+    those stamps against the bare store reports the batch's own first op as a
+    stranger's, with the direction backwards: `REOPENED → DECIDED`.
+
+    It matters more than a cosmetic wrong line. The drift report is the only
+    signal that a premise moved under a staged answer, and `demo-agentic/`
+    rests a whole scene on somebody reading one. A line that also fires on the
+    commonest single-writer batch in the tool is one an agent learns to skip.
+    """
+    reopen = pending.expand(g, {"op": "reopen", "vertex": "D01", "why": "x"})
+    reopen = [pending.stamp(g, op) for op in reopen]
+    eff = pending.apply_all(g, reopen)                 # what the tray now reads
+    attach = pending.stamp(eff, {"op": "add_edge", "from": "D01",
+                                 "to": ["D05"]})
+    assert pending.drift(g, [*reopen, attach]) == []
+
+
+def test_drift_still_names_another_writer_behind_your_own_ops(g):
+    """The guard on the fix above: silencing a batch's own effect must not
+    silence the case the report exists for.
+
+    Same batch, except the store has *also* moved — somebody else re-decided
+    `D01` with a different answer while this sat in the tray. Op 0 rests on the
+    store as it stands and its answer is not the one it was composed against,
+    so that op must still be named.
+
+    What must *not* happen is the second entry the unfixed code adds: the
+    attach reporting the batch's own reopen a second time, which is what turns
+    one true signal into two lines a reader cannot tell apart.
+    """
+    reopen = pending.expand(g, {"op": "reopen", "vertex": "D01", "why": "x"})
+    reopen = [pending.stamp(g, op) for op in reopen]
+    eff = pending.apply_all(g, reopen)
+    attach = pending.stamp(eff, {"op": "add_edge", "from": "D01",
+                                 "to": ["D05"]})
+
+    # Meanwhile, in the store: reopened and settled again, differently.
+    moved = pending.apply_all(g, pending.expand(g, {"op": "reopen",
+                                                    "vertex": "D01",
+                                                    "why": "someone else"}))
+    moved = pending.apply_all(moved, [{"op": "close", "vertex": "D01",
+                                       "answer": "A different answer.",
+                                       "falsifier": "f", "source": "s",
+                                       "to": ["D02", "D03"]}])
+
+    d = pending.drift(moved, [*reopen, attach])
+    assert [x["premise"] for x in d] == ["D01"]     # once, not twice
+    assert d[0]["op"] == 0 and d[0]["answer_changed"]
+
+
+# ---- an ordinary edit has a route (F-F6) ---------------------------------
+
+
+def test_a_vertex_note_and_its_dialect_go_together(g):
+    """`add_vertex` already applies this rule — the tag describes the note, so
+    without one it describes nothing — and `set_fields` is the only other way a
+    note reaches a vertex. The task store does *not* do this, and that is the
+    records differing rather than the rule: a task's `format` covers its
+    outcomes too."""
+    out = pending.apply_all(g, [
+        {"op": "set_fields", "vertex": "D05", "note": "*org*", "format": "org"}])
+    assert out.vertices["D05"].format == "org"
+    gone = pending.apply_all(out, [
+        {"op": "set_fields", "vertex": "D05", "note": None}])
+    assert gone.vertices["D05"].note is None
+    assert gone.vertices["D05"].format is None
+
+
+def test_a_correction_is_not_stamped_as_leaning_on_the_record(g):
+    """`premises` leaves `set_fields` out, and the reason is `fingerprint`
+    rather than the op: a fingerprint is a status and a digest of an answer, so
+    listing the vertex would make `drift` report a status change under an op
+    that does not care about the status, and go on missing the wording it does
+    care about. Two writers giving one record different titles is the seam's
+    problem, not this function's."""
+    assert pending.premises(g, {"op": "set_fields", "vertex": "D01",
+                                "title": "x"}) == []
+    assert "saw" not in pending.stamp(g, {"op": "set_fields", "vertex": "D01",
+                                          "title": "x"})

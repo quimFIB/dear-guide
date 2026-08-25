@@ -246,6 +246,9 @@ plugin's environment is the host's.
 - **opencode expresses `ask` as a refusal that says whose call it is.** Its
   permission API carries no reason field, and a refusal the model cannot read is
   a refusal it retries.
+- **Two agents on one graph is not supported.** One staging tray per project,
+  with no notion of whose ops are whose. What holds under contention and what
+  does not is [demonstrated rather than described](../demo-agentic/).
 - **Version skew is real** — the plugin and the package install separately.
   `dg --version` exists so an adapter can tell; the Claude Code brief hook says
   so explicitly when it meets a `dg` too old to know `dg brief`.
@@ -268,6 +271,10 @@ lost.
 
 - [A session, start to finish](session-walkthrough.md) — all three mechanisms in
   one worked session, with the real output of every command.
+- [`demo-agentic/`](../demo-agentic/) — five runnable interleavings of two agents
+  over one graph, for the limit above that this page states and cannot show:
+  what a second writer does to you, which of it `dg` refuses, which of it it
+  merely reports, and which of it is left to you.
 - [How it works, and why](how-it-works.md) — what the agent is maintaining.
 - [The CLI](quickstart-cli.md) — what the agent is actually driving.
 - [The web interface](quickstart-web.md) — for reviewing a graph by eye.

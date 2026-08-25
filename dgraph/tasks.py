@@ -22,14 +22,23 @@ are not decisions and the differences are the whole point of keeping two stores:
   it. Task readiness genuinely *is* a function of dependencies, so storing it
   would only create something that can go stale. `stale_block` has no analogue
   here; it cannot occur.
-- **Supersession, in one place only.** A decision that is overturned keeps its
-  old answer forever, because how a project changed its mind is worth more than
-  the conclusion. Here that applies to one question — *why is this work not
-  being done* — because it is the one whose answer can stop being true and
-  still be worth having. Every stoppage appends to `Task.stops` and nothing
-  ever clears it; work put down three times says so. Every other field this
-  store keeps is current-state and is cleared when the state it describes
-  stops holding.
+- **Supersession, in two places, and both are lists.** A decision that is
+  overturned keeps its old answer forever, because how a project changed its
+  mind is worth more than the conclusion. Here that applies to the two
+  questions whose answers can stop being current and still be worth having —
+  *why is this work not being done* and *what did it produce* — so every
+  stoppage appends to `Task.stops` and every completion appends to
+  `Task.completions`, and nothing ever clears either. Work put down three
+  times says so; work finished twice keeps both results. Which entry is
+  **live** is never stored: `stopped_because`, `done` and `outcome` all derive
+  it from the status, which is what stops a record outliving the claim it
+  used to support. Every other field this store keeps is current-state.
+
+  `completions` was the exception until audit `F-F5`, and it is worth saying
+  why the exception was not visible: the pair was two scalars that `_apply_one`
+  assigned, so a second `dg task done` overwrote a result and its date with
+  every invariant still holding. Nothing about the record's *shape* changed,
+  which is exactly what an invariant can see.
 - **Two ways to stop, and they differ downstream, not in the record.** `PARKED`
   is work nobody is doing; `DROPPED` is work nobody is going to do. Both write
   the same `Stop`. What separates them is whether the work that waited on this
@@ -38,7 +47,9 @@ are not decisions and the differences are the whole point of keeping two stores:
   the same way twice, and neither answer is right for both cases.
 - **No falsifier, no answer.** A task is finished when it is done, and what it
   produced is an `outcome` — a path, a PR, a note. That is a record, not a
-  claim about the world, so nothing can falsify it.
+  claim about the world, so nothing can falsify it. A *later* outcome does not
+  falsify an earlier one either: both happened, and which one the work stands
+  on now is the status's business.
 - **No orphan check.** An unconnected task is ordinary; an unconnected decision
   is a smell.
 
@@ -108,6 +119,22 @@ REMOVAL_MODES = ("sever", "splice", "into")
 STOP_LABEL = {"PARKED": "Put down", "DROPPED": "Not being done"}
 
 
+#: What to call the live completion, beside `STOP_LABEL` and for the same
+#: reason. Four renderers draw the completion list — `task_render`, `cli`,
+#: `context` and `app.html` — and a word each of them chooses for itself is
+#: how the PARKED reason came to be printed by one and dropped by the others.
+DONE_LABEL = "the result"
+
+
+def done_label(status: str) -> str | None:
+    """The word for the live completion, or None where the status claims none.
+
+    `stop_label`'s twin. The status is what decides, exactly as it does in
+    `Task.done` — a completion under restarted work is a record, not a claim.
+    """
+    return DONE_LABEL if status == "DONE" else None
+
+
 def stop_label(status: str) -> str | None:
     """The label for the live stop, or `None` where the status claims none.
 
@@ -138,6 +165,28 @@ class Stop:
 
     why: str
     date: str
+
+
+@dataclass
+class Completion:
+    """One time this work was finished, and what it produced.
+
+    `Stop`'s twin, and for the same reason: a record kept forever is appended,
+    never assigned. A task can be finished, restarted and finished again — a
+    measurement redone with a different method, a fix shipped twice — and each
+    time the store holds a dated account of what came out. Overwriting the
+    first one destroys the only copy of a result, silently, and no invariant
+    can notice because nothing about the record's *shape* changed.
+
+    Two fields and no more: when it finished, and what it produced. Which
+    completion is *live* is not stored, for the reason `stopped_because` gives:
+    the status decides, so `Task.done` and `Task.outcome` derive it, and a
+    completion that a later status contradicts cannot rot because it never
+    claimed to be current.
+    """
+
+    date: str
+    outcome: str
 
 
 @dataclass
@@ -178,8 +227,13 @@ class Task:
     area: str
     status: str = "TODO"
     note: str | None = None      # prose: what this involves, why it is parked
-    done: str | None = None      # ISO date, required once DONE
-    outcome: str | None = None   # what the work produced, required once DONE
+    #: Every time this work was finished, oldest first, and never cleared.
+    #: `done` and `outcome` read the last entry and are derived, not stored —
+    #: see those properties for why. Held as a list because the pair used to be
+    #: two scalars, and a second `dg task done` overwrote both with `dg check`
+    #: reporting clean: the one archival record in either store kept somewhere
+    #: a later write could erase it.
+    completions: list[Completion] = field(default_factory=list)
     #: Why the work is not being done, written by `dg task drop`. Its own
     #: field rather than the note, because overwriting the only description of
     #: what the work *was* is the opposite of keeping a record: the decision
@@ -236,6 +290,27 @@ class Task:
     @property
     def parked(self) -> bool:
         return self.status == "PARKED"
+
+    @property
+    def done(self) -> str | None:
+        """The date of the live completion, or None where none is claimed.
+
+        Derived for the reason `stopped_because` is, and the sentence there
+        applies word for word: a record that outlived its status cannot exist
+        if the status is what decides whether the record is live. Restarting
+        finished work leaves its completion in the list and stops it being
+        read, which is why nothing clears anything any more.
+        """
+        return self.completions[-1].date if self._live else None
+
+    @property
+    def outcome(self) -> str | None:
+        """What the live completion produced. `done`'s other half."""
+        return self.completions[-1].outcome if self._live else None
+
+    @property
+    def _live(self) -> bool:
+        return self.status == "DONE" and bool(self.completions)
 
     @property
     def stopped_because(self) -> str | None:
@@ -404,6 +479,23 @@ def _task(raw: dict) -> Task:
             f"{raw.get('id', '?')}: malformed stops entry — each needs a "
             f"`why` and a `date`, and nothing else ({exc})"
         ) from None
+    completions = fields.pop("completions", [])
+    legacy = [fields.pop(f, None) for f in ("done", "outcome")]
+    if any(v is not None for v in legacy) and not completions:
+        # A store written while a completion was two scalars. Folded rather
+        # than refused, unlike the `why` above, because nothing has to be
+        # invented: both halves are already in the record, and the date is one
+        # of them. A half-written pair folds too, with the missing half empty,
+        # so that `validate` can go on reporting it — refusing the load would
+        # make the one command that names the fault unable to run.
+        completions = [{"date": legacy[0] or "", "outcome": legacy[1] or ""}]
+    try:
+        fields["completions"] = [Completion(**c) for c in completions]
+    except TypeError as exc:
+        raise ValueError(
+            f"{raw.get('id', '?')}: malformed completions entry — each needs "
+            f"a `date` and an `outcome`, and nothing else ({exc})"
+        ) from None
     readings = fields.pop("readings", [])
     try:
         fields["readings"] = [Reading(**k) for k in readings]
@@ -481,7 +573,11 @@ class TaskGraph:
                     for k, val in (
                         ("id", t.id), ("title", t.title), ("area", t.area),
                         ("status", t.status), ("note", t.note),
-                        ("done", t.done), ("outcome", t.outcome),
+                        # `t.completions`, not `t.done`/`t.outcome`: those are
+                        # status-gated, so serializing through them would drop
+                        # the record of finished work the moment it restarted.
+                        ("completions", [{"date": c.date, "outcome": c.outcome}
+                                         for c in t.completions] or None),
                         # Absent rather than `[]` when there is none, matching
                         # every other field here: the store stays readable, and
                         # work that never stopped says so by silence.
@@ -708,16 +804,22 @@ class TaskGraph:
                            if t.evidence_for else "evidence for nothing now")
                         + f" — the record stands, but it covers nothing",
                         "warning")
-            if t.status != "DONE":
-                # Applying a status change clears these, so this catches a
-                # hand-edit: an outcome under unfinished work is a claim the
-                # store cannot support, and the view prints it as if it could.
-                stale = [f for f in ("done", "outcome") if getattr(t, f)]
-                if stale:
+            for c in t.completions:
+                if not c.date or not c.outcome:
                     add("task_done_complete",
-                        f"{tid} is {t.status} but still carries "
-                        f"{' and '.join(stale)} — completion data from an "
-                        f"earlier DONE; clear it, or set the status back")
+                        f"{tid}: a completions entry is missing its "
+                        f"{'date' if not c.date else 'outcome'}")
+            # There is no "carries completion data it should not" rule any
+            # more, and its absence is the point of folding the pair into a
+            # list. That rule existed because two live scalars outlived the
+            # status that made them true, and a status change had to clear them
+            # to stop them rotting. A completion describes work that *finished*,
+            # so no later status can contradict it — work finished, restarted
+            # and finished again is the ordinary case rather than drift, and it
+            # is the case the old shape destroyed. What is checked instead is
+            # the other direction: a status claiming a completion that is not
+            # there, below, and an entry missing a half of itself, above.
+            if t.status != "DONE":
                 continue
             if not t.done:
                 add("task_done_complete", f"{tid}: DONE without a date")

@@ -1,0 +1,1006 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Two Agents, One Graph</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap">
+
+<style>
+/* ---------------------------------------------------------------------------
+   Palette is not invented: agent A is tput setaf 4 and agent B is setaf 5, the
+   same two colours scenes/lib.sh prints them in. The deck and the terminal it
+   describes address the agents by the same names.
+   Neutrals carry a blue bias off the ink, so nothing reads as default grey.
+--------------------------------------------------------------------------- */
+:root {
+  --ground:      #eef0f4;
+  --surface:     #fafbfc;
+  --surface-sunk:#e6e9ef;
+  --ink:         #171a21;
+  --ink-soft:    #4a5262;
+  --ink-faint:   #79839a;
+  --rule:        #d3d8e2;
+  --a:           #1f5fb8;
+  --a-wash:      #e6eefa;
+  --b:           #8f3f8c;
+  --b-wash:      #f6e9f5;
+  --stop:        #ab3b33;
+  --warn:        #8a6206;
+  --ok:          #2f6b4d;
+  --term-bg:     #14171d;
+  --term-fg:     #d5dae4;
+  --shadow:      0 1px 2px rgba(23,26,33,.05), 0 8px 24px -12px rgba(23,26,33,.18);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #0e1116;
+    --surface:     #161a21;
+    --surface-sunk:#1d222b;
+    --ink:         #e7eaf0;
+    --ink-soft:    #a3acbd;
+    --ink-faint:   #737e92;
+    --rule:        #2b323d;
+    --a:           #74a8ee;
+    --a-wash:      #17263c;
+    --b:           #d68ed1;
+    --b-wash:      #331e33;
+    --stop:        #ef8078;
+    --warn:        #d6a52e;
+    --ok:          #6fbf95;
+    --term-bg:     #0a0d12;
+    --term-fg:     #ccd3df;
+    --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"] {
+  --ground:#0e1116; --surface:#161a21; --surface-sunk:#1d222b;
+  --ink:#e7eaf0; --ink-soft:#a3acbd; --ink-faint:#737e92; --rule:#2b323d;
+  --a:#74a8ee; --a-wash:#17263c; --b:#d68ed1; --b-wash:#331e33;
+  --stop:#ef8078; --warn:#d6a52e; --ok:#6fbf95;
+  --term-bg:#0a0d12; --term-fg:#ccd3df;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- the frame -------------------------------------------------------- */
+
+.deck { min-height: 100vh; display: flex; flex-direction: column; }
+
+.rail {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 1.25rem;
+  padding: .7rem clamp(1rem, 4vw, 3rem);
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--rule);
+}
+.rail__mark {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .72rem; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-faint); white-space: nowrap;
+}
+.rail__dots { display: flex; gap: .3rem; flex: 1; flex-wrap: wrap; }
+.dot {
+  appearance: none; border: 0; padding: 0; cursor: pointer;
+  height: 3px; flex: 1 1 auto; min-width: 14px; max-width: 90px;
+  background: var(--rule); border-radius: 2px;
+  transition: background .18s ease;
+}
+.dot[aria-current="true"] { background: var(--ink); }
+.dot.is-seen { background: var(--ink-faint); }
+.dot:focus-visible { outline: 2px solid var(--a); outline-offset: 3px; }
+.rail__count {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums; font-size: .78rem; color: var(--ink-faint);
+}
+.rail__theme {
+  appearance: none; background: none; border: 1px solid var(--rule);
+  border-radius: 999px; padding: .18rem .6rem; cursor: pointer;
+  font: inherit; font-size: .72rem; color: var(--ink-soft);
+}
+.rail__theme:hover { border-color: var(--ink-faint); color: var(--ink); }
+.rail__theme:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
+
+main { flex: 1; }
+
+.slide {
+  display: none;
+  padding: clamp(1.5rem, 4vw, 3.25rem) clamp(1rem, 4vw, 3rem) 5.5rem;
+  max-width: 1180px; margin: 0 auto; width: 100%;
+}
+.slide.is-on { display: block; animation: rise .32s ease both; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) {
+  .slide.is-on { animation: none; }
+  .step { transition: none !important; }
+}
+
+/* ---- type ------------------------------------------------------------- */
+
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .72rem; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-faint); margin: 0 0 .6rem;
+}
+h1, h2 {
+  font-family: Newsreader, ui-serif, Georgia, serif;
+  font-weight: 400; letter-spacing: -.012em; text-wrap: balance;
+  margin: 0 0 .5rem;
+}
+h1 { font-size: clamp(2.3rem, 5.4vw, 3.9rem); line-height: 1.06; }
+h2 { font-size: clamp(1.7rem, 3.4vw, 2.5rem); line-height: 1.12; }
+h3 {
+  font-family: "IBM Plex Sans", sans-serif; font-size: .8rem; font-weight: 600;
+  letter-spacing: .1em; text-transform: uppercase; margin: 0;
+}
+.lede {
+  font-family: Newsreader, ui-serif, Georgia, serif;
+  font-size: clamp(1.08rem, 2vw, 1.32rem); line-height: 1.5;
+  color: var(--ink-soft); max-width: 62ch; margin: 0 0 1.4rem;
+}
+p { max-width: 68ch; }
+em.q { font-style: italic; color: var(--ink); }
+strong { font-weight: 600; }
+code, .mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .87em;
+}
+p code { background: var(--surface-sunk); padding: .08em .34em; border-radius: 3px; }
+
+.kicker {
+  margin-top: 1.5rem; padding: 1rem 1.2rem;
+  border-left: 2px solid var(--ink); background: var(--surface);
+  box-shadow: var(--shadow); border-radius: 0 6px 6px 0;
+}
+.kicker p { margin: 0; max-width: 74ch; }
+.kicker p + p { margin-top: .7rem; }
+
+/* ---- the two lanes ----------------------------------------------------
+   One grid, three columns: agent A, the spine, agent B. Vertical position is
+   time, so a step's row says when it happened and its column says who did it.
+   The spine is where the thing they are contending over lives -- one tray in
+   scenes 1-2, the git remote in 3-5. That the spine changes is the point.
+------------------------------------------------------------------------- */
+
+.lanes {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) clamp(96px,13vw,168px) minmax(0,1fr);
+  gap: .55rem .9rem;
+  align-items: start;
+  position: relative;
+  margin-top: 1.4rem;
+}
+.lanes::before {                      /* the spine, drawn behind the cards */
+  content: ""; position: absolute; top: 2.4rem; bottom: 0;
+  left: 50%; width: 1px; transform: translateX(-.5px);
+  background: repeating-linear-gradient(var(--rule) 0 5px, transparent 5px 10px);
+}
+.lanehead {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .74rem; letter-spacing: .1em; text-transform: uppercase;
+  padding-bottom: .35rem; border-bottom: 1px solid;
+}
+.lanehead--a { grid-column: 1; color: var(--a); border-color: var(--a); }
+.lanehead--b { grid-column: 3; color: var(--b); border-color: var(--b); text-align: right; }
+.lanehead--mid {
+  grid-column: 2; text-align: center; color: var(--ink-faint);
+  border-color: var(--rule); font-size: .66rem;
+}
+
+.step {
+  opacity: 0; transform: translateY(4px);
+  transition: opacity .3s ease, transform .3s ease;
+  min-width: 0;
+}
+.step.is-shown { opacity: 1; transform: none; }
+.step--a { grid-column: 1; }
+.step--b { grid-column: 3; }
+.step--mid { grid-column: 2; }
+.step--wide { grid-column: 1 / -1; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 7px; box-shadow: var(--shadow); overflow: hidden;
+}
+.step--a .card { border-left: 3px solid var(--a); }
+.step--b .card { border-right: 3px solid var(--b); }
+
+.card__cmd {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .76rem; line-height: 1.45;
+  padding: .5rem .7rem; background: var(--surface-sunk);
+  color: var(--ink-soft); word-break: break-word;
+}
+.card__cmd b { color: var(--ink); font-weight: 600; }
+
+/* The terminal keeps its dark ground in BOTH themes -- a transcript that goes
+   pale in light mode stops looking like the thing it is a recording of. So the
+   syntax colours below are literals on purpose: they sit on --term-bg, which is
+   dark either way, and taking them from the page's token set would be wrong. */
+.term {
+  margin: 0; padding: .6rem .7rem;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .74rem; line-height: 1.5;
+  white-space: pre; overflow-x: auto;
+  background: var(--term-bg); color: var(--term-fg);
+}
+.term.wrap { white-space: pre-wrap; }
+.term .ok   { color: #79c79b; }
+.term .no   { color: #f08b82; }
+.term .dr   { color: #e6b95c; }
+.term .hi   { color: #fff; background: rgba(230,185,92,.22); }
+.term .hiA  { color: #a7c9f7; background: rgba(116,168,238,.16); }
+.term .hiB  { color: #e9b3e4; background: rgba(214,142,209,.16); }
+.term .mut  { color: #7c8698; }
+
+.note {
+  margin: .4rem 0 0; padding: .45rem .6rem;
+  font-size: .8rem; line-height: 1.45; color: var(--ink-soft);
+  background: var(--a-wash); border-radius: 5px;
+}
+.step--b .note { background: var(--b-wash); }
+.note b { color: var(--ink); }
+.note--flag { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+
+.spinecard {
+  background: var(--surface); border: 1px dashed var(--rule);
+  border-radius: 7px; padding: .5rem .45rem; text-align: center;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .68rem;
+  color: var(--ink-soft); line-height: 1.4;
+}
+.spinecard b { display: block; color: var(--ink); font-size: .72rem; }
+.spinecard .arrow { font-size: 1rem; color: var(--ink-faint); }
+
+/* ---- the graph diagram ------------------------------------------------ */
+
+.graph { display: grid; gap: .8rem; margin-top: 1.2rem; }
+.vtx {
+  border: 1px solid var(--rule); border-radius: 7px; background: var(--surface);
+  padding: .75rem .9rem; box-shadow: var(--shadow);
+}
+.vtx--premise { border-color: var(--ink-faint); }
+.vtx--a { border-left: 3px solid var(--a); }
+.vtx--b { border-left: 3px solid var(--b); }
+.vtx__id {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600;
+  font-size: .8rem; letter-spacing: .04em;
+}
+.vtx__q { font-size: .98rem; font-weight: 500; }
+.vtx__ans {
+  font-family: Newsreader, serif; font-size: .98rem; color: var(--ink-soft);
+  margin-top: .3rem; font-style: italic;
+}
+.vtx__fals {
+  margin-top: .45rem; font-family: "IBM Plex Mono", monospace; font-size: .72rem;
+  color: var(--warn);
+}
+.chip {
+  display: inline-block; font-family: "IBM Plex Mono", monospace;
+  font-size: .64rem; letter-spacing: .09em; padding: .1rem .42rem;
+  border-radius: 3px; border: 1px solid currentColor; vertical-align: .1em;
+}
+.chip--decided { color: var(--ok); }
+.chip--open    { color: var(--ink-faint); }
+.chip--a       { color: var(--a); }
+.chip--b       { color: var(--b); }
+.kids { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); gap: .8rem; }
+.tasks {
+  font-family: "IBM Plex Mono", monospace; font-size: .78rem; color: var(--ink-soft);
+  border-top: 1px solid var(--rule); padding-top: .7rem; line-height: 1.7;
+}
+
+/* ---- three-up refusal cards ------------------------------------------- */
+
+.trio { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px,1fr)); gap: .9rem; margin-top: 1.2rem; }
+.trio > .step { grid-column: auto; }
+.card--stop { border-left: 3px solid var(--stop); }
+.card--soft { border-left: 3px solid var(--warn); }
+.trio .card__hd {
+  padding: .55rem .7rem; border-bottom: 1px solid var(--rule);
+  font-size: .82rem;
+}
+.trio .card__hd b { font-family: "IBM Plex Mono", monospace; }
+
+/* ---- closing ---------------------------------------------------------- */
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px,1fr)); gap: 1.2rem 2rem; margin-top: 1.3rem; }
+.cols h3 { margin-bottom: .4rem; color: var(--ink-faint); }
+.runbox {
+  margin-top: 1.4rem; background: var(--term-bg); color: var(--term-fg);
+  border-radius: 8px; padding: 1rem 1.1rem; box-shadow: var(--shadow);
+  font-family: "IBM Plex Mono", monospace; font-size: .84rem; line-height: 1.8;
+  overflow-x: auto;
+}
+.runbox .mut { color: #7c8698; }
+
+/* ---- footer nav ------------------------------------------------------- */
+
+.nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: center; gap: .6rem;
+  padding: .55rem 1rem;
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: blur(8px); border-top: 1px solid var(--rule);
+}
+.nav button {
+  appearance: none; font: inherit; font-size: .8rem;
+  padding: .3rem .85rem; border-radius: 999px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--rule); color: var(--ink);
+}
+.nav button:hover:not(:disabled) { border-color: var(--ink-faint); }
+.nav button:disabled { opacity: .38; cursor: default; }
+.nav button:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
+.nav__hint { font-size: .74rem; color: var(--ink-faint); }
+kbd {
+  font-family: "IBM Plex Mono", monospace; font-size: .72rem;
+  border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px;
+  padding: .02rem .3rem; color: var(--ink-soft); background: var(--surface);
+}
+@media (max-width: 620px) {
+  .lanes { grid-template-columns: 1fr; }
+  .lanes::before { display: none; }
+  .step--a, .step--b, .step--mid, .step--wide { grid-column: 1; }
+  .lanehead--b { text-align: left; }
+  .lanehead--mid { text-align: left; }
+  .nav__hint { display: none; }
+}
+</style>
+
+<div class="deck">
+  <header class="rail">
+    <span class="rail__mark">dear&#8209;guide · demo&#8209;agentic</span>
+    <div class="rail__dots" id="dots" role="tablist" aria-label="Slides"></div>
+    <span class="rail__count" id="count">1 / 8</span>
+    <button class="rail__theme" id="theme" type="button">theme</button>
+  </header>
+
+  <main id="main">
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Title">
+    <p class="eyebrow">A demo you can run · five scenes · no model in any of them</p>
+    <h1>Two agents,<br>one graph.</h1>
+    <p class="lede">
+      <strong>dear&#8209;guide</strong> keeps a project's decisions and the work that
+      follows from them in two linked stores. It was built for one writer. These
+      five scenes are what happens when there are two — a pair of AI agents
+      given separate work on the same graph, racing.
+    </p>
+    <p>
+      Every line of terminal output on these slides is verbatim from running the
+      scripts. Nothing here is illustrative, and the interesting result is not
+      that the store breaks. It doesn't.
+    </p>
+    <div class="runbox">
+      <span class="mut">$</span> ./demo-agentic/demo.sh<br>
+      <span class="mut">$</span> ./demo-agentic/demo.sh 3 &nbsp;&nbsp;<span class="mut"># just the one that matters</span>
+    </div>
+    <p class="nav__hint" style="margin-top:1.2rem">
+      <kbd>&rarr;</kbd> to advance a step, <kbd>&larr;</kbd> to go back.
+    </p>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="The graph">
+    <p class="eyebrow">The setup</p>
+    <h2>An open-source chess engine, three decisions deep</h2>
+    <p class="lede">
+      One premise, with a question hanging off it in each of two agents' areas.
+      That is the smallest shape in which two agents can be given genuinely
+      separate work and still collide.
+    </p>
+
+    <div class="graph">
+      <div class="vtx vtx--premise">
+        <span class="vtx__id">D01</span> <span class="chip chip--decided">DECIDED</span>
+        <div class="vtx__q">Where do the evaluation weights come from?</div>
+        <div class="vtx__ans">“Hand-tuned, by us. Three strong players on the team and no GPU budget, so the cheap thing is also the only thing.”</div>
+        <div class="vtx__fals">falsifier &nbsp;a GPU budget appears, or hand-tuning stalls for two releases running</div>
+      </div>
+
+      <div class="kids">
+        <div class="vtx vtx--a">
+          <span class="vtx__id">D02</span> <span class="chip chip--open">OPEN</span>
+          <span class="chip chip--a">agent A</span>
+          <div class="vtx__q">How is a weight change accepted?</div>
+        </div>
+        <div class="vtx vtx--b">
+          <span class="vtx__id">D03</span> <span class="chip chip--open">OPEN</span>
+          <span class="chip chip--b">agent B</span>
+          <div class="vtx__q">What ships in the release binary?</div>
+        </div>
+      </div>
+
+      <div class="tasks">
+        T01 &nbsp;Wire the SPRT harness to the volunteer cluster &nbsp;&nbsp;<span style="color:var(--ink-faint)">DOING &nbsp;· evidence for D02</span><br>
+        T02 &nbsp;Measure the binary with the weights inlined &nbsp;&nbsp;<span style="color:var(--ok)">DONE</span> <span style="color:var(--ink-faint)">&nbsp;· evidence for D03 &nbsp;→ 412&nbsp;KB at -Os, weights 71&nbsp;KB of it</span>
+      </div>
+    </div>
+
+    <div class="kicker">
+      <p>Every vertex here is a question the <em class="q">team</em> answers in a design
+      discussion — where the weights are sourced, how a change gets reviewed,
+      what the release artefact is. None of it is anything the engine does while
+      playing. <strong>This graph guides the development of a system; it is not a
+      model of one.</strong></p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Scene 1">
+    <p class="eyebrow">Scene 1 · one project, two agents in it</p>
+    <h2>The tray has no idea whose ops are whose</h2>
+    <p class="lede">
+      They share a directory, so they share a staging tray. Nothing either of
+      them types is wrong.
+    </p>
+
+    <div class="lanes">
+      <div class="lanehead lanehead--a">agent A</div>
+      <div class="lanehead lanehead--mid">one tray</div>
+      <div class="lanehead lanehead--b">agent B</div>
+
+      <div class="step step--a" data-step="1">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg decide D02</b> --answer 'SPRT against the previous build&hellip;' --falsifier &hellip;</div>
+          <pre class="term">staged 1 op(s) — review with
+`dg pending`, then `dg apply`</pre>
+        </div>
+        <p class="note">Staged, <b>not applied</b>. A means to look it over first.</p>
+      </div>
+
+      <div class="step step--b" data-step="2">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg reopen D01</b> --why 'A sponsor donated cluster time&hellip;' --yes</div>
+          <pre class="term">Its answer becomes superseded;
+its dependencies stay.
+
+<span class="hi">1 decided descendant(s) rest on it
+and become PROVISIONAL:
+  D02</span></pre>
+        </div>
+        <p class="note note--flag"><b>D02 is OPEN in the store.</b> It is decided only in the
+        tray, by A, and unapplied. B has just been told about work that is not
+        B's and that B has never seen.</p>
+      </div>
+
+      <div class="step step--mid" data-step="3">
+        <div class="spinecard"><b>tray</b>3 ops<br>2 authors</div>
+      </div>
+
+      <div class="step step--b" data-step="3">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg pending</b></div>
+          <pre class="term">STAGED  3 op(s)
+  0 close      D02 <span class="hiA">← A's</span>
+  1 reopen     D01 <span class="hiB">← B's</span>
+  2 set_status D02 <span class="hiB">← B's,</span>
+                   <span class="hiB">  about A's</span></pre>
+        </div>
+        <p class="note">Nothing in the tray records which is which.</p>
+      </div>
+
+      <div class="step step--b" data-step="4">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg apply</b></div>
+          <pre class="term"><span class="ok">✓ applied 3 op(s)</span> → decisions.json
+                 + decision-graph.md</pre>
+        </div>
+        <p class="note">B applied A's decision.</p>
+      </div>
+
+      <div class="step step--a" data-step="5">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg pending</b></div>
+          <pre class="term"><span class="mut">nothing staged</span></pre>
+        </div>
+        <p class="note note--flag">A's <b>only</b> signal. Not that the work landed; not
+        that the ground moved under it.</p>
+      </div>
+
+      <div class="step step--a" data-step="6">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg decide D02</b> &hellip; <span style="color:var(--ink-faint)">(again — surely it failed?)</span></div>
+          <pre class="term wrap"><span class="no">D02 already has an answer, and is PROVISIONAL</span> — `dg confirm` it if it still holds, or `dg reopen` it</pre>
+        </div>
+        <p class="note"><b>And here the tool catches it</b>, accurately, naming both exits.</p>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="7">
+      <p>The resulting graph is <em class="q">correct</em>. D02 is PROVISIONAL, the propagation
+      is right, <code>dg check</code> is clean, nothing is corrupt. What went wrong is that
+      A's answer was published at a moment A did not choose, by a process that
+      did not know it was publishing it.</p>
+      <p><strong>The store never breaks. What breaks is an agent's model of it — and the
+      agent finds out only by trying to write.</strong></p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Scene 2">
+    <p class="eyebrow">Scene 2 · the same setup, played the supported way</p>
+    <h2>What one writer at a time actually costs</h2>
+
+    <div class="lanes">
+      <div class="lanehead lanehead--a">agent A</div>
+      <div class="lanehead lanehead--mid">one tray</div>
+      <div class="lanehead lanehead--b">agent B</div>
+
+      <div class="step step--a" data-step="1">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg decide D02</b> &hellip;</div>
+          <pre class="term">staged 1 op(s)</pre>
+        </div>
+      </div>
+
+      <div class="step step--b" data-step="2">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg pending</b> <span style="color:var(--ink-faint)">— before staging anything</span></div>
+          <pre class="term">STAGED  1 op(s)
+  0 close D02 SPRT against the…</pre>
+        </div>
+        <p class="note">&hellip; and stops, because that op is not B's.</p>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="3">
+      <p><strong>That is the whole protocol.</strong> <code>dg pending</code> costs nothing, needs no
+      flag, and turns scene 1 into a non-event.</p>
+      <p>It is also a <em class="q">habit</em> — and nothing observable reveals that an agent
+      skipped the look. Two people in two terminals keep it, because they are one
+      intent with two hands. <strong>Two agents are two intents.</strong></p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Scene 3">
+    <p class="eyebrow">Scene 3 · one clone each — the isolation a harness gives parallel agents</p>
+    <h2>A stale premise, still legal</h2>
+    <p class="lede">
+      Separate trays, separate worktrees. Scene 1 cannot happen here. Watch what
+      happens instead.
+    </p>
+
+    <div class="lanes">
+      <div class="lanehead lanehead--a">agent A · clone A</div>
+      <div class="lanehead lanehead--mid">git</div>
+      <div class="lanehead lanehead--b">agent B · clone B</div>
+
+      <div class="step step--a" data-step="1">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg check</b></div>
+          <pre class="term wrap"><span class="dr">! [evidence_unharvested]</span> T02 is DONE and was to inform D03, which is still unsettled — record what it showed with `dg decide D03`</pre>
+        </div>
+        <p class="note">A's assignment, arriving <b>from the tool</b> rather than from a prompt.</p>
+      </div>
+
+      <div class="step step--a" data-step="2">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg decide D03</b> --answer &hellip; --falsifier &hellip;</div>
+          <pre class="term wrap">answer  <span class="hiA">One binary, no runtime files. The weights compile in as a generated header — 412 KB at -Os.</span>
+
+falsifier  <span class="hi">the weights outgrow what a header can carry</span>
+
+staged 1 op(s)</pre>
+        </div>
+        <p class="note">Reasoned from D01 as it stands. The falsifier is written now,
+        with <b>no reason yet</b> to think it will ever matter.</p>
+      </div>
+
+      <div class="step step--b" data-step="3">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg reopen D01</b> --why 'A sponsor donated cluster time on 2026-03-18' --yes<br>$ <b>dg apply</b></div>
+          <pre class="term"><span class="ok">✓ applied 1 op(s)</span></pre>
+        </div>
+        <p class="note">D01's falsifier said <b>“a GPU budget appears.”</b> One just did.</p>
+      </div>
+
+      <div class="step step--b" data-step="4">
+        <div class="card">
+          <div class="card__cmd"><span style="color:var(--ink-faint)"># six weeks later, the training run comes back</span><br>$ <b>dg decide D01</b> --answer &hellip;<br>$ <b>dg apply</b></div>
+          <pre class="term wrap">answer  <span class="hiB">A trained net, 40 MB. Six weeks of donated cluster time buys more strength than a year of hand-tuning.</span>
+
+<span class="ok">✓ applied 1 op(s)</span></pre>
+        </div>
+      </div>
+
+      <div class="step step--mid" data-step="5">
+        <div class="spinecard"><span class="arrow">&#8592;</span><b>push</b>origin<b>pull</b><span class="arrow">&#8594;</span></div>
+      </div>
+
+      <div class="step step--a" data-step="6">
+        <div class="card">
+          <div class="card__cmd">$ git pull<br>$ <b>dg apply</b> <span style="color:var(--ink-faint)">— the batch staged before any of that existed</span></div>
+          <pre class="term wrap"><span class="dr">· D01 moved since this batch was staged (its answer changed) — op 0 (close D03) rests on it</span>
+<span class="mut">`dg node &lt;id&gt;` shows what it says now; nothing was applied on the old reading</span>
+<span class="ok">✓ applied 1 op(s)</span></pre>
+        </div>
+        <p class="note note--flag"><b>There is the whole warning: one line.</b> D01 never
+        left DECIDED, so no invariant fired and the batch landed.</p>
+      </div>
+
+      <div class="step step--a" data-step="7">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg check</b></div>
+          <pre class="term"><span class="ok">✓ 3 vertices, 3 edges; 2 tasks,
+  all invariants hold</span></pre>
+        </div>
+        <p class="note">Not one warning stands — the <code>evidence_unharvested</code> this
+        scene opened with is gone, because A <b>did</b> harvest it.</p>
+      </div>
+
+      <div class="step step--wide" data-step="8">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg why D03</b></div>
+          <pre class="term wrap">D03  DECIDED  What ships in the release binary?  [Release]
+  rests on D01
+  <span class="hiA">One binary, no runtime files. The weights compile in as a generated header —…</span>
+
+CHAIN  D01 → D03
+  D01  DECIDED  Where do the evaluation w…  ·  <span class="hiB">A trained net, 40 MB. Six weeks…</span>
+
+WORK  evidence for it: T02
+
+<span class="ok">→ every premise under this is settled</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="9">
+      <p>Four lines apart, in one command's output: <em class="q">the weights compile in as a
+      generated header</em>, and <em class="q">a trained net, 40 MB</em>. Underneath them, every
+      premise under this is settled.</p>
+      <p><strong>This graph is as clean as the tool can certify, and it describes a release
+      process that cannot produce a release.</strong> <code>dg check</code> is not wrong — the
+      <em class="q">structure</em> is valid. The contradiction is in the prose, where no
+      invariant can reach.</p>
+      <p>The only thing in the entire system that said so was that one drift line,
+      printed once, at apply time, to a process that may not have been reading.</p>
+    </div>
+
+    <div class="kicker" data-step="10" style="border-left-color:var(--ok)">
+      <p><strong>How it ends.</strong> A's falsifier has fired, so the exit is a command rather
+      than a judgement call:</p>
+      <pre class="term wrap" style="margin-top:.6rem;border-radius:5px">$ dg reopen D03 --why <span class="hi">"its falsifier fired: D01 moved to a 40 MB net"</span> --yes</pre>
+      <p>Drift does not prevent the stale answer. It is the one chance anybody gets
+      to notice — and everything after it depends on the falsifier having been
+      written first.</p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Scene 4">
+    <p class="eyebrow">Scene 4 · three interleavings, three refusals</p>
+    <h2>The loud one, and the two collisions</h2>
+    <p class="lede">
+      Worded three different ways on purpose. An agent that cannot tell the last
+      two apart puts two vertices behind one question.
+    </p>
+
+    <div class="trio">
+      <div class="step step--wide" data-step="1">
+        <div class="card card--stop">
+          <div class="card__hd"><b>4a</b> — B only <em>reopens</em> D01. A's close would put a DECIDED vertex on a REOPENED premise.</div>
+          <pre class="term wrap"><span class="no">✗ aborted, nothing written</span>
+would leave the graph invalid:
+  <span class="no">[propagation] D02 is DECIDED but rests on D01 (REOPENED)</span> — `dg repair` marks it PROVISIONAL, or settle the premise with `dg decide D01`</pre>
+        </div>
+      </div>
+
+      <div class="step step--wide" data-step="2">
+        <div class="card card--stop">
+          <div class="card__hd"><b>4b</b> — both agents reach for the next free id, for <em>different</em> questions.</div>
+          <pre class="term wrap"><span class="no">✗ aborted, nothing written</span>
+<span class="no">D04 already exists, and is not what this op would have created</span> — pick another id</pre>
+        </div>
+      </div>
+
+      <div class="step step--wide" data-step="3">
+        <div class="card card--soft">
+          <div class="card__hd"><b>4c</b> — both notice the <em>same</em> gap and file it identically. The commoner case.</div>
+          <pre class="term wrap"><span class="dr">· refused — another writer got there first</span>
+D05 already has this vertex, identical to the op staged — another writer applied it while this batch was waiting. <span class="hi">Nothing of yours was lost;</span> it is in the store, and the tray holds a duplicate of it.</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="4">
+      <p><strong>4a read beside scene 3 is the boundary.</strong> The same race, one notch
+      further, and the tool goes from a one-line note to a refusal. What separates
+      them is whether the resulting <em class="q">structure</em> is legal — and that does not
+      track how wrong the answer is. <em class="q">“A human can explain every weight”</em> under a
+      40&nbsp;MB net is refused; <em class="q">“412&nbsp;KB, compiled into the binary”</em> under the same
+      net lands clean.</p>
+      <p><strong>4c is why the message spends four lines saying <em class="q">nothing of yours was
+      lost</em>.</strong> An agent that reads it as <em class="q">my work failed</em> re-files under a fresh
+      id, and the graph ends up with one question behind two vertices — a fault
+      nothing downstream can detect, because both are individually valid.</p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Scene 5">
+    <p class="eyebrow">Scene 5 · both agents do nothing wrong at all</p>
+    <h2>Isolation moves the race, it does not remove it</h2>
+
+    <div class="lanes">
+      <div class="lanehead lanehead--a">agent A · clone A</div>
+      <div class="lanehead lanehead--mid">git</div>
+      <div class="lanehead lanehead--b">agent B · clone B</div>
+
+      <div class="step step--a" data-step="1">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg add</b> --id D07 --title 'Which platforms get a prebuilt binary?'<br>$ <b>dg apply</b></div>
+          <pre class="term"><span class="ok">✓ applied 2 op(s)</span></pre>
+        </div>
+      </div>
+
+      <div class="step step--b" data-step="1">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg add</b> --id D08 --title 'How are volunteer cluster results verified?'<br>$ <b>dg apply</b></div>
+          <pre class="term"><span class="ok">✓ applied 2 op(s)</span></pre>
+        </div>
+      </div>
+
+      <div class="step step--mid" data-step="2">
+        <div class="spinecard"><b>origin</b>A pushed<br>first</div>
+      </div>
+
+      <div class="step step--b" data-step="3">
+        <div class="card">
+          <div class="card__cmd">$ git pull</div>
+          <pre class="term wrap">Auto-merging decision-graph.md
+<span class="no">CONFLICT (content): Merge conflict in decision-graph.md</span>
+Auto-merging decisions.json
+<span class="no">CONFLICT (content): Merge conflict in decisions.json</span>
+Automatic merge failed.</pre>
+        </div>
+        <p class="note note--flag">Unrelated questions. Different ids. Valid batches.
+        Clean applies on both sides. <b>And the graph will not merge.</b></p>
+      </div>
+
+      <div class="step step--b" data-step="4">
+        <div class="card">
+          <div class="card__cmd">$ git checkout --ours decision-graph.md<br>$ python3 ../union.py <span style="color:var(--ink-faint)"># the two vertex lists</span><br>$ <b>dg render &amp;&amp; dg check</b></div>
+          <pre class="term"><span class="ok">✓ 5 vertices, 1 edges; 2 tasks,
+  all invariants hold</span>, <span class="dr">1 warning(s)</span></pre>
+        </div>
+        <p class="note">Both agents' questions survived the union. The one warning
+        is the standing <code>evidence_unharvested</code> on D03 — this scene never
+        settled it — <b>not</b> anything about the merge.</p>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="5">
+      <p><code>decisions.json</code> is a JSON array and git merges it as text. <strong>This is
+      what the isolation cost:</strong> scenes 1 and 2 cannot happen once each agent has
+      its own clone, and this can — in git, where <code>dg</code> has no visibility at all.</p>
+      <p>Two facts make the resolution safe. <code>decision-graph.md</code> is
+      <em class="q">generated</em>, so it is never resolved by hand. And <code>dg check</code> is the
+      merge test: a vertex dropped or an edge target lost is a <em class="q">structural</em>
+      fault, which is exactly the kind this tool catches.</p>
+      <p><strong>So scene 5 ends somewhere scene 3 does not.</strong> There, the graph was clean
+      and wrong and one line ever said so. Here, the damage a bad resolution can
+      do is the damage <code>dg check</code> is built to find.</p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide" data-title="Run it">
+    <p class="eyebrow">What this is, and what it is not</p>
+    <h2>Now run it yourself</h2>
+
+    <div class="cols">
+      <div>
+        <h3>What it shows</h3>
+        <p>What <code>dg</code> does when two writers meet: which contradictions it
+        refuses, which it merely reports, and which are left to you. Five
+        interleavings, reproducible to the line.</p>
+      </div>
+      <div>
+        <h3>What it does not</h3>
+        <p>There is <strong>no model in this demo</strong>. The agents are shell scripts,
+        because a race has to be deterministic to be a demo and this has to run
+        offline in CI. Whether an agent <em class="q">reads</em> the drift line in scene 3 and
+        acts on it is the question these scenes cannot answer.</p>
+      </div>
+      <div>
+        <h3>And it is not a retraction</h3>
+        <p>None of it makes two agents supported. The answer stays <strong>one writer at
+        a time</strong> — these scenes are the evidence for that sentence, not an
+        argument against it.</p>
+      </div>
+      <div>
+        <h3>One scene is missing</h3>
+        <p>The commit gate under two agents. On opencode the gate does not see
+        subagent shell calls, so a commit from inside a spawned agent is ungated
+        — the sharpest agent-specific failure this project knows about. Showing
+        it needs a real subagent, which breaks the rule the rest is built on. It
+        is named rather than faked.</p>
+      </div>
+    </div>
+
+    <div class="runbox">
+      <span class="mut"># the whole thing, about a minute</span><br>
+      $ ./demo-agentic/demo.sh<br><br>
+      <span class="mut"># or one scene, cold</span><br>
+      $ ./demo-agentic/demo.sh 3<br><br>
+      <span class="mut"># each scene rebuilds from scratch under /tmp/dg-demo-agentic,</span><br>
+      <span class="mut"># so nothing you do in there can be a mistake.</span>
+    </div>
+
+    <p style="margin-top:1.2rem;color:var(--ink-soft)">
+      The prose version, with every transcript in full, is in
+      <code>demo-agentic/README.md</code>.
+    </p>
+  </section>
+
+  </main>
+
+  <nav class="nav">
+    <button id="prev" type="button">&larr; Back</button>
+    <span class="nav__hint"><kbd>&larr;</kbd> <kbd>&rarr;</kbd> or <kbd>space</kbd></span>
+    <button id="next" type="button">Next &rarr;</button>
+  </nav>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var dots   = document.getElementById("dots");
+  var count  = document.getElementById("count");
+  var prevEl = document.getElementById("prev");
+  var nextEl = document.getElementById("next");
+
+  // Steps are ordered by their data-step value, not by document order: on the
+  // wide slides a mid-column card and a lane card share a number so they
+  // appear together, and scene 3's `dg why` sits below both lanes while
+  // belonging to A's turn.
+  var steps = slides.map(function (s) {
+    var els = Array.prototype.slice.call(s.querySelectorAll("[data-step]"));
+    var max = els.reduce(function (m, e) {
+      return Math.max(m, parseInt(e.getAttribute("data-step"), 10) || 0);
+    }, 0);
+    return { els: els, max: max };
+  });
+
+  var at = 0, on = 0;   // slide index, steps revealed on it
+
+  slides.forEach(function (s, i) {
+    var b = document.createElement("button");
+    b.className = "dot";
+    b.type = "button";
+    b.setAttribute("role", "tab");
+    b.title = s.getAttribute("data-title") || ("Slide " + (i + 1));
+    b.setAttribute("aria-label", b.title);
+    b.addEventListener("click", function () { go(i, 0); });
+    dots.appendChild(b);
+  });
+  var dotEls = Array.prototype.slice.call(dots.children);
+
+  function paint() {
+    slides.forEach(function (s, i) { s.classList.toggle("is-on", i === at); });
+    steps[at].els.forEach(function (e) {
+      var n = parseInt(e.getAttribute("data-step"), 10) || 0;
+      e.classList.toggle("is-shown", n <= on);
+    });
+    dotEls.forEach(function (d, i) {
+      d.setAttribute("aria-current", i === at ? "true" : "false");
+      d.classList.toggle("is-seen", i < at);
+    });
+    count.textContent = (at + 1) + " / " + slides.length;
+    prevEl.disabled = (at === 0 && on === 0);
+    nextEl.disabled = (at === slides.length - 1 && on >= steps[at].max);
+    document.title = "Two Agents, One Graph";
+  }
+
+  // A hidden step still occupies its grid row -- it is invisible, not absent --
+  // so revealing one never grows the page. On the long lane slides that means
+  // the card can appear wholly below the fold with the scroll position
+  // unchanged, and pressing next reads as nothing having happened. Scroll the
+  // step just far enough to sit in the band between the sticky rail and the
+  // fixed nav, and not at all when it is already there.
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  // Everything here is in document coordinates rather than viewport ones: a
+  // smooth scroll may still be in flight, and only an absolute target is
+  // immune to where that animation happens to have got to.
+  function keepInView(n, instant) {
+    var top = null, bottom = null;
+    steps[at].els.forEach(function (e) {
+      if ((parseInt(e.getAttribute("data-step"), 10) || 0) !== n) { return; }
+      var r = e.getBoundingClientRect();
+      top = (top === null) ? r.top : Math.min(top, r.top);
+      bottom = (bottom === null) ? r.bottom : Math.max(bottom, r.bottom);
+    });
+    if (top === null) { return; }
+    top += window.scrollY;
+    bottom += window.scrollY;
+
+    var pad  = 16;
+    var head = document.querySelector(".rail").getBoundingClientRect().height + pad;
+    var foot = document.querySelector(".nav").getBoundingClientRect().height + pad;
+    var lo   = bottom - (window.innerHeight - foot);  // least scroll that clears the nav
+    var hi   = top - head;                            // most that keeps the top under the rail
+    var to   = (lo > hi) ? hi                         // taller than the band: show its top
+                         : Math.max(lo, Math.min(window.scrollY, hi));
+    to = Math.max(0, Math.min(to, document.documentElement.scrollHeight - window.innerHeight));
+    if (Math.abs(to - window.scrollY) < 2) { return; }
+    window.scrollTo({ top: to, behavior: (instant || reduced.matches) ? "auto" : "smooth" });
+  }
+
+  function go(i, s) {
+    at = Math.max(0, Math.min(slides.length - 1, i));
+    on = (s === "end") ? steps[at].max : Math.max(0, s || 0);
+    window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+    paint();
+    // Stepping back into a slide lands on its last step, which on a long slide
+    // is nowhere near the top the jump just went to.
+    if (s === "end") { keepInView(on, true); }
+  }
+
+  function forward() {
+    if (on < steps[at].max) { on += 1; paint(); keepInView(on); }
+    else if (at < slides.length - 1) { go(at + 1, 0); }
+  }
+  function back() {
+    if (on > 0) { on -= 1; paint(); keepInView(on); }
+    else if (at > 0) { go(at - 1, "end"); }
+  }
+
+  nextEl.addEventListener("click", forward);
+  prevEl.addEventListener("click", back);
+
+  document.addEventListener("keydown", function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) { return; }
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) { return; }
+    switch (e.key) {
+      case "ArrowRight": case "PageDown": case " ": forward(); e.preventDefault(); break;
+      case "ArrowLeft":  case "PageUp":            back();    e.preventDefault(); break;
+      case "ArrowDown": forward(); e.preventDefault(); break;
+      case "ArrowUp":   back();    e.preventDefault(); break;
+      case "Home": go(0, 0); e.preventDefault(); break;
+      case "End":  go(slides.length - 1, "end"); e.preventDefault(); break;
+      default:
+        if (e.key >= "1" && e.key <= "9") {
+          var i = parseInt(e.key, 10) - 1;
+          if (i < slides.length) { go(i, 0); e.preventDefault(); }
+        }
+    }
+  });
+
+  // Theme: follow the OS until somebody says otherwise, then remember it.
+  var theme = document.getElementById("theme");
+  try {
+    var saved = localStorage.getItem("dg-slides-theme");
+    if (saved) { document.documentElement.setAttribute("data-theme", saved); }
+  } catch (err) { /* private window, blocked storage: the OS setting stands */ }
+  theme.addEventListener("click", function () {
+    var root = document.documentElement;
+    var dark = root.getAttribute("data-theme") === "dark" ||
+      (!root.getAttribute("data-theme") &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem("dg-slides-theme", next); } catch (err) {}
+  });
+
+  go(0, 0);
+}());
+</script>

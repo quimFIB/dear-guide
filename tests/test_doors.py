@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from conftest import bare
+from conftest import bare, finished
 from dgraph import pending, project, server, task_pending
 from dgraph.cli import app
 from dgraph.model import Graph
@@ -411,7 +411,10 @@ let tab = "decisions", sel = null, tsel = null;
 const held = {};
 const el = id => (held[id] = held[id] || {id, value:"", options:[],
   selectedOptions:[], style:{}, onclick:null, onchange:null, innerHTML:""});
-const side = {innerHTML:""};
+// `querySelectorAll` because the forms bind their own controls after drawing
+// them. Returning nothing is right: what is under test is the HTML a form
+// produces and the body a reader builds back out of it, not the binding.
+const side = {innerHTML:"", querySelectorAll: () => []};
 const $ = s => (s === "#side" ? side : el(s.slice(1)));
 const esc = x => String(x == null ? "" : x);
 const draw = () => {}, fit = () => {}, boot = async () => {};
@@ -458,12 +461,46 @@ const taskPanel = () => {}, panel = () => {};
       throw new Error(\`\${store}/\${verb} disagrees about whether it removes\`);
   });
 });
+
+// The correction form, over both stores, and read back through \`amendOp\` —
+// the same pairing the structure form gets above, and for the same reason: a
+// field the form draws and the op ignores is a correction that silently does
+// nothing.
+[["decisions", "vertex", G.areas, G.vertices[0]],
+ ["tasks", "task", T.areas, T.tasks[0]]].forEach(([store, key, areas, rec]) => {
+  side.innerHTML = amendForm(areas, rec);
+  want(side.innerHTML, ["amTitle","amArea","amNote","doAmend"],
+       store + "'s correction form");
+  // Placeholders, never values: \`captureDraft\` reads a non-empty input as
+  // unconfirmed work, so a prefilled form would make every node somebody
+  // merely looked at into a draft.
+  if (!side.innerHTML.includes(\`placeholder="\${rec.title}"\`))
+    throw new Error(store + ": the title is not offered as a placeholder");
+  areas.forEach(a => {
+    if (!side.innerHTML.includes(\`<option value="\${a}">\`))
+      throw new Error(store + ": area missing from the form: " + a);
+  });
+  const untouched = amendOp(key, rec.id);
+  if (Object.keys(untouched).length !== 2)
+    throw new Error(store + ": an untouched form built " +
+                    JSON.stringify(untouched));
+  held.amTitle.value = "  Reworded  ";
+  held.amArea.value = areas[0];
+  const op = amendOp(key, rec.id);
+  if (op.op !== "set_fields" || op[key] !== rec.id || op.title !== "Reworded"
+      || op.area !== areas[0] || "note" in op)
+    throw new Error(store + ": read back as " + JSON.stringify(op));
+  held.amTitle.value = ""; held.amArea.value = "";
+});
 console.log("ok");
 `;
-eval(block);
-
-DRIVER;
-console.log("ok");
+// `block + DRIVER`, not `eval(block); DRIVER;` — which is what this said, and
+// a bare expression statement evaluates a string and discards it. Every
+// assertion below the definition ran nowhere: the harness exited 0 whatever
+// the forms drew, so this test had been asserting that `app.html`'s two blocks
+// *parse* and nothing else. Found by breaking a field id on purpose and
+// watching it pass.
+eval(block + DRIVER);
 """
 
 
@@ -827,9 +864,8 @@ def late(both):
     """
     from dataclasses import replace as dc_replace
     tg = TaskGraph.load(both / "tasks.json")
-    tg.tasks["T01"] = dc_replace(tg.tasks["T01"], evidence_for="D01",
-                                 done="2026-06-01",
-                                 outcome="recall 0.91, below target")
+    tg.tasks["T01"].evidence_for = "D01"
+    finished(tg.tasks["T01"], "2026-06-01", "recall 0.91, below target")
     tg.save(both / "tasks.json")
     graph = Graph.load()
     edges = []
@@ -909,8 +945,8 @@ def test_a_later_result_brings_the_finding_back(srv, late, both):
     tg = TaskGraph.load(both / "tasks.json")
     assert not cross.late_evidence(tg, Graph.load(), "D01")
 
-    from dataclasses import replace as dc_replace
-    tg.tasks["T01"] = dc_replace(tg.tasks["T01"], done="2026-12-01")
+    # A second completion, which is what a later result is: the first stays.
+    finished(tg.tasks["T01"], "2026-12-01", "re-run, and it does not hold")
     tg.save(both / "tasks.json")
     assert cross.late_evidence(TaskGraph.load(both / "tasks.json"),
                                Graph.load(), "D01")
@@ -1537,3 +1573,54 @@ def test_the_areas_reading_renders_its_counts(both, tmp_path):
     # The harness raises on a missing area or count; this is the other half of
     # the claim the reading makes — two blocks, never one table.
     assert "decisions" in r.stdout and "work" in r.stdout
+
+
+# ---- correcting the wording (audit F-F6) ---------------------------------
+#
+# `set_fields` is the op that had no door at all until this finding: no command
+# retitled an applied record, so the browser could not either, and the only
+# route was editing the JSON. Both doors reach it now, and both go through
+# `pending.vet_fields` — the browser posts the op as data, so a rule the CLI
+# ran and `vet` did not would not be a rule.
+
+
+def test_amend_stages_the_same_op_through_both_doors(srv, store):
+    body = {"op": "set_fields", "vertex": "D05", "title": "Which shard count?"}
+    code, res = post(srv, "/api/pending", body)
+    assert code == 200, res
+    from_web = tray()
+    pending.clear()
+
+    cli(store, "amend", "D05", "--title", "Which shard count?")
+    assert tray() == from_web
+
+
+def test_the_browser_is_refused_what_the_command_is_refused(srv, store):
+    """Same three refusals, same wording, from `pending.vet_fields`."""
+    for body, says in (
+            ({"op": "set_fields", "vertex": "D05"}, "nothing to change"),
+            ({"op": "set_fields", "vertex": "D05", "title": " "},
+             "needs a title"),
+            ({"op": "set_fields", "vertex": "D05", "area": "Nope"},
+             "unknown area"),
+            ({"op": "set_fields", "vertex": "D05", "answer": "not this one"},
+             "not amended in answer"),
+    ):
+        code, res = post(srv, "/api/pending", body)
+        assert code == 400 and says in res["error"], (body, res)
+        assert tray() == []
+
+
+def test_the_page_offers_the_correction_on_both_stores():
+    """One form in the file, drawn on both panels. Two would be two sets of
+    rules a page away from disagreeing, which is what `_fields_detail` and
+    `vet_fields` exist to prevent on the other two surfaces."""
+    src = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    assert src.count("function amendForm(") == 1
+    assert src.count("amendForm(") == 3          # the definition and both panels
+    assert 'amendOp("vertex"' in src and 'amendOp("task"' in src
+    # Prefilled as placeholders, never as values: `captureDraft` treats a
+    # non-empty input as unconfirmed work, so a form carrying the current title
+    # would make every node somebody merely looked at into a draft.
+    assert 'id="amTitle" placeholder=' in src
+    assert 'id="amTitle" value=' not in src

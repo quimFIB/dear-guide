@@ -98,6 +98,7 @@ CASES = [
     ([], ("reopen", "D01", "-w", "why", "--yes")),
     ([], ("dep", "D06", "--after", "D01,D02")),
     ([], ("undep", "D06", "--after", "D05")),
+    ([], ("amend", "D05", "--title", "reworded")),
     ([], ("rm", "D06", "--yes")),
     ([], ("task", "add", "--id", "T09", "--title", "x", "--area", "Alpha")),
     ([], ("task", "add", "--id", "T09", "--title", "x", "--area", "Alpha",
@@ -117,6 +118,7 @@ CASES = [
     ([], ("task", "done", "T02", "-o", "out")),
     ([], ("task", "link", "T02", "--evidence-for", "D05")),
     ([], ("task", "unlink", "T01", "--because")),
+    ([], ("task", "amend", "T02", "--title", "reworded")),
     ([], ("task", "rm", "T03", "--yes")),
 ]
 
