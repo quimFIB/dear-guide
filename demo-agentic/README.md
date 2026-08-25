@@ -48,8 +48,8 @@ the work directory has to prove it is the demo's before anything in it is
 removed. Nothing you do here can be a mistake.
 
 **Or watch it first.** [`slides.html`](slides.html) walks the same seven scenes
-as a deck — a lane per agent, stepping through with the real output at each
-turn. Open it in a browser; no server, no build.
+as a deck, with the annex after them — a lane per agent, stepping through with
+the real output at each turn. Open it in a browser; no server, no build.
 
 ```sh
 xdg-open demo-agentic/slides.html
@@ -348,4 +348,4 @@ part of this tool that does the most work under a fan-out.
 | `scenes/lib.sh` | the work directory, the three agents, and who-ran-what narration |
 | `scenes/union.py` | annex 2a's hand-resolution, so it can run unattended |
 | `gitignore.txt` | what `dg` would add itself, committed up front so no scene's diff is about it |
-| `slides.html` | the same seven scenes as a deck, for reading before running |
+| `slides.html` | the seven scenes and the annex as a deck, for reading before running |

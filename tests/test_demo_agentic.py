@@ -204,20 +204,48 @@ import re
 SLIDES = (DEMO / "slides.html").read_text(encoding="utf-8")
 _CSS, _BODY = SLIDES.split("</style>", 1)
 
+#: A slide, however many classes it carries. Matching `class="slide"` exactly is
+#: what these checks did first, and the annex slides — which add
+#: `slide--annex` — were then invisible to every one of them: the counter check
+#: compared 12 against 10 and the coverage check found no annexes at all.
+_SLIDE = re.compile(r'<section class="[^"]*\bslide\b[^"]*" data-title="([^"]+)"')
+
 
 def test_the_deck_covers_every_scene_the_demo_has():
     """The failure this file was written after: the deck kept describing five
     scenes while the demo had six, and nothing said so."""
-    titles = re.findall(r'<section class="slide" data-title="([^"]+)"', _BODY)
+    titles = _SLIDE.findall(_BODY)
     scenes = sorted(int(t.split()[1]) for t in titles if t.startswith("Scene "))
     on_disk = sorted(int(p.stem) for p in (DEMO / "scenes").glob("[0-9].sh"))
     assert scenes == on_disk, f"deck has {scenes}, demo has {on_disk}"
 
 
+def test_the_deck_covers_the_annex_too():
+    """The first version of the check above globbed `[0-9].sh`, so `a1.sh` and
+    `a2.sh` were invisible to it: the annex could be missing from the deck, or
+    rot in it, and the suite would stay green while reporting that the deck was
+    covered. A guard that is silent about half its subject is worse than none,
+    because the guard is why nobody looks."""
+    titles = _SLIDE.findall(_BODY)
+    annexes = sorted(int(t.split()[1]) for t in titles if t.startswith("Annex "))
+    on_disk = sorted(int(p.stem[1:]) for p in (DEMO / "scenes").glob("a[0-9].sh"))
+    assert annexes == on_disk, f"deck has annexes {annexes}, demo has {on_disk}"
+
+
+def test_the_deck_marks_the_annex_as_outside_the_day():
+    """A reader landing on slide 11 has to know they have left the story. The
+    marker is a class rather than a sentence so it cannot be edited away in a
+    prose pass without this failing."""
+    for m in re.finditer(r'<section class="([^"]*)" data-title="Annex [0-9]"',
+                         _BODY):
+        assert "slide--annex" in m.group(1), "an annex slide reads as a scene"
+    assert "not part of the day" in _BODY
+
+
 def test_the_slide_counter_matches_the_slides():
     """Hand-written, and read by nobody until it is wrong."""
     said = re.search(r'id="count">\s*1\s*/\s*(\d+)\s*<', _BODY).group(1)
-    assert int(said) == len(re.findall(r'<section class="slide"', _BODY))
+    assert int(said) == len(_SLIDE.findall(_BODY))
 
 
 def test_every_class_the_deck_uses_has_a_rule():
@@ -233,8 +261,8 @@ def test_every_class_the_deck_uses_has_a_rule():
 def test_no_slide_skips_a_step():
     """The stepper reveals `data-step` 1..max and stops when `on >= max`, so a
     gap is a keypress that does nothing and a reader who thinks the deck hung."""
-    for m in re.finditer(r'<section class="slide" data-title="([^"]+)"(.*?)</section>',
-                         _BODY, re.S):
+    for m in re.finditer(r'<section class="[^"]*\bslide\b[^"]*" '
+                         r'data-title="([^"]+)"(.*?)</section>', _BODY, re.S):
         steps = {int(n) for n in re.findall(r'data-step="(\d+)"', m.group(2))}
         if steps:
             assert steps == set(range(1, max(steps) + 1)), \

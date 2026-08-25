@@ -171,6 +171,18 @@ p code { background: var(--surface-sunk); padding: .08em .34em; border-radius: 3
 .kicker p { margin: 0; max-width: 74ch; }
 .kicker p + p { margin-top: .7rem; }
 
+/* The annex is not the story. It gets a dashed rule and a muted eyebrow so a
+   reader landing on slide 11 knows they have left the day, rather than reading
+   two more scenes and wondering where the through-line went. */
+.slide--annex .eyebrow { color: var(--ink-faint); }
+.slide--annex h2 { border-top: 1px dashed var(--rule); padding-top: 1rem; }
+.annexmark {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .68rem; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-faint); border: 1px dashed var(--rule);
+  border-radius: 4px; padding: .12rem .45rem; margin-left: .5rem;
+}
+
 /* ---- the two lanes ----------------------------------------------------
    One grid, three columns: agent A, the spine, agent B. Vertical position is
    time, so a step's row says when it happened and its column says who did it.
@@ -383,7 +395,7 @@ kbd {
   <header class="rail">
     <span class="rail__mark">dear&#8209;guide · demo&#8209;agentic</span>
     <div class="rail__dots" id="dots" role="tablist" aria-label="Slides"></div>
-    <span class="rail__count" id="count">1 / 10</span>
+    <span class="rail__count" id="count">1 / 12</span>
     <button class="rail__theme" id="theme" type="button">theme</button>
   </header>
 
@@ -830,6 +842,130 @@ D01  "A trained net, 40 MB"
   </section>
 
   <!-- ==================================================================== -->
+  <!-- ==================================================================== -->
+  <section class="slide slide--annex" data-title="Annex 1">
+    <p class="eyebrow">Annex · not part of the day <span class="annexmark">a clone per agent</span></p>
+    <h2>Two agents, one id</h2>
+    <p class="lede">
+      The seven scenes put three agents in one checkout. Here a harness has given
+      each a clone instead — separate trays, separate stores, nothing shared
+      until a push. Scene 5 cannot happen. This can.
+    </p>
+
+    <div class="lanes">
+      <div class="lanehead lanehead--a">a1a · different questions</div>
+      <div class="lanehead lanehead--mid">the refusal</div>
+      <div class="lanehead lanehead--b">a1b · the same question</div>
+
+      <div class="step step--a" data-step="1">
+        <div class="card">
+          <pre class="term wrap">A: D04 "How is the joseki library distributed?"
+B: D04 "Which time control does CI run at?"</pre>
+        </div>
+        <p class="note">Two gaps, two agents, one next free number.</p>
+      </div>
+
+      <div class="step step--b" data-step="1">
+        <div class="card">
+          <pre class="term wrap">A: D04 "What happens to the hand-tuning history?"
+B: D04 "Do we keep the old tuned weights around?"</pre>
+        </div>
+        <p class="note">One gap, two agents, two wordings. <b>The commoner case.</b></p>
+      </div>
+
+      <div class="step step--mid" data-step="2">
+        <div class="spinecard"><b>identical</b>both times</div>
+      </div>
+
+      <div class="step step--wide" data-step="2">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg apply --mine</b> <span style="color:var(--ink-faint)">(after a pull)</span></div>
+          <pre class="term wrap"><span class="no">✗ aborted, nothing written</span>
+<span class="no">D04 already exists, and is not what this op would have created</span> — pick another id</pre>
+        </div>
+      </div>
+
+      <div class="step step--a" data-step="3">
+        <p class="note">→ take a fresh id. The questions really are different.</p>
+      </div>
+      <div class="step step--b" data-step="3">
+        <p class="note note--flag">→ <code>dg drop</code> it. The question is already
+        open, under A's wording.</p>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="4">
+      <p>An agent that cannot tell a1a from a1b <strong>puts two vertices behind one
+      question</strong> — the disorder the unique-id rule exists to prevent. The tool
+      cannot make that call and does not pretend to.</p>
+      <p>What <code>dg range --set 50-99</code> does is make the collision
+      <em class="q">rare</em>, so an integration report is not a rename line per
+      record anybody wrote — the volume that trains a reader to stop reading it.</p>
+    </div>
+  </section>
+
+  <!-- ==================================================================== -->
+  <section class="slide slide--annex" data-title="Annex 2">
+    <p class="eyebrow">Annex · not part of the day <span class="annexmark">a clone per agent</span></p>
+    <h2>Bringing two clones back together</h2>
+    <p class="lede">
+      Both clones hold the day's work — D02 and D03 settled on the evidence T01
+      and T02 produced. Then the two have to become one again.
+    </p>
+
+    <div class="lanes">
+      <div class="lanehead lanehead--a">a2a · two additions</div>
+      <div class="lanehead lanehead--mid">git</div>
+      <div class="lanehead lanehead--b">a2b · two answers</div>
+
+      <div class="step step--a" data-step="1">
+        <div class="card">
+          <div class="card__cmd">$ <b>git pull</b></div>
+          <pre class="term wrap"><span class="no">CONFLICT (content): Merge conflict in decisions.json</span></pre>
+        </div>
+        <p class="note">Two unrelated questions, different ids, valid batches,
+        clean applies — and a JSON array merges as text.</p>
+      </div>
+
+      <div class="step step--a" data-step="2">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg render</b> &nbsp;·&nbsp; $ <b>dg check</b></div>
+          <pre class="term"><span class="ok">✓ all invariants hold</span></pre>
+        </div>
+        <p class="note">A union handles two additions. <b>This step is what makes
+        it safe rather than merely merged.</b></p>
+      </div>
+
+      <div class="step step--b" data-step="3">
+        <div class="card">
+          <div class="card__cmd">$ <b>dg decide D50</b> <span style="color:var(--ink-faint)">(B, after pulling A's answer)</span></div>
+          <pre class="term wrap"><span class="no">D50 already has an answer, and is DECIDED</span> — `dg reopen` it first</pre>
+        </div>
+        <p class="note note--flag">Refused <b>before anything is staged</b>, let
+        alone merged.</p>
+      </div>
+
+      <div class="step step--mid" data-step="4">
+        <div class="spinecard"><b>a union</b>would pick one<br>silently</div>
+      </div>
+    </div>
+
+    <div class="kicker" data-step="5">
+      <p>A text merge would put both edges in the file and <code>dg check</code>
+      would refuse the result. <strong>A union keyed by id would pick one silently,
+      which is worse than either.</strong> Two answers to one question is a
+      disagreement between two agents, and <code>dg integrate</code> /
+      <code>dg incoming --take/--keep/--split</code> is the seam where a person
+      settles it — shown every conflict at once rather than interrupted per
+      record.</p>
+      <p><strong>Put the annex beside the day and the trade is visible.</strong> One
+      checkout: agents can publish each other's drafts, and the fix is a name. A
+      clone each: they cannot, and instead they collide on ids and produce merges
+      git cannot do. <em class="q">Isolation moves the race; it does not remove
+      it.</em></p>
+    </div>
+  </section>
+
   <section class="slide" data-title="Run it">
     <p class="eyebrow">What this is, and what it is not</p>
     <h2>Now run it yourself</h2>
@@ -860,10 +996,10 @@ D01  "A trained net, 40 MB"
       <div>
         <h3>And an annex</h3>
         <p>The seven scenes are one checkout, which is what a fan-out gets by
-        default. Two annexes cover a clone per agent — the id collision that
-        needs opposite answers, and the merge git cannot do — and are kept out
-        of the day so it reads as one story. <strong>Isolation moves the race; it
-        does not remove it.</strong></p>
+        default. The two annex slides cover a clone per agent — the id collision
+        that needs opposite answers, and the merge git cannot do — and are kept
+        out of the day so it reads as one story. <strong>Isolation moves the race;
+        it does not remove it.</strong></p>
       </div>
       <div>
         <h3>One scene is missing</h3>
