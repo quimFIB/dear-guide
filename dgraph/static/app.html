@@ -965,6 +965,7 @@ function newDecisionForm(){
   $("#side").innerHTML = `<h2>A new question</h2>
     <p class="muted">Nothing is written until Apply, as with everything else here.</p>
     <label>Id</label><input id="nId" value="${esc(G.next_id||"")}">
+    ${idFault(G)}
     <label>Title — the question this decision answers, in one line</label>
     <input id="nTitle" placeholder="e.g. Which index for the served vectors?">
     <label>Area</label><select id="nArea">${areas}</select>
@@ -1017,6 +1018,7 @@ function newTaskForm(){
   $("#side").innerHTML = `<h2>A new piece of work</h2>
     <p class="muted">Nothing is written until Apply, as with everything else here.</p>
     <label>Id</label><input id="nId" value="${esc(T.next_id||"")}">
+    ${idFault(T)}
     <label>Title — what doing this means</label>
     <input id="nTitle" placeholder="e.g. Build the HNSW index and sweep efSearch">
     <label>Area</label><select id="nArea">${areas}</select>
@@ -1303,6 +1305,16 @@ function amendOp(key, id){
   if(area) op.area=area;
   if(note) op.note=note;
   return op;
+}
+
+/* Why the id could not be prefilled, where that is the case. This clone
+   allocates from a granted range (`dgraph/ranges.py`) and a used-up grant is
+   the one thing that stops the form filling itself — every other reading on
+   the page still holds, so the payload carries the fault beside the id rather
+   than failing, and the form says it where the number would have been. */
+function idFault(store){
+  return store && store.next_id_fault
+    ? `<p class="wait">${esc(store.next_id_fault)}</p>` : "";
 }
 
 function structureBtn(store, id){

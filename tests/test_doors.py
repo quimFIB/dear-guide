@@ -1624,3 +1624,32 @@ def test_the_page_offers_the_correction_on_both_stores():
     # would make every node somebody merely looked at into a draft.
     assert 'id="amTitle" placeholder=' in src
     assert 'id="amTitle" value=' not in src
+
+
+# ---- an exhausted grant, at the door that cannot refuse (F-F3) ------------
+
+
+def test_a_used_up_grant_does_not_take_the_payload_down_with_it(srv, store):
+    """The page is still worth drawing. Every reading it offers still holds and
+    only the one form that prefills an id cannot be filled, so the fault
+    travels beside the id rather than as a 500 — the same distinction `dg add`
+    makes in a terminal between *this graph cannot be read* and *this clone
+    cannot allocate*."""
+    from dgraph import ranges, server as srv_mod
+    ranges.save({"D": ranges.Grant(50, 51, 51)}, store)
+    try:
+        d = srv_mod.graph_payload(Graph.load(store / "decisions.json"))
+        assert d["next_id"] is None
+        assert "used up" in d["next_id_fault"]
+        assert d["vertices"] and d["frontier"] is not None   # still a graph
+    finally:
+        ranges.save({}, store)
+
+
+def test_the_page_says_why_the_id_could_not_be_prefilled():
+    """A blank id field with no explanation is the failure this replaces: the
+    form looks broken rather than the clone looking out of ids."""
+    src = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    assert src.count("function idFault(") == 1
+    assert src.count("${idFault(") == 2          # both new-record forms
+    assert "next_id_fault" in src

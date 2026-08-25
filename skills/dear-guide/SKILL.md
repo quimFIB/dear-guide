@@ -272,6 +272,15 @@ dg undep D07 --after D03           # ...and removing one
 `dg undep` works only on a **bare** edge. A decided edge's targets are part of
 its answer, so `dg reopen` first, then remove, then decide again meaning it.
 
+**One writer at a time, unless somebody has granted this clone a range.**
+`dg range` says whether one has. With no grant, ids come from the whole
+sequence and nothing changes — that is right for one writer and is what almost
+every project is. With one, `dg add` and `dg task add` allocate inside it and
+refuse an `--id` outside it, because two clones on a shared base otherwise
+compute the same next id *every time*, not sometimes. Never set or clear a
+grant yourself: it is a fact about how this checkout was set up, and changing
+it silently is how two workers end up holding one range.
+
 **`dg amend` reaches a title, an area and a note, and nothing else.** That is
 the line, and it is worth knowing which side of it a field is on: those three
 are how a record is *referred to* and where it is filed, so nothing is

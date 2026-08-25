@@ -30,7 +30,7 @@ import textwrap
 from datetime import date as _date
 from pathlib import Path
 
-from dgraph import project
+from dgraph import project, ranges
 from dgraph.model import Graph, status_fault
 
 ELISP = Path(__file__).resolve().parent / "elisp" / "dgraph.el"
@@ -281,9 +281,17 @@ def next_id(g: Graph) -> str:
     buffer is no longer the only door that has to prefill it: `/api/graph`
     sends it to the browser's new-decision form. Two doors offering different
     "next" ids is the kind of disagreement this codebase spends its comments
-    preventing.
+    preventing — and it is why this clone's grant is read here rather than in
+    each door, so that all of them offer an id from the same range.
+
+    `max(stored) + 1` where there is no grant, which is every single-writer
+    project. Raises `ranges.RangeError` on a grant that is used up: the caller
+    decides what to do about it, since one of them is a browser payload and one
+    is a terminal.
     """
-    return f"D{max((int(v[1:]) for v in g.vertices if v[1:].isdigit()), default=0) + 1:02d}"
+    n = ranges.next_number(
+        "D", (int(v[1:]) for v in g.vertices if v[1:].isdigit()))
+    return f"D{n:02d}"
 
 
 def render_add(g: Graph, seed: dict | None = None) -> str:

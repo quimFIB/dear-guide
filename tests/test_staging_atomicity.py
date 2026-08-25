@@ -160,6 +160,10 @@ def test_every_staging_command_is_covered():
         ("brief",), ("gate",), ("check",), ("pending",), ("export",),
         ("apply",), ("render",), ("init",), ("import",), ("import-md",),
         ("serve",),
+        # Writes `.dgraph-range.json`, which is not a tray: it holds no ops,
+        # nothing applies it, and the watermark inside it is raised by
+        # `pending.stage_all` under that tray's own lock.
+        ("range",),
         ("drop",), ("clear",), ("edit",), ("repair",), ("confirm",),
         ("task", "init"), ("task", "pending"), ("task", "render"),
         ("task", "node"), ("task", "tree"), ("task", "drop-op"),

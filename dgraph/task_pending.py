@@ -23,7 +23,7 @@ import copy
 from collections.abc import Callable
 from pathlib import Path
 
-from dgraph import project
+from dgraph import project, ranges
 from dgraph.pending import FIELDS, ApplyError, already, vet_fields
 from dgraph.model import Graph
 from dgraph.tasks import (ID_RE, KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
@@ -549,6 +549,11 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
                             else ""))
     if area not in tg.areas:
         raise ApplyError("unknown area. one of: " + ", ".join(tg.areas))
+    # `pending.compose_add`'s twin — see there for why the check is in both the
+    # composer and `vet` when the area rule is in only one.
+    bad = ranges.fault("T", tid)
+    if bad:
+        raise ApplyError(bad)
     for did, flag in ((because, "--because"), (evidence_for, "--evidence-for")):
         if not did:
             continue
@@ -610,6 +615,13 @@ def vet(tg: TaskGraph, op: dict) -> None:
     unknown = [t for t in (op.get("to") or []) if t not in tg.tasks]
     if unknown:
         raise ApplyError(f"unknown task(s): {', '.join(unknown)}")
+    # `pending.vet`'s twin — see there. The `D` grant and the `T` grant are one
+    # grant, so a clone that refuses an out-of-range decision refuses an
+    # out-of-range task by the same rule and the same function.
+    if op.get("op") == "add_task":
+        bad = ranges.fault("T", str(op.get("id") or ""))
+        if bad:
+            raise ApplyError(bad)
     status = op.get("status")
     if status is not None and status not in STATUSES:
         raise ApplyError(f"illegal status {status!r} — one of {', '.join(STATUSES)}")

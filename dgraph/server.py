@@ -43,8 +43,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from dgraph import (applying, check, cross, editor, pending, project, render,
-                    task_editor, task_pending)
+from dgraph import (applying, check, cross, editor, pending, project, ranges,
+                    render, task_editor, task_pending)
 from dgraph.model import Graph
 from dgraph import tasks as tasks_mod
 from dgraph.tasks import TaskGraph, stop_label
@@ -113,8 +113,24 @@ def graph_payload(g: Graph) -> dict:
     # page, because `dg add --edit` prefills the same thing from the same
     # function (`editor.next_id`) and two doors offering different "next" ids
     # is the disagreement this codebase spends its comments preventing.
-    d["next_id"] = editor.next_id(g)
+    d["next_id"], d["next_id_fault"] = _next("D", lambda: editor.next_id(g))
     return d
+
+
+def _next(prefix: str, offer):
+    """`(next id, why there is none)` — one of the two is always None.
+
+    A used-up grant must not take the whole payload down with it. The page is
+    still worth drawing: every reading it offers still holds, and only the one
+    form that prefills an id cannot be filled. So the fault travels beside the
+    id and the form says it, which is the same thing `dg add` does in a
+    terminal — the difference between *this graph cannot be read* and *this
+    clone cannot allocate* is the difference that decides what to do next.
+    """
+    try:
+        return offer(), None
+    except ranges.RangeError as exc:
+        return None, str(exc)
 
 
 def task_depth(tg: TaskGraph) -> dict[str, int]:
@@ -188,7 +204,8 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
     d["counts"] = tg.counts()
     # `graph_payload`'s twin: what the new-task form prefills, from the same
     # function `dg task add --edit` prefills it with.
-    d["next_id"] = task_editor.next_id(tg)
+    d["next_id"], d["next_id_fault"] = _next(
+        "T", lambda: task_editor.next_id(tg))
     return d
 
 

@@ -31,6 +31,12 @@ TASKS_NAME = "tasks.json"
 TASK_VIEW_NAME = "tasks.md"
 TASK_PENDING_NAME = ".dgraph-task-pending.json"
 
+#: The id range this clone allocates from — see `dgraph/ranges.py`. Gitignored
+#: like the trays, and for one more reason than they are: the watermark inside
+#: it has to survive `git checkout`, or two branches in one worktree allocate
+#: the same id from the same grant and nothing can see it.
+RANGE_NAME = ".dgraph-range.json"
+
 #: Every path pattern the tool writes that must not be committed. Not a
 #: courtesy: three modules argue their own correctness from the assumption that
 #: these are ignored. `write_atomic` leaves a `.dg-tmp` sibling behind when a
@@ -97,6 +103,13 @@ class Project:
         staging file would break every decision command until it was cleared.
         """
         return self.root / TASK_PENDING_NAME
+
+    @property
+    def range(self) -> Path:
+        """This clone's id grant. Absent in every single-writer project, which
+        is the case `dgraph/ranges.py` treats as "behave as this tool always
+        has" rather than as a fault."""
+        return self.root / RANGE_NAME
 
     @property
     def has_decisions(self) -> bool:

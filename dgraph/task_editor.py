@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from datetime import date as _date
 
-from dgraph import cross, editor, project
+from dgraph import cross, editor, project, ranges
 from dgraph.editor import EditorAbort, EditorError
 from dgraph.model import Graph
 #: The prose a task's `format` covers. Imported rather than restated, and read
@@ -88,7 +88,12 @@ def _org(op: dict) -> dict:
 
 
 def next_id(tg: TaskGraph) -> str:
-    return f"T{max((int(t[1:]) for t in tg.tasks if t[1:].isdigit()), default=0) + 1:02d}"
+    """`editor.next_id`'s twin — see there. The `D` grant and the `T` grant are
+    one grant, so a clone that allocates decisions from a range allocates work
+    from the same one."""
+    n = ranges.next_number(
+        "T", (int(t[1:]) for t in tg.tasks if t[1:].isdigit()))
+    return f"T{n:02d}"
 
 
 def _decision_line(g: Graph | None, did: str | None) -> str:

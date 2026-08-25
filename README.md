@@ -633,6 +633,17 @@ that the skill's command table only names commands that exist.
   All of that is runnable rather than asserted — [`demo-agentic/`](demo-agentic/)
   is five interleavings of two agents over one graph, and each one ends where
   this paragraph says it does: `./demo-agentic/demo.sh`.
+
+  One class of collision is now off the table, though, and it is worth naming
+  because it was the worst-behaved: two clones of one graph both computed the
+  next id as `max(stored) + 1`, so on a shared base they did not *sometimes*
+  pick the same id — they picked it **every time, for every record either of
+  them added**. `dg range --set 50-99` grants a clone a range of its own, and
+  from then on every door allocates inside it and refuses an `--id` outside it.
+  It is prevention, not correctness: what it buys is that a future integration
+  report is not a rename line per record anyone wrote, which is the volume that
+  trains a reader to stop reading it. Nothing fires without a grant, which is
+  every single-writer project.
 - **Whether the store stays per-repo.** Probably: decisions are about a codebase.
   A cross-project view would need a different addressing scheme.
 - **Whether the falsifier can be checked rather than merely recorded.** A

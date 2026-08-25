@@ -22,7 +22,7 @@ from dgraph import applying
 from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
-from dgraph import cross, editor, pending, project, render, task_editor
+from dgraph import cross, editor, pending, project, ranges, render, task_editor
 from dgraph import task_pending, task_render
 from dgraph import query as _query
 from dgraph.model import Graph
@@ -70,7 +70,7 @@ LAYOUT = (
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
               "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
-    (STORE, ("init", "import", "import-md", "export")),
+    (STORE, ("init", "range", "import", "import-md", "export")),
     (WORK, ("task",)),
     (WEB, ("serve",)),
 )
@@ -1163,6 +1163,13 @@ def _compose(g: Graph, kind: str, **kw) -> list[dict]:
         con.print(f"[dim]note: in-buffer navigation needs emacs — {hint}[/]")
     try:
         return editor.compose(g, kind, **kw)
+    except ranges.RangeError as exc:
+        # The buffer prefills an id, so a used-up grant stops it before the
+        # editor opens. Reported as a refusal rather than a traceback for the
+        # reason `F-F2` gives about an unreadable store: *the tool broke* and
+        # *this clone cannot allocate* send a reader to different places.
+        con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
     except editor.EditorAbort as exc:
         con.print(f"[yellow]aborted[/] {_x(exc)}")
         raise typer.Exit(1) from None
@@ -1574,7 +1581,9 @@ def add(
                                       ("--area", area)) if not val]
     if missing:
         con.print(f"[red]missing option(s): {', '.join(missing)}[/]\n"
-                  f"[dim]give them as flags, or use `dg add --edit`[/]")
+                  f"[dim]give them as flags, or use `dg add --edit`[/]"
+                  + (_next_hint(lambda: editor.next_id(eff))
+                     if not vid else ""))
         raise typer.Exit(2)
     # Every graph-facing rule, and the op list itself, is `pending.compose_add`
     # — shared with `POST /api/add`, because a second door onto opening a
@@ -2438,6 +2447,27 @@ def _tstage_all(ops: list[dict]) -> None:
     pending.stage_all(ops, task_pending.path())
 
 
+def _next_hint(offer) -> str:
+    """`  next unused: D50`, or nothing it can say.
+
+    Appended to the missing-`--id` refusals. `dg add` only prefills an id in
+    the editor, so in a clone with a granted range the flag path would
+    otherwise leave a writer to look the range up and count — and the id it
+    then guesses is refused by a rule it cannot see from where it is standing.
+    """
+    try:
+        return f"\n[dim]next unused: {offer()}[/]"
+    except ranges.RangeError as exc:
+        # Said rather than swallowed. A hint that simply vanishes leaves the
+        # writer with "missing --id" and no id, and no way to tell a clone that
+        # is out of ids from a message that never offered one.
+        return f"\n[red]{_x(exc)}[/]"
+    except Exception:
+        # A hint must never break the refusal it decorates, and anything left
+        # here is reported by the act that meets it.
+        return ""
+
+
 def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
     """Run the editor over a task template, turning refusals into CLI exits.
 
@@ -2459,6 +2489,11 @@ def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
         # doors onto `Because` must accept the same ids, and the buffer's
         # frontier must be the one the writer is standing in front of.
         return go(tg, _decisions_eff_or_none(), **kw)
+    except ranges.RangeError as exc:
+        # `_compose`'s twin — see there. The buffer prefills an id, so a
+        # used-up grant stops it before the editor opens.
+        con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
     except editor.EditorAbort as exc:
         con.print(f"[yellow]aborted[/] {_x(exc)}")
         raise typer.Exit(1) from None
@@ -2590,7 +2625,9 @@ def task_add(
                                 ("--area", area)) if not val]
     if missing:
         con.print(f"[red]missing option(s): {', '.join(missing)}[/]\n"
-                  f"[dim]give them as flags, or use `dg task add --edit`[/]")
+                  f"[dim]give them as flags, or use `dg task add --edit`[/]"
+                  + (_next_hint(lambda: task_editor.next_id(tg))
+                     if not tid else ""))
         raise typer.Exit(2)
     # Every rule, and the op list itself, is `task_pending.compose_add` —
     # shared with `POST /api/add-task`. The task and its edges are one write:
@@ -3648,6 +3685,107 @@ def _refuse_overwrite(exists: bool, store: pathlib.Path) -> None:
                   f"[dim]import into an empty directory and merge by hand, or "
                   f"move the existing store aside first[/]")
         raise typer.Exit(1)
+
+
+@app.command(name="range", rich_help_panel=STORE)
+def range_cmd(
+    set_: str = typer.Option(None, "--set", metavar="LO-HI",
+                             help="grant this clone a range, e.g. 50-99"),
+    clear: bool = typer.Option(False, "--clear",
+                               help="give the grant up and allocate from the "
+                                    "whole sequence again"),
+) -> None:
+    """This clone's id range, and what it has issued out of it.
+
+    Two clones of one graph both compute the next id as `max(stored) + 1`, so
+    on a shared base they do not *sometimes* collide — they collide by
+    construction, for every record either of them adds. A grant per clone is
+    what makes that rare, which is what keeps an integration report readable
+    enough to be read.
+
+    Set it once per contribution, not per command: a worker that never passes a
+    flag cannot get it wrong. **Every clone needs one, `main` included** — a
+    checkout that has just integrated `D50`–`D57` computes `D58` next, which is
+    inside the range the contributor is still holding.
+
+    With no grant, allocation is exactly what it has always been. Nothing here
+    fires in a single-writer project, and `--clear` puts one back to that.
+    """
+    proj = project.find()
+    if set_ and clear:
+        con.print("[red]--set and --clear ask for opposite things[/]")
+        raise typer.Exit(2)
+
+    if clear:
+        ranges.save({}, proj.root)
+        con.print("[green]grant given up[/] [dim]— ids come from the whole "
+                  "sequence again[/]")
+        return
+
+    if set_:
+        lo, hi = _range_bounds(set_)
+        # One grant for both stores, never one per store: a contribution is to
+        # the project, not to one of its halves, and a worker with a `D` range
+        # and no `T` range collides on every task it adds while its decisions
+        # are safe.
+        ranges.save({p: ranges.Grant(lo, hi) for p in ranges.PREFIXES},
+                    proj.root)
+        con.print(f"[green]granted[/] D{lo}-D{hi} and T{lo}-T{hi} "
+                  f"[dim]({hi - lo + 1} ids each)[/]")
+
+    try:
+        grants = ranges.load(proj.root)
+    except ranges.RangeError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    if not grants:
+        con.print("[dim]no grant — this clone allocates from the whole "
+                  "sequence, which is right for one writer.\n"
+                  "`dg range --set 50-99` before contributing alongside "
+                  "somebody else.[/]")
+        return
+
+    for prefix in ranges.PREFIXES:
+        g = grants.get(prefix)
+        if g is None:
+            continue
+        line = f"{prefix}  [bold]{g.lo}-{g.hi}[/]  [dim]{g.size} ids[/]"
+        if g.issued is not None:
+            line += f"  issued to [bold]{prefix}{g.issued:02d}[/]"
+        con.print(line)
+        # The next id, from the store this clone actually has — the grant alone
+        # cannot say it, because an id inside the range may already be in the
+        # store from an integration.
+        loader = ((_g, editor.next_id) if prefix == "D"
+                  else (_tg, task_editor.next_id))
+        if (proj.has_decisions if prefix == "D" else proj.has_tasks):
+            try:
+                con.print(f"   next  {loader[1](loader[0]())}")
+            except ranges.RangeError as exc:
+                con.print(f"   [red]{_x(exc)}[/]")
+
+
+def _range_bounds(text: str) -> tuple[int, int]:
+    """`50-99` as a pair, refusing anything that would not be a range.
+
+    Its own function so the refusals sit together and read as one rule: a
+    grant a caller got wrong should be reported by the act that contains it,
+    not by the first `dg add` that meets it several commands later.
+    """
+    lo_s, _, hi_s = text.partition("-")
+    if not hi_s or not lo_s.strip().isdigit() or not hi_s.strip().isdigit():
+        con.print(f"[red]{_x(text)} is not a range — write it as LO-HI, "
+                  f"like 50-99[/]")
+        raise typer.Exit(2)
+    lo, hi = int(lo_s), int(hi_s)
+    if lo < 1:
+        con.print("[red]a range starts at 1 or above — id 0 is not one this "
+                  "tool writes[/]")
+        raise typer.Exit(2)
+    if hi < lo:
+        con.print(f"[red]{lo}-{hi} is empty — the high end comes second[/]")
+        raise typer.Exit(2)
+    return lo, hi
 
 
 @app.command(name="import", rich_help_panel=STORE)

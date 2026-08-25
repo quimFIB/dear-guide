@@ -14,7 +14,7 @@ from dataclasses import replace as _dc_replace
 from datetime import date as _date
 from pathlib import Path
 
-from dgraph import project
+from dgraph import project, ranges
 from dgraph.model import (SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex,
                           status_fault)
 from dgraph.violation import Violation
@@ -246,6 +246,18 @@ def stage_all(ops: list[dict], path: Path | None = None, *,
         # another writer may have staged since this call started.
         current.extend(_with_refs(ops, current))
         save(current, path)
+        # The watermark, raised where an id is *committed to*. Here rather than
+        # in `next_id` because all four of that function's callers only offer
+        # an id — one of them answers `/api/graph` on every page load, so
+        # bumping there would burn an id per refresh. And here rather than in
+        # each command because this is the one staging function, for both trays
+        # and every door. Outside the lock's purpose but inside its scope, so
+        # two writers in one clone cannot interleave a read and a write of it.
+        # The root from the tray's own directory when one was passed, not
+        # from `project.find()`: a caller that named a tray outside the current
+        # project would otherwise raise this clone's watermark for somebody
+        # else's grant, which is precisely the write the file exists to stop.
+        ranges.note_ops(ops, path.parent if path is not None else None)
         return current
 
 
@@ -407,6 +419,14 @@ def vet(g: Graph, op: dict) -> None:
     unknown = [t for t in (op.get("to") or []) if t not in g.vertices]
     if unknown:
         raise ApplyError(f"unknown target(s): {', '.join(unknown)}")
+    # A grant is a rule here or it is a discipline. `next_id` only prefills a
+    # form and `--id` is an option, so `dg add --id D58` walks straight past a
+    # range that lives only in the prompt — which is the thing a grant exists
+    # to replace. Silent in every project with no grant.
+    if op.get("op") == "add_vertex":
+        bad = ranges.fault("D", str(op.get("id") or ""))
+        if bad:
+            raise ApplyError(bad)
     status = op.get("status")
     if status is not None:
         fault = status_fault(status, g.vertices,
@@ -772,6 +792,15 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
                             if staged else ""))
     if area not in g.areas:
         raise ApplyError("unknown area. one of: " + ", ".join(g.areas))
+    # Checked here *as well as* in `vet`, and both are needed. This function is
+    # the flag path and `/api/add`; `vet` is the raw-op path and the editor.
+    # The area rule above can be checked in one place because `area_known`
+    # refuses the batch at apply if it slips through — a grant has no invariant
+    # behind it, so a route that skips the check is a route that writes an id
+    # inside another writer's range.
+    bad = ranges.fault("D", vid)
+    if bad:
+        raise ApplyError(bad)
     unknown = [x for x in after if x not in g.vertices]
     if unknown:
         raise ApplyError(f"unknown parent(s): {', '.join(unknown)}")

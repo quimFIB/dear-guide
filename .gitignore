@@ -5,6 +5,11 @@ __pycache__/
 .dgraph-task-pending.json
 .dgraph-edit.org
 
+# This clone's id grant and what it has issued. Ignored for one more reason
+# than the trays are: the watermark in it must survive `git checkout`, or two
+# branches in one worktree allocate the same id from the same grant.
+.dgraph-range.json
+
 # Locks beside the two staging trays and the compose buffer, and the temp file
 # `project.write_atomic` swaps in. All three are removed on the way out; what
 # is ignored here is the one a `kill -9` leaves behind, which would otherwise
