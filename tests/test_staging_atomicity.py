@@ -164,6 +164,13 @@ def test_every_staging_command_is_covered():
         # nothing applies it, and the watermark inside it is raised by
         # `pending.stage_all` under that tray's own lock.
         ("range",),
+        # Writes `.dgraph-incoming.json`, which is deliberately not a tray:
+        # quarantined ops nobody has accepted, in one file for both stores
+        # because a contribution is atomic across them.
+        ("integrate",),
+        # `--adopt` stages, but as one `stage_all` per tray — the same call
+        # every group command makes, and covered by their cases.
+        ("incoming",),
         ("drop",), ("clear",), ("edit",), ("repair",), ("confirm",),
         ("task", "init"), ("task", "pending"), ("task", "render"),
         ("task", "node"), ("task", "tree"), ("task", "drop-op"),

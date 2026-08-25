@@ -515,7 +515,16 @@ def test_only_cross_reasons_about_the_link():
     # rather than assumed.
     assert not {"dgraph.cross", "dgraph.model"} & _imports(task_render)
 
-    allowed = {"cross", "tasks", "cli", "task_render"}
+    from dgraph import integrate as _integ
+    assert "dgraph.cross" not in _imports(_integ)
+
+    # `integrate` is a *serialiser*, in the category `tasks` is: it copies the
+    # stored value of the link into an op, and compares one to another to
+    # notice that it moved. It never resolves a `D`-id and never asks whether a
+    # premise is settled — the cross-store guard reaches it as a callable the
+    # caller supplies, which is the rule `pending.apply_all` states about
+    # `also`, and the import assertion above is what holds it to that.
+    allowed = {"cross", "tasks", "cli", "task_render", "integrate"}
     offenders = []
     for info in pkgutil.iter_modules(dgraph.__path__):
         if info.name in allowed:

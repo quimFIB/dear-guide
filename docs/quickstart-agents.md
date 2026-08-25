@@ -246,14 +246,22 @@ plugin's environment is the host's.
 - **opencode expresses `ask` as a refusal that says whose call it is.** Its
   permission API carries no reason field, and a refusal the model cannot read is
   a refusal it retries.
-- **Two agents on one graph is not supported.** One staging tray per project,
-  with no notion of whose ops are whose. What holds under contention and what
-  does not is [demonstrated rather than described](../demo-agentic/). One part
-  of it *is* handled: a clone granted an id range (`dg range`) allocates inside
-  it and refuses an id outside it, which retires the collision two clones on a
-  shared base would otherwise produce for every record either added. Read the
-  grant, never set one — it describes how this checkout was configured, and a
-  worker that reassigns its own range is how two of them end up holding one.
+- **Two agents on one *checkout* is not supported.** One staging tray per
+  project, with no notion of whose ops are whose. What holds under contention
+  and what does not is [demonstrated rather than
+  described](../demo-agentic/).
+
+  Two agents in two checkouts is a different question and now has a mechanism.
+  A clone granted an id range (`dg range`) allocates inside it and refuses an
+  id outside it, which retires the collision two clones on a shared base would
+  otherwise produce for *every* record either added; and `dg integrate <ref>`
+  brings a contribution in as ops, replays them, and reports every conflict at
+  once rather than one refusal at a time. Read the grant, never set one — it
+  describes how this checkout was configured, and a worker that reassigns its
+  own range is how two of them end up holding one. And if the gate denies your
+  commit because a contribution is waiting, say so and stop: `dg incoming`
+  shows what is contested, and the contested ones are the questions a person
+  answers.
 - **Version skew is real** — the plugin and the package install separately.
   `dg --version` exists so an adapter can tell; the Claude Code brief hook says
   so explicitly when it meets a `dg` too old to know `dg brief`.

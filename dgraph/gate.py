@@ -550,6 +550,29 @@ def _commit_verdict(command: str, proj: project.Project | None = None) -> dict:
     if not any(_targets_this_repo(c, proj.root) for c in commits):
         return _allow()
 
+    # **`deny`, where a staged tray gets `ask`**, and the asymmetry is the
+    # point: one of them is your own unfinished thought and the other is
+    # somebody else's finished one. A tray you can be asked about, because you
+    # composed it and you know whether it was meant. A quarantined
+    # contribution you cannot: committing over it drops work a second writer
+    # did, and nothing in this repository would record that it existed.
+    #
+    # A file check rather than a flag on the ops, which is what quarantine buys
+    # — and which also answers where "contested" lives. `dg integrate` writes
+    # `.dgraph-incoming.json` and nothing else does.
+    from dgraph import integrate as _integrate
+    arriving = _integrate.waiting(proj.root)
+    if arriving:
+        return {
+            "verdict": "deny",
+            "reason": f"{arriving} op(s) from another writer are waiting in "
+                      f"{project.INCOMING_NAME}, unadjudicated. Committing "
+                      f"now records this store without them, and the file is "
+                      f"gitignored — so the contribution would be gone with "
+                      f"nothing saying it arrived. `dg incoming` shows what "
+                      f"is contested.",
+        }
+
     findings = _check.run(proj)
     problems = [v for v in findings if v.blocking]
     if problems:

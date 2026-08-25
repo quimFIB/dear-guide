@@ -272,6 +272,17 @@ dg undep D07 --after D03           # ...and removing one
 `dg undep` works only on a **bare** edge. A decided edge's targets are part of
 its answer, so `dg reopen` first, then remove, then decide again meaning it.
 
+**When the commit gate says a contribution is waiting, stop and say so.**
+`dg integrate <ref>` brings another writer's work in as ops and quarantines
+them in `.dgraph-incoming.json` — deliberately not the tray, so nothing you
+read here answers with an op nobody has accepted. While that file is
+non-empty the gate answers `deny` on every commit, because the file is
+gitignored: committing over it drops a second writer's work with nothing
+recording that it arrived. `dg incoming` shows what is in it and what is
+contested. **Do not `--discard` it, and do not adopt a contested one** —
+those are the three questions only a person can answer: two answers to one
+question, two completions of one task, two wordings of one record.
+
 **One writer at a time, unless somebody has granted this clone a range.**
 `dg range` says whether one has. With no grant, ids come from the whole
 sequence and nothing changes — that is right for one writer and is what almost

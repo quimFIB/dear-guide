@@ -37,6 +37,14 @@ TASK_PENDING_NAME = ".dgraph-task-pending.json"
 #: the same id from the same grant and nothing can see it.
 RANGE_NAME = ".dgraph-range.json"
 
+#: Somebody else's contribution, expressed as ops and waiting to be
+#: adjudicated — see `dgraph/integrate.py`. **Not the tray**, and that is the
+#: whole of why it is a second file: `pending.preview` is "what every
+#: stage-time guard consults", so an unadjudicated op put in the tray makes
+#: every read in this clone answer with it, and an agent doing unrelated work
+#: composes against a title nobody accepted.
+INCOMING_NAME = ".dgraph-incoming.json"
+
 #: Every path pattern the tool writes that must not be committed. Not a
 #: courtesy: three modules argue their own correctness from the assumption that
 #: these are ignored. `write_atomic` leaves a `.dg-tmp` sibling behind when a
@@ -110,6 +118,18 @@ class Project:
         is the case `dgraph/ranges.py` treats as "behave as this tool always
         has" rather than as a fault."""
         return self.root / RANGE_NAME
+
+    @property
+    def incoming(self) -> Path:
+        """An arriving contribution, quarantined until somebody answers it.
+
+        One file for both stores, deliberately: a contribution is atomic across
+        them. `because` and `evidence_for` hold a bare `D`-id in the other
+        file and both cross-store link invariants are blocking, so half a
+        contribution is not a smaller version of it — it is one that refuses
+        for an inconsistency the whole does not have.
+        """
+        return self.root / INCOMING_NAME
 
     @property
     def has_decisions(self) -> bool:

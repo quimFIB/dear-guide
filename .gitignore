@@ -10,6 +10,12 @@ __pycache__/
 # branches in one worktree allocate the same id from the same grant.
 .dgraph-range.json
 
+# Another writer's contribution, quarantined until somebody adjudicates it.
+# Ignored like the trays — it holds ops, not a store — and the commit gate
+# denies while it is non-empty for exactly that reason: committing over it
+# would drop the contribution with nothing recording that it arrived.
+.dgraph-incoming.json
+
 # Locks beside the two staging trays and the compose buffer, and the temp file
 # `project.write_atomic` swaps in. All three are removed on the way out; what
 # is ignored here is the one a `kill -9` leaves behind, which would otherwise

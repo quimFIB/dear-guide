@@ -644,6 +644,35 @@ that the skill's command table only names commands that exist.
   report is not a rename line per record anyone wrote, which is the volume that
   trains a reader to stop reading it. Nothing fires without a grant, which is
   every single-writer project.
+
+  **And bringing two clones together no longer needs a hand-edit.** `dg
+  integrate <ref>` expresses an arriving contribution as *ops* against the
+  graph you have — derived from what its writer started from, which is what
+  makes a removal a removal — and replays them, collecting every conflict
+  before asking anything:
+
+  ```
+  3 op(s) from worker against 32ec2d15d9 — 0 clean, 3 contested, 0 blocking
+
+  contested — it applies, but this graph says otherwise.
+    d0  D01 title differs — here 'Which index structure?', arriving 'Which index, at 48M?'
+    d1  D01 was answered here too — 'IVF-PQ' against 'HNSW, M=32'
+    t0  T01 was finished here too (2026-06-01, 'recall 0.91') — arriving 'recall 0.94'
+  ```
+
+  Those three are the ones only a person can settle, and they arrive together
+  rather than one refusal at a time. Everything else is mechanical or is a
+  refusal quoting a rule. The ops wait in `.dgraph-incoming.json` — **not the
+  tray**, because the tray is what every stage-time guard consults and an
+  unadjudicated op there would have this clone answering `dg node` with a
+  title nobody accepted — and the commit gate denies while it is non-empty,
+  since that file is gitignored and a commit over it drops the contribution
+  with nothing saying it arrived. `dg incoming --adopt` makes it yours.
+
+  What this does **not** change is isolation inside one clone: the tray is
+  still shared and still has no notion of whose ops are whose. Two agents in
+  one checkout is the same as it was. Two agents in two checkouts is now a
+  mechanism rather than a hand-edit.
 - **Whether the store stays per-repo.** Probably: decisions are about a codebase.
   A cross-project view would need a different addressing scheme.
 - **Whether the falsifier can be checked rather than merely recorded.** A

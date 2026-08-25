@@ -295,6 +295,57 @@ nowhere a diff will ever show.
 the markdown — it is regenerated from the store on every apply, and `dg check`
 fails if the two have drifted apart.
 
+## Bringing somebody else's work in
+
+`dg integrate <ref>` is not a merge, and the reason it is not is the whole
+design. There are three ways two divergent stores can be brought together and
+they do not fail alike:
+
+| | fails |
+|---|---|
+| a git text-merge of `decisions.json` | **loud**, in a file with no semantics |
+| a union keyed by id | **silent** — the naive improvement, and the worst |
+| replay through `vet` | **loud, and before anything is written** |
+
+The union is the one to watch, because it is what anybody would write next
+after being burned by a text conflict, and it loses records without saying so.
+A removal always loses to a side that still names the record. Two answers to
+one question become an arbitrary pick. A park is erased by a completion,
+because a whole task record is taken from one side. None of that is reported,
+and `dg check` certifies the result.
+
+Replayed as ops, each of those is either a refusal quoting a rule or a line in
+a report — and a removal is something a person has to **drop on purpose**.
+
+**Three graphs, not two.** The ops are derived from *base → theirs* and then
+replayed onto *ours*. The base is what the contributor started from, and it is
+what makes a removal a removal: `D07` absent from an arriving store means
+*deleted* only if the base had it. `git merge-base` supplies it, and its
+absence is refused rather than guessed at.
+
+**The ops wait outside the tray.** `.dgraph-incoming.json` holds them, because
+the tray is what every stage-time guard consults — put an unadjudicated
+`set_fields D07` there and `dg node D07` answers with a title nobody accepted,
+to a bystander who agreed to nothing. The commit gate denies while that file is
+non-empty: it is gitignored, so a commit over it drops the contribution with
+nothing recording that it arrived. `dg incoming` shows it; `--adopt` moves it
+into the trays, where it is reviewed and applied exactly like your own work.
+
+**Adoption is all or nothing, and so is judgement.** A contribution is atomic
+across both stores — `because` and `evidence_for` hold a bare `D`-id in the
+other file and both link invariants are blocking — so an arriving `T50
+--because D50` whose `D50` arrives with it is consistent as a whole and
+inconsistent in either half alone. Each half is judged against what the other
+half *will* hold, which is the difference between a false refusal and a
+correct apply.
+
+**Every conflict is collected before anything is asked.** Fail-fast is right
+for staging, where you compose one op at a time and meet its refusal as you
+type it. It is wrong for a contribution composed elsewhere: twelve ops with
+three conflicts becomes four round-trips in composition order, and the reader
+cannot see the invariant failure — the thing that might make them reject the
+whole contribution — until they have answered three unrelated questions.
+
 ## Taking something back
 
 Four verbs, and picking the wrong one is how a graph loses the thing it is

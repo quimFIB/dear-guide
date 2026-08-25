@@ -588,6 +588,43 @@ def _staged_decision_ops() -> list[dict]:
         return []
 
 
+#: **The trays and nothing else**, and specifically not `.dgraph-incoming.json`.
+#: Reading the quarantine here was the obvious way to give integration the
+#: other half of an arriving contribution, and it is the wrong one twice over.
+#: `guard_pair` below has both proposed graphs in hand, which is a better
+#: answer than a file — it judges what the replay actually produced rather
+#: than what a list of ops is expected to produce. And an *ordinary* apply
+#: while a contribution is quarantined would then be validated against ops
+#: nobody has accepted, which is precisely the failure `tasks_after` exists to
+#: prevent, arriving from the other direction.
+
+
+def guard_pair() -> Callable[[Graph, TaskGraph], list[Violation]] | None:
+    """Judge a proposed **pair** of graphs, reporting only what it introduces.
+
+    `guard_decisions` and `guard_tasks` each hold one side fixed, which is
+    right for an apply: the two trays are deliberately independent, and either
+    can be refused while the other is written.
+
+    Integration is the caller for which that is wrong. A contribution is
+    atomic across the stores — `because` and `evidence_for` hold a bare `D`-id
+    in the other file and both link invariants are blocking — so each half has
+    to be judged against what the other half **will hold**, not against what
+    its store holds now. An arriving `add_task T50 --because D50` whose `D50`
+    arrives in the same contribution is otherwise refused for an inconsistency
+    the contribution does not have: a false refusal produced by arrival order
+    rather than by a conflict, which is the integration twin of `F-F1`.
+
+    Introduced findings only, for the reason `guard_decisions` gives at
+    length: a store that is already invalid must stay repairable.
+    """
+    stored_tg, stored_g = _stored_tasks(), _stored_decisions()
+    if stored_tg is None or stored_g is None:
+        return None
+    before = _seen(validate(stored_tg, stored_g))
+    return lambda g, tg: [v for v in validate(tg, g) if str(v) not in before]
+
+
 def _seen(problems: list[Violation]) -> set[str]:
     """Findings by their text, for the "no worse than before" comparison."""
     return {str(v) for v in problems}

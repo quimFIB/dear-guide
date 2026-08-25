@@ -23,6 +23,7 @@ from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
 from dgraph import cross, editor, pending, project, ranges, render, task_editor
+from dgraph import integrate as integrate_mod
 from dgraph import task_pending, task_render
 from dgraph import query as _query
 from dgraph.model import Graph
@@ -70,7 +71,8 @@ LAYOUT = (
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
               "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
-    (STORE, ("init", "range", "import", "import-md", "export")),
+    (STORE, ("init", "range", "import", "import-md", "export", "integrate",
+             "incoming")),
     (WORK, ("task",)),
     (WEB, ("serve",)),
 )
@@ -3685,6 +3687,244 @@ def _refuse_overwrite(exists: bool, store: pathlib.Path) -> None:
                   f"[dim]import into an empty directory and merge by hand, or "
                   f"move the existing store aside first[/]")
         raise typer.Exit(1)
+
+
+def _at_ref(ref: str, name: str):
+    """One store as it was at a git ref, or None where that ref had none.
+
+    `git show` rather than a checkout: integration reads three graphs and two
+    of them are not the working tree, so touching the working tree to see them
+    would be a side effect nobody asked for.
+    """
+    import subprocess
+    root = project.find().root
+    res = subprocess.run(["git", "-C", str(root), "show", f"{ref}:./{name}"],
+                         capture_output=True, text=True)
+    return res.stdout if res.returncode == 0 else None
+
+
+def _merge_base(ref: str) -> str:
+    import subprocess
+    root = project.find().root
+    res = subprocess.run(["git", "-C", str(root), "merge-base", "HEAD", ref],
+                         capture_output=True, text=True)
+    if res.returncode != 0 or not res.stdout.strip():
+        con.print(f"[red]no common history with {_x(ref)}[/]\n"
+                  f"[dim]a contribution is derived from what its writer "
+                  f"started from — without a base, a record missing from the "
+                  f"arriving store cannot be told from one it never saw, and "
+                  f"guessing is how a deletion gets silently reverted.\n"
+                  f"`--base <ref>` names it if this repository cannot.[/]")
+        raise typer.Exit(1)
+    return res.stdout.strip()
+
+
+@app.command(rich_help_panel=STORE)
+def integrate(
+    ref: str = typer.Argument(..., help="the branch, worktree or commit "
+                                        "whose contribution is arriving"),
+    base: str = typer.Option(None, "--base",
+                             help="what they started from "
+                                  "(default: the merge base with HEAD)"),
+) -> None:
+    """Bring somebody else's work in, as ops you can read before they land.
+
+    Not a merge. A git text-merge of `decisions.json` fails loudly but in a
+    file with no semantics, and the naive improvement — a union keyed by id —
+    fails *silently*, which is worse: a removal loses to any side that still
+    names the record, two answers to one question become an arbitrary pick,
+    and a park is erased by a completion. Replayed as ops, each of those is a
+    refusal or a line in a report, before anything is written.
+
+    The ops are quarantined in `.dgraph-incoming.json`, **not** staged. The
+    tray is what every stage-time guard consults, so an unadjudicated op put
+    there would have this clone answering `dg node` with a title nobody
+    accepted.
+    """
+    proj = project.find()
+    if not project.in_repo(proj.root):
+        con.print("[red]integration needs git[/]\n[dim]the base a "
+                  "contribution is derived from comes from `git merge-base`[/]")
+        raise typer.Exit(1)
+    if integrate_mod.waiting(proj.root):
+        con.print("[red]a contribution is already waiting[/]\n"
+                  "[dim]adjudicate it first — one at a time, because the "
+                  "second would be judged against a graph nobody has agreed "
+                  "to yet[/]")
+        raise typer.Exit(1)
+
+    base_ref = base or _merge_base(ref)
+    ours_g = Graph.load(proj.store) if proj.has_decisions else None
+    ours_tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    theirs_g, base_g = _pair(ref, base_ref, project.STORE_NAME, Graph)
+    theirs_tg, base_tg = _pair(ref, base_ref, project.TASKS_NAME, TaskGraph)
+    if theirs_g is None and theirs_tg is None:
+        con.print(f"[red]{_x(ref)} holds no store this project has[/]")
+        raise typer.Exit(1)
+
+    rep = integrate_mod.plan(
+        ours_g, ours_tg, base_g, base_tg, theirs_g, theirs_tg,
+        # Wired explicitly, and it has to be: put an arriving contribution
+        # through `apply_all` without the cross guards and both link
+        # invariants are silent — the dangling reference lands, the cycle
+        # lands, `dg check` finds them afterwards, and the commit gate then
+        # denies every commit in the repository with a hand-edit as the only
+        # exit. `guard_pair` rather than the two one-sided guards, because
+        # each half has to be judged against what the other half will hold.
+        guard=cross.guard_pair())
+    _integration_report(rep, ref, base_ref)
+
+    if rep.derived == 0:
+        con.print("[dim]nothing to integrate — the contribution is already "
+                  "in this store[/]")
+        return
+    integrate_mod.save_incoming(rep, source=ref, base=base_ref[:12],
+                                root=proj.root)
+    con.print(f"[dim]quarantined in {project.INCOMING_NAME} — nothing is "
+              f"staged and nothing is written[/]")
+
+
+def _pair(ref: str, base_ref: str, name: str, builder):
+    """`(theirs, base)` for one store, or `(None, None)` where it has none."""
+    theirs_raw = _at_ref(ref, name)
+    if theirs_raw is None:
+        return None, None
+    base_raw = _at_ref(base_ref, name)
+    try:
+        theirs = builder.from_dict(json.loads(theirs_raw))
+        # A store the base did not have is a store this contribution created,
+        # so every record in it is an addition — which an empty graph says
+        # exactly, with no special case anywhere downstream.
+        base = (builder.from_dict(json.loads(base_raw)) if base_raw
+                else builder(areas=list(theirs.areas)))
+    except (ValueError, KeyError) as exc:
+        con.print(f"[red]{name} at {_x(ref)} could not be read[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
+    return theirs, base
+
+
+def _integration_report(rep, ref: str, base_ref: str) -> None:
+    """One report, once, after everything has been collected.
+
+    Fail-fast would make a twelve-op contribution with three conflicts four
+    round-trips, in composition order rather than importance order — and the
+    invariant failure, the thing that might make somebody reject the whole
+    contribution, arrives only after three unrelated questions have been
+    answered. That inverts the point of having a seam.
+    """
+    con.print(f"[bold]{rep.derived} op(s) from {_x(ref)}[/] "
+              f"[dim]against {_x(base_ref[:12])}[/] — "
+              f"{rep.clean} clean, {len(rep.contested)} contested, "
+              f"{len(rep.blocking)} blocking")
+    if rep.contested:
+        con.print("\n[yellow]contested[/] [dim]— it applies, but this graph "
+                  "says otherwise. Only a person can say which is right.[/]")
+        for f in rep.contested:
+            con.print(f"  [dim]{f.store[0]}{f.at}[/]  {_x(f.message)}")
+            if f.refusal:
+                # The refusal under the disagreement that caused it, indented
+                # as a consequence rather than listed as a second conflict.
+                con.print(f"      [dim]{_x(f.refusal)}[/]")
+    if rep.inapplicable:
+        con.print("\n[yellow]inapplicable[/] [dim]— cannot apply here at "
+                  "all, and what each one took down with it[/]")
+        for f in rep.inapplicable:
+            more = (f"  [dim](+{len(f.grouped)} op(s) on the same record)[/]"
+                    if f.grouped else "")
+            con.print(f"  [dim]{f.store[0]}{f.at}[/]  {_x(f.message)}{more}")
+    if rep.unexpressible:
+        con.print("\n[yellow]not expressible as an op[/] [dim]— reported "
+                  "rather than invented; no merge driver here has invariant "
+                  "knowledge of its own[/]")
+        for line in rep.unexpressible:
+            con.print(f"  {_x(line)}")
+    if rep.blocking:
+        con.print("\n[red]blocking[/] [dim]— the graph these produce is one "
+                  "the store may not hold[/]")
+        for line in rep.blocking:
+            con.print(f"  {_x(line)}")
+    if rep.ok and rep.derived:
+        con.print("[green]nothing contested[/] [dim]— every op applies and "
+                  "the result is valid[/]")
+
+
+@app.command(rich_help_panel=STORE)
+def incoming(
+    adopt: bool = typer.Option(False, "--adopt",
+                               help="move it into the trays, to review and "
+                                    "apply like your own work"),
+    discard: bool = typer.Option(False, "--discard",
+                                 help="refuse the whole contribution"),
+) -> None:
+    """What another writer's contribution holds, before any of it is yours.
+
+    `dg integrate` puts it here rather than in the tray, so that nothing in
+    this clone answers a question with an op nobody has accepted. Adoption is
+    the moment it becomes yours: the ops move into the two trays and from
+    there they are reviewed and applied exactly like work you composed.
+
+    **Adoption is all or nothing**, because a contribution is. Dropping the
+    contested half and keeping the rest reads as though a person had chosen
+    the remainder, and an op left behind takes its dependants with it — an
+    `add_edge` whose vertex was held back can never apply, and it would sit in
+    a tray every writer here shares.
+    """
+    proj = project.find()
+    raw = integrate_mod.load_incoming(proj.root)
+    if not raw:
+        con.print("[dim]nothing arriving[/]")
+        return
+    d_ops, t_ops = raw.get("decisions", []), raw.get("tasks", [])
+    if discard and adopt:
+        con.print("[red]--adopt and --discard ask for opposite things[/]")
+        raise typer.Exit(2)
+
+    if discard:
+        integrate_mod.clear_incoming(proj.root)
+        con.print(f"[yellow]refused[/] {len(d_ops) + len(t_ops)} op(s) from "
+                  f"{_x(raw.get('source', '?'))}\n"
+                  f"[dim]nothing here records that it arrived — the file was "
+                  f"gitignored. Say so wherever the contribution came from.[/]")
+        return
+
+    con.print(f"[bold]{len(d_ops) + len(t_ops)} op(s) from "
+              f"{_x(raw.get('source', '?'))}[/] "
+              f"[dim]against {_x(raw.get('base', '?'))}[/]")
+    held = []
+    for label, key in (("contested", "contested"),
+                       ("blocking", "blocking"),
+                       ("not expressible as an op", "unexpressible")):
+        for line in raw.get(key, []):
+            held.append((label, line))
+    for label, line in held:
+        con.print(f"  [yellow]{label}[/]  {_x(line)}")
+    for op in d_ops + t_ops:
+        con.print(f"  [dim]{_x(op.get('op', '?'))}[/]  "
+                  f"{_tray_detail(op, _PENDING_DETAIL if op in d_ops
+                                  else _TASK_DETAIL)}")
+
+    if not adopt:
+        con.print("\n[dim]`dg incoming --adopt` to make it yours, "
+                  "`--discard` to refuse it[/]")
+        return
+    if held:
+        # Refused rather than forced. The per-op seam — adopt this one, keep
+        # mine, open a new question because the two answers are to different
+        # questions worded as one — is not built, and a `--force` that adopted
+        # everything would answer those three questions by not asking them.
+        con.print("\n[red]not adopted[/] [dim]— every line above needs an "
+                  "answer, and answering them one op at a time is not built "
+                  "yet. `--discard` refuses the whole contribution.[/]")
+        raise typer.Exit(1)
+
+    if d_ops:
+        _vet_all(_eff(_g()), d_ops)
+        pending.stage_all(d_ops)
+    if t_ops:
+        _tstage_all(t_ops)
+    integrate_mod.clear_incoming(proj.root)
+    con.print(f"[green]adopted[/] {len(d_ops) + len(t_ops)} op(s) "
+              f"[dim]— `dg pending` to review, `dg apply` to write[/]")
 
 
 @app.command(name="range", rich_help_panel=STORE)
