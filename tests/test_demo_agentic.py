@@ -148,6 +148,11 @@ def test_scene6_puts_every_answer_under_review_at_once(tmp_path):
     assert "2 decided descendant(s) rest on it and become PROVISIONAL" in out
     assert "PROVISIONAL 2" in out
     assert "unfinished task(s) rest on a premise under review" in out
+    # And the work does *not* stop: PROVISIONAL means there is an answer nobody
+    # is vouching for, not that there is none. An earlier cut of this scene said
+    # T03 was blocked again; the transcript said `ready T03`.
+    assert "ready T03" in out, "the reopen wrongly blocked the work"
+    assert "RESTING ON A PREMISE UNDER REVIEW" in out
 
 
 def test_scene7_reports_the_two_it_cannot_prevent(tmp_path):

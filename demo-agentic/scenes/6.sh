@@ -31,10 +31,18 @@ gives you is the *list*."
 M dg show
 M dg task
 
-say "And the work follows the answers. T03 — the release note C was about to
-start — is waiting again, because what ships is a question again.
+say "And now look at what did **not** happen. T03 is still \`ready\`.
 
-Nothing here is wrong and nothing is lost. The two answers are still in the
-store, still cite the tasks that produced them, and \`dg confirm\` is what says
-*re-read under the new premise and it still holds*. What has changed is that
-none of them may be relied on until somebody says so."
+That is the difference between OPEN and PROVISIONAL, and it is deliberate. D03
+has an answer; what it no longer has is an answer anybody is currently vouching
+for. Blocking T03 would say the answer was *gone*, and it is not — it is in the
+store, it still cites T02, and it may well survive. Stopping the work would be a
+stronger claim than the graph is entitled to make.
+
+So nothing halts, and instead \`dg show\` says it in the one place a reader will
+look: two decisions under **RESTING ON A PREMISE UNDER REVIEW**. Whoever starts
+T03 now is building on something being re-examined, and can see that they are.
+
+That is the whole of what a reopen costs a fan-out. Not lost work, not stopped
+work — a list of what is now standing on a question, computed rather than
+remembered, with \`dg confirm\` as the way each one comes off it."

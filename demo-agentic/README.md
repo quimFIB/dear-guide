@@ -203,8 +203,17 @@ says what that drags with it:
 
 Three agents worked in parallel on a premise, and one fact put all of it under
 review at once. The maintainer did not work that set out — `dg reopen` computed
-it, and `dg check` refuses a store where it was not applied. **That is the cost
-of a fan-out stated exactly, and the graph's answer to it is the list.**
+it, and `dg check` refuses a store where it was not applied.
+
+And nothing *halts*: `T03` is still `ready`. That is the difference between
+`OPEN` and `PROVISIONAL` — `D03` has an answer, it just has nobody currently
+vouching for it, and blocking the work would claim the answer was gone when it
+is not. Instead `dg show` lists both decisions under **RESTING ON A PREMISE
+UNDER REVIEW**, so whoever starts `T03` can see what they are building on.
+
+**That is what a reopen costs a fan-out, stated exactly:** not lost work and not
+stopped work, but a computed list of what is now standing on a question, with
+`dg confirm` as the way each one comes off it.
 
 ### 7 — the two nothing prevents · **the one to read**
 
