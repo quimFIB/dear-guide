@@ -707,3 +707,43 @@ def test_splitting_needs_an_id_and_only_means_something_for_an_answer(
     assert run("incoming", "--split", ref).exit_code == 2        # no --as
     res = run("incoming", "--split", ref, "--as", "D51")
     assert res.exit_code == 1 and "not two answers" in res.output
+
+
+# ---- the order the ops arrive in -----------------------------------------
+
+
+def test_the_incoming_file_preserves_the_order_the_ops_were_derived_in(
+        two_writers):
+    """Left open by the design as *probably a test rather than a decision*, and
+    it is. Replay is ordered — a record exists before anything attaches to it,
+    a question is reopened before it is answered again, and removals come last
+    because a removal rewrites the edges around it. Nothing between derivation
+    and the file re-sorts, and this is what says so: the file's own order has
+    to be the order `plan` produced, or the first op to be replayed out of turn
+    is a refusal about the wrong act."""
+    root, run = two_writers
+    run("integrate", "worker")
+    raw = integrate.load_incoming(root)
+    refs = [op["iref"] for op in raw["decisions"]]
+    assert refs == sorted(refs, key=lambda r: int(r[1:]))
+    trefs = [op["iref"] for op in raw["tasks"]]
+    assert trefs == sorted(trefs, key=lambda r: int(r[1:]))
+
+
+def test_a_removal_is_derived_after_the_ops_that_name_what_it_removes(g):
+    """The ordering that matters most. A removal rewrites the edges around it,
+    so replayed before an `add_edge` naming the removed vertex it leaves the
+    second op refusing — and a person reading that refusal would be reading
+    about the wrong act."""
+    # D06 is the fixture's only vertex no decided answer opens, so it is the
+    # one a removal can reach without reopening something first.
+    theirs = replay(g, [
+        {"op": "add_vertex", "id": "D50", "title": "new", "area": "Beta",
+         "status": "OPEN"},
+        {"op": "add_edge", "from": "D05", "to": ["D50"]},
+        {"op": "remove_vertex", "vertex": "D06", "mode": "sever"},
+    ])
+    ops = integrate.decisions(g, theirs).ops
+    kinds = [o["op"] for o in ops]
+    assert kinds.index("remove_vertex") == len(kinds) - 1
+    assert kinds.index("add_vertex") < kinds.index("add_edge")

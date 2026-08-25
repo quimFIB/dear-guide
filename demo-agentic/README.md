@@ -268,6 +268,27 @@ this tool does catch. So scene 5 ends somewhere scene 3 does not: there, the
 graph was clean and wrong and one line ever said so; here, the damage a bad
 resolution can do is exactly the damage `dg check` is built to find.
 
+### Since this scene was written: `dg integrate`
+
+**The scene still runs, and it is still worth running, because it is what
+happens when somebody reaches for git first.** But the hand union it ends on is
+no longer the best answer available, and the parenthesis above is the reason:
+the interesting conflicts have no union. `dg integrate <ref>` is the answer
+that does not need one.
+
+It reads three graphs — this one, theirs, and what they branched from — and
+expresses their contribution as **ops** rather than as a file. Then it replays
+them, which is where the difference shows: `union.py` cannot tell a removed
+vertex from one it never saw, so a deletion is silently reverted; replay has
+the base, so a removal arrives *as a removal* and dropping it is something a
+person does on purpose. Two answers to one question, which no union resolves,
+becomes one of exactly three questions a person is asked — with the answer that
+loses recorded rather than lost.
+
+Read this scene as the cost of the merge nobody should reach for, and
+`docs/how-it-works.md` § *Bringing somebody else's work in* for the one they
+should.
+
 ## What this demo does not show, and why
 
 **The commit gate under two agents.** `docs/quickstart-agents.md` records that on
@@ -281,9 +302,16 @@ is built on. It is named here rather than faked.
 **Anything about model behaviour.** Whether an agent *reads* the drift line in
 scene 3 and acts on it is exactly the question this demo cannot answer.
 
-**A retraction.** None of the above makes two agents supported. The answer stays
-*one writer at a time*; these five scenes are the evidence for that sentence,
-not an argument against it.
+**A retraction.** None of the above makes two agents supported *in one
+checkout*. The answer stays *one writer at a time* there — one tray, no notion
+of whose ops are whose — and scenes 1 and 2 are the evidence for that sentence
+rather than an argument against it.
+
+What has changed since is the other question, the one scenes 3 to 5 are about:
+two agents in two clones. `dg range` retires the id collision they produced for
+*every* record either added, and `dg integrate` replaces the hand-resolution
+scene 5 ends on. Neither touches the tray, so neither makes scene 1 or 2 come
+out differently — which is why this page is amended rather than withdrawn.
 
 ## Files
 
