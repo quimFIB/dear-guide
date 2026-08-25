@@ -858,6 +858,14 @@ D01  "A trained net, 40 MB"
         — which is why the falsifier does the most work under a fan-out.</p>
       </div>
       <div>
+        <h3>And an annex</h3>
+        <p>The seven scenes are one checkout, which is what a fan-out gets by
+        default. Two annexes cover a clone per agent — the id collision that
+        needs opposite answers, and the merge git cannot do — and are kept out
+        of the day so it reads as one story. <strong>Isolation moves the race; it
+        does not remove it.</strong></p>
+      </div>
+      <div>
         <h3>One scene is missing</h3>
         <p>The commit gate under a fan-out. On opencode the gate does not see
         subagent shell calls, so a commit from inside a spawned agent is ungated
@@ -872,6 +880,8 @@ D01  "A trained net, 40 MB"
       $ ./demo-agentic/demo.sh<br><br>
       <span class="mut"># or one scene, cold</span><br>
       $ ./demo-agentic/demo.sh 7<br><br>
+      <span class="mut"># and two extra examples: a clone per agent instead of one checkout</span><br>
+      $ ./demo-agentic/demo.sh annex<br><br>
       <span class="mut"># a scene run alone replays the beats before it, quietly, so it</span><br>
       <span class="mut"># opens on the state the story really left. Everything happens</span><br>
       <span class="mut"># under /tmp/dg-demo-agentic; nothing in there can be a mistake.</span>

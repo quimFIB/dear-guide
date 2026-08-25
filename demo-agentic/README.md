@@ -32,8 +32,9 @@ the tool does about it. **7 is what it does not, which is why the rest matter.**
 ## Run it
 
 ```sh
-./demo-agentic/demo.sh          # every scene, in order
+./demo-agentic/demo.sh          # the day, in order
 ./demo-agentic/demo.sh 7        # one scene, on its own
+./demo-agentic/demo.sh annex    # the two extra examples — see below
 ```
 
 The seven scenes are one story and the graph accumulates across them. A scene
@@ -249,6 +250,59 @@ not prevent the stale answer; it is the one chance anybody gets to notice, and
 the falsifier is what makes it findable six months later by somebody who was not
 here.
 
+## Annex: a clone per agent
+
+Not part of the day, and runnable on their own. The seven scenes put three
+agents in one checkout; these two are what changes when a harness gives each
+agent a clone instead — which trades scene 5's problem for a different pair.
+
+```sh
+./demo-agentic/demo.sh annex     # both
+./demo-agentic/demo.sh a1        # or one
+```
+
+### a1 — two agents, one id
+
+Two agents cannot see each other's store, and both reach for the next free
+number. **a1a**, the questions really are different; **a1b**, they are the same
+question in two wordings. The refusal is identical:
+
+```
+✗ aborted, nothing written
+D04 already exists, and is not what this op would have created — pick another id
+```
+
+and the right answer is opposite — a fresh id in the first, `dg drop` in the
+second, because the question is already open under the other agent's wording. An
+agent that cannot tell them apart puts two vertices behind one question.
+
+The tool does not make that call. What `dg range --set 50-99` does is make the
+collision *rare*, so an integration report is not a rename line per record
+anybody wrote.
+
+### a2 — bringing two clones back together
+
+**a2a**: two unrelated additions, and git cannot merge them — `decisions.json`
+is a JSON array and two additions land in one region. Resolution is two facts
+about the layout (`decision-graph.md` is generated; `decisions.json` is the
+union) and then `dg render && dg check`, which is what makes it *safe* rather
+than merely merged.
+
+**a2b**: both agents answered the same question. A text merge would put both
+edges in the file and `dg check` would refuse the result; a union keyed by id
+would pick one **silently**, which is worse. Instead the refusal arrives before
+anything is staged — `D50 already has an answer, and is DECIDED`.
+
+Two answers to one question is not a merge problem to be resolved. It is a
+disagreement between two agents, and `dg integrate` / `dg incoming
+--take/--keep/--split` is the seam where a person settles it, having been shown
+every conflict at once rather than interrupted per record.
+
+**Put the annex beside the day and the trade is visible.** One checkout: agents
+can publish each other's drafts, and the fix is a name. A clone each: they
+cannot, and instead they collide on ids and produce merges git cannot do.
+*Isolation moves the race; it does not remove it.*
+
 ## What this demo does not show, and why
 
 **The commit gate under a fan-out.** `docs/quickstart-agents.md` records that on
@@ -262,12 +316,10 @@ is built on. It is named here rather than faked.
 **Anything about model behaviour.** Whether an agent *reads* the drift line in
 scene 7 and acts on it is exactly the question this demo cannot answer.
 
-**Bringing two clones together.** Everything here happens in one checkout,
-because that is what a fan-out gets by default and it is where the interesting
-joins are. Two agents in two clones is a different set of problems — a text
-merge git cannot do, two answers to one question — and it has its own machinery
-(`dg range`, `dg integrate`, `dg incoming --take/--keep/--split`) documented in
-the main README. No scene here covers it.
+**Two clones, in the main run.** Everything in the seven scenes happens in one
+checkout, because that is what a fan-out gets by default and where the
+interesting joins are. The other configuration — a clone per agent — is in the
+**annex** below rather than in the day.
 
 **Isolation of the guards.** The agents share one `preview`, so while B holds a
 staged `close D02` the maintainer's `dg decide D02` is refused. That refusal is
@@ -291,8 +343,9 @@ part of this tool that does the most work under a fan-out.
 | `decisions.json`, `tasks.json` | the graph and the work the agents found |
 | `demo.sh` | the driver — `./demo.sh [1-7]` |
 | `scenes/1.sh` … `7.sh` | one scene each; each replays the beats before it |
+| `scenes/a1.sh`, `a2.sh` | the annex — a clone per agent, outside the day |
 | `scenes/story.sh` | the day as beats, so the scenes accumulate and still read cold |
 | `scenes/lib.sh` | the work directory, the three agents, and who-ran-what narration |
-| `scenes/union.py` | a hand-resolution helper, kept for the two-clone case |
+| `scenes/union.py` | annex 2a's hand-resolution, so it can run unattended |
 | `gitignore.txt` | what `dg` would add itself, committed up front so no scene's diff is about it |
 | `slides.html` | the same seven scenes as a deck, for reading before running |

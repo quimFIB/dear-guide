@@ -93,3 +93,25 @@ beat_the_sponsor() {
     --yes
   M dg apply
 }
+
+# ---- the day, replayed into a clone --------------------------------------
+#
+# The annexes open on the graph the seven scenes built, not on a fixture that
+# resembles it: the work done, both questions settled on the evidence it
+# produced. Pushed, so the other clones start from it too.
+#
+# Written as a replay rather than as a second `decisions.json` for the reason
+# `demo.sh` gives about the scenes themselves: a fixture drifts from the story
+# silently, and a replay cannot.
+beat_the_day_so_far() { # beat_the_day_so_far <dir>
+  local d=$1 keep_M=$M_DIR keep_A=$A_DIR keep_B=$B_DIR keep_C=$C_DIR
+  M_DIR=$d; A_DIR=$d; B_DIR=$d; C_DIR=$d
+  silently beat_decompose
+  silently beat_c_takes_a_subtask
+  silently beat_a_harvests
+  silently beat_b_reports
+  silently beat_b_answers
+  M_DIR=$keep_M; A_DIR=$keep_A; B_DIR=$keep_B; C_DIR=$keep_C
+  git_commit "$d" "the day's work: D02 and D03 settled on the evidence T01 and T02 produced"
+  push "$d"
+}

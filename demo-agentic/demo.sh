@@ -24,7 +24,13 @@ want=${1:-all}
 case $want in
   all) scenes=(1 2 3 4 5 6 7) ;;
   [1-7]) scenes=("$want") ;;
-  *) echo "usage: $(basename "$0") [1|2|3|4|5|6|7]" >&2; exit 2 ;;
+  # The annexes are not part of the day: two agents in two *clones*, which is a
+  # different set of problems and a different configuration. Kept runnable and
+  # kept out of `all`, so the story reads as one thing and the extra examples
+  # are there for whoever wants them.
+  annex) scenes=(a1 a2) ;;
+  a1|a2) scenes=("$want") ;;
+  *) echo "usage: $(basename "$0") [1-7 | annex | a1 | a2]" >&2; exit 2 ;;
 esac
 
 if [ "$want" = all ]; then
@@ -52,6 +58,15 @@ if [ "$want" = all ]; then
   Scenes 1 to 4 are the loop working. 5 and 6 are what a fan-out costs and what
   the tool does about it. 7 is what it does not, which is why the rest matter.
 
+  All seven happen in one checkout, which is what a fan-out gets by default.
+  Two annexes cover the other configuration -- a clone per agent -- and are not
+  part of the day:
+
+    a1 two agents, one id                    the collision, twice, needing opposite answers
+    a2 bringing two clones back together     what git cannot merge, and the seam
+
+    ./demo-agentic/demo.sh annex
+
   The agents are shell scripts. There is no model here and nothing in it is a
   claim about how one behaves -- what it shows is what `dg` does when several
   writers meet, which is a property of the tool and reproducible to the line.
@@ -62,5 +77,17 @@ fi
 for s in "${scenes[@]}"; do
   bash "$here/scenes/$s.sh"
 done
+
+if [ "$want" = all ]; then
+  cat <<'TXT'
+
+  That is the day. Two more, if you want them -- a clone per agent instead of
+  one shared checkout, which trades the problems in scenes 5 and 6 for a
+  different pair:
+
+    ./demo-agentic/demo.sh annex
+
+TXT
+fi
 
 printf '\n%s\n\n' "  Work directory: ${DG_DEMO_DIR:-${TMPDIR:-/tmp}/dg-demo-agentic}"

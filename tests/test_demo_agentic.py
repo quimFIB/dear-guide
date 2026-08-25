@@ -247,3 +247,54 @@ def test_the_third_agent_lane_is_only_used_where_it_exists():
     for m in re.finditer(r'<div class="lanes([^"]*)">(.*?)\n    </div>', _BODY, re.S):
         if "step--c" in m.group(2) or "lanehead--c" in m.group(2):
             assert "lanes--3" in m.group(1), "agent C's lane outside .lanes--3"
+
+
+# ---- the annex -----------------------------------------------------------
+#
+# Outside the day and outside `demo.sh all`, which is exactly why it needs
+# pinning: nothing in the main run exercises these, so they can rot without any
+# transcript changing. The claims are the same shape as the scenes' — a
+# quotation from `dg`, asserted rather than described.
+
+
+def _annex(name, tmp_path):
+    return run(name, tmp_path)
+
+
+def test_annex1_refuses_both_id_collisions_identically(tmp_path):
+    """The annex's whole point: the refusal is the same both times and the right
+    answer is opposite — a fresh id where the questions differ, a `dg drop`
+    where they are the same question in two wordings. If these ever start
+    reading differently, the paragraph explaining why an agent cannot tell them
+    apart is wrong."""
+    out = _annex("a1", tmp_path)
+    assert out.count("D04 already exists, and is not what this op would have "
+                     "created") == 2
+    assert "50-99" in out, "the grant that makes the collision rare"
+
+
+def test_annex2_cannot_be_merged_by_git_and_is_refused_at_composition(tmp_path):
+    """a2a is what a union genuinely handles; a2b is what it must never be
+    allowed to do silently."""
+    out = _annex("a2", tmp_path)
+    assert "CONFLICT (content): Merge conflict in decisions.json" in out
+    assert "all invariants hold" in out, "a2a must resolve to a store dg vouches for"
+    assert "D50 already has an answer, and is DECIDED" in out
+    assert "every premise under this is settled" in out
+    # ...and it opens on the day the seven scenes built rather than on a bare
+    # fixture. Asserted on the source, because the replay is deliberately silent
+    # and so leaves nothing in the transcript to match.
+    assert 'beat_the_day_so_far "$A_DIR"' in \
+        (DEMO / "scenes" / "a2.sh").read_text(encoding="utf-8")
+
+
+def test_the_annex_is_reachable_and_is_not_part_of_the_day():
+    """Both halves. An annex nobody can run is worse than no annex, and an annex
+    inside `all` is not an annex — it is scene 8, which would make the day stop
+    being one story."""
+    driver = (DEMO / "demo.sh").read_text(encoding="utf-8")
+    assert "annex) scenes=(a1 a2)" in driver, "no way to run it"
+    assert "a1|a2)" in driver, "no way to run one of them"
+    assert "all) scenes=(1 2 3 4 5 6 7) ;;" in driver, "the annex leaked into the day"
+    # And the day says it exists, or nobody will find it.
+    assert "demo.sh annex" in driver
