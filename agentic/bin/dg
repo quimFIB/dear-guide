@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# Record every `dg` invocation, then delegate. It is NAMED `dg` and lives alone
+# in a directory, which is the whole mechanism: put that directory first on
+# $PATH and every `dg` call in the session comes through here.
+#
+#     export PATH="/path/to/dear-guide/agentic/bin:$PATH"
+#     command -v dg          # should print .../agentic/bin/dg
+#     dg pending             # ...and it is recorded
+#
+# The directory holds nothing else, so putting it first shadows `dg` and
+# nothing else on the system.
+#
+# WHY THIS EXISTS. The graph keeps what LANDED and deliberately not what was
+# proposed: `dg drop`, `dg clear --agent` and an applied tray all erase what was
+# there, because a record of every draft somebody thought better of is not a
+# record of a project's decisions. That is the right call for the store and the
+# wrong one for watching a fan-out work, where the proposals nobody took are
+# most of what there is to see.
+#
+# So this writes a second, disposable record beside the durable one. It is not
+# part of the graph, nothing reads it back, and deleting it loses nothing the
+# project needs.
+#
+# WHAT IT RECORDS. One JSON object per invocation: when, which agent, the
+# argv, the exit code, stdout and stderr, and BOTH TRAYS AS THEY STOOD
+# AFTERWARDS. That last field is the point -- a dropped op is visible as the
+# difference between one entry's tray and the next one's, so the op that never
+# reached the graph is still in the log, in full.
+#
+# WHAT IT CANNOT SEE, and you should decide before the run rather than after:
+#
+#   * The browser. `dg serve` runs its own process and does not come through
+#     here, so a review done by clicking leaves no entry. Either do the recorded
+#     review in the terminal, or accept the gap and say so in the narration --
+#     but do not half-do it, because the step where somebody turned a proposal
+#     down is the part of the record that matters most.
+#   * Reasoning, and anything that is not a `dg` call. Your agent host keeps
+#     that: Claude Code writes one JSONL per session under
+#     ~/.claude/projects/<slug>/. Copy those at the end; nothing else holds them.
+#
+set -uo pipefail
+
+# --- find the real dg ------------------------------------------------------
+#
+# The first `dg` on $PATH that is not this one. Resolved rather than hardcoded,
+# so the script works from a venv, a pipx install or a checkout without being
+# edited -- and $DG_REAL overrides it for the case none of those is true.
+_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL="${DG_REAL:-}"
+if [ -z "$REAL" ]; then
+  IFS=: read -ra _dirs <<< "$PATH"
+  for _d in "${_dirs[@]}"; do
+    [ -n "$_d" ] || continue
+    [ "$(cd "$_d" 2>/dev/null && pwd)" = "$_self" ] && continue
+    if [ -x "$_d/dg" ]; then REAL="$_d/dg"; break; fi
+  done
+fi
+if [ -z "$REAL" ]; then
+  echo "capture: no real \`dg\` on \$PATH besides this wrapper" >&2
+  echo "         set \$DG_REAL to it, or install dear-guide" >&2
+  exit 127
+fi
+
+# --- where the record goes -------------------------------------------------
+#
+# `.dgraph-capture/` by default, which the .gitignore `dg init` writes already
+# covers under `.dgraph-*` -- so a capture never has to be remembered about at
+# commit time.
+LOG_DIR="${DG_CAPTURE:-$PWD/.dgraph-capture}"
+LOG="$LOG_DIR/dg.jsonl"
+
+# --- interactive commands pass straight through ----------------------------
+#
+# `serve` blocks, `--edit` opens an editor, and the full-screen readings expect
+# a terminal. Capturing any of them through a pipe breaks them, and a wrapper
+# that broke `dg serve` would be a capture nobody could run a review under.
+case " $* " in
+  *" serve "*|*" --edit "*) exec "$REAL" "$@" ;;
+esac
+
+out="$(mktemp)"; err="$(mktemp)"
+"$REAL" "$@" >"$out" 2>"$err"; rc=$?
+
+# Output first, and unmodified. `dg agent claim` prints a bare name precisely
+# so `DG_AGENT=$(dg agent claim)` works; a wrapper that prepended a banner
+# would break every launch that used it.
+cat "$out"; cat "$err" >&2
+
+python3 - "$rc" "$out" "$err" "$LOG" "$@" <<'PY'
+import datetime
+import json
+import os
+import sys
+
+rc, out, err, log, *argv = sys.argv[1:]
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+os.makedirs(os.path.dirname(log), exist_ok=True)
+with open(log, "a", encoding="utf-8") as f:
+    f.write(json.dumps({
+        "at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "agent": os.environ.get("DG_AGENT"),
+        "cwd": os.getcwd(),
+        "argv": argv,
+        "exit": int(rc),
+        "stdout": read(out),
+        "stderr": read(err),
+        # The trays AFTER the call. An op that was dropped is the difference
+        # between this entry and the one before it, which is the only place it
+        # survives at all.
+        "tray": read(os.path.join(os.getcwd(), ".dgraph-pending.json")),
+        "task_tray": read(os.path.join(os.getcwd(),
+                                       ".dgraph-task-pending.json")),
+    }, ensure_ascii=False) + "\n")
+PY
+
+rm -f "$out" "$err"
+exit "$rc"

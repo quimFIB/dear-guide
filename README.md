@@ -115,9 +115,11 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `tasks.json` · `tasks.md` | the task graph and its view — its own store, and usable on its own |
 | `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG` |
+| `.dgraph-capture/` | a fan-out's recording, if one is running — scratch, and gitignored with the rest |
 | `demo/` | a runnable graph holding one of every record this keeps, and a walkthrough over it |
 | `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md); plus [the design behind `dg find`](docs/query-framework.md) |
 | `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
+| `agentic/` | [running a fan-out against the graph](agentic/README.md) — the procedure, and `agentic/bin/dg`, a capture that records every call and both trays so the proposals nobody took survive |
 | `skills/dear-guide/` | the recording discipline, as a skill both agent hosts load |
 | `commands/` | the slash commands, one set of files for both hosts — `/dg:brief` under Claude Code, `/dg-brief` under opencode |
 | `hooks/`, `.claude-plugin/` | the Claude Code plugin |
@@ -545,9 +547,9 @@ Code** and **opencode**, which turns three of the four habits into mechanisms:
 | **know the discipline** | the `dear-guide` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it. Work staged and never applied asks the human instead — `.dgraph-pending.json` is gitignored, so committing over it loses the record silently |
 
-Plus six slash commands, one set of files for both hosts: `/dg:brief`,
-`/dg:frontier`, `/dg:tasks`, `/dg:find <query>`, `/dg:context <id>` and
-`/dg:serve` — spelled `/dg-brief` and so on in opencode, which has no plugin
+Plus seven slash commands, one set of files for both hosts: `/dg:brief`,
+`/dg:frontier`, `/dg:tasks`, `/dg:find <query>`, `/dg:context <id>`,
+`/dg:serve` and `/dg:fanout` — spelled `/dg-brief` and so on in opencode, which has no plugin
 namespace to hang them under. Two matter most. `/dg:context` prints every
 premise a decision or a task rests on, which is exactly what a subagent's fresh
 context is missing; `/dg:find` is the only reading that starts from a word, and

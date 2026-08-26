@@ -791,4 +791,4 @@ the rule and the fix.
 - [CLI quick start](quickstart-cli.md) — the commands, step by step.
 - [Web quick start](quickstart-web.md) — the same graph, laid out and clickable.
 - [Agent plugin](quickstart-agents.md) — the brief at session start, the commit
-  gate and the six slash commands, for Claude Code and opencode.
+  gate and the seven slash commands, for Claude Code and opencode.

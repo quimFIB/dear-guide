@@ -1,0 +1,156 @@
+"""The capture that ships in `agentic/bin/dg`.
+
+It is a wrapper named `dg`, put first on `$PATH`, that records every invocation
+and then delegates. Two properties carry the whole thing and both fail silently,
+which is why they are pinned here rather than left to a smoke test somebody
+remembers to run.
+
+**Stdout must stay byte-clean.** `dg agent claim` prints a bare name precisely
+so `DG_AGENT=$(dg agent claim)` works. A wrapper that prepended a banner, or
+that let a stray `echo` reach stdout, would break every launch that used it --
+and break it into a name with a newline and a sentence in it, which fails later
+and somewhere else.
+
+**A dropped op must survive.** That is the reason the capture exists at all. The
+graph keeps what landed and deliberately not what was proposed: `dg drop`,
+`dg clear --agent` and an applied tray all erase. The wrapper records both trays
+as they stood after each call, so an op that never reached the graph is the
+difference between one entry and the next.
+
+Driven through a real subprocess with a real `$PATH`, because the mechanism IS
+the `$PATH` interception -- calling the script directly would test everything
+except the thing that makes it work.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CAPTURE_BIN = os.path.join(ROOT, "agentic", "bin")
+
+
+@pytest.fixture
+def project(tmp_path):
+    """An empty git repo with a graph, and `$PATH` led by the capture.
+
+    The real `dg` has to be findable behind the wrapper, so whichever one is
+    running these tests is put on `$PATH` after it. That is also the arrangement
+    a user ends up with.
+    """
+    real = shutil.which("dg") or os.path.join(os.path.dirname(sys.executable), "dg")
+    if not os.path.exists(real):
+        pytest.skip("no `dg` on PATH to wrap")
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        [CAPTURE_BIN, os.path.dirname(real), env.get("PATH", "")])
+    env.pop("DG_AGENT", None)
+    subprocess.run(["git", "init", "-q", "."], cwd=tmp_path, capture_output=True)
+
+    def run(*args, **kw):
+        return subprocess.run(["dg", *args], cwd=tmp_path, env={**env, **kw.pop("env", {})},
+                              capture_output=True, text=True, **kw)
+
+    run("init")
+    run("task", "init")
+    return tmp_path, run
+
+
+def entries(root):
+    path = os.path.join(root, ".dgraph-capture", "dg.jsonl")
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def test_the_wrapper_is_what_runs(project):
+    """The mechanism, asserted rather than assumed: a directory holding only
+    `dg`, first on `$PATH`. If this resolves to the real one the rest of this
+    file is testing nothing."""
+    root, run = project
+    assert os.path.isfile(os.path.join(CAPTURE_BIN, "dg"))
+    assert os.listdir(CAPTURE_BIN) == ["dg"], (
+        "the capture directory must hold nothing else -- putting it first on "
+        "$PATH shadows whatever is in it")
+    assert entries(root), "nothing was recorded for `dg init`"
+
+
+def test_stdout_stays_clean_enough_to_substitute(project):
+    """`DG_AGENT=$(dg agent claim)` is the only sensible caller of `claim`, so
+    the whole of stdout has to be the name."""
+    root, run = project
+    r = run("agent", "claim")
+
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() and "\n" not in r.stdout.strip(), repr(r.stdout)
+    name = r.stdout.strip()
+    assert all(c.isalnum() or c == "-" for c in name), repr(name)
+
+
+def test_the_exit_code_is_the_real_one(project):
+    """A wrapper that swallowed a refusal would turn every failed `dg` into a
+    success, and a launcher checking `$?` would carry on into a sweep that had
+    not been set up."""
+    root, run = project
+
+    assert run("agent", "release", "nobody-holds-this").returncode != 0
+    assert run("pending").returncode == 0
+
+
+def test_an_op_that_never_reached_the_graph_is_still_in_the_log(project):
+    """**The reason the capture exists.**
+
+    The store keeps what landed. A proposal somebody staged and thought better
+    of leaves nothing behind -- rightly, since a record of every draft is not a
+    record of a project's decisions, and wrongly for watching a fan-out, where
+    the proposals nobody took are most of what there is to see.
+    """
+    root, run = project
+    name = run("agent", "claim").stdout.strip()
+    run("add", "--id", "D02", "--title", "a proposal nobody kept",
+        "--area", "General", env={"DG_AGENT": name})
+    run("drop", "0")
+
+    log = entries(root)
+    staged = [e for e in log if e["tray"]]
+    assert staged, "no entry recorded a non-empty tray"
+    ops = json.loads(staged[-1]["tray"])
+    assert ops[0]["title"] == "a proposal nobody kept"
+    assert ops[0]["by"] == name, "the record lost who proposed it"
+
+    # ...and the drop is visible as the difference, not as an absence.
+    assert log[-1]["argv"][:1] == ["drop"]
+    assert not log[-1]["tray"], "the tray after the drop should be empty"
+
+
+def test_every_entry_says_who_and_what(project):
+    root, run = project
+    name = run("agent", "claim").stdout.strip()
+    run("pending", env={"DG_AGENT": name})
+
+    last = entries(root)[-1]
+    assert last["argv"] == ["pending"]
+    assert last["agent"] == name
+    assert last["exit"] == 0
+    assert "at" in last and "cwd" in last
+    assert last["stdout"] is not None
+
+
+def test_the_record_is_scratch_that_git_already_ignores(project):
+    """`.dgraph-capture/` is covered by the `.dgraph-*` line `dg init` writes,
+    so a capture never has to be remembered about at commit time -- and a run
+    that was recorded cannot accidentally be committed as if it were part of
+    the graph."""
+    root, run = project
+    run("pending")
+    assert os.path.isdir(os.path.join(root, ".dgraph-capture"))
+
+    subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True)
+    tracked = subprocess.run(["git", "ls-files"], cwd=root,
+                             capture_output=True, text=True).stdout
+    assert ".dgraph-capture" not in tracked, tracked
