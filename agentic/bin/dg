@@ -10,8 +10,15 @@
 # The directory holds nothing else, so putting it first shadows `dg` and
 # nothing else on the system.
 #
-# WHY THIS EXISTS. The graph keeps what LANDED and deliberately not what was
-# proposed: `dg drop`, `dg clear --agent` and an applied tray all erase what was
+# THIS IS OPTIONAL. Running a fan-out does not need it -- see agentic/README.md,
+# which is the procedure; this is for when you want the RUN ITSELF afterwards.
+# It was written so that one real session could become a demo, and it is equally
+# useful for auditing what a set of agents actually proposed. A fan-out with the
+# capture off leaves behind exactly what it decided, which is the point of the
+# graph.
+#
+# WHY IT HAS TO EXIST AT ALL, given that. The graph keeps what LANDED and
+# deliberately not what was proposed: `dg drop`, `dg clear --agent` and an applied tray all erase what was
 # there, because a record of every draft somebody thought better of is not a
 # record of a project's decisions. That is the right call for the store and the
 # wrong one for watching a fan-out work, where the proposals nobody took are
@@ -34,9 +41,11 @@
 #     review in the terminal, or accept the gap and say so in the narration --
 #     but do not half-do it, because the step where somebody turned a proposal
 #     down is the part of the record that matters most.
-#   * Reasoning, and anything that is not a `dg` call. Your agent host keeps
-#     that: Claude Code writes one JSONL per session under
-#     ~/.claude/projects/<slug>/. Copy those at the end; nothing else holds them.
+#   * Reasoning, and anything that is not a `dg` call. Whatever host ran the
+#     agent keeps that, wherever it keeps it -- Claude Code writes one JSONL per
+#     session under ~/.claude/projects/<slug>/, opencode its own store. Copy
+#     them at the end; nothing else holds them. This wrapper is host-neutral for
+#     the same reason the workflow is: it wraps the CLI, not the agent.
 #
 set -uo pipefail
 

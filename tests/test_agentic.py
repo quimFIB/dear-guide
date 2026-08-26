@@ -1,4 +1,4 @@
-"""The capture that ships in `agentic/bin/dg`.
+"""What `agentic/` ships: the fan-out procedure, and the optional capture.
 
 It is a wrapper named `dg`, put first on `$PATH`, that records every invocation
 and then delegates. Two properties carry the whole thing and both fail silently,
@@ -154,3 +154,54 @@ def test_the_record_is_scratch_that_git_already_ignores(project):
     tracked = subprocess.run(["git", "ls-files"], cwd=root,
                              capture_output=True, text=True).stdout
     assert ".dgraph-capture" not in tracked, tracked
+
+
+# ---- the procedure, and the one claim in it that can rot --------------------
+
+
+def _guide():
+    with open(os.path.join(ROOT, "agentic", "README.md"), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_the_workflow_does_not_belong_to_one_host():
+    """The claim: a fan-out works under Claude Code, under opencode, or under
+    anything else that can run `dg`.
+
+    It is true by construction -- an agent touches the graph only through the
+    CLI, and the whole contract with whatever spawned it is one environment
+    variable. Prose is where that stops being true, by growing an example that
+    reads as a requirement, so the guide has to keep showing both.
+    """
+    guide = _guide()
+    assert "claude" in guide.lower() and "opencode" in guide.lower(), (
+        "the launch step names one host only, which reads as a requirement")
+    assert "DG_AGENT" in guide
+    assert "contract with the host" in guide, (
+        "the guide no longer says what the host actually has to do")
+
+
+def test_the_command_is_shipped_for_both_hosts():
+    """One file in `commands/`, which Claude Code namespaces as `/dg:fanout`
+    and the opencode install snippet symlinks as `/dg-fanout`. A command that
+    lived anywhere else would be a Claude Code feature wearing a shared name."""
+    assert os.path.isfile(os.path.join(ROOT, "commands", "fanout.md"))
+    with open(os.path.join(ROOT, "opencode", "README.md"), encoding="utf-8") as f:
+        assert '"$repo"/commands/*.md' in f.read(), (
+            "opencode installs commands by glob; a new one must need no edit")
+
+
+def test_the_capture_is_offered_as_optional_and_not_as_a_step():
+    """It was written so one run could become a demo, and it is not part of the
+    workflow. A guide that presented it as setup would have every fan-out
+    recording itself for no reason -- and would suggest the graph is not enough
+    on its own, which is the opposite of what it is for."""
+    guide = _guide()
+    body, _, optional = guide.partition("# Optional: recording the run")
+    assert optional, "the capture is no longer in an Optional section"
+    assert "Nothing above needs this" in optional
+    for step in ("## 1.", "## 2.", "## 3.", "## 4.", "## 5.", "## 6."):
+        assert step in body, f"{step} is not in the procedure"
+    assert "capture" not in body.split("## 1.")[1].lower(), (
+        "the numbered procedure mentions the capture; it is meant to stand "
+        "without it")

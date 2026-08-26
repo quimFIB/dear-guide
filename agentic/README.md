@@ -1,17 +1,22 @@
 # Running a fan-out against the graph
 
-Several agents proposing into one graph, a person deciding, and a record of the
-whole thing including the parts that never landed.
+Several agents proposing into one graph, and a person deciding.
 
-The graph already supports this: the tray is shared, every staged op records who
-staged it, and `--agent` reads and applies one writer's proposal at a time. What
-this directory adds is the two things that were left to improvise — a capture,
-and a procedure.
+The graph already supports it: the tray is shared, every staged op records who
+staged it, `dg agent claim` hands out names that cannot collide, and `--agent`
+reads and applies one writer's proposal at a time. What was left to improvise
+was the procedure around those, which is what this is.
 
 ```
-agentic/bin/dg     the capture: put it first on $PATH and every dg call is recorded
-agentic/README.md  this
+agentic/README.md  the procedure — sections 1 to 6 below
+agentic/bin/dg     OPTIONAL: a capture, for when you want the run itself
+                   afterwards. Nothing in the procedure needs it.
 ```
+
+The capture exists because one run needed to become a demo. It is genuinely
+useful for that and for auditing what a set of agents proposed, and it is
+genuinely not part of the workflow — a fan-out leaves behind exactly what it
+decided, which is what the graph is for.
 
 ---
 
@@ -91,7 +96,108 @@ dg task dep T01 --after T04       # a prerequisite discovered later
 That is backwards elaboration, recorded as you learn it rather than searched for
 inside the store.
 
-## 3. The capture
+## 3. Launching
+
+**The whole contract with the host is one environment variable.** Whatever
+spawns an agent has to put `DG_AGENT` in its environment; nothing else about the
+host matters, because everything the agent does to the graph it does through the
+`dg` CLI. That is what keeps this workflow independent of which model or which
+scaffold is running it.
+
+Each agent gets its name from the tool, never one you invent:
+
+```sh
+for role in …; do
+  DG_AGENT=$(dg agent claim) <however you spawn an agent> &
+done
+dg agent list        # who holds what, and what each has staged
+```
+
+```sh
+DG_AGENT=$(dg agent claim) claude -p "$(cat prompts/scout.md)"   # Claude Code
+DG_AGENT=$(dg agent claim) opencode run "$(cat prompts/scout.md)"   # opencode
+```
+
+The flags are the host's business and change between versions; the variable is
+not. A host with no way to set one per agent can still be used — run each agent
+in its own shell and export it there — and a mixed fan-out is fine, since two
+agents under different scaffolds are just two names in one tray.
+
+`dg agent claim` never hands out a name that is held or that has ops in either
+tray, so two agents cannot end up sharing one — including across hosts, since
+the tray is the only thing either of them touches. A claim does not expire;
+`dg agent release` and `dg agent prune` give names back deliberately.
+
+**And `dg` itself is host-neutral by construction.** The slash commands ship as
+one set of files for both — `/dg:fanout` under Claude Code, `/dg-fanout` under
+opencode — and the skill that teaches the recording discipline is loaded by
+both. An agent under a third scaffold, or none, still has the CLI, which is
+where all of this actually happens.
+
+Each prompt should carry three things:
+
+1. **The chain, in full.** `dg context <id> --full`, pasted in. A fresh context
+   knows the task and nothing about why it exists, and without the chain it
+   cannot tell a constraint from an implementation detail.
+2. **The rule** from the top of this file: add questions and work, decide
+   nothing.
+3. **What it may read.** Point at the files; it will not find them.
+
+## 4. Review, one proposal at a time
+
+```sh
+dg pending                       # the roster: who proposed what, across both trays
+dg pending --agent brisk-frege   # one agent's proposal, alone
+dg serve                         # ...or as a graph, with staging applied
+dg apply --agent brisk-frege     # take this one
+dg clear --agent agile-azimuth   # turn that one down — the others are untouched
+```
+
+Then **you** decide, with the proposals as input:
+
+```sh
+dg decide D07 --answer "…" --source "discussion" --falsifier "…"
+```
+
+If a proposal turns up a question nobody had written down, add the decision and
+link the work to it rather than leaving it in prose:
+
+```sh
+dg task link T04 --evidence-for D09
+```
+
+## 5. Settle the empirical ones with evidence
+
+The decisions a fan-out cannot settle by arguing are the ones that want a
+measurement — a benchmark, a spike, a pilot. That loop is native:
+
+```sh
+dg task add --id T09 --title "…" --area … --evidence-for D07
+dg task start T09
+# ...run the thing...
+dg task done T09 --outcome "where the result is"
+dg confirm D07 --against T09 --note "what it showed"
+```
+
+`dg check` warns when an `--evidence-for` task has finished and its decision is
+still unsettled — *the measurement ran and nobody recorded its conclusion*.
+
+## 6. Close
+
+```sh
+dg task done T01 --outcome "…"
+dg agent prune        # release the names, now that nothing is staged
+dg check
+```
+
+---
+
+# Optional: recording the run
+
+**Nothing above needs this.** Turn it on when you want the run itself
+afterwards: to show somebody how the workflow behaves, to audit what a set of
+agents actually proposed, or to build a demo out of a real session instead of a
+scripted one. It was written for that last case.
 
 Everything that touches the graph goes through `dg`, so a wrapper first on
 `$PATH` catches every interaction — **including the ones that leave no trace**,
@@ -137,83 +243,12 @@ it was dropped.
   review in the terminal, or accept the gap and say so — but do not half-do it,
   because the step where you turned a proposal down is the part of the record
   that matters most.
-- **Reasoning, and anything that is not a `dg` call.** Your agent host keeps
-  that. Claude Code writes one JSONL per session under
-  `~/.claude/projects/<slug>/`; copy them at the end, because nothing else holds
-  them.
+- **Reasoning, and anything that is not a `dg` call.** Whatever host the agent
+  ran under keeps that, wherever it keeps it — Claude Code writes one JSONL per
+  session under `~/.claude/projects/<slug>/`, opencode keeps its own session
+  store. Copy them at the end; nothing else holds them, and in a fan-out across
+  two hosts you will be copying from two places.
 
-## 4. Launching
-
-Each agent gets a name from the tool, never one you invent:
-
-```sh
-for role in …; do
-  DG_AGENT=$(dg agent claim) claude -p "$(cat prompts/$role.md)" &
-done
-dg agent list        # who holds what, and what each has staged
-```
-
-`dg agent claim` never hands out a name that is held or that has ops in either
-tray, so two agents cannot end up sharing one. A claim does not expire;
-`dg agent release` and `dg agent prune` give names back deliberately.
-
-Each prompt should carry three things:
-
-1. **The chain, in full.** `dg context <id> --full`, pasted in. A fresh context
-   knows the task and nothing about why it exists, and without the chain it
-   cannot tell a constraint from an implementation detail.
-2. **The rule** from the top of this file: add questions and work, decide
-   nothing.
-3. **What it may read.** Point at the files; it will not find them.
-
-## 5. Review, one proposal at a time
-
-```sh
-dg pending                       # the roster: who proposed what, across both trays
-dg pending --agent brisk-frege   # one agent's proposal, alone
-dg serve                         # ...or as a graph, with staging applied
-dg apply --agent brisk-frege     # take this one
-dg clear --agent agile-azimuth   # turn that one down — the others are untouched
-```
-
-Then **you** decide, with the proposals as input:
-
-```sh
-dg decide D07 --answer "…" --source "discussion" --falsifier "…"
-```
-
-If a proposal turns up a question nobody had written down, add the decision and
-link the work to it rather than leaving it in prose:
-
-```sh
-dg task link T04 --evidence-for D09
-```
-
-## 6. Settle the empirical ones with evidence
-
-The decisions a fan-out cannot settle by arguing are the ones that want a
-measurement — a benchmark, a spike, a pilot. That loop is native:
-
-```sh
-dg task add --id T09 --title "…" --area … --evidence-for D07
-dg task start T09
-# ...run the thing...
-dg task done T09 --outcome "where the result is"
-dg confirm D07 --against T09 --note "what it showed"
-```
-
-`dg check` warns when an `--evidence-for` task has finished and its decision is
-still unsettled — *the measurement ran and nobody recorded its conclusion*.
-
-## 7. Close
-
-```sh
-dg task done T01 --outcome "…"
-dg agent prune        # release the names, now that nothing is staged
-dg check
-```
-
----
 
 ## Turning a capture into a demo
 

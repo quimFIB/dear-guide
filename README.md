@@ -119,7 +119,7 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `demo/` | a runnable graph holding one of every record this keeps, and a walkthrough over it |
 | `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md); plus [the design behind `dg find`](docs/query-framework.md) |
 | `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
-| `agentic/` | [running a fan-out against the graph](agentic/README.md) — the procedure, and `agentic/bin/dg`, a capture that records every call and both trays so the proposals nobody took survive |
+| `agentic/` | [running a fan-out against the graph](agentic/README.md) — several agents proposing into one tray and a person deciding. Optionally `agentic/bin/dg`, a capture for when the run itself has to survive |
 | `skills/dear-guide/` | the recording discipline, as a skill both agent hosts load |
 | `commands/` | the slash commands, one set of files for both hosts — `/dg:brief` under Claude Code, `/dg-brief` under opencode |
 | `hooks/`, `.claude-plugin/` | the Claude Code plugin |
