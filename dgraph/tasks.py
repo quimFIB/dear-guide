@@ -161,6 +161,13 @@ class Stop:
 
     Two fields and no more: what stopped it, and when. What *restarted* it is a
     relation between tasks, which is what the `prompted` edge already says.
+
+    **And not who.** Attribution was briefly added here for a fan-out that
+    wanted to know which agent abandoned what, and taken straight back out: this
+    record is kept forever, agent names are recycled, and in six months "who
+    parked this" is noise that a name no longer even identifies. Who is holding
+    work is a fact about a RUN, and `dgraph/agents.py` keeps it in scratch that
+    evaporates. See there.
     """
 
     why: str
@@ -178,8 +185,9 @@ class Completion:
     first one destroys the only copy of a result, silently, and no invariant
     can notice because nothing about the record's *shape* changed.
 
-    Two fields and no more: when it finished, and what it produced. Which
-    completion is *live* is not stored, for the reason `stopped_because` gives:
+    Two fields and no more: when it finished, and what it produced -- not who
+    produced it, for the reason `Stop` gives. Which completion is *live* is not
+    stored, for the reason `stopped_because` gives:
     the status decides, so `Task.done` and `Task.outcome` derive it, and a
     completion that a later status contradicts cannot rot because it never
     claimed to be current.

@@ -205,6 +205,59 @@ def claim(root: Path | None = None, *, today: str | None = None) -> str:
                         len([n for n in leases if n not in staged]))
 
 
+def holdings(root: Path | None = None) -> dict[str, str]:
+    """`{task: agent}` for work an agent is holding RIGHT NOW.
+
+    **This is why the lease file exists in the plural.** `DOING` says a task is
+    claimed and not by whom, which a fan-out needs -- a stalled agent has to be
+    distinguishable from a slow one, and `dg task park --why "the agent died"`
+    has to have something to name.
+
+    It is here and not on the `Task` because it is a fact about a RUN and not
+    about the work. The task store is kept forever and is committed; agent names
+    are recycled the moment they are released, so a name written into
+    `tasks.json` today identifies nothing in six months, and "who finished this"
+    is noise a reader has to scroll past. `Stop` and `Completion` carried `by`
+    for exactly one commit before that argument won.
+
+    So it lives in scratch, beside the names themselves, under the `.dgraph-*`
+    the .gitignore already covers -- true while the run is on, gone with it.
+    """
+    return {t: name for name, rec in load(root).items()
+            for t in (rec.get("holding") or ())}
+
+
+def hold(name: str, tid: str, root: Path | None = None) -> None:
+    """Record that `name` has started `tid`. A person holds nothing."""
+    if not name:
+        return
+    with project.held(path(root)):
+        leases = load(root)
+        # A name with no lease can still hold work: `$DG_AGENT` is
+        # self-declared, so an agent that never called `claim` is an ordinary
+        # caller with a name. Record it rather than dropping the fact.
+        rec = leases.setdefault(name, {"since": _today()})
+        held = [t for t in (rec.get("holding") or ()) if t != tid]
+        rec["holding"] = held + [tid]
+        save(leases, root)
+
+
+def drop_hold(tid: str, root: Path | None = None) -> None:
+    """Forget who had `tid`, whoever it was. Called when work leaves DOING."""
+    with project.held(path(root)):
+        leases = load(root)
+        changed = False
+        for rec in leases.values():
+            held = rec.get("holding") or []
+            if tid in held:
+                rec["holding"] = [t for t in held if t != tid]
+                if not rec["holding"]:
+                    del rec["holding"]
+                changed = True
+        if changed:
+            save(leases, root)
+
+
 def release(name: str, root: Path | None = None) -> bool:
     """Drop one lease. `False` if nothing was holding it.
 

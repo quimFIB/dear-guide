@@ -123,6 +123,26 @@ dg apply   --agent b      # ...take it, and leave everybody else's staged
 dg clear   --agent c      # ...turn one down, without touching the others
 ```
 
+**How much you may settle on your own** is `$DG_DECIDE`, and it is worth
+reading before you close anything in a shared clone. Unset it means what it has
+always meant — you may close what you like. `evidence` means you may close only
+a decision a *finished* `--evidence-for` task backs, which is the case where the
+falsifier is a measurement you made rather than a judgement you are inventing.
+`never` means you stage and a person applies. All three are about an agent: a
+caller with no `$DG_AGENT` is never refused. You will be told at stage time, by
+name, before you have written an answer.
+
+**You can pick your own work, too.** `dg task` ends with a `ready` line —
+everything startable right now — and `dg task start` refuses a task somebody
+already claimed, so taking work off the frontier is safe without asking. The
+claim records who made it, so `dg task` shows `held by <name>`; **park it rather
+than abandoning it** if you stop, or the graph goes on saying you have it.
+
+Parking or finishing releases the claim. **Neither store ever records who did
+what** — that is deliberate: `tasks.json` is committed and kept forever, agent
+names are recycled, and "who finished this" is noise six months on. Who holds
+what is scratch, alive only while the run is.
+
 `dg clear` on its own takes the **whole** tray whoever runs it, including work
 three other agents were half way through; `--agent` is the narrow form, and the
 one to reach for in a shared clone. `--agent unowned` names the ops nobody

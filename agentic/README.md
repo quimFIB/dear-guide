@@ -22,7 +22,8 @@ decided, which is what the graph is for.
 
 ## The rule the whole thing rests on
 
-> **Agents may `dg add` and `dg task add`. Only the supervisor runs `dg decide`.**
+> **Agents may `dg add` and `dg task add`. By default, only the supervisor runs
+> `dg decide` — and `$DG_DECIDE` can make that a rule instead of a habit.**
 
 A fan-out is a *search*: agents proposing questions, work, and structure. The
 graph is a *record*. Keeping them apart is what stops one turning into the other.
@@ -38,6 +39,37 @@ means a `reopen` that files a reversal nobody made.
 The tray is what makes the search safe: nothing an agent stages exists until
 somebody applies it, and `dg serve` renders the graph **with the staged ops
 applied**, so a proposal can be read as a graph before it is one.
+
+### ...and the real reason, which is narrower than "agents judge badly"
+
+The graph has two exits from a decision and both are wrong for a premature one.
+`dg reopen` files a reversal — but a reversal means *we changed our mind*, not
+*that should not have been written*, and the skill calls a reversal that never
+happened a lie in the record. `dg rm` erases, is explicitly for things that
+should never have been written, and `dg gate` answers `ask` on it, so a person
+decides anyway. There is no vocabulary for "an agent decided this too early".
+
+Which means the restraint that is right depends on the DECISION, not on who is
+asking:
+
+- a falsifier that is **a measurement the agent made** — the benchmark ran, the
+  number is 0.62 — is a fact being recorded, and the falsifier writes itself;
+- a **judgement between defensible alternatives** is where a falsifier written
+  by something that never had to live with the consequence comes out as
+  rationalisation.
+
+Only the first is mechanically recognisable, which is what `$DG_DECIDE` checks:
+
+| `$DG_DECIDE` | an agent may close… |
+|---|---|
+| `open` *(default)* | anything — what the tool has always done |
+| `evidence` | only a decision a **finished** `--evidence-for` task backs |
+| `never` | nothing; it stages, a person applies |
+
+A supervisor — anyone with no `$DG_AGENT` — is never refused by any value. And
+it is cooperative, like `$DG_AGENT` itself: an agent could unset it, at which
+point it *is* the supervisor. Nothing here is a security boundary; it is a rule
+the launcher sets so an honest mistake is caught.
 
 ---
 
@@ -96,7 +128,23 @@ dg task dep T01 --after T04       # a prerequisite discovered later
 That is backwards elaboration, recorded as you learn it rather than searched for
 inside the store.
 
-## 3. Launching
+## 3. Launching — and letting agents pick their own work
+
+An agent does not have to be handed a role. `dg task` ends with a computed
+`ready` line, `dg task start` **refuses work somebody already claimed**, and
+blocked-ness is derived — so *read the frontier → claim → do → `dg task done` →
+repeat* is a loop an agent can run with nobody in it.
+
+`dg task` shows `held by <name>` for work an agent has claimed, so a stalled
+agent can be told from a slow one.
+
+That fact is kept **outside both graphs**, in `.dgraph-agents.json` beside the
+names themselves — scratch, gitignored, gone when the run is. Neither store
+records who did anything, and that is deliberate rather than an omission: the
+stores are committed and kept forever, agent names are recycled the moment they
+are released, and "who finished this" is noise six months on that a recycled
+name no longer even identifies. Who holds work is a fact about a run.
+
 
 **The whole contract with the host is one environment variable.** Whatever
 spawns an agent has to put `DG_AGENT` in its environment; nothing else about the

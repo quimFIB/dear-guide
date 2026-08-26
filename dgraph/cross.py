@@ -17,6 +17,8 @@ supposed to be readable stays readable.
 
 from __future__ import annotations
 
+import os
+
 from collections.abc import Callable
 
 from dgraph.model import Graph
@@ -37,6 +39,90 @@ def evidence(tg: TaskGraph, did: str) -> list[str]:
 def pending_evidence(tg: TaskGraph, did: str) -> list[str]:
     """Evidence tasks not finished yet — what an open decision is waiting on."""
     return [t for t in evidence(tg, did) if tg.tasks[t].unfinished]
+
+
+#: How much an AGENT may settle on its own, read from `$DG_DECIDE`. Only ever
+#: consulted for an owned caller: a supervisor -- anybody with no `$DG_AGENT` --
+#: is unaffected by every value, which is the same shape the rest of the
+#: ownership model has.
+#:
+#:   open      (default) an agent may close anything. What the tool has always
+#:             done, and what the agentic demo is written against.
+#:   evidence  an agent may close a decision only where a FINISHED task is
+#:             `--evidence-for` it. The measured half of the distinction below.
+#:   never     an agent may not close at all. It stages, a person applies.
+#:
+#: **Why this is a policy and not a default.** The graph has two exits from a
+#: decision and both are wrong for a premature one: `dg reopen` files a reversal,
+#: and a reversal means *we changed our mind* rather than *that should not have
+#: been written*; `dg rm` erases, is for things that should never have been
+#: written, and `dg gate` answers `ask` on it, so a person decides anyway. There
+#: is no vocabulary for "an agent decided this too early", which is the real
+#: argument for restraint -- not that agents judge badly.
+#:
+#: But the restraint that is right depends on the decision, not on who is asking.
+#: A decision whose falsifier is a MEASUREMENT THE AGENT MADE -- the benchmark
+#: ran, the number is 0.62 -- is a fact being recorded, and the falsifier writes
+#: itself. A judgement between defensible alternatives is where a falsifier
+#: written by something that never had to live with the consequence comes out as
+#: rationalisation. Only the first of those is mechanically recognisable, and
+#: `evidence` is exactly the check for it.
+#:
+#: **This is cooperative, like everything else here.** `$DG_AGENT` is
+#: self-declared, so `$DG_DECIDE` is self-declarable too; an agent that unset it
+#: would be unowned, and an unowned caller is a supervisor. Nothing here is a
+#: security boundary and it is not trying to be one -- it is a rule the launcher
+#: sets so that the honest failure is caught, in the same way `dg apply` refuses
+#: a tray it did not stage.
+POLICIES = ("open", "evidence", "never")
+POLICY_ENV = "DG_DECIDE"
+
+
+def policy() -> str:
+    """What `$DG_DECIDE` says, defaulting to today's behaviour.
+
+    An unrecognised value is `open` rather than an error: this is read on the
+    path of every `decide`, and a typo in a launcher's environment should not
+    make the tool unusable for the supervisor too. The CLI reports the typo
+    where it is set instead.
+    """
+    val = (os.environ.get(POLICY_ENV) or "").strip().lower()
+    return val if val in POLICIES else POLICIES[0]
+
+
+def refuse_close(tg: TaskGraph | None, did: str, owner: str | None,
+                 chosen: str | None = None) -> str | None:
+    """Why this caller may not close `did` yet -- or `None` if it may.
+
+    `owner` is `pending.owner()`: `None` is the supervisor and is never refused.
+    `tg` is the task store, or `None` where the project has none -- in which
+    case `evidence` can never be satisfied, and says so rather than refusing
+    with a reason nobody can act on.
+    """
+    if owner is None:
+        return None
+    mode = chosen or policy()
+    if mode == "never":
+        return (f"${POLICY_ENV}=never: {owner} may stage this decision, and a "
+                f"caller with no $DG_AGENT applies it")
+    if mode != "evidence":
+        return None
+    if tg is None:
+        return (f"${POLICY_ENV}=evidence, and this project has no task store, "
+                f"so no decision can carry evidence. `dg task init`, or set "
+                f"${POLICY_ENV}=open")
+    backing = evidence(tg, did)
+    if not backing:
+        return (f"${POLICY_ENV}=evidence: nothing is `--evidence-for {did}`, so "
+                f"there is no measurement for {owner} to be recording. Link the "
+                f"work that bears on it — `dg task link <id> --evidence-for "
+                f"{did}` — or leave it staged for a person")
+    unfinished = [t for t in backing if tg.tasks[t].unfinished]
+    if len(unfinished) == len(backing):
+        return (f"${POLICY_ENV}=evidence: {did}'s evidence has not finished "
+                f"({', '.join(unfinished)}), so the measurement it would be "
+                f"recording does not exist yet")
+    return None
 
 
 def gated_by(tg: TaskGraph, g: Graph, tid: str) -> str | None:

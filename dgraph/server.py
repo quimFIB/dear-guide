@@ -446,6 +446,16 @@ def stage(g: Graph, op: dict) -> list[dict]:
     staged as a batch-poisoning op `apply` rejects later.
     """
     eff = pending.preview(g)
+    # The same policy the CLI applies, at the same moment. The page itself
+    # stages as nobody and is never refused; this bites for a caller driving the
+    # API with an `X-DG-Agent` header, which is the other way an agent reaches
+    # the graph and would otherwise be the way around the rule.
+    if op.get("op") == "close":
+        proj = project.find()
+        tg = (TaskGraph.load(proj.tasks) if proj.has_tasks else None)
+        why = cross.refuse_close(tg, op.get("vertex"), pending.owner())
+        if why is not None:
+            raise pending.ApplyError(why)
     pending.vet(eff, op)
     ops = pending.expand(eff, op)
     pending.stage_all(ops, against=eff)   # one write, each op stamped

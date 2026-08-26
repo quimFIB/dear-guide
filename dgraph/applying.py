@@ -47,7 +47,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 
-from dgraph import cross, pending, project, render, task_pending, task_render
+from dgraph import agents, cross, pending, project, render, task_pending, task_render
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
 
@@ -230,6 +230,38 @@ def apply_decisions(ops: list[dict], dry_run: bool = False,
                   drift=moved)
 
 
+def _record_holdings(ops, tg, proj) -> None:
+    """Who is holding live work, kept OUTSIDE the store.
+
+    Here rather than in `_apply_one`, which builds a graph and must not write
+    files, and here rather than on the `Task`, which is the point: the task
+    store is committed and kept forever, agent names are recycled, and "who
+    finished this" is noise six months later that a recycled name no longer even
+    identifies. Who has work right now is a fact about a RUN, so it lives with
+    the names themselves in `.dgraph-agents.json` -- scratch, gitignored, gone
+    when the run is.
+
+    Best-effort by design. A run whose holdings could not be written is still a
+    run whose WORK was applied, and the store is the thing that must not be lost;
+    this is a convenience for triage during a fan-out.
+    """
+    if not any(o.get("op") == "set_status" for o in ops):
+        return
+    try:
+        for op in ops:
+            if op.get("op") != "set_status":
+                continue
+            tid = op.get("task")
+            if tid is None or tid not in tg.tasks:
+                continue
+            if tg.tasks[tid].status == "DOING":
+                agents.hold(op.get("by"), tid, proj.root)
+            else:
+                agents.drop_hold(tid, proj.root)
+    except (OSError, ValueError):
+        pass
+
+
 def apply_tasks(ops: list[dict], dry_run: bool = False,
                 tg: TaskGraph | None = None) -> Result:
     """The same for a task batch. Independent of the decision one on purpose:
@@ -244,6 +276,7 @@ def apply_tasks(ops: list[dict], dry_run: bool = False,
         out = task_pending.apply_all(tg, ops, cross.guard_tasks())
         view_text = task_render.render(out)
         out.save(proj.tasks)
+        _record_holdings(ops, out, proj)
         pending.discard(ops, task_pending.path())
         try:
             project.write_atomic(proj.task_view, view_text)

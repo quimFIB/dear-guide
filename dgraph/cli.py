@@ -1295,6 +1295,15 @@ def decide(
     if vid not in eff.vertices:
         con.print(f"[red]unknown vertex {vid}[/]")
         raise typer.Exit(1)
+    # Before anything is composed, and deliberately so. The skill's argument for
+    # stage-time refusals is that the second agent to answer a settled question
+    # is turned away BEFORE writing an answer, a source and a falsifier; a
+    # policy that refused after all three were typed would be the same waste
+    # with a different reason. See cross.POLICIES.
+    why = cross.refuse_close(_maybe_tasks(), vid, pending.owner())
+    if why is not None:
+        con.print(f"[red]✗ nothing staged — {_x(why)}[/]")
+        raise typer.Exit(1)
     v = eff.vertices[vid]
     e = eff.active_edge(vid)
     if e is not None and e.decided:
@@ -2847,6 +2856,22 @@ TASK_STYLE = {
 }
 
 
+def _maybe_tasks():
+    """The task store if this project has one, `None` otherwise.
+
+    Unlike `_tg`, does not exit: the callers are cross-store *policies*, and a
+    project tracking only decisions is an ordinary project rather than a
+    misconfigured one.
+    """
+    proj = project.find()
+    if not proj.has_tasks:
+        return None
+    try:
+        return TaskGraph.load(proj.tasks)
+    except UNREADABLE:
+        return None
+
+
 def _tg() -> TaskGraph:
     proj = project.find()
     if not proj.has_tasks:
@@ -3667,11 +3692,27 @@ def _task_listing(tg: TaskGraph, waiting_for) -> None:
               f"{len(tg.tasks)}   " + "  ".join(
                   f"[{TASK_STYLE.get(k, 'white')}]{k} {n}[/]"
                   for k, n in sorted(tg.counts().items())))
+    # One read for the whole listing rather than one per row.
+    try:
+        held = agents.holdings()
+    except (OSError, ValueError):
+        held = {}
     entries, areas = [], []
     for tid in frontier:
         task = tg.tasks[tid]
         waiting, gate = waiting_for(tid)
         aside = []
+        # First, because it is the only thing here that names somebody rather
+        # than describing the graph. `DOING` says a task is claimed; without
+        # this it does not say by whom, and a fan-out cannot tell a stalled
+        # agent from a slow one.
+        #
+        # Read from `.dgraph-agents.json` and NOT from the task: who has work is
+        # a fact about a run, and the store is committed and kept forever. Silent
+        # where nobody claimed it, so a project with no agents reads as it always
+        # did.
+        if held.get(tid):
+            aside.append(f"held by {held[tid]}")
         if waiting:
             aside.append("waits " + ", ".join(waiting))
         if tg.unblocks(tid):
@@ -3841,7 +3882,11 @@ def task_node(tid: str) -> None:
         last = len(t.completions) - 1
         for i, c in enumerate(t.completions):
             tag = f"  [dim]({label})[/]" if label and i == last else ""
-            lines.append(f"  [dim]{c.date}[/]  {_x(c.outcome)}{tag}")
+            # Who produced it, where anybody did. Silent for a person, the
+            # same as everywhere else -- a project with no agents in it must
+            # read as it did before the field existed.
+            who = f"  [dim]by {_x(c.by)}[/]" if c.by else ""
+            lines.append(f"  [dim]{c.date}[/]  {_x(c.outcome)}{who}{tag}")
     if t.stops:
         # Kept whatever the status is now — work picked up again is the
         # ordinary case, and the list of what kept stopping it is the record
@@ -3854,7 +3899,8 @@ def task_node(tid: str) -> None:
             now = live is not None and i == len(t.stops) - 1
             tag = ("  [cyan](still parked)[/]" if now and t.parked
                    else "  [dim](abandoned here)[/]" if now else "")
-            lines.append(f"  [dim]{k.date}[/]  {_x(k.why)}{tag}")
+            who = f"  [dim]by {_x(k.by)}[/]" if k.by else ""
+            lines.append(f"  [dim]{k.date}[/]  {_x(k.why)}{who}{tag}")
     if t.note:
         lines += ["", "[bold]Note[/]", _x(t.note)]
     con.print(Panel("\n".join(lines), title=tid,
