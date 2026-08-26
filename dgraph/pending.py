@@ -174,6 +174,29 @@ def owner() -> str | None:
     return (os.environ.get(AGENT_ENV) or "").strip() or None
 
 
+def _identity_source() -> str:
+    """Which door handed this thread its identity, for a refusal to name.
+
+    An agent is told to change `$DG_AGENT` and a caller driving the API is told
+    to change its header, because telling either one the other's answer is a
+    refusal it cannot act on. `_as` is set only by `as_owner`, which only the
+    server uses — so the branch is exactly "was this a request or a process".
+    """
+    return ("the `" + server_header() + "` header"
+            if getattr(_as, "name", _INHERIT) is not _INHERIT
+            else "$" + AGENT_ENV)
+
+
+def server_header() -> str:
+    """The header `dgraph/server.py` reads an identity from.
+
+    Named here rather than imported from there: `pending` is the lower module
+    and must not import the server, and a refusal that guessed the header name
+    would be one more string free to drift from the one that is read.
+    """
+    return "X-DG-Agent"
+
+
 @contextlib.contextmanager
 def as_owner(name: str | None):
     """Stage as `name` for the duration of a block, whatever the environment says.
@@ -209,6 +232,101 @@ def mine(ops: list[dict], me=_INHERIT) -> tuple[list[dict], list[dict]]:
             [o for o in ops if o.get("by") != me])
 
 
+#: What an op nobody owns is *called*, wherever a reader has to be able to name
+#: one. `_scope`'s refusal already printed this word, and a filter that would
+#: not take back the name it prints is a dead end for whoever just read it — so
+#: the two share a constant rather than repeating a string.
+#:
+#: **Therefore reserved**, and refused at the staging door by `_with_refs`. A
+#: writer actually called `unowned` made the reading and the write disagree:
+#: `named` falls back to this word for an unsigned op while `addressed` maps it
+#: to `None`, so `dg pending --agent unowned` listed the named writer's ops
+#: *and* the unsigned ones while `dg apply --agent unowned` wrote only the
+#: unsigned ones. A reader reviewed two and accepted one, with nothing saying
+#: so — which is the failure the roster exists to prevent, one layer down.
+UNOWNED = "unowned"
+
+
+def named(op: dict) -> str:
+    """One op's owner as a name, `UNOWNED` where nobody is named."""
+    return op.get("by") or UNOWNED
+
+
+def addressed(name: str) -> str | None:
+    """The `by` value a roster name stands for.
+
+    `UNOWNED` is a label and never a stamp — an unowned op has no `by` key at
+    all, which `test_no_identity_leaves_the_op_exactly_as_it_was` pins — so a
+    filter that handed the word straight to `mine` would match nothing and then
+    report an empty selection as a legitimate one.
+    """
+    return None if name == UNOWNED else name
+
+
+def roster(*trays: list[dict] | None) -> dict[str, int]:
+    """Who has work staged across these trays, and how many ops each of them has.
+
+    **Spans the trays rather than reading one.** They are staged independently
+    and reviewed as a pair, so an agent with no decision ops and five task ops
+    is present, and a per-tray roster is the reading that calls it absent.
+    `_scope` already unions them to name the owners it refused over; this is
+    that union offered *before* the refusal instead of inside it.
+
+    A tray that could not be read is `None` and contributes nothing, for the
+    same reason it does everywhere else: a roster is a reading, and an
+    unparseable task tray must not take the decision one down with it.
+
+    Ordered, named owners first and `UNOWNED` last — it is the one entry that
+    is not a name, and sorting it in among them reads as an agent called
+    "unowned".
+    """
+    counts: dict[str, int] = {}
+    for ops in trays:
+        for op in ops or []:
+            who = named(op)
+            counts[who] = counts.get(who, 0) + 1
+    return {k: counts[k]
+            for k in sorted(counts, key=lambda n: (n == UNOWNED, n))}
+
+
+def refuse_apply_for(name: str, *trays: list[dict] | None) -> str | None:
+    """Why this caller may not write what `name` staged — `None` if it may.
+
+    One rule, both doors. The terminal renders it with the flags beside it and
+    the browser returns it as a 400; what neither of them owns is the judgement,
+    because a rule about who may write somebody else's draft that held at one
+    door and not the other is the drift every shared helper in this file exists
+    to stop.
+
+    Two refusals, about different things.
+
+    **Authority.** Applying for a named writer is `--all`'s sibling, not
+    `--mine`'s: it writes somebody else's half-composed batch, which is
+    `C-F16` — a draft `close` applied by another writer is a DECIDED answer
+    whose only exit is a `reopen`, filing a reversal nobody made. An *unowned*
+    caller is the supervisor and is usually right to do it; one agent reaching
+    into another's drafts is the failure the ownership stamp exists to stop,
+    and naming the victim does not make it a different act. Naming **yourself**
+    is allowed, since refusing it would be refusing `--mine` spelled out.
+
+    **The name.** A roster name nobody staged under is almost always a typo,
+    and the damage is that it is *silent*: `mine` matches nothing, the scope
+    comes back empty, and an empty selection reports as a legitimate one —
+    "nothing staged by agnet-b", which is true and useless. So an unknown name
+    is refused **with the roster**, which is the list the caller meant to type
+    from.
+    """
+    me = owner()
+    if me is not None and addressed(name) != me:
+        whose = "the unowned drafts" if name == UNOWNED else f"{name}'s drafts"
+        return f"you are staging as {me}, and {whose} are not yours to write"
+    known = roster(*trays)
+    if name not in known:
+        listed = " · ".join(f"{n} {c}" for n, c in known.items()) or "nobody"
+        return f"nobody called {name} has work staged — staged by  {listed}"
+    return None
+
+
 def _new_ref(taken: set[str]) -> str:
     """An id no op in this tray is using.
 
@@ -232,6 +350,16 @@ def _with_refs(ops: list[dict], current: list[dict]) -> list[dict]:
     """
     taken = {o["ref"] for o in current if o.get("ref")}
     who = owner()
+    if who == UNOWNED:
+        # Refused **here**, not in `owner()`: reading a graph under a bad
+        # identity harms nothing, and a `dg show` that failed because of an
+        # environment variable would be a refusal aimed at the wrong act. This
+        # is the one place the name is written down, so it is the one place it
+        # has to be a name.
+        raise ApplyError(
+            f"`{UNOWNED}` is reserved — it is how this tool names ops nobody "
+            f"signed, so a writer cannot also be called that. Set "
+            f"{_identity_source()} to something else.")
     out = []
     for op in ops:
         if not op.get("ref") or op["ref"] in taken:
@@ -428,6 +556,25 @@ def clear(path: Path | None = None) -> None:
     """
     with held(path):
         save([], path)
+
+
+def clear_agent(name: str, path: Path | None = None) -> int:
+    """Discard one writer's ops, leave everybody else's, and say how many went.
+
+    The reject verb for a shared tray. `clear` above takes the whole file
+    whoever runs it, which is right for the single writer it was written for
+    and is a blunt instrument once several agents stage into one tray — reading
+    one proposal and turning it down should not cost the other three.
+
+    Re-read **inside** the lock, not filtered from a list loaded outside it: the
+    window `clear` names is the same window here, and an op staged while this
+    ran belongs to whoever staged it.
+    """
+    me = addressed(name)
+    with held(path):
+        gone, keep = mine(load(path), me)
+        save(keep, path)
+        return len(gone)
 
 
 def discard(applied: list[dict], path: Path | None = None) -> list[dict]:

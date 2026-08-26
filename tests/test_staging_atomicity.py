@@ -175,6 +175,13 @@ def test_every_staging_command_is_covered():
         ("task", "init"), ("task", "pending"), ("task", "render"),
         ("task", "node"), ("task", "tree"), ("task", "drop-op"),
         ("task", "clear"), ("task", "import"), ("task", "export"),
+        # `.dgraph-agents.json` is not a tray either: it holds names, not ops,
+        # and nothing applies it. `claim` and `prune` *read* both trays to work
+        # out what is in use, under the lease file's own lock and never a
+        # tray's — which is also what keeps them out of `applying.trays`' lock
+        # order.
+        ("agent", "claim"), ("agent", "list"), ("agent", "release"),
+        ("agent", "prune"),
     }
     covered = {tuple(a for a in argv if not a.startswith("-"))[:2]
                for _, argv in CASES}

@@ -18,7 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
-from dgraph import applying
+from dgraph import agents, applying
 from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
@@ -54,6 +54,11 @@ READ = "Reading the graph"
 HONEST = "Keeping it honest"
 RECORD = "Recording decisions"
 STAGE = "The staging area — nothing is written until `apply`"
+#: Its own panel rather than a corner of `STAGE`: nothing here stages anything.
+#: These name the *writers* a shared tray has, which is a question that only
+#: exists once more than one of them is running — and reads as noise filed under
+#: a heading about ops waiting to be applied.
+WRITERS = "Who is writing — names for a shared tray"
 STORE = "Starting a graph, and moving one"
 WORK = "Tracking the work — its own graph, and its own help screen"
 WEB = "In a browser"
@@ -72,6 +77,7 @@ LAYOUT = (
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
               "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
+    (WRITERS, ("agent",)),
     (STORE, ("init", "range", "import", "import-md", "export", "integrate",
              "incoming")),
     (WORK, ("task",)),
@@ -134,7 +140,7 @@ def _roles(*pairs: tuple[str, str]) -> dict[str, str]:
 #: other rather than read side by side by somebody who remembers to.
 ROLES = _roles(
     (READ, "read"), (HONEST, "honest"), (RECORD, "record"), (STAGE, "stage"),
-    (STORE, "store"), (WORK, "work"), (WEB, "web"),
+    (STORE, "store"), (WORK, "work"), (WEB, "web"), (WRITERS, "writers"),
     (T_READ, "read"), (T_HONEST, "honest"), (T_RECORD, "record"),
     (T_STAGE, "stage"), (T_STORE, "store"),
 )
@@ -243,6 +249,21 @@ def _root(
     ),
 ) -> None:
     project.use(project_dir)
+    # Before anything reads a store. `$DG_AGENT=unowned` is not a bad op, it is
+    # a **bad configuration**, and the two want different refusals: raising at
+    # the op leaves twelve `pending.stage_all` call sites to wrap and a
+    # traceback wherever one was missed, and it would let a reading succeed
+    # under an identity that every subsequent stage refuses. So the whole
+    # session is refused here, once, the way an unloadable store is — and
+    # `_with_refs` keeps its own raise for the library's other callers, the
+    # server among them, which turn it into a 400 of their own.
+    if pending.owner() == pending.UNOWNED:
+        con.print(f"[red]✗ `{pending.UNOWNED}` is reserved — it is how this "
+                  f"tool names ops nobody signed, so a writer cannot also be "
+                  f"called that[/]\n"
+                  f"[dim]set ${pending.AGENT_ENV} to something else, or unset "
+                  f"it to work as the supervisor[/]")
+        raise typer.Exit(2)
 
 STATUS_STYLE = {
     "DECIDED": "green",
@@ -1968,17 +1989,25 @@ def _tasks_naming(did: str) -> list[str]:
 def pending_cmd(
     full: bool = typer.Option(False, "--full",
                               help="The table, with no detail clipped."),
+    agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              help="Only what one writer staged. `unowned` "
+                                   "names the ops nobody signed."),
 ) -> None:
     """What is staged but not yet applied.
 
     One line per op by default — its position, its short id, the op, what it is
     about, and the detail clipped. `--full` gives the table instead, which is
     the one to reach for when two answers read the same at the width above.
+
+    `--agent` narrows it to one writer, and where several agents stage into one
+    tray that is what makes their proposals reviewable one at a time rather
+    than as an overlay. The roster line under the listing counts everybody
+    either way, so a narrowed reading always says what it is not showing.
     """
     _tray(pending.load(), full, details=_PENDING_DETAIL, subject="vertex",
           heading="STAGED", title="Staged", column="Vertex",
           actions="`dg apply` to write, `dg drop <id>` to unstage",
-          expand="dg pending --full")
+          expand="dg pending --full", roster=_trays_roster(), agent=agent)
     _say_arriving()
 
 
@@ -2007,7 +2036,9 @@ def _say_arriving() -> None:
 
 def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
           heading: str, title: str, column: str, actions: str,
-          expand: str) -> None:
+          expand: str, roster: dict | None = None,
+          agent: str | None = None,
+          narrow: str = "dg pending --agent <name>") -> None:
     """One staging tray, listed or tabulated. Both trays read through here.
 
     The two used to be a table apiece, near-identical and free to drift; they
@@ -2015,16 +2046,117 @@ def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
     the asymmetry the rest of this file spends its comments removing. So the
     shape lives here once and the callers pass only what genuinely differs:
     which store's key names the subject, and which command unstages one op.
+
+    `agent` narrows the listing to one writer. The roster is printed **whether
+    or not it matched**, and that is the point of printing it at all: a
+    mistyped name would otherwise produce an empty listing that reads exactly
+    like an empty tray, and the roster is the list the reader meant to type
+    from. It is also what stops the narrowed heading lying — `STAGED 12 op(s)`
+    is true of the selection and false of the tray, and the line underneath is
+    where the other twelve are accounted for.
     """
+    if agent:
+        ops = [o for o in ops if pending.named(o) == agent]
     if not ops:
-        con.print("[dim]nothing staged[/]")
+        con.print(f"[dim]nothing staged by {_x(agent)}[/]" if agent
+                  else "[dim]nothing staged[/]")
+        # `matched=False`: "showing scout-c" over a listing showing nothing
+        # contradicts the line above it, and the name has already been said.
+        _roster_line(roster, agent, narrow, matched=False)
         return
     (_tray_table if full else _tray_listing)(
         ops, details=details, subject=subject, heading=heading, title=title,
         column=column)
+    _roster_line(roster, agent, narrow)
     con.print(f"[dim]{actions}[/]")
     if not full:
         con.print(compact.hint(expand, "the table, nothing clipped"))
+
+
+def _clear_tray(clear_all, clear_one, agent: str | None, path, unit: str, *,
+                other, other_cmd: str) -> None:
+    """`dg clear` and `dg task clear`, whole or narrowed to one writer.
+
+    A name that matched nothing is reported as a **failure**, not as a clear of
+    zero ops. The two are indistinguishable in the tray afterwards and mean
+    opposite things — one is "there was nothing of theirs", the other is "you
+    typed a name nobody staged under, and the ops you meant to reject are still
+    there" — and only the second is a reason to look again. Same reasoning as
+    `_may_apply_for`, on the verb that does not write.
+
+    **The clears are per store and rejecting a proposal is not.** `dg apply
+    --agent` spans both trays because applying always did; these two never did,
+    and unifying them here would quietly change what a bare `dg clear` means.
+    So the narrowed form names what it could not reach instead — turning a
+    proposal down and leaving half of it staged is exactly the quiet leftover
+    the cross-tray roster exists to catch, and catching it one command earlier
+    is cheaper than reading it off a roster afterwards.
+    """
+    if not agent:
+        clear_all(path)
+        con.print("[green]cleared[/]")
+        return
+    n = clear_one(agent, path)
+    if not n:
+        known = _trays_roster()
+        listed = " · ".join(f"{_x(k)} {c}" for k, c in known.items())
+        con.print(f"[red]nothing cleared — no {unit} staged by {_x(agent)}[/]\n"
+                  f"[dim]staged by  {listed or 'nobody'}[/]")
+        raise typer.Exit(1)
+    con.print(f"[green]cleared[/] {n} {unit}(s) staged by {_x(agent)}")
+    try:
+        rest = len(pending.mine(pending.load(other),
+                                pending.addressed(agent))[0])
+    except (OSError, ValueError):
+        return          # an unreadable neighbour costs the note and nothing else
+    if rest:
+        con.print(f"[dim]{rest} more staged by {_x(agent)} in the other tray — "
+                  f"`{other_cmd} --agent {_x(agent)}`[/]")
+
+
+
+def _roster_line(roster: dict | None, agent: str | None,
+                 narrow: str = "dg pending --agent <name>",
+                 matched: bool = True) -> None:
+    """Who has work in the trays, and how much each of them has.
+
+    Printed **only where somebody is named**, which is the rule the owner
+    column in `_tray_listing` already follows and for the same reason: a
+    project that never sets an identity is owed a reading identical to the one
+    it had before ownership existed, and a line saying `unowned 3` to a single
+    writer is noise dressed as information.
+
+    It counts across both trays even though the listing above it shows one. The
+    two are staged independently and applied as a pair, so an agent with no
+    decision ops and five task ops is *present* in the review — and a reader
+    who saw a per-tray roster would conclude it had gone home.
+    """
+    if not roster or list(roster) == [pending.UNOWNED]:
+        return
+    cells = " · ".join(f"{_x(n)} {c}" for n, c in roster.items())
+    shown = f"  [dim]— showing[/] {_x(agent)}" if agent and matched else ""
+    con.print(f"[dim]staged by[/]  {cells}{shown}")
+    if not agent:
+        con.print(compact.hint(narrow, "one writer alone"))
+
+
+def _trays_roster() -> dict[str, int]:
+    """The roster across both trays, for whichever listing is about to print it.
+
+    Reads the *other* tray as well as its own, and forgives it entirely:
+    `_staged_ops` reports an unreadable tray and owns an exit code, which is
+    right for `apply` and wrong here, where the roster is a courtesy line under
+    a listing that has already succeeded. `C-F22` is the same shape — one
+    tray's failure must not reach the other's reading — so an unparseable
+    neighbour costs this line its counts and nothing else.
+    """
+    proj = project.find()
+    def read(path):
+        try:
+            return pending.load(path)
+        except (OSError, ValueError):
+            return None
+    return pending.roster(read(proj.pending), read(proj.task_pending))
 
 
 def _tray_detail(o: dict, details: dict) -> str:
@@ -2267,10 +2399,21 @@ def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
 
 
 @app.command(rich_help_panel=STAGE)
-def clear() -> None:
-    """Unstage everything."""
-    pending.clear()
-    con.print("[green]cleared[/]")
+def clear(
+    agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              help="Unstage only what one writer staged."),
+) -> None:
+    """Unstage everything, or one writer's contribution with `--agent`.
+
+    `--agent` is the reject verb for a shared tray: read one agent's proposal
+    with `dg pending --agent a`, decide against it, and turn it down without
+    touching the other three. Unlike `dg apply --agent` it is open to any
+    caller — a bare `dg clear` already discards everybody's work whoever runs
+    it, so gating the *narrower* form would only push a reader toward the
+    blunter one.
+    """
+    _clear_tray(pending.clear, pending.clear_agent, agent, None, "op",
+                other=task_pending.path(), other_cmd="dg task clear")
 
 
 @app.command(rich_help_panel=STAGE)
@@ -2280,6 +2423,9 @@ def apply(
                               help="apply every staged op, whoever staged it"),
     mine: bool = typer.Option(False, "--mine",
                               help="apply only what this writer staged"),
+    agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              help="apply what ONE writer staged, by the name "
+                                   "`dg pending` lists"),
 ) -> None:
     """Validate everything staged and write it.
 
@@ -2311,15 +2457,21 @@ def apply(
         if not ops and not task_ops:
             con.print("[dim]nothing staged[/]")
             return
-        if all_ and mine:
-            con.print("[red]--all and --mine ask for opposite things[/]")
+        chosen = [f for f, on in (("--all", all_), ("--mine", mine),
+                                  ("--agent", bool(agent))) if on]
+        if len(chosen) > 1:
+            con.print(f"[red]{' and '.join(chosen)} ask for different "
+                      f"scopes — pick one[/]")
             raise typer.Exit(2)
-        scoped = _scope(ops, task_ops, all_=all_, mine=mine)
+        if agent and not _may_apply_for(agent, ops, task_ops):
+            raise typer.Exit(1)
+        scoped = _scope(ops, task_ops, all_=all_, mine=mine, agent=agent)
         if scoped is None:
             raise typer.Exit(1)
         ops, task_ops, left = scoped
         if not ops and not task_ops and not (ops is None or task_ops is None):
-            con.print(f"[dim]nothing of yours staged — {left}[/]")
+            whose = f"staged by {_x(agent)}" if agent else "of yours staged"
+            con.print(f"[dim]nothing {whose} — {left}[/]")
             return
         # One lock span across both batches, not one per batch. They stay
         # independent — either can be refused while the other is written, which
@@ -2341,7 +2493,25 @@ def apply(
         raise typer.Exit(1)
 
 
-def _scope(ops, task_ops, *, all_: bool, mine: bool):
+def _may_apply_for(agent: str, ops, task_ops) -> bool:
+    """`pending.refuse_apply_for`, rendered for a terminal.
+
+    The judgement is not here — it is shared with the browser, which returns
+    the same sentence as a 400. What is here is the second line: a refusal a
+    reader cannot act on is the shape `C-F17` is about, and the flags are what
+    they act on.
+    """
+    why = pending.refuse_apply_for(agent, ops, task_ops)
+    if why is None:
+        return True
+    con.print(f"[red]✗ nothing written — {_x(why)}[/]\n"
+              f"[dim]`dg apply` writes your own; only a caller with no "
+              f"$DG_AGENT applies for somebody else, and `dg pending` lists "
+              f"the names[/]")
+    return False
+
+
+def _scope(ops, task_ops, *, all_: bool, mine: bool, agent: str | None = None):
     """Which of the staged ops this caller may apply, and what it is leaving.
 
     `(ops, task_ops, note)`, or `None` having refused. `note` is empty when
@@ -2365,6 +2535,15 @@ def _scope(ops, task_ops, *, all_: bool, mine: bool):
 
     `--mine` is offered from an unowned caller too, where it means the unowned
     ops: a person tidying their own work out of a tray an agent is also using.
+
+    `--agent NAME` is the fourth, and it is a *scope*, not a fourth authority:
+    it supplies the identity the other three inherit from the environment, and
+    the split, the note and the validation are the same ones. It exists for the
+    review the other three cannot express — several agents proposing
+    **alternatives** into one tray, where the supervisor means to write one of
+    them and turn the rest down. Where agents propose complementary pieces of
+    one elaboration the union is what you want, and `--all` already is it.
+    `_may_apply_for` holds the authority question, which is separate.
     """
     # `None` is a tray that could not be read, and it stays `None` all the way
     # through: `apply` reports it separately and owns the exit code for the
@@ -2373,8 +2552,13 @@ def _scope(ops, task_ops, *, all_: bool, mine: bool):
     # unreadable task tray, which is `C-F22` exactly.
     if all_ or (ops is None and task_ops is None):
         return ops, task_ops, ""
-    keep, theirs = pending.mine(ops or [])
-    tkeep, ttheirs = pending.mine(task_ops or [])
+    # `--agent` supplies the identity the other two inherit, and everything
+    # downstream is unchanged: one `mine` split, the same note about what was
+    # left, the same refusal — except that a caller who *named* whose work to
+    # take cannot be surprised by taking it, so the refusal below does not fire.
+    me = pending.addressed(agent) if agent else pending.owner()
+    keep, theirs = pending.mine(ops or [], me)
+    tkeep, ttheirs = pending.mine(task_ops or [], me)
     if not theirs and not ttheirs:
         return ops, task_ops, ""
     keep = keep if ops is not None else None
@@ -2387,11 +2571,12 @@ def _scope(ops, task_ops, *, all_: bool, mine: bool):
     who = ", ".join(sorted({str(o["by"]) if o.get("by") else "unowned"
                             for o in (*theirs, *ttheirs)}))
     n = len(theirs) + len(ttheirs)
-    if not mine and pending.owner() is None:
+    if not mine and not agent and pending.owner() is None:
         con.print(f"[red]✗ nothing written — {n} staged op(s) belong to "
                   f"{_x(who)}[/]\n"
                   f"[dim]`dg apply --all` writes theirs too, `dg apply --mine` "
-                  f"only yours; `dg pending` shows who staged what[/]")
+                  f"only yours, `dg apply --agent <name>` one of them; "
+                  f"`dg pending` shows who staged what[/]")
         return None
     return keep, tkeep, f"{n} op(s) left staged, by {_x(who)}"
 
@@ -2531,6 +2716,109 @@ def render_cmd() -> None:
     """Regenerate decision-graph.md from the store."""
     render.write(_g())
     con.print(f"[green]✓[/] wrote {project.find().view}")
+
+
+# ---- agents --------------------------------------------------------------
+#
+# Naming moved in here because every value `$DG_AGENT` has gone wrong on was one
+# a launcher invented. `dg` still cannot set its caller's environment, so the
+# variable stays the way a name *reaches* an agent — what these commands remove
+# is the need to make one up. See `dgraph/agents.py` for why a claim never
+# expires and why running out is an error rather than a fallback.
+
+agent_app = typer.Typer(
+    add_completion=False,
+    help="Names for the writers sharing one tray. `dg agent claim` hands out "
+         "a free one; nothing ever reuses a name behind your back.",
+)
+app.add_typer(agent_app, name="agent", rich_help_panel=WRITERS)
+
+
+@agent_app.command("claim")
+def agent_claim() -> None:
+    """Take a free name and hold it. Prints the name, and nothing else.
+
+    **Bare stdout on purpose**, because the only sensible caller is a
+    substitution:
+
+        DG_AGENT=$(dg agent claim) claude -p "..."
+
+    A launcher's job, not an agent's: shell state does not survive between a
+    coding agent's tool calls, so one that claimed a name for itself could not
+    hold on to it.
+    """
+    try:
+        name = agents.claim()
+    except agents.Exhausted as exc:
+        # An error, never a fallback. Handing back a name somebody holds — or
+        # inventing a numbered one outside the lists — is the silent conflation
+        # the whole ownership stamp exists to prevent, and the numbered one is
+        # worse for looking deliberate.
+        con.print(f"[red]✗ no name to claim — {_x(exc)}[/]")
+        if exc.releasable:
+            con.print(f"[dim]{exc.releasable} have nothing staged under them: "
+                      f"`dg agent prune` frees those now[/]")
+        else:
+            con.print("[dim]every name has ops in a tray — `dg apply` or "
+                      "`dg clear` first, then `dg agent prune`[/]")
+        raise typer.Exit(1)
+    # `print`, not `con.print`: rich wraps at the terminal width and would put a
+    # newline inside a long name, and this string is going into a variable.
+    print(name)
+
+
+@agent_app.command("list")
+def agent_list() -> None:
+    """Every name held, when it was claimed, and what it still has staged."""
+    leases = agents.load()
+    staged = agents.in_trays(project.find())
+    if not leases and not staged:
+        con.print("[dim]no names claimed[/]")
+        return
+    t = Table(header_style="bold", title="Names held")
+    for c in ("Name", "Since", "Staged"):
+        t.add_column(c)
+    # Names with ops but no lease are listed too, and marked. That is what a
+    # hand-set `$DG_AGENT` looks like, and a roster of leases alone would say
+    # the tray was unowned while somebody's drafts sat in it.
+    for name in sorted(set(leases) | set(staged)):
+        since = leases.get(name, {}).get("since", "[dim]not claimed here[/]")
+        t.add_row(_x(name), since, str(staged.get(name, 0)))
+    con.print(t)
+    con.print(f"[dim]{len(agents.sequence()) - len(set(leases) | set(staged))} "
+              f"of {len(agents.sequence())} names free[/]")
+
+
+@agent_app.command("release")
+def agent_release(
+    name: str = typer.Argument(..., help="the name to stop holding"),
+) -> None:
+    """Stop holding one name, so it can be claimed again.
+
+    Says nothing about the tray: releasing a name whose ops are still staged is
+    legitimate — the launcher is done, the review is not — and `dg agent claim`
+    still will not hand it out while those ops are there.
+    """
+    if not agents.release(name):
+        con.print(f"[red]nothing released — {_x(name)} is not held[/]\n"
+                  f"[dim]`dg agent list` shows what is[/]")
+        raise typer.Exit(1)
+    con.print(f"[green]released[/] {_x(name)}")
+
+
+@agent_app.command("prune")
+def agent_prune() -> None:
+    """Release every name with no ops left in either tray.
+
+    Deliberate, and never run on your behalf. A name with nothing staged can
+    still belong to an agent that has not staged *yet*, so this is safe when a
+    person knows the round is over and unsafe as a rule a timer applies.
+    """
+    gone = agents.prune()
+    if not gone:
+        con.print("[dim]nothing to prune — every name held has ops staged[/]")
+        return
+    con.print(f"[green]released[/] {len(gone)}: {_x(', '.join(sorted(gone)))}")
 
 
 # ---- tasks ---------------------------------------------------------------
@@ -3646,17 +3934,24 @@ def task_tree(root: str = typer.Argument(None, help="Task to root at")) -> None:
 def task_pending_cmd(
     full: bool = typer.Option(False, "--full",
                               help="The table, with no detail clipped."),
+    agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              help="Only what one writer staged. `unowned` "
+                                   "names the ops nobody signed."),
 ) -> None:
     """What is staged for the task store but not yet applied.
 
     One line per op by default, the table under `--full` — `dg pending`'s twin,
     through the same renderer, because the two trays are reviewed the same way.
+    `--agent` narrows it, and its roster counts **both** trays: the two are
+    staged apart and applied together, so a writer present in one is present in
+    the review.
     """
     _tray(pending.load(task_pending.path()), full, details=_TASK_DETAIL,
           subject="task", heading="STAGED TASKS", title="Staged tasks",
           column="Task",
           actions="`dg apply` to write, `dg task drop-op <id>` to unstage",
-          expand="dg task pending --full")
+          expand="dg task pending --full", roster=_trays_roster(), agent=agent,
+          narrow="dg task pending --agent <name>")
     _say_arriving()
 
 
@@ -3695,10 +3990,14 @@ def task_drop_op(
 
 
 @task_app.command("clear", rich_help_panel=T_STAGE)
-def task_clear() -> None:
-    """Unstage every task op."""
-    pending.clear(task_pending.path())
-    con.print("[green]cleared[/]")
+def task_clear(
+    agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              help="Unstage only what one writer staged."),
+) -> None:
+    """Unstage every task op, or one writer's with `--agent`. See `dg clear`."""
+    _clear_tray(pending.clear, pending.clear_agent, agent,
+                task_pending.path(), "task op",
+                other=project.find().pending, other_cmd="dg clear")
 
 
 @task_app.command("export", rich_help_panel=T_STORE)

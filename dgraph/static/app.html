@@ -2069,30 +2069,87 @@ function opRow(o, i, kind){
     }<button class="x" data-i="${i}" data-k="${kind}">✕</button></td></tr>`;
 }
 
-function trayTable(ops, kind){
+/* Rows carry the index they had in the **unfiltered** tray. `opRow` writes it
+   into `data-i` and the ✕ handler reads `PEND[i]` back out of it, so a narrowed
+   table renumbered from zero would delete somebody else's op. */
+function trayTable(rows, kind){
   return `<table><tr><th>#</th><th>op</th><th>node</th><th>detail</th><th></th></tr>`
-    + ops.map((o,i)=>opRow(o,i,kind)).join("") + `</table>`;
+    + rows.map(r=>opRow(r.o,r.i,kind)).join("") + `</table>`;
+}
+
+/* The writer the tray is narrowed to, or null for everybody. Page state, not
+   stored: it is a lens on one review, and a filter that survived a reload
+   would be a tray reading a returning user has no reason to distrust. */
+let TRAYWHO=null;
+
+const UNOWNED="unowned";
+function whoOf(o){ return o.by || UNOWNED; }
+
+/* Who has work in the two trays, and how many ops each. Counted across both,
+   for the reason `pending.roster` gives: they are staged apart and applied
+   together, so a writer present in one is present in the review. Named writers
+   first and `unowned` last — it is the one entry that is not a name. */
+function trayRoster(){
+  const c={};
+  for(const o of PEND.concat(TPEND)) c[whoOf(o)]=(c[whoOf(o)]||0)+1;
+  return Object.keys(c).sort((a,b)=>
+    (a===UNOWNED)-(b===UNOWNED) || a.localeCompare(b)).map(n=>[n,c[n]]);
+}
+
+function rowsFor(list){
+  return list.map((o,i)=>({o,i}))
+             .filter(r=>!TRAYWHO || whoOf(r.o)===TRAYWHO);
 }
 
 function tray(){
   const total = PEND.length + TPEND.length;
+  const roster = trayRoster();
+  /* A writer who had ops and now has none — applied, or cleared — must not
+     leave the tray narrowed to nobody, which renders as an empty tray and
+     reads as an empty one. */
+  if(TRAYWHO && !roster.some(r=>r[0]===TRAYWHO)) TRAYWHO=null;
+  const dRows=rowsFor(PEND), tRows=rowsFor(TPEND);
+  const shown=dRows.length+tRows.length;
   /* Applying while an editor is open would move the graph out from under a
      compose that was validated against the old one. Cheaper to refuse than to
      explain the error afterwards. */
-  $("#applyBtn").disabled = total===0 || EDITING!==null;
+  $("#applyBtn").disabled = shown===0 || EDITING!==null;
   $("#applyBtn").title = EDITING ? `an editor is open for ${EDITING.vertex}` : "";
-  $("#applyBtn").textContent = total ? `Apply ${total}` : "Apply";
+  /* The button says what it will write, which under a narrowing is not the
+     tray. A screen that can reject one writer's proposal but only accept every
+     writer's is one that walks its user to "apply everything" and then to a
+     reversal — so the accept half narrows too. */
+  $("#applyBtn").textContent = !shown ? "Apply"
+    : TRAYWHO ? `Apply ${shown} by ${TRAYWHO}` : `Apply ${shown}`;
   if(!total){ $("#tray").innerHTML=`<span class="muted">Nothing staged.</span>`; return; }
-  let h=`<div class="tray-split">`;
+  let h="";
+  /* The roster, and only where somebody is named: a project that never sets an
+     identity is owed the reading it had before ownership existed, and a row of
+     one chip saying "unowned" is noise dressed as information. Mirrors
+     `_roster_line` in the CLI. */
+  if(roster.some(r=>r[0]!==UNOWNED)){
+    h+=`<div style="margin-bottom:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <span class="muted">staged by</span>
+      <button class="chip" data-who="" ${TRAYWHO?"":'style="font-weight:600"'}>everyone ${total}</button>`
+      + roster.map(([n,c])=>
+        `<button class="chip" data-who="${esc(n)}" ${TRAYWHO===n?'style="font-weight:600"':""}>${esc(n)} ${c}</button>`).join("")
+      + `</div>`;
+  }
+  h+=`<div class="tray-split">`;
   /* A clear per tray. The count is in the button rather than behind it: the
      trays are shared, so clearing can discard something a terminal staged a
-     minute ago, and the number is the only warning that would have said so. */
+     minute ago, and the number is the only warning that would have said so.
+     Under a narrowing it discards that writer's ops alone, which is the whole
+     point of being able to read one proposal at a time. */
   const clearBtn = (n,k) =>
-    `<button class="chip" data-clear="${k}" style="margin-left:8px">clear ${n}</button>`;
-  if(PEND.length) h+=`<div><h3>decisions (${PEND.length})${clearBtn(PEND.length,"d")}</h3>${trayTable(PEND,"d")}</div>`;
-  if(TPEND.length) h+=`<div><h3>tasks (${TPEND.length})${clearBtn(TPEND.length,"t")}</h3>${trayTable(TPEND,"t")}</div>`;
+    `<button class="chip" data-clear="${k}" style="margin-left:8px">clear ${n}${TRAYWHO?` by ${esc(TRAYWHO)}`:""}</button>`;
+  if(dRows.length) h+=`<div><h3>decisions (${dRows.length})${clearBtn(dRows.length,"d")}</h3>${trayTable(dRows,"d")}</div>`;
+  if(tRows.length) h+=`<div><h3>tasks (${tRows.length})${clearBtn(tRows.length,"t")}</h3>${trayTable(tRows,"t")}</div>`;
   h+=`</div>`;
   $("#tray").innerHTML=h;
+  $("#tray").querySelectorAll("button[data-who]").forEach(b=>b.onclick=()=>{
+    TRAYWHO = b.dataset.who || null; tray();
+  });
   $("#tray").querySelectorAll("button[data-clear]").forEach(b=>b.onclick=()=>
     confirmClear(b.dataset.clear==="t"));
   $("#tray").querySelectorAll("button[data-edit]").forEach(b=>b.onclick=()=>
@@ -2118,7 +2175,9 @@ function tray(){
 
 $("#applyBtn").onclick=async()=>{
   try{
-    const r = await api("/api/apply",{method:"POST"});
+    const r = await api("/api/apply",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(TRAYWHO?{agent:TRAYWHO}:{})});
     /* Every note describes a staging area that no longer exists. */
     Object.keys(NOTES).forEach(k=>delete NOTES[k]);
     sel=null; tsel=null; await boot(); fit(); draw();
@@ -2147,11 +2206,12 @@ $("#applyBtn").onclick=async()=>{
    every subsequent event, and this one is answerable with the count in front
    of you. */
 function confirmClear(task){
-  const n=(task?TPEND:PEND).length;
-  $("#side").innerHTML=`<h2>Discard ${n} staged op(s)?</h2>
+  const n=rowsFor(task?TPEND:PEND).length;
+  const who=TRAYWHO;
+  $("#side").innerHTML=`<h2>Discard ${n} staged op(s)${who?` by ${esc(who)}`:""}?</h2>
     <p class="muted">This tray is shared with <code>dg ${task?"task ":""}pending</code>
-      in a terminal, so some of these may not be yours. Nothing that has already
-      been applied is affected.</p>
+      in a terminal, so ${who?`even ${esc(who)}'s may be mid-batch`:"some of these may not be yours"}.
+      Nothing that has already been applied is affected.</p>
     <p style="margin:10px 0;display:flex;gap:8px">
       <button class="primary" id="clYes">Discard ${n}</button>
       <button class="ghost" id="clNo">Keep them</button></p>
@@ -2159,7 +2219,13 @@ function confirmClear(task){
   $("#clNo").onclick=()=>{ $("#side").innerHTML=`<p class="muted">Click a node to inspect it.</p>`; };
   $("#clYes").onclick=async()=>{
     try{
-      const r=await api(task?"/api/task-pending":"/api/pending",{method:"DELETE"});
+      /* `who` is read from the closure, not from `TRAYWHO`: the chips are live
+         behind this panel, and a narrowing changed between opening it and
+         clicking Discard would discard a set the question was never asked
+         about. */
+      const r=await api((task?"/api/task-pending":"/api/pending")
+                        + (who?`?agent=${encodeURIComponent(who)}`:""),
+                        {method:"DELETE"});
       if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
       Object.keys(NOTES).forEach(k=>delete NOTES[k]);
       tray(); await soundness();

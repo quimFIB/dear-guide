@@ -177,9 +177,14 @@ dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
 dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds
 dg repair                                # a store a merge broke: stage the missing propagation
+dg agent claim                           # a free name for one writer, printed bare
+dg agent list                            # who holds a name, and what they have staged
 dg pending                               # review; `--full` for the table
+dg pending --agent b                     # ...one writer's proposal alone
 dg apply                                 # validate, then write both files
 dg apply --mine                          # ...only what this writer staged
+dg apply --agent b                       # ...only what ONE named writer staged
+dg clear --agent b                       # turn one writer's proposal down
 dg check                                 # every invariant
 dg serve                                 # web app on 127.0.0.1:8765
 dg edit <id>                             # revise a staged op
@@ -631,10 +636,26 @@ that the skill's command table only names commands that exist.
   that is two writers with one intent. Two agents are two intents.
 
   What has stopped happening is the silent half of that. **Set `$DG_AGENT` and
-  each staged op records who staged it**, `dg apply` writes yours and leaves the
+  each staged op records who staged it** — and the name itself now comes from
+  `dg agent claim` rather than from whoever was launching, because every value
+  that variable went wrong on was one somebody invented. A claim is checked
+  against the leases *and* both trays, so two agents cannot share a name; it
+  never expires; and if the 7004 ever run out, `claim` refuses and says what to
+  empty instead of inventing one, `dg apply` writes yours and leaves the
   rest, and an unowned `dg apply` refuses a tray holding somebody else's work
   rather than sweeping their draft into the store — `--all` and `--mine` say
-  which you meant. That mattered most for a `close`: applied by mistake it is a
+  which you meant, and `--agent <name>` names one of them. That last one is for
+  the review the other two cannot express: several agents proposing
+  *alternatives* into one tray, where the supervisor means to write one of them
+  and turn the rest down. `dg pending` counts them under the listing so the
+  names are discoverable, `dg pending --agent b` reads one proposal on its own,
+  and `dg clear --agent b` is the reject verb — a bare `dg clear` takes the
+  whole file whoever runs it, which is blunt once four agents share it. The one
+  constraint on a name: **`unowned` is reserved**, because it is what the tool
+  calls an op nobody signed, and a writer by that name made the reading and the
+  write disagree about who was meant. Anything else goes. Where
+  agents propose *complementary* pieces of one elaboration the union is what
+  you want, and `--all` always was. That mattered most for a `close`: applied by mistake it is a
   decision, and the only way back is a `reopen` that files a reversal nobody
   made. The tray deliberately stays **one file**, so `dg brief`'s "staged and
   about to be lost" still counts everybody's; splitting it per agent would push

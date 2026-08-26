@@ -66,7 +66,10 @@ TOKEN_HEADER = "X-DG-Token"
 #: clicked in that browser — and that person's terminal `dg apply`, being
 #: unowned, would then refuse to apply what they had just staged through it.
 #: Doing nothing gets this wrong, which is why it is stated rather than assumed.
-AGENT_HEADER = "X-DG-Agent"
+#: One definition, in the lower module: `pending` names it in the refusal it
+#: raises when somebody stages as the reserved name, and a second literal
+#: here would be free to drift from the header actually read.
+AGENT_HEADER = pending.server_header()
 TOKEN_MARK = "__DG_TOKEN__"
 
 #: Reads that require the token anyway, because the caller chooses what they
@@ -568,8 +571,17 @@ def find_payload(q: str) -> dict:
     return out
 
 
-def _clear(path) -> int:
-    """Empty one tray, and say how many ops went. `dg clear`, `dg task clear`."""
+def _clear(path, agent: str | None = None) -> int:
+    """Empty one tray, and say how many ops went. `dg clear`, `dg task clear`.
+
+    With `agent`, one writer's ops and nobody else's — `dg clear --agent`, and
+    the browser's reject button for a tray several agents stage into. Counted
+    inside `clear_agent` rather than here, because the narrowed clear re-reads
+    the tray under its own lock and a count taken outside it would be of a tray
+    that no longer existed by the time it was reported.
+    """
+    if agent is not None:
+        return pending.clear_agent(agent, path)
     n = len(pending.load(path))
     pending.clear(path)
     return n
@@ -794,11 +806,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
         elif self.path == "/api/apply":
-            self._apply()
+            self._apply(self._body().get("agent") or None)
         else:
             self._json({"error": "not found"}, 404)
 
-    def _apply(self) -> None:
+    def _apply(self, agent: str | None = None) -> None:
         """Apply both trays, exactly as `dg apply` does.
 
         Two independent batches: a task batch that will not apply must never
@@ -806,6 +818,14 @@ class Handler(BaseHTTPRequestHandler):
         refusal names which one. The write sequence itself is
         `dgraph.applying` — the same function the CLI calls, so the two hosts
         cannot drift on the order that makes it safe.
+
+        `agent` is `dg apply --agent`: write what one writer staged and leave
+        the rest. It is the accept half of a review the page can already do the
+        reject half of, and a screen that can turn one proposal down but can
+        only take **all** of them is one that pushes its user to `--all` and
+        then to a reversal. `pending.discard` removes applied ops by value, so
+        a narrowed batch leaves everybody else's staged with no extra care
+        taken here.
         """
         proj = project.find()
         # Held across the read, exactly as `dg apply` does and for the same
@@ -815,15 +835,25 @@ class Handler(BaseHTTPRequestHandler):
         # one, and watch it land. Audit W-F2. The span reaches `discard`, which
         # is inside `applying.apply_*`, so it wraps the whole loop below.
         with applying.trays(proj):
-            return self._apply_held(proj)
+            return self._apply_held(proj, agent)
 
-    def _apply_held(self, proj) -> None:
+    def _apply_held(self, proj, agent: str | None = None) -> None:
         """The body of `_apply`, with both trays already held."""
         ops = pending.load(proj.pending) if proj.has_decisions else []
         task_ops = (pending.load(task_pending.path())
                     if proj.has_tasks else [])
         if not ops and not task_ops:
             return self._json({"error": "nothing staged"}, 400)
+        if agent is not None:
+            # Judged against the **whole** tray, before narrowing: the roster a
+            # refusal names has to be the one the reader is choosing from, and
+            # one built from the selection could only ever contain the name
+            # that was just asked for.
+            why = pending.refuse_apply_for(agent, ops, task_ops)
+            if why is not None:
+                return self._json({"error": why}, 400)
+            ops, _ = pending.mine(ops, pending.addressed(agent))
+            task_ops, _ = pending.mine(task_ops, pending.addressed(agent))
 
         out: dict = {"applied": 0, "applied_tasks": 0, "errors": [],
                      # What moved under the batch while it sat in the tray.
@@ -1282,10 +1312,25 @@ class Handler(BaseHTTPRequestHandler):
                 # The whole tray, not one op. `dg clear`'s twin, and it answers
                 # with what it discarded: the tray is shared, so clearing can throw
                 # away something a terminal staged a moment ago.
-                if self.path == "/api/pending":
-                    return self._json({"cleared": _clear(None)})
-                if self.path == "/api/task-pending":
-                    return self._json({"cleared": _clear(task_pending.path())})
+                # `urlparse`, not `==`: a narrowed clear carries `?agent=`,
+                # and an exact match would fall through it to the 404 — the
+                # same trap `/api/find` names, arriving from the other side.
+                route = urlparse(self.path).path
+                # `keep_blank_values`, and an empty name refused rather than
+                # ignored. Without both, `?agent=` parses to nothing and a
+                # narrowed clear silently becomes a clear of the whole tray —
+                # a destructive widening produced by a page bug, which is the
+                # one direction this route must not fail in.
+                who = parse_qs(urlparse(self.path).query,
+                               keep_blank_values=True).get("agent")
+                agent = who[0] if who else None
+                if agent == "":
+                    return self._json({"error": "empty agent name"}, 400)
+                if route == "/api/pending":
+                    return self._json({"cleared": _clear(None, agent)})
+                if route == "/api/task-pending":
+                    return self._json({"cleared": _clear(task_pending.path(),
+                                                         agent)})
                 if self.path.startswith("/api/task-pending/"):
                     try:
                         pending.drop(self.path.rsplit("/", 1)[1],

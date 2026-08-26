@@ -73,18 +73,74 @@ what is in it. So a draft you left staged is a draft somebody else's `dg apply`
 can turn into a decision — and a decision is the one thing this graph makes
 hard to take back.
 
-**Set `$DG_AGENT` to a name that is yours** whenever you were launched
-alongside other writers. Then:
+**`$DG_AGENT` is a name that is yours**, and you are given one rather than
+choosing one — every value it has gone wrong on was a value somebody invented.
+If you were launched alongside other writers, whatever launched you set it. Do
+not make one up.
+
+**If you are the one launching them**, take a name per agent and hand it down:
+
+```sh
+DG_AGENT=$(dg agent claim) claude -p "…"      # one per agent
+dg agent list                                 # who holds what, and what is staged
+```
+
+`dg agent claim` prints a free name and nothing else, so it composes into a
+variable. It never hands out a name that is held or that has ops in either
+tray, so two agents cannot end up sharing one. Claiming it yourself is no use:
+your shell state does not survive between tool calls, so the name has to come
+from whatever spawns you.
+
+Nothing is ever reused behind your back — a claim does not expire. `dg agent
+release <name>` gives one back, `dg agent prune` releases every name with
+nothing staged under it, and both are things a person does deliberately. If the
+pool ever runs out, `claim` **refuses** and says what to empty; it will not
+invent a name.
+
+With a name set, either way:
 
 - `dg apply` writes **your** ops and leaves everyone else's staged, saying how
   many it left and whose.
-- `dg pending` shows who staged each op.
+- `dg pending` shows who staged each op, and counts every writer — across
+  **both** trays — under the listing.
 - With no `$DG_AGENT` you are the supervisor: `dg apply` takes the whole tray,
   and **refuses** if it holds work somebody else staged. `dg apply --all`
-  writes theirs too; `dg apply --mine` writes only yours.
+  writes theirs too; `dg apply --mine` writes only yours; `dg apply --agent
+  <name>` writes one named writer's and leaves the rest.
 
 Unset means supervisor, so an agent that forgets to set it is one. Set it
 before you stage anything.
+
+### Several agents proposing alternatives
+
+Only where they are proposing *different answers to the same question*. Where
+each is working a different area their ops compose, the union is what you want,
+and `dg apply` — or `--all` — already is it.
+
+```sh
+dg pending --agent b      # read one writer's proposal on its own
+dg apply   --agent b      # ...take it, and leave everybody else's staged
+dg clear   --agent c      # ...turn one down, without touching the others
+```
+
+`dg clear` on its own takes the **whole** tray whoever runs it, including work
+three other agents were half way through; `--agent` is the narrow form, and the
+one to reach for in a shared clone. `--agent unowned` names the ops nobody
+signed — which is why **`unowned` is a reserved name**: set `$DG_AGENT` to it
+and every `dg` command refuses until you set it to something else. Any other
+name works; there is no charset.
+
+Two things to know before using them:
+
+- **`dg apply --agent` is `--all`'s sibling, not `--mine`'s.** It writes
+  somebody else's half-composed batch, and a draft `close` applied by another
+  writer is a DECIDED answer whose only exit is a `reopen` — a reversal nobody
+  made. Only a caller with no `$DG_AGENT` may do it. **As an agent, do not
+  reach for it**: apply your own work with a bare `dg apply`, and leave the
+  adjudication to whoever is supervising.
+- A name nobody staged under is **refused**, with the roster, rather than
+  quietly applying nothing. An empty selection and a typo look identical
+  afterwards and mean opposite things.
 
 ## Reading
 
