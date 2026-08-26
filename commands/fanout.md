@@ -1,6 +1,6 @@
 ---
 description: Set up a recorded fan-out — several agents proposing into one graph, one person deciding
-allowed-tools: Bash(dg agent:*), Bash(dg pending:*), Bash(command -v dg), Read
+allowed-tools: Bash(dg agent:*), Bash(dg pending:*), Bash(dg task:*), Bash(command -v dg), Read
 ---
 
 The graph as somewhere several agents propose and one person decides. Who holds
@@ -8,24 +8,43 @@ a name right now:
 
 !`dg agent list`
 
+...what each of them is holding, and what is ready for whoever asks next:
+
+!`dg task`
+
 ...and what is staged, across both trays:
 
 !`dg pending`
 
 Read `agentic/README.md` in the dear-guide checkout before setting one up — it
-is the procedure, and two things in it are easy to get wrong by improvising.
+is the procedure, and three things in it are easy to get wrong by improvising.
 
-**The rule.** Agents may `dg add` and `dg task add`; only the supervisor runs
-`dg decide`. A fan-out is a search and the graph is a record: an agent adding an
-OPEN question is cheap and reversible, and an agent deciding writes a falsifier
-for a question nobody made it live with.
+**The rule, and the environment variable that makes it one.** Agents may
+`dg add` and `dg task add`; by default only the supervisor runs `dg decide`. A
+fan-out is a search and the graph is a record: an agent adding an OPEN question
+is cheap and reversible, and an agent deciding writes a falsifier for a question
+nobody made it live with. `$DG_DECIDE` turns that from a habit into a refusal —
+`evidence` lets an agent close only a decision a **finished** `--evidence-for`
+task backs, which is the case where the falsifier writes itself, and `never`
+sends every answer back to a person. It is checked at stage time and only for a
+caller with `$DG_AGENT` set, so a supervisor is never refused.
 
-**Names come from the tool, and the name is the whole contract with the host.**
-`DG_AGENT=$(dg agent claim)` per agent, never a name somebody invented — `claim`
-refuses to hand out one that is held or that has ops in a tray, so two agents
-cannot share one and conflate their work. Whatever spawns an agent only has to
-put that variable in its environment, which is why a fan-out can mix Claude
-Code, opencode and anything else that can run `dg`.
+**Names come from the tool, and the two variables are the whole contract with
+the host.** `DG_AGENT=$(dg agent claim)` per agent, never a name somebody
+invented — `claim` refuses to hand out one that is held or that has ops in a
+tray, so two agents cannot share one and conflate their work. Whatever spawns an
+agent only has to put those in its environment, which is why a fan-out can mix
+Claude Code, opencode and anything else that can run `dg`.
+
+**Nobody has to hand out the work either.** `dg task` ends with a computed
+`ready` line, `dg task start` refuses a task somebody already claimed, and
+blocked-ness is derived — so *read the frontier → claim → do → `dg task done` →
+repeat* is a loop an agent runs unattended, and one agent finishing makes work
+startable for another that was never told it existed. Two things to put in the
+prompt: `dg apply --mine` right after the claim, since a `start` sitting in the
+tray leaves the queue reading `startable` and shows no `held by`; and
+`dg task park --why` when an agent stops, since a task left `DOING` by an agent
+that died is indistinguishable from one being worked on.
 
 **Recording the run is OPTIONAL and usually not wanted.** A fan-out leaves
 behind what it decided, which is what the graph is for. If this run needs to

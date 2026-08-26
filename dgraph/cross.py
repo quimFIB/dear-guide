@@ -50,7 +50,8 @@ def pending_evidence(tg: TaskGraph, did: str) -> list[str]:
 #:             done, and what the agentic demo is written against.
 #:   evidence  an agent may close a decision only where a FINISHED task is
 #:             `--evidence-for` it. The measured half of the distinction below.
-#:   never     an agent may not close at all. It stages, a person applies.
+#:   never     an agent may not close at all -- refused before an answer is
+#:             composed, and a caller with no `$DG_AGENT` decides it.
 #:
 #: **Why this is a policy and not a default.** The graph has two exits from a
 #: decision and both are wrong for a premature one: `dg reopen` files a reversal,
@@ -67,6 +68,18 @@ def pending_evidence(tg: TaskGraph, did: str) -> list[str]:
 #: written by something that never had to live with the consequence comes out as
 #: rationalisation. Only the first of those is mechanically recognisable, and
 #: `evidence` is exactly the check for it.
+#:
+#: **Every value refuses before anything is staged, and the alternative is
+#: deferred rather than dismissed.** A refused close leaves the tray empty: the
+#: agent does not compose an answer, a source and a falsifier that a person then
+#: has to turn down, which is `cli.decide`'s own argument for stage-time guards.
+#: The other shape -- `never` meaning *the agent stages and only a person
+#: applies* -- is coherent, and is what the tray's review flow (`dg pending
+#: --agent`, `dg apply --agent`, `dg clear --agent`) already does for every other
+#: op. It is not what happens today, and these messages used to say it did. What
+#: it would cost is a policy check at a door that has none -- `apply` -- so that
+#: a staged close could not be published by its own author, which is a different
+#: mechanism from this one rather than a wording change to it.
 #:
 #: **This is cooperative, like everything else here.** `$DG_AGENT` is
 #: self-declared, so `$DG_DECIDE` is self-declarable too; an agent that unset it
@@ -103,8 +116,8 @@ def refuse_close(tg: TaskGraph | None, did: str, owner: str | None,
         return None
     mode = chosen or policy()
     if mode == "never":
-        return (f"${POLICY_ENV}=never: {owner} may stage this decision, and a "
-                f"caller with no $DG_AGENT applies it")
+        return (f"${POLICY_ENV}=never: {owner} may not close {did} — a caller "
+                f"with no $DG_AGENT decides it")
     if mode != "evidence":
         return None
     if tg is None:
@@ -116,7 +129,7 @@ def refuse_close(tg: TaskGraph | None, did: str, owner: str | None,
         return (f"${POLICY_ENV}=evidence: nothing is `--evidence-for {did}`, so "
                 f"there is no measurement for {owner} to be recording. Link the "
                 f"work that bears on it — `dg task link <id> --evidence-for "
-                f"{did}` — or leave it staged for a person")
+                f"{did}` — or leave the question open for a person")
     unfinished = [t for t in backing if tg.tasks[t].unfinished]
     if len(unfinished) == len(backing):
         return (f"${POLICY_ENV}=evidence: {did}'s evidence has not finished "

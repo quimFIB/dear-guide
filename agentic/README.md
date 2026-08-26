@@ -64,7 +64,7 @@ Only the first is mechanically recognisable, which is what `$DG_DECIDE` checks:
 |---|---|
 | `open` *(default)* | anything — what the tool has always done |
 | `evidence` | only a decision a **finished** `--evidence-for` task backs |
-| `never` | nothing; it stages, a person applies |
+| `never` | nothing — the close is refused before it is composed, and a caller with no `$DG_AGENT` writes it |
 
 A supervisor — anyone with no `$DG_AGENT` — is never refused by any value. And
 it is cooperative, like `$DG_AGENT` itself: an agent could unset it, at which
@@ -130,33 +130,78 @@ inside the store.
 
 ## 3. Launching — and letting agents pick their own work
 
-An agent does not have to be handed a role. `dg task` ends with a computed
-`ready` line, `dg task start` **refuses work somebody already claimed**, and
-blocked-ness is derived — so *read the frontier → claim → do → `dg task done` →
-repeat* is a loop an agent can run with nobody in it.
+**Nobody has to hand an agent a role.** `dg task` ends with a computed `ready`
+line, `dg task start` refuses work somebody already claimed, and blocked-ness is
+derived — so *read the frontier → claim → do → `dg task done` → repeat* is a loop
+an agent runs with nobody in it:
 
-`dg task` shows `held by <name>` for work an agent has claimed, so a stalled
-agent can be told from a slow one.
+```sh
+dg show && dg task                 # the frontier: what is open, and what is ready
+dg task start T04                  # claim it
+dg apply --mine                    # ...and publish the claim, so others see it
+# ...do the work...
+dg task done T04 --outcome "where the result is"
+dg apply --mine
+```
 
-That fact is kept **outside both graphs**, in `.dgraph-agents.json` beside the
-names themselves — scratch, gitignored, gone when the run is. Neither store
+The claim is what makes the loop safe under several agents, and it is a refusal
+rather than a warning:
+
+```
+$ DG_AGENT=beta dg task start T04
+T04 is already DOING
+```
+
+Nothing in that loop was assigned. `ready` is derived from the edges every time
+it is printed, so an agent that finishes `T04` makes `T05` startable for an agent
+that was never told `T04` existed and does not know the first one exists — which
+is `demo-agentic/` scene 3, run with no model in it at all.
+
+**Apply the claim rather than leaving it in the tray.** `dg task start` stages
+like everything else, and until it is applied `dg task` still prints the task as
+`startable` — the listing reads the store, the guard reads the tray. Nobody
+double-claims it either way: that refusal above is a *stage-time* one, so the
+second agent is turned away before it writes anything. What it costs is that the
+queue lies to whoever reads it, and `held by <name>` — the thing that tells a
+stalled agent from a slow one — does not exist until the op lands. `dg apply
+--mine` immediately after the start is the whole of the fix.
+
+**And an agent that stops has to say so.** A task left `DOING` by an agent that
+died reads exactly like one being worked on, and the loop has no other way to
+hand it back:
+
+```sh
+dg task park T04 --why "the cluster queue is six days deep"
+```
+
+A parked task says *what* stopped it, which is the difference between work the
+next agent can pick up and work nobody knows is free. And `dg check` reads the
+park across the seam — a parked task that was the only evidence for an open
+decision comes back as the question nobody is producing an answer for:
+
+```
+! [evidence_stalled] D02 is OPEN and waits on evidence nobody is producing —
+T01 is parked and no other task meant to inform it is still going
+```
+
+Who holds what is kept **outside both graphs**, in `.dgraph-agents.json` beside
+the names themselves — scratch, gitignored, gone when the run is. Neither store
 records who did anything, and that is deliberate rather than an omission: the
 stores are committed and kept forever, agent names are recycled the moment they
 are released, and "who finished this" is noise six months on that a recycled
 name no longer even identifies. Who holds work is a fact about a run.
 
-
-**The whole contract with the host is one environment variable.** Whatever
-spawns an agent has to put `DG_AGENT` in its environment; nothing else about the
-host matters, because everything the agent does to the graph it does through the
-`dg` CLI. That is what keeps this workflow independent of which model or which
+**The whole contract with the host is two environment variables.** Whatever
+spawns an agent has to put `DG_AGENT` — and, if you want the rule rather than the
+habit, `DG_DECIDE` — in its environment; nothing else about the host matters,
+because everything the agent does to the graph it does through the `dg` CLI. That is what keeps this workflow independent of which model or which
 scaffold is running it.
 
 Each agent gets its name from the tool, never one you invent:
 
 ```sh
 for role in …; do
-  DG_AGENT=$(dg agent claim) <however you spawn an agent> &
+  DG_AGENT=$(dg agent claim) DG_DECIDE=evidence <however you spawn an agent> &
 done
 dg agent list        # who holds what, and what each has staged
 ```
@@ -166,9 +211,17 @@ DG_AGENT=$(dg agent claim) claude -p "$(cat prompts/scout.md)"   # Claude Code
 DG_AGENT=$(dg agent claim) opencode run "$(cat prompts/scout.md)"   # opencode
 ```
 
-The flags are the host's business and change between versions; the variable is
-not. A host with no way to set one per agent can still be used — run each agent
-in its own shell and export it there — and a mixed fan-out is fine, since two
+`DG_DECIDE` is the other half of the launch, and the table at the top of this
+file is what the values mean. Set it here rather than trusting the prompt: an
+agent running the loop above finishes work all day, and the moment a finished
+`--evidence-for` task leaves a question owed an answer is exactly when the
+temptation to write one arrives. `evidence` lets it record what it measured and
+refuses the rest; `never` sends every answer back to a person. Unset is the
+default and the widest, which is what `demo-agentic/` is written against.
+
+The flags are the host's business and change between versions; the variables are
+not. A host with no way to set them per agent can still be used — run each agent
+in its own shell and export them there — and a mixed fan-out is fine, since two
 agents under different scaffolds are just two names in one tray.
 
 `dg agent claim` never hands out a name that is held or that has ops in either
@@ -182,14 +235,20 @@ opencode — and the skill that teaches the recording discipline is loaded by
 both. An agent under a third scaffold, or none, still has the CLI, which is
 where all of this actually happens.
 
-Each prompt should carry three things:
+Each prompt should carry four things:
 
 1. **The chain, in full.** `dg context <id> --full`, pasted in. A fresh context
    knows the task and nothing about why it exists, and without the chain it
    cannot tell a constraint from an implementation detail.
-2. **The rule** from the top of this file: add questions and work, decide
-   nothing.
-3. **What it may read.** Point at the files; it will not find them.
+2. **The loop, and that nothing will be assigned.** `dg show && dg task`, claim
+   with `dg task start`, `dg apply --mine`, finish with `dg task done --outcome`
+   or `dg task park --why`, then read the frontier again. An agent told only what
+   to do this once stops when it is done and leaves the rest of the queue sitting
+   there.
+3. **The rule** from the top of this file — add questions and work, decide
+   nothing — **and which `$DG_DECIDE` it is running under**, so a refusal at
+   stage time reads as the policy it is rather than as a broken tool.
+4. **What it may read.** Point at the files; it will not find them.
 
 ## 4. Review, one proposal at a time
 
@@ -224,11 +283,35 @@ dg task add --id T09 --title "…" --area … --evidence-for D07
 dg task start T09
 # ...run the thing...
 dg task done T09 --outcome "where the result is"
-dg confirm D07 --against T09 --note "what it showed"
+dg decide D07 --answer "…" --source T09 --falsifier "…"
 ```
+
+The source is the task, not `discussion`: what settled the question is a thing
+that was run, and the id is how somebody six months from now gets from the answer
+to the measurement. Where `D07` already had an answer and the evidence merely
+holds it up, the verb is `dg confirm D07 --against T09 --note "what it showed"`
+instead — a confirm needs an answer standing, and against an `OPEN` question it
+refuses.
 
 `dg check` warns when an `--evidence-for` task has finished and its decision is
 still unsettled — *the measurement ran and nobody recorded its conclusion*.
+
+**This is the loop `DG_DECIDE=evidence` exists for**, and it is why that value is
+not simply a weaker `never`. An agent under it may close exactly the decisions a
+finished task of its own backs, so the answer it writes is the measurement it
+just ran and the falsifier is the number moving. Everything else is refused at
+stage time, before an answer, a source and a falsifier have been composed:
+
+```
+✗ nothing staged — $DG_DECIDE=evidence: nothing is `--evidence-for D07`, so
+there is no measurement for brisk-frege to be recording. Link the work that
+bears on it — `dg task link <id> --evidence-for D07` — or leave the question
+open for a person
+```
+
+The refusal names its own fix, which is usually the right one: the agent found a
+question its work bears on and had not said so. `dg task link` is cheap, is not
+an answer, and is exactly what a fan-out is for.
 
 ## 6. Close
 

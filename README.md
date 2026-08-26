@@ -555,6 +555,41 @@ premise a decision or a task rests on, which is exactly what a subagent's fresh
 context is missing; `/dg:find` is the only reading that starts from a word, and
 so the only one that answers *was this already decided?*
 
+### Several agents, and nobody handing out the work
+
+`dg task` ends with a computed `ready` line, `dg task start` refuses a task
+somebody already claimed, and blocked-ness is derived from the edges rather than
+stored — so *read the frontier → claim → do → `dg task done` → repeat* is a loop
+an agent runs with nobody in it. One agent finishing its work makes another's
+startable without either of them knowing the other exists, which is the whole of
+the coordination: `dg task` prints `held by <name>` for work that is claimed, so
+a stalled agent can be told from a slow one, and `dg task park --why` is how an
+agent that stops hands the work back rather than leaving it looking busy.
+
+What an agent may *settle* on its own is `$DG_DECIDE`, and the argument for it is
+narrower than "agents judge badly". A falsifier that is a measurement the agent
+made — the benchmark ran, the number is 0.62 — writes itself; a judgement between
+defensible alternatives, written by something that never had to live with the
+consequence, comes out as rationalisation. Only the first is mechanically
+recognisable, and `--evidence-for` already says which those are: `evidence` lets
+an agent close only a decision a **finished** evidence task backs, `never` sends
+every answer back to a person, and unset is the default and the widest. Refused
+at stage time, before an answer and a falsifier have been composed, and never for
+a caller with no `$DG_AGENT`. Like `$DG_AGENT` it is cooperative rather than a
+boundary — an agent that unset it would be the supervisor — which is a rule the
+launcher sets so an honest mistake is caught, not a lock.
+
+Neither store learns who did anything. Holdings live in `.dgraph-agents.json`,
+gitignored beside the names themselves, because `tasks.json` is kept forever and
+agent names are recycled the moment they are released — a name written there
+would become a record that is actively wrong about who did something. Who holds
+work is a fact about a run.
+
+[`agentic/README.md`](agentic/README.md) is the procedure end to end — seeding the
+graph from prose you already have, launching, reviewing one writer's proposal at a
+time, and settling the empirical questions with evidence — and `/dg:fanout` puts
+the state of it in front of you at launch time.
+
 What stays a habit is **recording a decision at the moment it is made**. Nothing
 a host can observe reveals that something was settled — it is a property of the
 reasoning, not of a tool call — and the two obvious implementations both fail. A
@@ -612,9 +647,12 @@ that the skill's command table only names commands that exist.
   into a gitignored file and then committed over is unrecoverable. Staging for a
   human to confirm would also mean the commit gate stopped to ask on nearly every
   commit, which is how a gate stops being read.
-- **Whether two agents may work one graph.** Not yet, and the honest answer is
-  *one writer at a time* — though what a second writer can do to you is now
-  reported rather than silent. Each staged op records what the premises it names
+- **Whether two agents may work one graph.** They do, and what is still open is
+  *isolation* rather than whether it can be done at all —
+  [`agentic/README.md`](agentic/README.md) is the fan-out end to end, with the
+  rule it rests on and the cost it carries. The honest summary of that cost is
+  still *one writer at a time* inside a single checkout, and what a second writer
+  can do to you is now reported rather than silent. Each staged op records what the premises it names
   looked like when it was composed, and `dg apply` says which of them moved
   while the batch waited:
 

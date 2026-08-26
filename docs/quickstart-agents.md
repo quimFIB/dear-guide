@@ -2,7 +2,7 @@
 
 A CLI only records what somebody remembers to run, and the thing that forgets is
 an agent working across many sessions. The plugin turns three of the four habits
-into mechanisms, for **Claude Code** and **opencode** alike, and adds six
+into mechanisms, for **Claude Code** and **opencode** alike, and adds seven
 commands for the times you want to ask rather than wait to be told.
 
 |  | how |
@@ -10,7 +10,7 @@ commands for the times you want to ask rather than wait to be told.
 | **read the frontier first** | `dg brief` is injected at the start of every session, and again after a compaction — no rule in an instructions file, no "read this first" |
 | **know the discipline** | the `dear-guide` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it |
-| **ask on demand** | `/dg:brief` `/dg:frontier` `/dg:tasks` `/dg:find` `/dg:context` `/dg:serve` — the same six files on both hosts, `/dg-brief` and friends on opencode |
+| **ask on demand** | `/dg:brief` `/dg:frontier` `/dg:tasks` `/dg:find` `/dg:context` `/dg:serve` `/dg:fanout` — the same seven files on both hosts, `/dg-brief` and friends on opencode |
 
 The interesting parts live in `dg` — `dg brief`, `dg gate`, `dg context` — so
 each adapter is a few dozen lines of translation with no policy of its own, and
@@ -155,7 +155,7 @@ different repository is allowed, since it records nothing about this graph.
 
 ## The commands
 
-Six files in `commands/` at the repo root, loaded by Claude Code from the
+Seven files in `commands/` at the repo root, loaded by Claude Code from the
 plugin and by opencode from a symlink. Each is a `description`, a `dg`
 invocation, and a sentence saying how to read the output — no policy, for the
 same reason the adapters have none.
@@ -171,8 +171,9 @@ from the prefix the install put on the link.
 | `/dg:find <query>` | `/dg-find <query>` | decisions and work by what they *say* — the only reading that starts from a word |
 | `/dg:context <id> [--full]` | `/dg-context <id>` | the chain of premises a decision or a task rests on |
 | `/dg:serve` | `/dg-serve` | the graphs in a browser |
+| `/dg:fanout` | `/dg-fanout` | who holds a name, what each is holding, and what is staged — before running several agents against one graph |
 
-Three of them are worth a note.
+Four of them are worth a note.
 
 **`/dg:context` is the one to run before dispatching a subagent.** A fresh
 context knows the task and nothing about why it exists; `dg context T14` prints
@@ -196,6 +197,17 @@ has no way to ask. A bare word searches prose; `is:decidable`, `under:D04` and
 the rest ask derived questions; `--ids` pipes. An empty result is a fact rather
 than a threshold, and a query that cannot be answered exits 2 instead of coming
 back empty, so a script can tell the two apart.
+
+**`/dg:fanout` is the one to run before launching several agents at one graph.**
+It prints the three facts a supervisor needs and cannot derive — who holds a
+name, what work each of them is holding, and what is sitting unapplied in either
+tray — and then states the procedure the agents have to be launched under:
+`DG_AGENT=$(dg agent claim)` per agent so two cannot conflate their work,
+`$DG_DECIDE` to say how much an agent may settle on its own, and the loop the
+agents run unattended once they are up (`dg task` says what is ready,
+`dg task start` claims it and refuses work somebody else has, `dg task done` or
+`dg task park --why` hands it back). The full procedure is `agentic/README.md`;
+the command is the part that has to be in front of you at launch time.
 
 **`/dg:serve` returns immediately.** `dg serve` blocks forever, so a command file
 that ran it would hang the session; `dg serve --detach` starts it in its own

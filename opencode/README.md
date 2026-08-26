@@ -65,6 +65,7 @@ directory. The two mechanisms do not depend on them.
 | `/dg-find <query>` | decisions and work by what they *say* — the only reading that starts from a word, and so the only answer to *was this already decided?* |
 | `/dg-context <id>` | every premise a decision or a task rests on — what to read before dispatching work |
 | `/dg-serve` | the graphs in a browser, started detached so the session keeps its prompt |
+| `/dg-fanout` | who holds a name, what each of them is holding, and what is staged — before running several agents against one graph |
 | the commit gate | `dg gate` judges every `bash` call carrying one of `dg gate --triggers`' words — `commit` and `rm` today. It answers four ways: `deny` and `ask` both stop the call and arrive as the tool's error, carrying the reason and the fix, with `ask` saying whose call it is; `warn` stops nothing and is the third limit below; `allow` says nothing |
 | the `dear-guide` skill | loaded by opencode's own `skill` tool when a decision or a piece of work is in play |
 

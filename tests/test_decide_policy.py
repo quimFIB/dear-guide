@@ -175,6 +175,36 @@ def test_evidence_says_so_when_the_project_has_no_task_store(
     assert "dg task init" in res.output, res.output
 
 
+# ---- what a refusal may promise ----------------------------------------------
+
+
+@pytest.mark.parametrize("mode,did", [("never", "D05"), ("evidence", "D05")])
+def test_no_refusal_offers_a_route_through_the_tray(proj, run, monkeypatch,
+                                                    mode, did):
+    """**A refusal may not describe a route the same call forecloses.**
+
+    Both of these messages once did. `never` said the agent *may stage this
+    decision, and a caller with no $DG_AGENT applies it*, and the unbacked
+    `evidence` refusal ended *or leave it staged for a person* — while the check
+    that printed them runs before `pending.stage_all` and leaves the tray empty.
+    An agent following either would look for an op that is not there.
+
+    The staging route is coherent and is what the tray does for every other op;
+    what makes it a lie here is that nothing implements it. Keeping the two
+    apart is this assertion: whatever these messages say, they may not send the
+    reader to a tray this call did not write to.
+    """
+    monkeypatch.setenv("DG_AGENT", "a")
+    monkeypatch.setenv(cross.POLICY_ENV, mode)
+
+    res = decide(run, did)
+
+    assert res.exit_code != 0
+    assert pending.load(proj.pending) == [], "the refusal staged it anyway"
+    assert "stage" not in res.output.lower().replace("nothing staged", ""), \
+        f"the refusal offers a staging route that does not exist: {res.output}"
+
+
 # ---- who it applies to -------------------------------------------------------
 
 
