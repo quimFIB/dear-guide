@@ -3882,11 +3882,7 @@ def task_node(tid: str) -> None:
         last = len(t.completions) - 1
         for i, c in enumerate(t.completions):
             tag = f"  [dim]({label})[/]" if label and i == last else ""
-            # Who produced it, where anybody did. Silent for a person, the
-            # same as everywhere else -- a project with no agents in it must
-            # read as it did before the field existed.
-            who = f"  [dim]by {_x(c.by)}[/]" if c.by else ""
-            lines.append(f"  [dim]{c.date}[/]  {_x(c.outcome)}{who}{tag}")
+            lines.append(f"  [dim]{c.date}[/]  {_x(c.outcome)}{tag}")
     if t.stops:
         # Kept whatever the status is now — work picked up again is the
         # ordinary case, and the list of what kept stopping it is the record
@@ -3899,8 +3895,7 @@ def task_node(tid: str) -> None:
             now = live is not None and i == len(t.stops) - 1
             tag = ("  [cyan](still parked)[/]" if now and t.parked
                    else "  [dim](abandoned here)[/]" if now else "")
-            who = f"  [dim]by {_x(k.by)}[/]" if k.by else ""
-            lines.append(f"  [dim]{k.date}[/]  {_x(k.why)}{who}{tag}")
+            lines.append(f"  [dim]{k.date}[/]  {_x(k.why)}{tag}")
     if t.note:
         lines += ["", "[bold]Note[/]", _x(t.note)]
     con.print(Panel("\n".join(lines), title=tid,
