@@ -191,7 +191,7 @@ dg agent claim                           # a free name for one writer, printed b
 dg agent list                            # who holds a name, and what they have staged
 dg pending                               # review; `--full` for the table
 dg pending --agent b                     # ...one writer's proposal alone
-dg apply                                 # validate, then write both files
+dg apply                                 # validate, then write the store
 dg apply --mine                          # ...only what this writer staged
 dg apply --agent b                       # ...only what ONE named writer staged
 dg clear --agent b                       # turn one writer's proposal down
@@ -667,7 +667,7 @@ that the skill's command table only names commands that exist.
   ```
   · D01 moved since this batch was staged (DECIDED → REOPENED) — op 1
     (add_edge D01) rests on it
-  ✓ applied 2 op(s) → decisions.json + decision-graph.md
+  ✓ applied 2 op(s) → decisions.json
   ```
 
   Never a refusal: the invariants already refuse the case that matters (a

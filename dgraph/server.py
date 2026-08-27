@@ -892,11 +892,6 @@ class Handler(BaseHTTPRequestHandler):
                 out["drift"] += [pending.describe(d) for d in r.drift]
                 if label == "decision":
                     graph = r.graph
-                if r.view_error:
-                    out["errors"].append(
-                        f"applied {r.applied} {label} op(s) to {r.store}, but "
-                        f"{r.view} could not be written ({r.view_error}) — run "
-                        f"`dg render` to regenerate it")
         if graph is not None:
             out["graph"] = graph_payload(graph)
         if not out["errors"]:
@@ -906,9 +901,8 @@ class Handler(BaseHTTPRequestHandler):
         # unrelated reasons and a client showing one of them would mislead.
         out["error"] = "\n".join(out["errors"])
         # 400 when nothing was written — a refusal, and the ops are still
-        # staged. 500 once something *has* landed: the store moved and the
-        # view did not, which `dg render` fixes and which the caller must not
-        # read as "nothing happened".
+        # staged. 500 once some store *has* landed (one batch applied, another
+        # refused): the caller must not read that as "nothing happened".
         wrote = out["applied"] or out["applied_tasks"]
         self._json(out, 500 if wrote else 400)
 

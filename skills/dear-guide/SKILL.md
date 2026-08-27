@@ -223,13 +223,16 @@ The two stores are independent — **either works without the other**, so track
 only decisions, only work, or both.
 
 ```sh
-dg init            # decisions.json + decision-graph.md
-dg task init       # tasks.json + tasks.md
+dg init            # decisions.json (view: dg render)
+dg task init       # tasks.json (view: dg task render)
 ```
 
 Run these before anything else in a project that has no graph. Never write
 `decisions.json` or `tasks.json` by hand: every command below refuses input the
 store would be wrong to hold, and a hand-written file gets none of that.
+The `.md` views are generated, not written at bootstrap (`init`, `import`,
+`import-md`, `task init`, `task import`): build one on demand with `dg render`
+(or `dg task render`) when you want to read it.
 
 ## Recording a decision
 

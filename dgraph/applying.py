@@ -3,18 +3,19 @@
 `dg apply` and the web app's Apply button do the same thing, and the *order* in
 which they do it is the correctness argument:
 
-1. **render first** — rendering is pure, so a rendering bug aborts before
-   anything has been written;
-2. **then the store**, which is the thing that must not be lost;
-3. **then take the applied ops out of the tray** — they are in the store now,
+1. **the store**, which is the thing that must not be lost;
+2. **then take the applied ops out of the tray** — they are in the store now,
    and leaving them staged would re-apply them. Out, not *cleared*: an apply
    is not instantaneous, and whatever was staged while it ran is the next
-   batch, not this one's leftovers;
-4. **then the view**, last, because it is the one failure that is recoverable:
-   `dg render` regenerates it.
+   batch, not this one's leftovers.
+
+The generated views are not written here at all — they are optional and built
+on demand with `dg render` / `dg task render` when read, and `dg check` reports
+a view that has fallen behind its store as a warning. So the one failure this
+sequence guards is a half-written store, and it cannot be repaired.
 
 Ordering is half the argument and was for a long time mistaken for all of it.
-It covers a failure *between* the four writes; it says nothing about a failure
+It covers a failure *between* the writes; it says nothing about a failure
 *inside* one, and a half-written `decisions.json` is the state no `dg` command
 can repair. Every write below therefore goes through `project.write_atomic`,
 which swaps a fully-written file into place or leaves the old one untouched.
@@ -47,7 +48,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 
-from dgraph import agents, cross, pending, project, render, task_pending, task_render
+from dgraph import agents, cross, pending, project, task_pending
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
 
@@ -145,30 +146,23 @@ def trays(proj: project.Project | None = None, *, wait: float = APPLY_WAIT):
 class Result:
     """What happened, in enough detail for either host to report it.
 
-    `view_error` is the partial success: the store was written and the batch is
-    safe, but the generated view is now stale. It is not an exception because it
-    is not a failure of the apply — reporting it as one would tell a user their
-    work was lost when it was not.
+    The batch was applied and the store written; `applied` says how many ops
+    landed. The generated views are optional and left to `dg render` /
+    `dg task render`, so nothing here reports on them.
     """
 
     applied: int
     dry_run: bool
     store: str          # the file that was written, for the message
-    view: str           # the file that was regenerated
-    view_error: str | None = None
     graph: Graph | TaskGraph | None = None   # the result, for a caller that wants it
     #: Premises that moved between staging this batch and applying it — see
     #: `pending.drift`. Reported, never a refusal: the invariants already refuse
     #: the dangerous case (a decided answer on a reopened premise is a blocking
     #: `propagation` finding), so what is left here is the batch that applies
     #: cleanly while resting on something that has quietly changed underneath.
-    #: Carried on `Result` rather than printed here for the reason `view_error`
-    #: is: this module says nothing, and each host reports in its own idiom.
+    #: Carried on `Result` rather than printed here: this module says nothing,
+    #: and each host reports in its own idiom.
     drift: tuple[dict, ...] = ()
-
-    @property
-    def ok(self) -> bool:
-        return self.view_error is None
 
 
 def apply_decisions(ops: list[dict], dry_run: bool = False,
@@ -189,7 +183,7 @@ def apply_decisions(ops: list[dict], dry_run: bool = False,
     proj = project.find()
     if dry_run:
         g = Graph.load(proj.store) if g is None else g
-        return Result(len(ops), True, proj.store.name, proj.view.name,
+        return Result(len(ops), True, proj.store.name,
                       graph=pending.apply_all(g, ops, cross.guard_decisions()),
                       drift=tuple(pending.drift(g, ops)))
     # The tray before the stores, and its own even when a host already holds it
@@ -216,18 +210,12 @@ def apply_decisions(ops: list[dict], dry_run: bool = False,
         # validator can see it. Called inside the lock, so the task store it
         # reads cannot change under it.
         out = pending.apply_all(g, ops, cross.guard_decisions())
-        view_text = render.render(out)
         out.save(proj.store)
         # `discard`, not `clear`: anything staged while this apply was running
         # belongs to the next batch, and clearing would drop it silently.
         pending.discard(ops, proj.pending)
-        try:
-            project.write_atomic(proj.view, view_text)
-        except OSError as exc:
-            return Result(len(ops), False, proj.store.name, proj.view.name,
-                          view_error=str(exc), graph=out, drift=moved)
-    return Result(len(ops), False, proj.store.name, proj.view.name, graph=out,
-                  drift=moved)
+        return Result(len(ops), False, proj.store.name, graph=out, drift=moved)
+    return Result(len(ops), False, proj.store.name, graph=out, drift=moved)
 
 
 def _record_holdings(ops, tg, proj) -> None:
@@ -269,18 +257,13 @@ def apply_tasks(ops: list[dict], dry_run: bool = False,
     proj = project.find()
     if dry_run:
         tg = TaskGraph.load(proj.tasks) if tg is None else tg
-        return Result(len(ops), True, proj.tasks.name, proj.task_view.name,
+        return Result(len(ops), True, proj.tasks.name,
                       graph=task_pending.apply_all(tg, ops, cross.guard_tasks()))
     with pending.held(proj.task_pending, wait=APPLY_WAIT), _writing(proj):
         tg = TaskGraph.load(proj.tasks)     # under the lock; see apply_decisions
         out = task_pending.apply_all(tg, ops, cross.guard_tasks())
-        view_text = task_render.render(out)
         out.save(proj.tasks)
         _record_holdings(ops, out, proj)
         pending.discard(ops, task_pending.path())
-        try:
-            project.write_atomic(proj.task_view, view_text)
-        except OSError as exc:
-            return Result(len(ops), False, proj.tasks.name, proj.task_view.name,
-                          view_error=str(exc), graph=out)
-    return Result(len(ops), False, proj.tasks.name, proj.task_view.name, graph=out)
+        return Result(len(ops), False, proj.tasks.name, graph=out)
+    return Result(len(ops), False, proj.tasks.name, graph=out)

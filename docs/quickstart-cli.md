@@ -31,8 +31,10 @@ cd my-project
 dg init --areas "Search,Serving,Index"
 ```
 
-Two files appear: `decisions.json` (the store — source of truth) and
-`decision-graph.md` (a generated view — **never hand-edit it**).
+`decisions.json` (the store — source of truth) appears. Its view,
+`decision-graph.md`, is generated **on demand** — run `dg render` when you want
+to read it, and `dg check` will tell you the view is stale rather than refusing
+to commit. **Never hand-edit the view.**
 
 **Already have a graph?** `decisions.json` is the input format, so there is no
 conversion step — write it, then `dg import prepared.json` checks it and makes
@@ -87,16 +89,17 @@ first:
 ```sh
 dg pending          # review what is staged — one line per op
 dg pending --full   # ...as a table, with nothing clipped
-dg apply            # validate a copy, then write both files
+dg apply            # validate a copy, then write the store
 ```
 
 ```
-✓ applied 3 op(s) → decisions.json + decision-graph.md
+✓ applied 3 op(s) → decisions.json
 ```
 
 `apply` mutates a copy, validates it, and refuses to write at all if the result
 would be invalid — so a bad batch costs you nothing. `dg drop <id>` unstages one
-op, `dg clear` all of them.
+op, `dg clear` all of them. The generated views are left to `dg render` /
+`dg task render`, built on demand when you want to read one.
 
 Staged work lives in `.dgraph-pending.json`, which is gitignored — so **apply
 your own work**. Leaving it staged means it exists only in a file no diff will

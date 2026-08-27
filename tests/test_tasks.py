@@ -219,7 +219,9 @@ def test_task_init_works_with_no_decision_store(tmp_path, monkeypatch):
     res = runner.invoke(app, ["--project", str(tmp_path), "task", "init",
                               "--areas", "Infra"])
     assert res.exit_code == 0
-    assert (tmp_path / "tasks.json").exists() and (tmp_path / "tasks.md").exists()
+    # The view is generated on demand (`dg task render`), not at init.
+    assert (tmp_path / "tasks.json").exists()
+    assert not (tmp_path / "tasks.md").exists()
 
 
 def test_a_chain_of_adds_stages_in_one_batch(run_cli, task_store):
@@ -362,6 +364,7 @@ def test_dropping_a_task_keeps_the_note_that_described_it(run_cli, task_store):
     res = run_cli("task", "drop", "T04", "--why", "the vendor tool does it")
     assert res.exit_code == 0
     assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "render").exit_code == 0   # view is generated on demand
     t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
     assert t.note == "Nobody has finished this yet."
     assert t.stopped_because == "the vendor tool does it"
@@ -380,6 +383,7 @@ def test_leaving_done_keeps_the_completion_and_stops_claiming_it(run_cli,
     """
     assert run_cli("task", "start", "T01").exit_code == 0
     assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "render").exit_code == 0   # view is generated on demand
     t = TaskGraph.load(task_store / "tasks.json").tasks["T01"]
     assert t.status == "DOING" and t.done is None and t.outcome is None
     assert [c.outcome for c in t.completions] == ["PR #1"]
@@ -451,6 +455,7 @@ def test_leaving_dropped_keeps_the_reason_as_a_record(run_cli, task_store, resum
     args = ["task", verb, "T04"] + (["-o", "PR #9"] if verb == "done" else [])
     assert run_cli(*args).exit_code == 0
     assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "render").exit_code == 0   # view is generated on demand
 
     t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
     assert t.status == want

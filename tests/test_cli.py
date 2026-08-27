@@ -313,37 +313,30 @@ def test_import_md_names_the_section_missing_its_status(tmp_path, monkeypatch):
 # ---- apply's write order (audit B1) --------------------------------------
 
 
-def test_apply_renders_before_writing_anything(run, store, g, monkeypatch):
-    """The view text is computed first, so a rendering bug aborts with the
-    store untouched and the staged ops intact — not with a half-applied
-    project."""
-    import dgraph.render
-    write(g)
-    run("decide", "D05", "-a", "yes", "-s", "s", "-f", "f")
-    staged_before = pending.load(store / ".dgraph-pending.json")
-    store_before = (store / "decisions.json").read_text(encoding="utf-8")
-
-    def boom(g):
-        raise RuntimeError("render bug")
-
-    monkeypatch.setattr(dgraph.render, "render", boom)
-    res = run("apply")
-    assert res.exit_code == 1
-    assert (store / "decisions.json").read_text(encoding="utf-8") == store_before
-    assert pending.load(store / ".dgraph-pending.json") == staged_before
-
-
-def test_apply_recovers_when_the_view_cannot_be_written(run, store, g):
-    """Store first, pending cleared, view last. The applied ops must not stay
-    staged — they are in the store now, and re-applying them is the dead end
-    A3 removed — and the failure names the recovery: `dg render`."""
+def test_apply_writes_the_store_and_clears_the_tray(run, store, g):
+    """Apply lands the store and unstages the ops; the view is left for
+    `dg render`. It must not plant a generated view the way it used to —
+    views are optional and built on demand (see `dg init` / `dg import`)."""
     write(g)
     run("decide", "D05", "-a", "yes", "-s", "s", "-f", "f")
     (store / "decision-graph.md").unlink()
-    (store / "decision-graph.md").mkdir()          # write_text now fails
     res = run("apply")
-    assert res.exit_code == 1
-    assert "dg render" in res.output
+    assert res.exit_code == 0
+    assert Graph.load(store / "decisions.json").vertices["D05"].status == "DECIDED"
+    assert pending.load(store / ".dgraph-pending.json") == []
+    assert not (store / "decision-graph.md").exists()
+
+
+def test_apply_leaves_the_view_directory_alone(run, store, g):
+    """Apply no longer writes the view, so a path where one cannot be written
+    (here, a directory squatting on the file's name) does not fail the apply —
+    nothing about the view is that command's concern."""
+    write(g)
+    run("decide", "D05", "-a", "yes", "-s", "s", "-f", "f")
+    (store / "decision-graph.md").unlink()
+    (store / "decision-graph.md").mkdir()
+    res = run("apply")
+    assert res.exit_code == 0
     assert Graph.load(store / "decisions.json").vertices["D05"].status == "DECIDED"
     assert pending.load(store / ".dgraph-pending.json") == []
 

@@ -81,11 +81,16 @@ def test_a_prepared_graph_becomes_the_store(empty):
     assert Graph.load(empty / "decisions.json").vertices.keys() == {"D01", "D02"}
 
 
-def test_the_view_is_generated_too(empty):
-    """A store with no view beside it is one `dg check` immediately warns about,
-    which is a poor first impression for a command that just succeeded."""
-    dg(empty, "import", str(write(empty, GOOD)))
-    assert (empty / "decision-graph.md").exists()
+def test_the_view_is_left_to_render(empty):
+    """Import writes the store alone; the view is generated on demand.
+
+    Matching `dg init` and `dg task init`, a bootstrap door does not plant a
+    generated view in the worktree — `dg render` builds it when it is read, and
+    `dg check` reports its absence as a warning, never a blocker.
+    """
+    res = dg(empty, "import", str(write(empty, GOOD)))
+    assert res.exit_code == 0 and "run `dg render`" in res.output
+    assert not (empty / "decision-graph.md").exists()
 
 
 def test_what_it_accepts_is_what_the_store_accepts(empty):
@@ -263,8 +268,11 @@ def test_import_md_still_refuses_a_document_in_another_dialect(empty):
 
 def test_import_md_round_trips_a_view_this_tool_wrote(empty):
     """What the command is actually for: a store rebuilt from the view beside
-    it. This is the property the name now claims and nothing tested."""
+    it. This is the property the name now claims and nothing tested. The view
+    is rendered on demand (`dg render`), as every bootstrap door now leaves
+    it."""
     dg(empty, "import", str(write(empty, GOOD)))
+    dg(empty, "render")
     before = Graph.load(empty / "decisions.json")
     view = (empty / "decision-graph.md").read_text(encoding="utf-8")
     (empty / "decisions.json").unlink()

@@ -2670,12 +2670,8 @@ def _apply_decisions(ops: list[dict], dry_run: bool) -> bool:
     if r.dry_run:
         con.print(f"[green]✓[/] {r.applied} decision op(s) would apply cleanly")
         return True
-    if r.view_error:
-        con.print(f"[yellow]applied {r.applied} op(s) → {r.store}, but "
-                  f"{r.view} could not be written[/]\n{_x(r.view_error)}\n"
-                  f"[dim]`dg render` regenerates it once the cause is fixed[/]")
-        return False
-    con.print(f"[green]✓[/] applied {r.applied} op(s) → {r.store} + {r.view}")
+    con.print(f"[green]✓[/] applied {r.applied} op(s) → {r.store}; the view is "
+              f"regenerated on demand with `dg render`")
     return True
 
 
@@ -2711,12 +2707,8 @@ def _apply_tasks(ops: list[dict], dry_run: bool) -> bool:
     if r.dry_run:
         con.print(f"[green]✓[/] {r.applied} task op(s) would apply cleanly")
         return True
-    if r.view_error:
-        con.print(f"[yellow]applied {r.applied} op(s) → {r.store}, but "
-                  f"{r.view} could not be written[/]\n{_x(r.view_error)}\n"
-                  f"[dim]`dg task render` regenerates it[/]")
-        return False
-    con.print(f"[green]✓[/] applied {r.applied} op(s) → {r.store} + {r.view}")
+    con.print(f"[green]✓[/] applied {r.applied} op(s) → {r.store}; the view is "
+              f"regenerated on demand with `dg task render`")
     return True
 
 
@@ -3037,8 +3029,8 @@ def task_init(
         raise typer.Exit(1)
     tg = TaskGraph(areas=[a.strip() for a in areas.split(",") if a.strip()])
     tg.save(proj.tasks)
-    task_render.write(tg, proj.task_view)
-    con.print(f"[green]✓[/] created {proj.tasks} and {proj.task_view.name}")
+    con.print(f"[green]✓[/] created {proj.tasks}; run `dg task render` for "
+              f"{proj.task_view.name}")
     _report_ignored(proj)
 
 
@@ -4107,7 +4099,7 @@ def task_import(
         con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
     _say_recomputed(recomputed)
-    _adopt(tg, proj.tasks, proj.task_view, task_render.write, force,
+    _adopt(tg, proj.tasks, proj.task_view, force,
            f"{len(tg.tasks)} tasks, {len(tg.edges)} edges", "the file")
 
 
@@ -4132,8 +4124,8 @@ def init(
         raise typer.Exit(1)
     g = Graph(areas=[a.strip() for a in areas.split(",") if a.strip()])
     g.save(proj.store)
-    render.write(g, proj.view)
-    con.print(f"[green]✓[/] created {proj.store} and {proj.view.name}")
+    con.print(f"[green]✓[/] created {proj.store}; run `dg render` for "
+              f"{proj.view.name}")
     _report_ignored(proj)
 
 
@@ -4150,7 +4142,7 @@ def _report_ignored(proj: project.Project) -> None:
         con.print(f"[dim]added to .gitignore: {', '.join(added)}[/]")
 
 
-def _adopt(graph, store: pathlib.Path, view: pathlib.Path, write_view,
+def _adopt(graph, store: pathlib.Path, view: pathlib.Path,
            force: bool, counted: str, source: str) -> None:
     """Validate a prepared graph, refuse it if invalid, then make it the store.
 
@@ -4159,6 +4151,9 @@ def _adopt(graph, store: pathlib.Path, view: pathlib.Path, write_view,
     matters: **a bootstrap never writes a store `dg apply` would refuse.** That
     would plant, on day one, the contradiction the tool exists to prevent. One
     implementation, so a new door cannot arrive without it.
+
+    Like `init`, the store is written but the generated view is left to
+    `dg render` / `dg task render`, built on demand.
     """
     problems = graph.validate()
     for v in problems:
@@ -4172,8 +4167,10 @@ def _adopt(graph, store: pathlib.Path, view: pathlib.Path, write_view,
                   f"repair with `dg` afterwards[/]")
         raise typer.Exit(1)
     graph.save(store)
-    write_view(graph, view)
-    con.print(f"[green]✓[/] imported {counted} → {store}")
+    render_cmd_name = "task render" if view.name == project.TASK_VIEW_NAME \
+        else "render"
+    con.print(f"[green]✓[/] imported {counted} → {store}; run `dg "
+              f"{render_cmd_name}` for {view.name}")
     # Same as `init`: a store has just appeared, and the trays, locks and temp
     # files beside it are scratch. The commit gate's advice ("it is gitignored,
     # so committing now drops it") is only true if they actually are.
@@ -4711,7 +4708,7 @@ def import_json(
         con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
     _say_recomputed(recomputed)
-    _adopt(g, proj.store, proj.view, render.write, force,
+    _adopt(g, proj.store, proj.view, force,
            f"{len(g.vertices)} vertices, {len(g.edges)} edges", "the file")
 
 
@@ -4743,7 +4740,7 @@ def import_md(
     except (OSError, ValueError) as exc:
         con.print(f"[red]✗ not imported[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
-    _adopt(g, proj.store, proj.view, render.write, force,
+    _adopt(g, proj.store, proj.view, force,
            f"{len(g.vertices)} vertices, {len(g.edges)} edges",
            "the source document")
 

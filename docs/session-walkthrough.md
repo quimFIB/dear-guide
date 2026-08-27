@@ -152,7 +152,7 @@ dg apply
 ```
 
 ```
-✓ applied 3 op(s) → decisions.json + decision-graph.md
+✓ applied 3 op(s) → decisions.json
 ```
 
 Agents apply their own work rather than leaving it for you. `apply` validates a

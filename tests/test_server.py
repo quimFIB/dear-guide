@@ -162,17 +162,18 @@ def test_a_broken_store_is_a_json_error_not_a_dropped_connection(srv, store):
 # ---- apply's write order (audit B1) --------------------------------------
 
 
-def test_apply_recovers_when_the_view_cannot_be_written(srv, store):
-    """Store first, pending cleared, view last: a view failure is the one
-    recoverable case (`dg render`), and the applied ops must not stay staged —
-    they are in the store now, and re-applying them is the A3 dead end."""
+def test_apply_ignores_the_view_and_unstages(srv, store):
+    """Apply writes the store and clears the tray; the view is optional and
+    left to `dg render`. A path where a view cannot exist (a directory
+    squatting on the file's name) must not fail the apply — that command has
+    nothing to do with the view."""
     from dgraph.model import Graph
     code, _ = jreq(srv, "/api/pending", "POST",
                    dict(CLOSE, answer="a", source="s", falsifier="f", to=[]))
     assert code == 200
-    (store / "decision-graph.md").mkdir()          # write_text now fails
+    (store / "decision-graph.md").mkdir()          # a view cannot be written here
     code, body = jreq(srv, "/api/apply", "POST")
-    assert code == 500 and "dg render" in body["error"]
+    assert code == 200, body
     assert Graph.load(store / "decisions.json").vertices["D05"].status == "DECIDED"
     assert pending.load() == []
 
@@ -524,7 +525,7 @@ def test_staging_a_task_op_without_a_task_store_says_so(srv, store):
 
 
 def test_one_apply_writes_both_stores(srv, dual):
-    from dgraph import task_pending
+    from dgraph import task_pending, task_render
     from dgraph.model import Graph
     from dgraph.tasks import TaskGraph
     jreq(srv, "/api/pending", "POST",
@@ -538,7 +539,12 @@ def test_one_apply_writes_both_stores(srv, dual):
     assert Graph.load(dual / "decisions.json").vertices["D05"].status == "DECIDED"
     assert TaskGraph.load(dual / "tasks.json").tasks["T02"].status == "DOING"
     assert pending.load() == [] and pending.load(task_pending.path()) == []
-    assert "DOING" in (dual / "tasks.md").read_text()
+    # Apply writes the stores only; the views are left for the on-demand
+    # renderers, so the on-disk `tasks.md` has fallen behind the store it was
+    # rendered from (T02 is DOING in the store, TODO in the view).
+    on_disk = (dual / "tasks.md").read_text(encoding="utf-8")
+    fresh = task_render.render(TaskGraph.load(dual / "tasks.json"))
+    assert isinstance(fresh, str) and on_disk != fresh
 
 
 def test_a_refused_task_batch_does_not_stop_a_decision_batch(srv, dual):

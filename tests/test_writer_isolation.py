@@ -272,8 +272,9 @@ def test_the_tray_is_held_while_the_batch_it_gave_up_is_applied(proj, monkeypatc
     verified has to be the layer that ships. `server._apply` reaches the same
     span one call in.
 
-    The probe is `render.render`, which runs inside the apply and after the tray
-    was read. It calls through; nothing is stubbed.
+    The probe is `pending.apply_all`, which runs inside `apply_decisions` after
+    that command has taken the tray's lock and before it discards the ops. It
+    calls through; nothing is stubbed.
     """
     from typer.testing import CliRunner
 
@@ -283,14 +284,15 @@ def test_the_tray_is_held_while_the_batch_it_gave_up_is_applied(proj, monkeypatc
                         "area": "Alpha", "status": "OPEN"}], proj.pending)
     lock = proj.pending.with_name(proj.pending.name + ".lock")
     seen = []
-    real = render.render
-    monkeypatch.setattr(render, "render", lambda g: (seen.append(lock.exists()),
-                                                     real(g))[1])
+    real = pending.apply_all
+    monkeypatch.setattr(
+        pending, "apply_all",
+        lambda *a, **k: (seen.append(lock.exists()), real(*a, **k))[1])
 
     res = CliRunner().invoke(app, ["--project", str(proj.root), "apply"])
 
     assert res.exit_code == 0, res.output
-    assert seen == [True], (
+    assert seen and all(seen), (
         "`dg apply` did not hold the tray while applying the batch it read from "
         "it — any writer may drop, edit or clear it in that window")
 

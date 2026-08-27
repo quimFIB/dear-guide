@@ -292,8 +292,8 @@ lives in a gitignored file, so apply your own work — otherwise it exists
 nowhere a diff will ever show.
 
 **`decisions.json` is the truth; `decision-graph.md` is a view.** Never edit
-the markdown — it is regenerated from the store on every apply, and `dg check`
-fails if the two have drifted apart.
+the markdown — it is generated from the store with `dg render`, on demand, and
+`dg check` warns if the two have drifted apart.
 
 ## Bringing somebody else's work in
 
