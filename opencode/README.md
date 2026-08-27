@@ -95,7 +95,7 @@ the plugin's environment is the host's.
   unchecked.
 
   Nothing is lost either way: `dg check` reports a lagging view on demand and
-  `dg render` rebuilds it, and every `dg apply` renders before it writes. Both
+  `dg render` rebuilds it. Both
   refusing verdicts are thrown and so arrive by construction; it is only the
   two advisories that ride this channel. If the answer turns out to be the log,
   `client.tui.showToast` is the supported one — `PluginInput` hands the plugin

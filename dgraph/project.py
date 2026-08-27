@@ -288,8 +288,9 @@ def _umask() -> int:
 # same way, and a second copy of a lock is how two locks come to disagree.
 
 #: How long to wait for a live holder before giving up on the lock. Tray ops
-#: are microseconds; an apply is a validate and a render, so callers that hold
-#: one across real work pass their own.
+#: are microseconds; an apply is a validate and a store write (the views are
+#: built on demand, outside this lock), so callers that hold one across real
+#: work pass their own.
 LOCK_WAIT = 2.0
 
 #: In-process locks, one per path. The file lock cannot separate two threads of

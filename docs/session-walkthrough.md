@@ -513,8 +513,8 @@ decision-graph.md no longer matches decisions.json, and this commit records it.
 behind until someone renders again.
 ```
 
-The view is generated, so nothing is lost — `dg render` rebuilds it, and the
-next `dg apply` rebuilds it anyway. It used to be a blocking violation, which
+The view is generated, so nothing is lost — `dg render` rebuilds it on demand.
+It used to be a blocking violation, which
 meant one un-rendered file denied *every* commit in the repository, including
 commits that never touched the graph. `dg check` still reports it.
 

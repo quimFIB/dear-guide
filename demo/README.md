@@ -282,10 +282,11 @@ one a prerequisite list cannot tell you.
   dotted cyan edge to D02 is the `evidence_for` link, and T09 sits *above* D02
   because the answer waited on the work. T04 sits *below* D05, because the work
   waits on the answer.
-- **Stage a decision and a task, then Apply once.** Both stores and both
-  generated views are written, and `dg pending` / `dg task pending` in a
-  terminal show the same two trays the footer does. If one batch will not
-  apply, the other still does — you are told which.
+- **Stage a decision and a task, then Apply once.** Both stores are written
+  (the generated views are produced on demand with `dg render` /
+  `dg task render`), and `dg pending` / `dg task pending` in a terminal show the
+  same two trays the footer does. If one batch will not apply, the other still
+  does — you are told which.
 - **Resolve all three findings** and the chip disappears. That is the only way
   it goes away; there is no field anywhere whose job is to silence a check.
 

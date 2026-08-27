@@ -139,7 +139,7 @@ behind until someone renders again.
 The same warning covers the case `dg check` cannot see, because `check` compares
 the worktree: staging `decisions.json` without `decision-graph.md` produces a
 commit whose store and view disagree. Both are said, neither refuses — the view
-is generated, `dg render` rebuilds it, and every `dg apply` rebuilds it anyway.
+is generated, and `dg render` (or `dg task render`) rebuilds it on demand.
 
 **An invalid graph** → `deny`, quoting the rule and the remedy:
 
