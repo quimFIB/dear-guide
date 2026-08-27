@@ -69,7 +69,12 @@ written *before* that evidence arrives. Afterwards it is rationalisation.
   the task it points from must be resolved first. `prompted` is provenance:
   doing that task turned this one up. Provenance makes nothing wait — a chore
   noticed mid-task is usually startable at once, and often has to land *before*
-  the task that revealed it can finish.
+  the task that revealed it can finish. The two can even run opposite ways
+  between the same pair — doing `A` turned up `B` (`prompted`), and `B` may or
+  may not block `A` (`precedes`, or no edge at all). That looks odd and is
+  deliberate: `prompted` records that the discovery happened, and only
+  `precedes` — recorded when it is true — says whether the discovered work is
+  held back by the work that found it or independent of it.
 
 It is deliberately **not** a copy of the decision graph, and every difference is
 the point:

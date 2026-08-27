@@ -101,7 +101,11 @@ only *staged*, so a question recorded a minute ago can already be linked to.
 The two relation controls are deliberately separate. **After** asserts an order
 and holds the work back; **discovered during** only records where it came from
 and blocks nothing. One control for both would assert an ordering nobody
-claimed.
+claimed. They can even coexist between the same pair, pointing opposite ways —
+doing `A` turned up `B` (**discovered during**), and `B` may or may not then
+block `A` (**after**): the discovery is recorded regardless, and only the
+ordering says whether the found work must wait for the work that found it or is
+independent of it.
 
 Nothing is written until Apply, as everywhere else here. Both forms stage the
 same op list `dg add` and `dg task add` stage — same function, one set of rules,

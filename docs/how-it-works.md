@@ -619,6 +619,16 @@ task that revealed it can be finished. Those two facts about the same pair point
 opposite ways, and as one untyped relation they are a cycle — the store would
 refuse them and you would have to delete one of two true things.
 
+That an *opposite-direction* pair can hold between the same two tasks looks
+surprising on first read, but it is exactly the shape of real work. Doing a task
+turns up another — `prompted` — and whether the discovered work must wait for
+the current task to finish is left open: sometimes it cannot start until the
+task that revealed it is done (`precedes`, the other direction back), and
+sometimes it is independent and need not wait at all (no edge back). `prompted`
+records the fact of discovery either way; `precedes` — or its absence — says
+whether the ordering binds. `precedes` is only recorded when it is true; its
+absence is not an oversight but the honest answer that the two are independent.
+
 Each kind is therefore walked as its own subgraph, and only `precedes` feeds
 readiness. What `prompted` is for is the question the ordering cannot answer:
 when work is abandoned, which chores existed only because of it.
