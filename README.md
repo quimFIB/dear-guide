@@ -100,11 +100,12 @@ the point:
 
 ### The one seam
 
-A task may name **the one** decision it exists **`because`** of, and **the one**
-decision its outcome will be **`evidence_for`** — a single link of each kind per
-task; a task resting on or informing a second decision is kept as a sibling task
-linked to it. Opposite polarity: the first makes the work wait on the answer,
-the second makes the answer wait on the work. Nothing else crosses —
+A task may name **the decisions** it exists **`because`** of — a task can rest
+on several at once — and **the one** decision its outcome will be
+**`evidence_for`**. A single `evidence_for` per task; work informing a second
+decision is kept as a sibling task linked to it. Opposite polarity: `because`
+makes the work wait on the answers, `evidence_for` makes the answer wait on the
+work. Nothing else crosses —
 `decisions.json` never mentions a task, so a change to it always means a
 decision changed.
 

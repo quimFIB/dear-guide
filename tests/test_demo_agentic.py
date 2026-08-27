@@ -84,7 +84,7 @@ def test_the_store_is_the_shape_every_scene_assumes(tmp_path):
     assert tg.tasks["T01"].status == "TODO" and tg.tasks["T01"].evidence_for == "D02"
     assert "T01" not in tg.blocked_ids(), "T01 has to be startable on day one"
     # Work is blocked by a question, which is the other polarity of the seam.
-    assert tg.tasks["T03"].because == "D03"
+    assert tg.tasks["T03"].because == ["D03"]
 
 
 def test_d01_carries_the_falsifier_the_whole_demo_turns_on(tmp_path):

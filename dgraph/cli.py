@@ -3077,7 +3077,8 @@ def task_add(
         None, "--discovered-during",
         help="comma-separated tasks whose doing turned this one up"),
     because: str = typer.Option(None, "--because",
-                                help="the decision this work exists because of"),
+                                help="comma-separated decisions this work "
+                                     "exists because of"),
     evidence_for: str = typer.Option(None, "--evidence-for",
                                      help="the decision this work will inform"),
     note: str = typer.Option(None, "--note", "-n"),
@@ -3123,7 +3124,7 @@ def task_add(
         ops = task_pending.compose_add(
             tg, _decisions_eff_or_none(), tid=tid, title=title, area=area,
             after=parents, discovered_during=prompted,
-            because=because, evidence_for=evidence_for, note=note,
+            because=_csv(because), evidence_for=evidence_for, note=note,
             stored=_tg())
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
@@ -3311,8 +3312,10 @@ def task_amend(
 @task_app.command("link", rich_help_panel=T_RECORD)
 def task_link(
     tid: str,
-    because: str = typer.Option(None, "--because",
-                                help="the decision this work exists because of"),
+    because: str = typer.Option(
+        None, "--because",
+        help="comma-separated decisions to add to what this work exists "
+             "because of"),
     evidence_for: str = typer.Option(None, "--evidence-for",
                                      help="the decision this work will inform"),
 ) -> None:
@@ -3321,6 +3324,10 @@ def task_link(
     The emergent case: work turns up a question nobody had written down, so you
     record the decision and then say which work raised it — after the fact, and
     often after the task is already done.
+
+    A task rests on a set of premises, so `--because` appends to them rather
+    than replacing them — `--because D01` then `--because D05` leaves the task
+    resting on both.
     """
     tg = _teff(_tg())
     if not because and not evidence_for:
@@ -3329,7 +3336,7 @@ def task_link(
         raise typer.Exit(2)
     try:
         ops = task_pending.compose_link(tg, _decisions_eff_or_none(), tid=tid,
-                                        because=because,
+                                        because=_csv(because),
                                         evidence_for=evidence_for)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
@@ -3342,10 +3349,11 @@ def task_link(
 @task_app.command("unlink", rich_help_panel=T_RECORD)
 def task_unlink(
     tid: str,
-    because: bool = typer.Option(False, "--because",
-                                 help="drop the decision this work rests on"),
+    because: str = typer.Option(None, "--because",
+                                help="the premise decision to remove — a task "
+                                     "rests on several, so name the one"),
     evidence_for: bool = typer.Option(False, "--evidence-for",
-                                      help="drop the decision this work informs"),
+                                      help="drop the single decision this work informs"),
 ) -> None:
     """Remove a task's link to a decision.
 
@@ -3718,7 +3726,7 @@ def _task_listing(tg: TaskGraph, waiting_for) -> None:
         if tg.unblocks(tid):
             aside.append("unblocks " + ", ".join(tg.unblocks(tid)))
         if task.because:
-            aside.append(f"because {task.because}")
+            aside.append(f"because {', '.join(task.because)}")
         if task.evidence_for:
             aside.append(f"evidence for {task.evidence_for}")
         if task.parked:
@@ -3753,7 +3761,7 @@ def _task_table(tg: TaskGraph, waiting_for) -> None:
     for tid in tg.frontier():
         task = tg.tasks[tid]
         waiting, gate = waiting_for(tid)
-        premise = task.because or "—"
+        premise = ", ".join(task.because) or "—"
         if gate:
             premise = f"[yellow]{premise}[/]"
         t.add_row(tid, _x(task.title),
@@ -3866,7 +3874,7 @@ def task_node(tid: str) -> None:
     if tg.prompted(tid):
         lines.append(f"turned up   {', '.join(tg.prompted(tid))}")
     if t.because:
-        lines.append(f"because     {t.because}"
+        lines.append(f"because     {', '.join(t.because)}"
                      + ("  [yellow](undecided)[/]" if gate else ""))
     if t.evidence_for:
         lines.append(f"informs     {t.evidence_for}")

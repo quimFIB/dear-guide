@@ -258,12 +258,13 @@ class Task:
     #: outcome and the reason it was dropped, all converted through this one
     #: field by `task_render`. "org", else markdown. See `task_pending.PROSE`.
     format: str | None = None
-    #: The decision this work exists because of — a `D`-id in the *other*
-    #: store. Held here and nowhere else: `decisions.json` never names a task,
+    #: The decisions this work exists because of — a `D`-id in the *other*
+    #: store, held as a list because a task may rest on more than one premise
+    #: at once. Held here and nowhere else: `decisions.json` never names a task,
     #: so a change to it always means a decision changed. Nothing in this
     #: module resolves it; that is `dgraph/cross.py`'s job, and this module
     #: cannot even see the decision store.
-    because: str | None = None
+    because: list[str] = field(default_factory=list)
     #: The decision this work will *bear on* — the spike whose result feeds a
     #: question, or the chore that turned out to raise one. Opposite polarity
     #: to `because`: that one makes the task wait on the decision, this one
@@ -438,7 +439,7 @@ def matches(t: Task, op: dict) -> bool:
     return (t.title == op["title"] and t.area == op["area"]
             and t.status == op.get("status", "TODO")
             and t.note == op.get("note")
-            and t.because == op.get("because")
+            and _fold_because(t.because) == _fold_because(op.get("because"))
             and t.evidence_for == op.get("evidence_for"))
 
 
@@ -455,6 +456,18 @@ class TaskEdge:
     src: str
     to: list[str]
     kind: str
+
+
+def _fold_because(raw) -> list[str]:
+    """Normalise a stored `because` to a list, folding a pre-list scalar.
+
+    `because` is now a list on every `Task`, but a store written before the
+    change holds a scalar string. `_task` folds it here so the rest of the tool
+    never has to know the old shape.
+    """
+    if raw is None:
+        return []
+    return list(raw) if isinstance(raw, (list, tuple)) else [raw]
 
 
 def _task(raw: dict) -> Task:
@@ -512,6 +525,10 @@ def _task(raw: dict) -> Task:
             f"{raw.get('id', '?')}: malformed readings entry — each needs a "
             f"`date`, a `note` and an `against`, and nothing else ({exc})"
         ) from None
+    # `because` became a list. A store written before then held a scalar, so it
+    # is folded rather than refused, the same way the two-scalar completion was:
+    # nothing has to be invented.
+    fields["because"] = _fold_because(fields.pop("because", None))
     return Task(**fields)
 
 
@@ -591,7 +608,7 @@ class TaskGraph:
                         # work that never stopped says so by silence.
                         ("stops", [{"why": k.why, "date": k.date}
                                    for k in t.stops] or None),
-                        ("format", t.format), ("because", t.because),
+                        ("format", t.format), ("because", t.because or None),
                         ("evidence_for", t.evidence_for),
                         ("readings", [{"date": r.date, "note": r.note,
                                        "against": r.against}

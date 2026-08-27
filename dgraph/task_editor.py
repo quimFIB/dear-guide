@@ -130,7 +130,8 @@ def _task_context(tg: TaskGraph, g: Graph | None, tid: str) -> str:
     if link and (link["because"] or link["evidence_for"]):
         out.append("** Why this work exists")
         if link["because"]:
-            out.append(f"   because   {_decision_line(g, link['because'])}")
+            for did in link["because"]:
+                out.append(f"   because   {_decision_line(g, did)}")
         if link["evidence_for"]:
             out.append(f"   evidence for "
                        f"{_decision_line(g, link['evidence_for'])}")
@@ -334,10 +335,13 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict) -> list[dict]:
     op = {"op": "add_task", "id": tid, "title": _need(f, "title"), "area": area}
     if f.get("note", "").strip():
         op["note"] = f["note"].strip()
-    for field, key in (("Because", "because"), ("Evidence for", "evidence_for")):
-        val = f.get(field.lower(), "").strip()
-        if val:
-            op[key] = _premise(g, val, field)
+    because_raw = f.get("because", "").strip()
+    if because_raw:
+        op["because"] = [_premise(g, d.strip(), "Because")
+                         for d in because_raw.split(",") if d.strip()]
+    ef_raw = f.get("evidence for", "").strip()
+    if ef_raw:
+        op["evidence_for"] = _premise(g, ef_raw, "Evidence for")
     ops = [_org(op)]
     # One group, in the order the CLI stages them: the task, then its edges.
     # A task landing without them is not a partial batch something refuses —

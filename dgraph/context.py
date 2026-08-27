@@ -261,7 +261,7 @@ def _verdict(g: Graph, link: dict, out: dict) -> str:
     *facts* come from `cross.task_link` and from the chain walk above; only the
     phrasing is decided here.
     """
-    because = link["because"]
+    because = ", ".join(link["because"])
     if link["dangling"]:
         return (f"the premise {because} is not in the decision store — the "
                 f"link is dangling and `dg check` will say so")

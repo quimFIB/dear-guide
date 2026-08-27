@@ -67,7 +67,7 @@ def _index(tg: TaskGraph) -> str:
     for t in sorted(tg.tasks.values(), key=lambda t: (order.get(t.area, 99), t.id)):
         waiting = ", ".join(tg.waiting_on(t.id)) or NONE
         rows.append(f"| {t.id} | {orgmd.cell(t.title)} | {t.status} | {waiting} "
-                    f"| {t.because or NONE} |")
+                    f"| {', '.join(t.because) or NONE} |")
     ready = ", ".join(t for t in sorted(tg.tasks) if tg.ready(t))
     rows.append("")
     # Qualified, because this file is rendered from one store: `tg.ready` means
@@ -105,7 +105,7 @@ def _section(tg: TaskGraph, tid: str) -> str:
     # printing it needs nothing from the decision store and keeps this view's
     # staleness independent of `decisions.json` — leaving it out only hid it.
     if t.because:
-        out.append(f"- **Because:** {t.because}")
+        out.append(f"- **Because:** {', '.join(t.because)}")
     if t.evidence_for:
         out.append(f"- **Evidence for:** {t.evidence_for}")
     out.append("")

@@ -106,7 +106,7 @@ def test_a_link_to_a_decision_survives_the_import(empty):
     """`because` is carried through as written. Whether it names a decision
     that exists is a cross-store question, and `dg check`'s."""
     dg(empty, "task", "import", str(write(empty, GOOD_TASKS)))
-    assert TaskGraph.load(empty / "tasks.json").tasks["T01"].because == "D02"
+    assert TaskGraph.load(empty / "tasks.json").tasks["T01"].because == ["D02"]
 
 
 # ---- it refuses to overwrite --------------------------------------------

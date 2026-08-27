@@ -28,7 +28,7 @@ from dgraph.pending import FIELDS, ApplyError, already, vet_fields
 from dgraph.model import Graph
 from dgraph.tasks import (ID_RE, KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
                           Completion, Reading, Stop, Task, TaskEdge,
-                          TaskGraph, matches)
+                          TaskGraph, _fold_because, matches)
 from dgraph.violation import Violation
 
 OPS = {"add_task", "add_dep", "remove_dep", "remove_task", "set_status",
@@ -68,7 +68,8 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             id=op["id"], title=op["title"], area=op["area"],
             status=op.get("status", "TODO"), note=op.get("note"),
             format=op.get("format") if op.get("note") else None,
-            because=op.get("because"), evidence_for=op.get("evidence_for"),
+            because=_fold_because(op.get("because")),
+            evidence_for=op.get("evidence_for"),
         )
         return
 
@@ -166,13 +167,15 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             raise ApplyError(f"unknown task {tid!r}")
         for fld in ("because", "evidence_for"):
             if op.get(fld) is not None:
-                setattr(tg.tasks[tid], fld, op[fld])
+                val = op[fld]
+                setattr(tg.tasks[tid], fld,
+                        _fold_because(val) if fld == "because" else val)
         # Cleared through a separate key, because an absent field and a field
         # set to nothing have to stay distinguishable in a stored op.
         for fld in op.get("clear", ()):
             if fld not in ("because", "evidence_for"):
                 raise ApplyError(f"cannot clear {fld!r}")
-            setattr(tg.tasks[tid], fld, None)
+            setattr(tg.tasks[tid], fld, [] if fld == "because" else None)
         return
 
     if kind == "read_evidence":
@@ -411,7 +414,7 @@ def compose_undep(tg: TaskGraph, *, tid: str, after: list[str] | None = None,
 
 
 def compose_link(tg: TaskGraph, g: Graph | None, *, tid: str,
-                 because: str | None = None,
+                 because: list[str] | None = None,
                  evidence_for: str | None = None) -> list[dict]:
     """The op pointing `tid` at a decision.
 
@@ -420,60 +423,87 @@ def compose_link(tg: TaskGraph, g: Graph | None, *, tid: str,
     after the fact, and often after the task is already done.
     """
     _require(tg, tid)
+    because = list(because) if because else []
     if not because and not evidence_for:
         raise ApplyError("nothing to link — give a because or an evidence-for")
+    # Every premise and the evidence target, checked before any op is built, so
+    # a bad second one cannot leave the first staged alone.
+    for did in because:
+        _premise_exists(g, did, "--because")
+    if evidence_for:
+        _premise_exists(g, evidence_for, "--evidence-for")
     op = {"op": "set_link", "task": tid}
-    for did, field in ((because, "because"), (evidence_for, "evidence_for")):
-        if not did:
-            continue
-        if g is None:
+    # A task rests on a set of premises, so linking appends. Adding never loses
+    # a premise, so there is no overwrite to refuse — only duplicates to avoid
+    # by keeping the set a set.
+    if because:
+        current = list(getattr(tg.tasks[tid], "because"))
+        for did in because:
+            if did not in current:
+                current.append(did)
+        op["because"] = current
+    if evidence_for:
+        # `evidence_for` is the one decision this work informs — a single slot,
+        # by design. It is not an override site: silently re-pointing it is how
+        # evidence walks away from a question nobody closed. Refuse a link onto
+        # a different decision and say the correction, rather than letting the
+        # second link erase the first.
+        current = getattr(tg.tasks[tid], "evidence_for")
+        if current and current != evidence_for:
             raise ApplyError(
-                f"{did} names a decision, but this project has no decision "
-                f"graph\n`dg init` starts one")
-        if did not in g.vertices:
-            raise ApplyError(f"unknown decision {did}\n"
-                             f"`dg show` lists what is on the frontier")
-        # A task records the one decision it exists because of, and the one it
-        # informs -- a strict one, by design. Neither is an override site:
-        # silently re-pointing a link is how work walks away from a premise,
-        # and evidence walks away from a question, without anybody deciding it.
-        # Refuse a link onto a different decision and say the correction, rather
-        # than letting the second link erase the first.
-        current = getattr(tg.tasks[tid], field)
-        if current and current != did:
-            verb = "depends on" if field == "because" else "informs"
-            flag = "--" + field.replace("_", "-")
-            raise ApplyError(
-                f"{tid} {verb} {current}, not {did}\n"
-                f"a task holds one {field.replace('_', ' ')} link, so move it "
-                f"across (unlink {current}, then link {did}):\n"
-                f"  dg task unlink {tid} {flag}\n"
-                f"  dg task link {tid} {flag} {did}")
-        op[field] = did
+                f"{tid} informs {current}, not {evidence_for}\n"
+                f"a task informs one decision, so link it across "
+                f"(unlink {current}, then link {evidence_for}):\n"
+                f"  dg task unlink {tid} --evidence-for\n"
+                f"  dg task link {tid} --evidence-for {evidence_for}")
+        op["evidence_for"] = evidence_for
     return [op]
 
 
-def compose_unlink(tg: TaskGraph, *, tid: str, because: bool = False,
+def _premise_exists(g: Graph | None, did: str, flag: str) -> None:
+    """A decision id must name an actual decision. Shared by link's two sides."""
+    if g is None:
+        raise ApplyError(
+            f"{flag} {did} names a decision, but this project has no decision "
+            f"graph\n`dg init` starts one")
+    if did not in g.vertices:
+        raise ApplyError(f"unknown decision {did}\n"
+                         f"`dg show` lists what is on the frontier")
+
+
+def compose_unlink(tg: TaskGraph, *, tid: str,
+                   because: str | None = None,
                    evidence_for: bool = False) -> tuple[list[dict], list[str]]:
     """`(ops, was)` for severing `tid`'s link to a decision.
 
     The undo `link` never had. A link recorded against the wrong decision, or
     one that stopped being true, is a correction the tool has to be able to
     make — hand-editing the store is the failure this exists to prevent.
+
+    `--because` names the one premise to remove: a task rests on several, so
+    which one goes has to be said. `evidence_for` is a single slot, so a bare
+    flag removes it all.
     """
     _require(tg, tid)
-    wanted = [f for f, on in (("because", because),
-                              ("evidence_for", evidence_for)) if on]
-    if not wanted:
+    if not because and not evidence_for:
         raise ApplyError("nothing to unlink — give a because or an evidence-for")
-    missing = [f for f in wanted if getattr(tg.tasks[tid], f) is None]
-    if missing:
-        raise ApplyError(
-            f"{tid} has no "
-            + " or ".join("--" + f.replace("_", "-") for f in missing)
-            + " to remove")
-    return ([{"op": "set_link", "task": tid, "clear": wanted}],
-            [getattr(tg.tasks[tid], f) for f in wanted])
+    ops, was = [], []
+    if evidence_for:
+        had = getattr(tg.tasks[tid], "evidence_for")
+        if had is None:
+            raise ApplyError(f"{tid} has no --evidence-for to remove")
+        ops.append({"op": "set_link", "task": tid, "clear": ["evidence_for"]})
+        was.append(had)
+    if because:
+        current = list(getattr(tg.tasks[tid], "because"))
+        if because not in current:
+            raise ApplyError(
+                f"{tid} has no --because {because} to remove — its premises "
+                f"are {', '.join(current) or 'none'}")
+        current.remove(because)
+        ops.append({"op": "set_link", "task": tid, "because": current})
+        was.append(because)
+    return ops, was
 
 
 def preview_ops(tg: TaskGraph, ops: list[dict]) -> TaskGraph:
@@ -523,7 +553,8 @@ def releases(tg: TaskGraph, g: Graph | None, ops: list[dict]) -> list[str]:
 def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
                 area: str, after: list[str] | None = None,
                 discovered_during: list[str] | None = None,
-                because: str | None = None, evidence_for: str | None = None,
+                because: list[str] | None = None,
+                evidence_for: str | None = None,
                 note: str | None = None,
                 stored: TaskGraph | None = None) -> list[dict]:
     """The op list that records a new task, validated against `tg`.
@@ -570,15 +601,22 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
     bad = ranges.fault("T", tid)
     if bad:
         raise ApplyError(bad)
-    for did, flag in ((because, "--because"), (evidence_for, "--evidence-for")):
-        if not did:
-            continue
+    for did in because or ():
         if g is None:
             raise ApplyError(
-                f"{flag} {did} names a decision, but this project has no "
-                f"decision graph\n`dg init` starts one, or drop {flag}")
+                f"--because {did} names a decision, but this project has no "
+                f"decision graph\n`dg init` starts one, or drop --because")
         if did not in g.vertices:
             raise ApplyError(f"unknown decision {did}\n"
+                             f"`dg show` lists what is on the frontier")
+    if evidence_for:
+        if g is None:
+            raise ApplyError(
+                f"--evidence-for {evidence_for} names a decision, but this "
+                f"project has no decision graph\n`dg init` starts one, or drop "
+                f"--evidence-for")
+        if evidence_for not in g.vertices:
+            raise ApplyError(f"unknown decision {evidence_for}\n"
                              f"`dg show` lists what is on the frontier")
     rels = [(others, kind) for others, kind
             in ((after, "precedes"), (discovered_during, "prompted")) if others]
@@ -589,7 +627,7 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
     if note:
         op["note"] = note
     if because:
-        op["because"] = because
+        op["because"] = list(because)
     if evidence_for:
         op["evidence_for"] = evidence_for
     ops = [op]

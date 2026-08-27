@@ -31,9 +31,9 @@ def both(store, task_store, g):
     """
     write(g)
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T01"].because = "D01"     # DONE
-    tg.tasks["T02"].because = "D01"     # TODO
-    tg.tasks["T03"].because = "D05"     # TODO, premise never settled (OPEN)
+    tg.tasks["T01"].because = ["D01"]     # DONE
+    tg.tasks["T02"].because = ["D01"]     # TODO
+    tg.tasks["T03"].because = ["D05"]     # TODO, premise never settled (OPEN)
     tg.save(task_store / "tasks.json")
     from dgraph import task_render
     task_render.write(tg, task_store / "tasks.md")
@@ -77,14 +77,14 @@ def test_gated_by_skips_an_unknown_decision(both):
     """A dangling reference must not crash the traversal that was about to
     report it — the class of bug audit item A1 fixed."""
     tg, g = TaskGraph.load(both / "tasks.json"), Graph.load(both / "decisions.json")
-    tg.tasks["T02"].because = "D99"
+    tg.tasks["T02"].because = ["D99"]
     assert cross.gated_by(tg, g, "T02") is None
 
 
 def test_ready_needs_prerequisites_and_a_settled_premise(both):
     tg, g = TaskGraph.load(both / "tasks.json"), Graph.load(both / "decisions.json")
     assert cross.ready(tg, g, "T02")            # T01 done, D01 decided
-    tg.tasks["T02"].because = "D05"             # an unsettled premise
+    tg.tasks["T02"].because = ["D05"]             # an unsettled premise
     assert not cross.ready(tg, g, "T02")
     assert tg.ready("T02")                      # ...but the task graph alone says yes
 
@@ -99,7 +99,7 @@ def test_blast_radius_is_unfinished_work_only(both):
 
 def test_a_dangling_because_is_a_blocking_error(both):
     tg = TaskGraph.load(both / "tasks.json")
-    tg.tasks["T02"].because = "D99"
+    tg.tasks["T02"].because = ["D99"]
     tg.save(both / "tasks.json")
     hits = [v for v in run() if v.check == "link_resolves"]
     assert hits and hits[0].blocking and "D99" in str(hits[0])
@@ -131,7 +131,7 @@ def test_a_provisional_premise_warns_too(both):
     """The propagated case: D02 becomes PROVISIONAL when D01 is reopened, so
     work resting on D02 is equally on shaky ground."""
     tg = TaskGraph.load(both / "tasks.json")
-    tg.tasks["T03"].because = "D02"
+    tg.tasks["T03"].because = ["D02"]
     tg.save(both / "tasks.json")
     _reopen(both)
     hits = [v for v in run() if v.check == "link_premise_under_review"]
@@ -159,7 +159,7 @@ def test_the_two_link_errors_do_deny_a_commit(both):
     deadlock are contradictions, not states of play, so they block — which is
     exactly why `dg apply` refuses to write one in the first place."""
     tg = TaskGraph.load(both / "tasks.json")
-    tg.tasks["T02"].because = "D99"
+    tg.tasks["T02"].because = ["D99"]
     tg.save(both / "tasks.json")
     from dgraph import task_render
     task_render.write(tg, both / "tasks.md")     # the link is the only problem
@@ -172,7 +172,7 @@ def test_a_tasks_only_project_still_resolves_its_links(task_store):
     """Deleting `decisions.json` must not be a way to silence a dangling link:
     with no decision store every link names something that cannot exist."""
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T02"].because = "D01"
+    tg.tasks["T02"].because = ["D01"]
     tg.save(task_store / "tasks.json")
     from dgraph import task_render
     task_render.write(tg, task_store / "tasks.md")
@@ -482,15 +482,32 @@ def test_relinking_a_task_to_a_second_decision_is_refused(run_cli, both):
     assert TaskGraph.load(both / "tasks.json").tasks["T02"].evidence_for == "D05"
 
 
-def test_because_also_refuses_to_swing_to_a_second_decision(run_cli, both):
-    """A task rests on one decision by design, so a second `--because` must not
-    silently erase the first. Refuse the same way `--evidence-for` does."""
-    res = run_cli("task", "link", "T03", "--because", "D04")
+def test_because_accumulates_premises_and_unlinks_one(run_cli, both):
+    """A task rests on a set of decisions. Linking adds a premise (never drops
+    the ones it has); unlinking names the one premise to remove, not the whole
+    set. T03 starts because D05."""
+    assert TaskGraph.load(both / "tasks.json").tasks["T03"].because == ["D05"]
+    # Add a second premise: the first is kept.
+    assert run_cli("task", "link", "T03", "--because", "D04").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(both / "tasks.json").tasks["T03"].because == ["D05", "D04"]
+    # Linking the same premise again is idempotent, not a duplicate.
+    assert run_cli("task", "link", "T03", "--because", "D05").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(both / "tasks.json").tasks["T03"].because == ["D05", "D04"]
+    # One call can append several at once, comma-separated, still keeping the set.
+    assert run_cli("task", "link", "T03", "--because", "D06,D02").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(both / "tasks.json").tasks["T03"].because == ["D05", "D04", "D06", "D02"]
+    # Unlink names the one premise to remove.
+    res = run_cli("task", "unlink", "T03", "--because", "D05")
+    assert res.exit_code == 0, res.output
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(both / "tasks.json").tasks["T03"].because == ["D04", "D06", "D02"]
+    # Unlinking a premise that is not there is refused, naming the set.
+    res = run_cli("task", "unlink", "T03", "--because", "D99")
     assert res.exit_code == 1, res.output
-    assert "depends on D05, not D04" in res.output
-    assert "dg task unlink T03 --because" in res.output
-    assert "dg task link T03 --because D04" in res.output
-    assert TaskGraph.load(both / "tasks.json").tasks["T03"].because == "D05"
+    assert "has no --because D99" in res.output
 
 
 # ---- the barrier ---------------------------------------------------------
@@ -606,7 +623,7 @@ def test_because_resolves_against_the_effective_graph(run_cli, both):
                   "--area", "Alpha", "--because", "D20")
     assert res.exit_code == 0, res.output
     assert run_cli("apply").exit_code == 0
-    assert TaskGraph.load(both / "tasks.json").tasks["T20"].because == "D20"
+    assert TaskGraph.load(both / "tasks.json").tasks["T20"].because == ["D20"]
 
 
 def test_because_refuses_an_unknown_decision(run_cli):
@@ -899,7 +916,7 @@ def test_a_batch_is_never_judged_against_one_that_will_not_apply(both, direction
         (both / "decisions.json").write_text(json.dumps(raw, indent=2))
         tg = TaskGraph.load(both / "tasks.json")
         tg.tasks["T05"] = Task(id="T05", title="the spike", area="Beta",
-                               status="TODO", because="D07",
+                               status="TODO", because=["D07"],
                                evidence_for="D08")   # D07 -> T05 -> D08
         tg.save(both / "tasks.json")
         _render(both)
@@ -938,7 +955,7 @@ def test_a_batch_that_needs_the_other_one_still_applies(both):
            [{"op": "set_link", "task": "T04", "because": "D09"}])
 
     assert _apply_both(both) == {"decisions": 1, "tasks": 1}
-    assert TaskGraph.load(both / "tasks.json").tasks["T04"].because == "D09"
+    assert TaskGraph.load(both / "tasks.json").tasks["T04"].because == ["D09"]
     from dgraph import check
     assert [str(v) for v in check.run() if v.blocking] == []
 
@@ -1035,7 +1052,7 @@ def test_the_stage_time_warning_does_not_cry_over_a_decision_being_staged(run_cl
     assert res.exit_code == 0
     assert "would currently refuse" not in res.output
     assert _apply_both(both) == {"decisions": 1, "tasks": 1}
-    assert TaskGraph.load(both / "tasks.json").tasks["T04"].because == "D09"
+    assert TaskGraph.load(both / "tasks.json").tasks["T04"].because == ["D09"]
 
 
 def test_the_stage_time_warning_still_fires_when_nothing_will_fix_it(run_cli, both):

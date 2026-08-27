@@ -28,7 +28,7 @@ from dgraph.violation import Violation, cycle_from
 
 def rests_on(tg: TaskGraph, did: str) -> list[str]:
     """The tasks that exist because of this decision. The derived reverse."""
-    return sorted(t.id for t in tg.tasks.values() if t.because == did)
+    return sorted(t.id for t in tg.tasks.values() if did in t.because)
 
 
 def evidence(tg: TaskGraph, did: str) -> list[str]:
@@ -141,17 +141,16 @@ def refuse_close(tg: TaskGraph | None, did: str, owner: str | None,
 def gated_by(tg: TaskGraph, g: Graph, tid: str) -> str | None:
     """The decision this task waits on, if it is waiting on one.
 
-    `None` when the task names no premise *or* the premise is already settled —
+    `None` when the task names no premise *or* every premise is already settled —
     the question every caller actually has is "is this work startable?", not
-    "does this link exist". A `because` naming an unknown decision is skipped
-    rather than returned, for the reason `Graph.depends` documents: a traversal
-    helper that trusts ids crashes the validator that was about to report the
-    dangling reference.
+    "does this link exist". An unknown premise is skipped rather than returned,
+    for the reason `Graph.depends` documents: a traversal helper that trusts ids
+    crashes the validator that was about to report the dangling reference.
     """
-    because = tg.tasks[tid].because
-    if not because or because not in g.vertices:
-        return None
-    return None if g.vertices[because].settled else because
+    for did in tg.tasks[tid].because:
+        if did in g.vertices and not g.vertices[did].settled:
+            return did
+    return None
 
 
 def ready(tg: TaskGraph, g: Graph, tid: str) -> bool:
@@ -168,17 +167,18 @@ def task_link(tg: TaskGraph, g: Graph, tid: str) -> dict:
     to prevent. Callers get the ids from here and never read `Task.because`
     themselves.
 
-    `premise` is the `because` decision *that exists*; `dangling` says the link
-    names one that does not, which is a different fact from having no link and
-    is what `dg check` will report.
+    `premise` is the first `because` decision *that exists* — a single id, kept
+    as one for the readers that render a chain off one premise; `dangling` says
+    any link names one that does not, which is a different fact from having no
+    link and is what `dg check` will report.
     """
     t = tg.tasks[tid]
-    resolves = bool(t.because) and t.because in g.vertices
+    resolving = [did for did in t.because if did in g.vertices]
     return {
-        "because": t.because,
+        "because": list(t.because),
         "evidence_for": t.evidence_for,
-        "premise": t.because if resolves else None,
-        "dangling": bool(t.because) and not resolves,
+        "premise": resolving[0] if resolving else None,
+        "dangling": bool(t.because) and len(resolving) < len(t.because),
         "gated_by": gated_by(tg, g, tid),
         "ready": ready(tg, g, tid),
         "unfinished": t.unfinished,
@@ -278,7 +278,7 @@ def blast_radius(tg: TaskGraph, dids: list[str]) -> list[str]:
     """
     wanted = set(dids)
     return sorted(t.id for t in tg.tasks.values()
-                  if t.because in wanted and t.unfinished)
+                  if any(p in wanted for p in t.because) and t.unfinished)
 
 
 #: The decision statuses that mean "this answer is being re-examined". A task
@@ -297,14 +297,15 @@ def under_review(tg: TaskGraph, g: Graph) -> list[dict]:
     """
     out = []
     for tid in tg.frontier():
-        because = tg.tasks[tid].because
-        if not because or because not in g.vertices:
-            continue
-        premise = g.vertices[because]
-        if premise.base_status in UNDER_REVIEW:
-            out.append({"id": tid, "title": tg.tasks[tid].title,
-                        "status": tg.tasks[tid].status,
-                        "because": because, "premise_status": premise.status})
+        t = tg.tasks[tid]
+        for did in t.because:
+            if did not in g.vertices:
+                continue
+            premise = g.vertices[did]
+            if premise.base_status in UNDER_REVIEW:
+                out.append({"id": tid, "title": t.title,
+                            "status": t.status,
+                            "because": did, "premise_status": premise.status})
     return out
 
 
@@ -581,8 +582,9 @@ def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
     for tid in tg.tasks:
         adj.setdefault(tid, []).extend(tg.unblocks(tid))
     for tid, t in tg.tasks.items():
-        if t.because and t.because in g.vertices:
-            adj.setdefault(t.because, []).append(tid)
+        for did in t.because:
+            if did in g.vertices:
+                adj.setdefault(did, []).append(tid)
         if t.evidence_for and t.evidence_for in g.vertices:
             adj.setdefault(tid, []).append(t.evidence_for)
     # Sorted, so the walk depends on what the graphs *are* and not on the order
@@ -867,17 +869,21 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
 
     for tid in sorted(tg.tasks):
         t = tg.tasks[tid]
-        for fld in ("because", "evidence_for"):
-            ref = getattr(t, fld)
-            if ref and ref not in g.vertices:
+        for did in t.because:
+            if did not in g.vertices:
                 v.append(Violation(
                     "link_resolves",
-                    f"{tid}: {fld} names unknown decision {ref}",
+                    f"{tid}: because names unknown decision {did}",
                 ))
-        if t.because and t.because == t.evidence_for:
+        if t.evidence_for and t.evidence_for not in g.vertices:
+            v.append(Violation(
+                "link_resolves",
+                f"{tid}: evidence_for names unknown decision {t.evidence_for}",
+            ))
+        if t.evidence_for and t.evidence_for in t.because:
             v.append(Violation(
                 "link_acyclic",
-                f"{tid}: because and evidence_for both name {t.because} — a "
+                f"{tid}: because and evidence_for both name {t.evidence_for} — a "
                 f"task cannot rest on the answer it exists to produce. Split "
                 f"the decision: one question settled cheaply now, another "
                 f"settled by this evidence.",

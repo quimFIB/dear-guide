@@ -407,8 +407,8 @@ def dual(store, task_store, g):
     from dgraph.tasks import TaskGraph
     render.write(g, store / "decision-graph.md")
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T01"].because = "D01"      # DONE, premise settled
-    tg.tasks["T03"].because = "D05"      # TODO, premise OPEN — gated
+    tg.tasks["T01"].because = ["D01"]      # DONE, premise settled
+    tg.tasks["T03"].because = ["D05"]      # TODO, premise OPEN — gated
     tg.tasks["T04"].evidence_for = "D05"
     tg.save(task_store / "tasks.json")
     task_render.write(tg, task_store / "tasks.md")
@@ -439,7 +439,7 @@ def test_readiness_in_the_payload_accounts_for_the_premise(srv, dual):
     the only module that may look at both."""
     _, body = jreq(srv, "/api/tasks")
     c = body["derived"]["T03"]["cross"]
-    assert c["premise"] == "D05" and c["gated_by"] == "D05"
+    assert c["premise"] == ["D05"] and c["gated_by"] == "D05"
     assert c["premise_status"] == "OPEN" and c["ready"] is False
 
 

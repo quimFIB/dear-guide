@@ -36,9 +36,9 @@ def both(store, task_store, g):
     """One directory holding both stores, the tasks pointing at real decisions."""
     write(g)
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T01"].because = "D01"      # DONE, premise settled
-    tg.tasks["T02"].because = "D04"      # TODO, premise settled, deep chain
-    tg.tasks["T03"].because = "D05"      # TODO, premise OPEN
+    tg.tasks["T01"].because = ["D01"]      # DONE, premise settled
+    tg.tasks["T02"].because = ["D04"]      # TODO, premise settled, deep chain
+    tg.tasks["T03"].because = ["D05"]      # TODO, premise OPEN
     tg.tasks["T04"].evidence_for = "D05"  # DOING, will settle D05
     tg.save(task_store / "tasks.json")
     return task_store
@@ -143,7 +143,7 @@ def test_org_prose_is_converted_the_way_the_view_converts_it(store):
 
 def test_a_task_pulls_in_its_premise_and_that_premise_s_whole_chain(both):
     d = context.data(project.find(), "T02")
-    assert d["kind"] == "task" and d["because"] == "D04"
+    assert d["kind"] == "task" and d["because"] == ["D04"]
     assert d["premise"]["id"] == "D04"
     # D04's own chain, not just D04: that is the part a fresh context lacks.
     assert [p["id"] for p in d["chain"]] == ["D01", "D02"]
@@ -160,7 +160,7 @@ def test_a_task_with_no_premise_says_nothing_can_go_stale(both):
     tg.tasks["T04"].evidence_for = None
     tg.save()
     d = context.data(project.find(), "T04")
-    assert d["because"] is None
+    assert d["because"] == []
     assert "no premise" in d["verdict"]
 
 
@@ -175,10 +175,10 @@ def test_evidence_work_is_reported_from_the_decision_s_side_too(both):
 
 def test_a_dangling_premise_is_named_not_hidden(both):
     tg = TaskGraph.load()
-    tg.tasks["T01"].because = "D99"
+    tg.tasks["T01"].because = ["D99"]
     tg.save()
     d = context.data(project.find(), "T01")
-    assert d["premise"] is None and d["because"] == "D99"
+    assert d["premise"] is None and d["because"] == ["D99"]
     assert "dangling" in d["verdict"]
 
 

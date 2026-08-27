@@ -59,7 +59,7 @@ def both(store, task_store):
     left bare, which is what most work looks like.
     """
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T01"].because = "D01"
+    tg.tasks["T01"].because = ["D01"]
     tg.save(task_store / "tasks.json")
     return task_store
 
@@ -266,7 +266,7 @@ def test_work_can_be_linked_to_a_decision_that_is_only_staged(srv, both):
     code, res = post(srv, "/api/add-task", {
         "id": "T07", "title": "measure it", "area": "Alpha", "because": "D07"})
     assert code == 200, res
-    assert bare(res["staged"])[0]["because"] == "D07"
+    assert bare(res["staged"])[0]["because"] == ["D07"]
 
 
 def test_the_browser_refuses_the_task_the_command_refuses(srv, both):
@@ -552,8 +552,8 @@ REL_CASES = [
         "/api/task-dep", {"verb": "link", "id": "T04", "because": "D01"},
         ["task", "link", "T04", "--because", "D01"], "task", id="link"),
     pytest.param(
-        "/api/task-dep", {"verb": "unlink", "id": "T01", "because": True},
-        ["task", "unlink", "T01", "--because"], "task", id="unlink"),
+        "/api/task-dep", {"verb": "unlink", "id": "T01", "because": "D01"},
+        ["task", "unlink", "T01", "--because", "D01"], "task", id="unlink"),
 ]
 
 

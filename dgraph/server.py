@@ -967,7 +967,8 @@ class Handler(BaseHTTPRequestHandler):
                 after=[x for x in (body.get("after") or []) if x],
                 discovered_during=[x for x in
                                    (body.get("discovered_during") or []) if x],
-                because=(body.get("because") or "").strip() or None,
+                because=[x.strip() for x in
+                         (body.get("because") or "").split(",") if x.strip()],
                 evidence_for=(body.get("evidence_for") or "").strip() or None,
                 note=(body.get("note") or "").strip() or None,
                 stored=tg)
@@ -1205,12 +1206,13 @@ class Handler(BaseHTTPRequestHandler):
         elif verb == "link":
             ops = task_pending.compose_link(
                 eff, g, tid=tid,
-                because=(body.get("because") or "").strip() or None,
+                because=[x.strip() for x in
+                         (body.get("because") or "").split(",") if x.strip()],
                 evidence_for=(body.get("evidence_for") or "").strip() or None)
             said = []
         else:
             ops, was = task_pending.compose_unlink(
-                eff, tid=tid, because=bool(body.get("because")),
+                eff, tid=tid, because=(body.get("because") or "").strip() or None,
                 evidence_for=bool(body.get("evidence_for")))
             said = [f"{tid} unlinked from {', '.join(was)}"]
             said += _released_note(eff, g, ops)
@@ -1256,7 +1258,7 @@ class Handler(BaseHTTPRequestHandler):
                                        (body.get("discovered_during") or []) if x])
             else:
                 ops, _ = task_pending.compose_unlink(
-                    eff, tid=tid, because=bool(body.get("because")),
+                    eff, tid=tid, because=(body.get("because") or "").strip() or None,
                     evidence_for=bool(body.get("evidence_for")))
         except pending.ApplyError as exc:
             return self._json({"error": str(exc)}, 400)

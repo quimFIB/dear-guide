@@ -91,9 +91,10 @@ unused one), a title, an area, a status and what it rests on. Choosing
 an *edge*, because a block is a dependency and dependency is the edge list.
 
 A new task takes what `dg task add` takes, including the two links into the
-decision store: **because** — the one decision this work exists for — and
-**evidence for** — the one decision it will inform. Each is a single link per
-task, so linking a task to a second decision of either kind is refused with a
+decision store: **because** — the decisions (plural) this work exists for — and
+**evidence for** — the one decision it will inform. A task rests on several
+premises at once, so linking adds one to the set; `evidence for` is a single
+slot, so linking a task to a second of that kind is refused with a
 suggestion to unlink the first; work that bears on several is kept as sibling
 tasks. Both offer decisions that are
 only *staged*, so a question recorded a minute ago can already be linked to.

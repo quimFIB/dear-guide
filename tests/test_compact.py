@@ -41,9 +41,9 @@ def both(store, task_store, g):
     """One directory holding both stores, the tasks pointing at real decisions."""
     write(g)
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T01"].because = "D01"
-    tg.tasks["T02"].because = "D04"
-    tg.tasks["T03"].because = "D05"
+    tg.tasks["T01"].because = ["D01"]
+    tg.tasks["T02"].because = ["D04"]
+    tg.tasks["T03"].because = ["D05"]
     tg.tasks["T04"].evidence_for = "D05"
     tg.save(task_store / "tasks.json")
     return task_store

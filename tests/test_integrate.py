@@ -334,7 +334,7 @@ def test_the_cross_store_guard_is_wired_and_not_merely_silent(two_writers):
     # A task pointing at a decision no side has: the one thing neither store
     # can notice alone.
     tg = TaskGraph.load(root / "tasks.json")
-    tg.tasks["T50"].because = "D99"
+    tg.tasks["T50"].because = ["D99"]
     tg.save(root / "tasks.json")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "dangling")

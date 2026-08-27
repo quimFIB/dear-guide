@@ -341,15 +341,15 @@ def test_a_link_can_be_removed(run_cli, task_store):
     """The undo `dg task link` never had. Without it a link recorded against
     the wrong decision could only be fixed by hand-editing tasks.json."""
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T02"].because = "D01"
+    tg.tasks["T02"].because = ["D01"]
     tg.save(task_store / "tasks.json")
-    assert run_cli("task", "unlink", "T02", "--because").exit_code == 0
+    assert run_cli("task", "unlink", "T02", "--because", "D01").exit_code == 0
     assert run_cli("apply").exit_code == 0
-    assert TaskGraph.load(task_store / "tasks.json").tasks["T02"].because is None
+    assert TaskGraph.load(task_store / "tasks.json").tasks["T02"].because == []
 
 
 def test_unlinking_what_is_not_linked_is_refused(run_cli):
-    res = run_cli("task", "unlink", "T02", "--because")
+    res = run_cli("task", "unlink", "T02", "--because", "D01")
     assert res.exit_code == 1 and "no --because" in res.output
 
 
@@ -509,7 +509,7 @@ def test_the_view_names_the_decisions_a_task_is_linked_to(task_store):
     committed, human-readable view."""
     from dgraph import task_render
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T02"].because = "D01"
+    tg.tasks["T02"].because = ["D01"]
     tg.tasks["T02"].evidence_for = "D05"
     text = task_render.render(tg)
     assert "**Because:** D01" in text and "**Evidence for:** D05" in text
@@ -522,7 +522,7 @@ def test_the_view_does_not_claim_readiness_it_cannot_judge(task_store):
     task`, which joins both, disagreed."""
     from dgraph import task_render
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T02"].because = "D01"
+    tg.tasks["T02"].because = ["D01"]
     text = task_render.render(tg)
     assert "nothing outstanding *in this graph* before them" in text
     assert "cannot see the decision store" in text
@@ -940,7 +940,7 @@ def test_an_independently_justified_orphan_is_quiet(tg):
     tg.edges.append(TaskEdge(src="T04", to=["T02"], kind="prompted"))
     _drop(tg, "T04")
     assert [v for v in tg.validate() if v.check == "orphaned_by_drop"]
-    tg.tasks["T02"].because = "D01"
+    tg.tasks["T02"].because = ["D01"]
     assert not [v for v in tg.validate() if v.check == "orphaned_by_drop"]
 
 

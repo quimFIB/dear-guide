@@ -43,7 +43,7 @@ def both(store, task_store, g):
     """Both stores in one directory, linked the way a real project links them."""
     write(g)
     tg = TaskGraph.load(task_store / "tasks.json")
-    tg.tasks["T02"].because = "D05"        # premise still OPEN: gated
+    tg.tasks["T02"].because = ["D05"]     # premise still OPEN: gated
     tg.tasks["T03"].evidence_for = "D05"   # a spike feeding that question
     tg.save(task_store / "tasks.json")
     return task_store

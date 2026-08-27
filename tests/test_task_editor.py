@@ -349,7 +349,7 @@ def test_a_premise_staged_but_not_applied_is_still_a_premise(
     res = run_cli("task", "add", "--edit")
     assert res.exit_code == 0, res.output
     assert [o for o in tray(task_store) if o["op"] == "add_task"][0][
-        "because"] == "D07"
+        "because"] == ["D07"]
 
 
 def test_the_buffer_lists_a_question_that_is_only_staged(

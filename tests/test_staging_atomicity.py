@@ -46,7 +46,7 @@ def both_stores(tmp_path, monkeypatch):
     tasks = json.loads(json.dumps(TASK_FIXTURE))
     for t in tasks["tasks"]:
         if t["id"] in ("T01", "T02"):
-            t["because"] = "D01"
+            t["because"] = ["D01"]
     (tmp_path / "tasks.json").write_text(json.dumps(tasks, indent=2),
                                          encoding="utf-8")
     monkeypatch.setattr(project, "_override", tmp_path)
@@ -117,7 +117,7 @@ CASES = [
     ([], ("task", "park", "T02", "-w", "stuck upstream")),
     ([], ("task", "done", "T02", "-o", "out")),
     ([], ("task", "link", "T02", "--evidence-for", "D05")),
-    ([], ("task", "unlink", "T01", "--because")),
+    ([], ("task", "unlink", "T01", "--because", "D01")),
     ([], ("task", "amend", "T02", "--title", "reworded")),
     ([], ("task", "rm", "T03", "--yes")),
 ]
