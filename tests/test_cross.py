@@ -465,6 +465,34 @@ def test_link_needs_something_to_link(run_cli):
     assert run_cli("task", "link", "T02").exit_code == 2
 
 
+def test_relinking_a_task_to_a_second_decision_is_refused(run_cli, both):
+    """A task informs one decision by design, so a second `--evidence-for`
+    must not silently erase the first. Refuse instead, and say the correction:
+    unlink the one it has, then link the one it wants."""
+    assert run_cli("task", "link", "T02", "--evidence-for", "D05").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert TaskGraph.load(both / "tasks.json").tasks["T02"].evidence_for == "D05"
+
+    res = run_cli("task", "link", "T02", "--evidence-for", "D04")
+    assert res.exit_code == 1, res.output
+    assert "informs D05, not D04" in res.output
+    assert "dg task unlink T02 --evidence-for" in res.output
+    assert "dg task link T02 --evidence-for D04" in res.output
+    # ...and the first link is untouched
+    assert TaskGraph.load(both / "tasks.json").tasks["T02"].evidence_for == "D05"
+
+
+def test_because_also_refuses_to_swing_to_a_second_decision(run_cli, both):
+    """A task rests on one decision by design, so a second `--because` must not
+    silently erase the first. Refuse the same way `--evidence-for` does."""
+    res = run_cli("task", "link", "T03", "--because", "D04")
+    assert res.exit_code == 1, res.output
+    assert "depends on D05, not D04" in res.output
+    assert "dg task unlink T03 --because" in res.output
+    assert "dg task link T03 --because D04" in res.output
+    assert TaskGraph.load(both / "tasks.json").tasks["T03"].because == "D05"
+
+
 # ---- the barrier ---------------------------------------------------------
 
 
@@ -710,7 +738,11 @@ def test_a_pre_existing_violation_does_not_freeze_either_store(run_cli, both):
     assert run_cli("add", "--id", "D20", "-t", "Somewhere to re-point",
                    "--area", "Alpha").exit_code == 0
     assert run_cli("apply").exit_code == 0
-    # ...and the repair applies, leaving the join valid again.
+    # ...and the repair applies, leaving the join valid again. The fix is two
+    # steps under the no-silent-overwrite rule: unlink the decision it has,
+    # then link the one it wants.
+    assert run_cli("task", "unlink", "T04", "--evidence-for").exit_code == 0
+    assert run_cli("apply").exit_code == 0
     assert run_cli("task", "link", "T04", "--evidence-for", "D20").exit_code == 0
     assert run_cli("apply").exit_code == 0
     assert not [v for v in run() if v.blocking]

@@ -433,6 +433,22 @@ def compose_link(tg: TaskGraph, g: Graph | None, *, tid: str,
         if did not in g.vertices:
             raise ApplyError(f"unknown decision {did}\n"
                              f"`dg show` lists what is on the frontier")
+        # A task records the one decision it exists because of, and the one it
+        # informs -- a strict one, by design. Neither is an override site:
+        # silently re-pointing a link is how work walks away from a premise,
+        # and evidence walks away from a question, without anybody deciding it.
+        # Refuse a link onto a different decision and say the correction, rather
+        # than letting the second link erase the first.
+        current = getattr(tg.tasks[tid], field)
+        if current and current != did:
+            verb = "depends on" if field == "because" else "informs"
+            flag = "--" + field.replace("_", "-")
+            raise ApplyError(
+                f"{tid} {verb} {current}, not {did}\n"
+                f"a task holds one {field.replace('_', ' ')} link, so move it "
+                f"across (unlink {current}, then link {did}):\n"
+                f"  dg task unlink {tid} {flag}\n"
+                f"  dg task link {tid} {flag} {did}")
         op[field] = did
     return [op]
 

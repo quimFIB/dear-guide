@@ -631,9 +631,11 @@ both alike would assert the ordering the second kind exists to avoid asserting.
 ### What linking the two graphs buys
 
 One optional field ties them: `--because D01` says *this work exists because of
-that answer*. It is stored on the task and derived the other way, so
-`decisions.json` never mentions a task and a change to it still always means a
-decision changed.
+that answer*. A task holds one such link — the one decision it exists because
+of — the same way it holds one `--evidence-for`; work resting on a second
+premise is kept as a sibling task linked to it. The link is stored on the task
+and derived the other way, so `decisions.json` never mentions a task and a
+change to it still always means a decision changed.
 
 Now go back to the moment the crawl lands at 48M vectors:
 

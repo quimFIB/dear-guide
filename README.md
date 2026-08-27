@@ -95,11 +95,13 @@ the point:
 
 ### The one seam
 
-A task may name the decision it exists **`because`** of, and the decision its
-outcome will be **`evidence_for`**. Opposite polarity: the first makes the work
-wait on the answer, the second makes the answer wait on the work. Nothing else
-crosses — `decisions.json` never mentions a task, so a change to it always means
-a decision changed.
+A task may name **the one** decision it exists **`because`** of, and **the one**
+decision its outcome will be **`evidence_for`** — a single link of each kind per
+task; a task resting on or informing a second decision is kept as a sibling task
+linked to it. Opposite polarity: the first makes the work wait on the answer,
+the second makes the answer wait on the work. Nothing else crosses —
+`decisions.json` never mentions a task, so a change to it always means a
+decision changed.
 
 That one link is what lets `dg` answer the question neither store can answer
 alone: *is this work still resting on something we believe?* Reopen a decision
