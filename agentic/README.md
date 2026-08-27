@@ -207,13 +207,16 @@ dg agent list        # who holds what, and what each has staged
 ```
 
 ```sh
-DG_AGENT=$(dg agent claim) claude -p "$(cat your-prompt.md)"      # Claude Code
-DG_AGENT=$(dg agent claim) opencode run "$(cat your-prompt.md)"   # opencode
+DG_AGENT=$(dg agent claim) claude -p "$(cat agentic/prompts/scout.md)"      # Claude Code
+DG_AGENT=$(dg agent claim) opencode run "$(cat agentic/prompts/scout.md)"   # opencode
 ```
 
-There is no prompt shipped here to point at: what an agent should be told
-depends on what the fan-out is for, and the four things below are the spec
-rather than a template. `your-prompt.md` is yours to write.
+`agentic/prompts/scout.md` is a **template, not a prompt** — the four things
+below with every project-specific part left as `⟨…⟩`. What an agent should be
+told depends on what the fan-out is for, so the blanks are the work; running it
+unfilled gets you an agent that has been told nothing. `orchestrator.md` beside
+it is the same for an agent that spawns and watches rather than works.
+`RUNNING.md` is the whole procedure end to end.
 
 `DG_DECIDE` is the other half of the launch, and the table at the top of this
 file is what the values mean. Set it here rather than trusting the prompt: an

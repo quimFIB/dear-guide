@@ -304,9 +304,9 @@ def test_every_agent_name_in_the_prose_is_one_the_tool_can_hand_out():
     """
     pool, adjectives = set(agents.sequence()), set(agents.ADJECTIVES)
     root = pathlib.Path(__file__).resolve().parent.parent
-    pages = [root / "agentic" / "README.md", root / "commands" / "fanout.md",
-             root / "README.md", root / "skills" / "dear-guide" / "SKILL.md",
-             *(root / "docs").glob("*.md")]
+    pages = [root / "commands" / "fanout.md", root / "README.md",
+             root / "skills" / "dear-guide" / "SKILL.md",
+             *(root / "agentic").rglob("*.md"), *(root / "docs").glob("*.md")]
     context = re.compile(r"--agent\b|DG_AGENT|\bagent (claim|list|release|prune)\b")
     bad = []
     for page in pages:
