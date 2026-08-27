@@ -22,6 +22,7 @@ about the two ways "taken" is bigger than the lease file.
 from __future__ import annotations
 
 import json
+import pathlib
 import re
 import subprocess
 import threading
@@ -278,3 +279,44 @@ def test_the_lease_file_is_ignored_by_git(proj, run):
                              capture_output=True, text=True).stdout
 
     assert agents.AGENTS_NAME not in tracked, tracked
+
+
+def test_every_agent_name_in_the_prose_is_one_the_tool_can_hand_out():
+    """A name in a doc is an example somebody will copy into `--agent`.
+
+    `agentic/README.md` used `brisk-frege` in three places. `frege` is a
+    logician, and `dgraph/agents.py` argues at length for *things rather than
+    people* — "a writer here is a role for an afternoon and not a tribute" — so
+    the allocator can never produce it. The example contradicted the design
+    decision it was illustrating, and `dg pending --agent brisk-frege` would
+    match nothing in any project.
+
+    Checked against `sequence()` rather than a word list, so this cannot drift
+    from what allocation actually does.
+
+    **Scoped to names presented as agent values** — a line naming `--agent`,
+    `$DG_AGENT` or an `agent` subcommand. `<adjective>-<word>` on its own is far
+    too wide: `still-open` and `exact-search` are ordinary English whose first
+    half happens to be in `ADJECTIVES`, and a check that flagged those is one
+    somebody switches off. The cost is that a name in bare prose, away from any
+    command, is not covered; the benefit is that this fails only on something
+    that is genuinely wrong.
+    """
+    pool, adjectives = set(agents.sequence()), set(agents.ADJECTIVES)
+    root = pathlib.Path(__file__).resolve().parent.parent
+    pages = [root / "agentic" / "README.md", root / "commands" / "fanout.md",
+             root / "README.md", root / "skills" / "dear-guide" / "SKILL.md",
+             *(root / "docs").glob("*.md")]
+    context = re.compile(r"--agent\b|DG_AGENT|\bagent (claim|list|release|prune)\b")
+    bad = []
+    for page in pages:
+        if not page.exists():
+            continue
+        for i, line in enumerate(page.read_text(encoding="utf-8").splitlines(), 1):
+            if not context.search(line):
+                continue
+            for tok in re.findall(r"\b[a-z]+-[a-z]+\b", line):
+                if tok.split("-")[0] in adjectives and tok not in pool:
+                    bad.append(f"{page.relative_to(root)}:{i} {tok}")
+    assert not bad, ("names the allocator cannot produce:\n  "
+                     + "\n  ".join(bad))

@@ -207,9 +207,13 @@ dg agent list        # who holds what, and what each has staged
 ```
 
 ```sh
-DG_AGENT=$(dg agent claim) claude -p "$(cat prompts/scout.md)"   # Claude Code
-DG_AGENT=$(dg agent claim) opencode run "$(cat prompts/scout.md)"   # opencode
+DG_AGENT=$(dg agent claim) claude -p "$(cat your-prompt.md)"      # Claude Code
+DG_AGENT=$(dg agent claim) opencode run "$(cat your-prompt.md)"   # opencode
 ```
+
+There is no prompt shipped here to point at: what an agent should be told
+depends on what the fan-out is for, and the four things below are the spec
+rather than a template. `your-prompt.md` is yours to write.
 
 `DG_DECIDE` is the other half of the launch, and the table at the top of this
 file is what the values mean. Set it here rather than trusting the prompt: an
@@ -254,9 +258,9 @@ Each prompt should carry four things:
 
 ```sh
 dg pending                       # the roster: who proposed what, across both trays
-dg pending --agent brisk-frege   # one agent's proposal, alone
+dg pending --agent brisk-beacon   # one agent's proposal, alone
 dg serve                         # ...or as a graph, with staging applied
-dg apply --agent brisk-frege     # take this one
+dg apply --agent brisk-beacon     # take this one
 dg clear --agent agile-azimuth   # turn that one down — the others are untouched
 ```
 
@@ -304,7 +308,7 @@ stage time, before an answer, a source and a falsifier have been composed:
 
 ```
 ✗ nothing staged — $DG_DECIDE=evidence: nothing is `--evidence-for D07`, so
-there is no measurement for brisk-frege to be recording. Link the work that
+there is no measurement for brisk-beacon to be recording. Link the work that
 bears on it — `dg task link <id> --evidence-for D07` — or leave the question
 open for a person
 ```
