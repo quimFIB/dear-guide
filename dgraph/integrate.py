@@ -743,10 +743,12 @@ def held(root=None, *, wait: float = 5.0):
     splitting one, adopting the contribution, discarding it — and none of them
     held anything. Two writers therefore lost each other's work the way the
     trays used to before `pending.held`, except that what is lost here is worse:
-    this file holds the class of conflict `consistency-policy-proposal.md`
-    reserves for a person (*"Class H — semantic. Always ask, and ask well"*), so
-    a lost write is a lost human judgement, and both writers were told they had
-    settled it. Audit W-F1.
+    this file holds the one class of conflict that is never resolved by a rule.
+    Two writers each settled the same question a different way — a disagreement
+    about what is *true*, not about what a merge should do — and the only honest
+    resolution is to put it to a person and ask well. So a lost write here is a
+    lost human judgement, and both writers were told they had settled it.
+    Audit W-F1.
 
     `wait` is longer than a tray's because adopting stages into both trays while
     holding this, and shorter than an apply's because nothing here validates or

@@ -428,9 +428,10 @@ def contested(proj):
     one: `integrate.plan` over ours/base/theirs, then `save_incoming`.
 
     Base has `D05` OPEN. This store settles it one way and the arriving side
-    settles it another, which is `one_active_edge` — the conflict
-    `consistency-policy-proposal.md` files under *Class H — semantic. Always ask,
-    and ask well.*
+    settles it another, which is `one_active_edge` — a *semantic* conflict, the
+    class that is always put to a person rather than resolved by a rule, because
+    the two sides disagree about what is true and no merge strategy can know
+    which is right.
     """
     base_g = Graph.load(proj.store)
     base_tg = TaskGraph.load(proj.tasks)
@@ -440,8 +441,14 @@ def contested(proj):
 
         `pending.expand` derives the group a `close` implies — here the release
         of `D06`, which is `BLOCKED:D05` — so the side is valid because the tool
-        refused anything else, which is `consistency-policy.md` § *Method*'s rule
-        for building one of these.
+        refused anything else.
+
+        Driven through the real op path rather than hand-written, and that is the
+        method rather than a convenience: an integration conflict is only worth
+        testing if **each side was individually correct**, so that the damage
+        appears at integration and nowhere earlier. A fixture that hand-wrote the
+        JSON could produce a side that was already invalid, and proving two
+        broken stores conflict proves nothing.
         """
         g = Graph.load(proj.store)
         op = {"op": "close", "vertex": "D05", "answer": answer,

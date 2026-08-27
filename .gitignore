@@ -1,3 +1,11 @@
+# The private working notes, reached from here by symlink. **No trailing
+# slash**: `/dev-docs/` matches directories only and a symlink is not one, so
+# the rule silently stopped matching and git offered the link for commit — one
+# `git add -A` from publishing a pointer into a private repo. It has lived in
+# `.git/info/exclude` until now, which is not committed and does not survive a
+# clone, so the protection existed only on the machine that first hit this.
+/dev-docs
+
 __pycache__/
 *.pyc
 *.elc

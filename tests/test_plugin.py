@@ -909,3 +909,67 @@ def test_dist_matches_the_packaging_name():
     root = Path(__file__).resolve().parent.parent
     meta = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     assert dgraph.DIST == meta["project"]["name"]
+
+
+def test_nothing_published_cites_a_document_only_the_private_notes_hold():
+    """The pointing between this repo and the working notes is **one-way**.
+
+    `dev-docs/` is a separate, private repository, symlinked in. It may cite this
+    tree freely — `CAPTURE-MECHANISM.md` pins thirty-five citations to a tag here
+    — because anyone who can read it can read this. The reverse does not hold: a
+    comment here naming `consistency-policy-proposal.md` sends a reader to a file
+    that, for them, does not exist.
+
+    Not a secrecy rule — a filename discloses nothing. It is a dangling-reference
+    rule, and the remedy is the one the notes themselves prescribe: state the
+    reasoning outright. Three docstrings carried the pointer instead, and each was
+    carrying real substance behind it — a conflict classification, a rule about
+    how a fixture must be built — which is exactly why the pointer looked
+    sufficient.
+
+    Finding ids are deliberately **not** caught: `W-F1`, `C-F16` and the rest are
+    bare handles that name no file, they are long-standing practice here, and a
+    reader who cannot resolve one has lost nothing but a cross-reference.
+    """
+    root = Path(__file__).resolve().parent.parent
+    private = re.compile(
+        r"\b(FINDINGS|TASKS|AUDIT-PROMPT|MULTI-WRITER|CAPTURE-MECHANISM"
+        r"|consistency-policy(?:-proposal)?)\.md\b")
+    tracked = subprocess.run(["git", "-C", str(root), "ls-files"],
+                             capture_output=True, text=True).stdout.split()
+    bad = []
+    for rel in tracked:
+        # This file states the rule, so it has to name what the rule forbids.
+        # Exempting it is not a loophole worth closing: a citation smuggled in
+        # here would sit inside the test that exists to ban citations, which is
+        # not somewhere a pointer gets added by accident.
+        if rel == "tests/test_plugin.py":
+            continue
+        f = root / rel
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if private.search(line):
+                bad.append(f"{rel}:{i}  {line.strip()[:70]}")
+    assert not bad, (
+        "published files citing a document only `dev-docs/` holds — state the "
+        "reasoning inline instead:\n  " + "\n  ".join(bad))
+
+
+def test_the_private_notes_symlink_is_ignored_by_a_committed_rule():
+    """`.git/info/exclude` is not committed and does not survive a clone.
+
+    The rule lived there, so the protection existed only on the machine that
+    first needed it. And it must have **no trailing slash**: `/dev-docs/` matches
+    directories only, a symlink is not one, so the rule silently stops matching
+    and git offers the link for commit — one `git add -A` from publishing a
+    pointer into a private repository.
+    """
+    root = Path(__file__).resolve().parent.parent
+    rules = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "/dev-docs" in [r.strip() for r in rules], \
+        ".gitignore must carry `/dev-docs` — see the comment above it"
+    assert "/dev-docs/" not in [r.strip() for r in rules], \
+        "a trailing slash makes the rule match directories only, and a symlink is not one"
