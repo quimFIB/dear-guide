@@ -164,17 +164,26 @@ useless entries:
 - **Anything with `--edit` is not recorded either.** Same exemption, less
   obvious: `dg decide --edit` and the compose buffer write nothing to the log.
 
-Check it before you rely on it:
+Check it before you rely on it — and check **`cwd`**, not the tray:
 
 ```sh
 python3 -c "
-import json
-for l in open('.dgraph-capture/dg.jsonl'):
-    e = json.loads(l)
-    print(e['agent'], e['argv'][:3], 'tray:',
-          'NULL — wrong directory' if e['tray'] is None
-          else f\"{len(json.loads(e['tray']))} op(s)\")"
+import json, os
+root = os.getcwd()
+rows = [json.loads(l) for l in open('.dgraph-capture/dg.jsonl')]
+astray = [r for r in rows if r['cwd'] != root]
+print(f'{len(rows)} entries, {len(astray)} recorded from the wrong directory')
+for r in astray[:5]:
+    print('  ✗', r['cwd'], r['argv'][:3])
+print('agents:', {r['agent'] for r in rows})"
 ```
 
-Every line should name an agent and a tray. A column of `NULL` means the
-capture recorded nothing worth keeping.
+**A null tray is not the fault**, and this is the trap: `.dgraph-pending.json`
+does not exist while nothing is staged, so a healthy capture is full of
+`"tray": null` — every read taken between applies has one. The broken case looks
+identical in that field and differs only in `cwd`, which the wrapper records on
+every entry. Compare that against the project root and the two separate cleanly.
+
+What you want to see: zero entries from the wrong directory, and every agent you
+launched present in the roster. A name missing there means that agent never
+reached `dg` at all.
