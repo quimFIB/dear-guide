@@ -21,8 +21,8 @@ NONE = "—"
 
 PREAMBLE = """# Decision graph
 
-**Generated from `decisions.json` — do not hand-edit.** Run `dg render`, or any
-`dg` command that applies decisions, to rebuild it. The store is the source of
+**Generated from `decisions.json` — do not hand-edit.** Run `dg render` to
+rebuild it; nothing else writes this file. The store is the source of
 truth; this file is the readable view of it. `dg check` enforces the invariants.
 
 - A **vertex** is a decision the project must make. Vertices are permanent.

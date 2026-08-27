@@ -472,7 +472,7 @@ def _premise_exists(g: Graph | None, did: str, flag: str) -> None:
 
 
 def compose_unlink(tg: TaskGraph, *, tid: str,
-                   because: str | None = None,
+                   because: list[str] | None = None,
                    evidence_for: bool = False) -> tuple[list[dict], list[str]]:
     """`(ops, was)` for severing `tid`'s link to a decision.
 
@@ -480,11 +480,13 @@ def compose_unlink(tg: TaskGraph, *, tid: str,
     one that stopped being true, is a correction the tool has to be able to
     make — hand-editing the store is the failure this exists to prevent.
 
-    `--because` names the one premise to remove: a task rests on several, so
-    which one goes has to be said. `evidence_for` is a single slot, so a bare
-    flag removes it all.
+    `--because` names which premises to remove: a task rests on several, so
+    which ones go has to be said, and it takes a set for the reason `link` does
+    — `--because D01,D05` in either direction is one act. `evidence_for` is a
+    single slot, so a bare flag removes it all.
     """
     _require(tg, tid)
+    because = list(because) if because else []
     if not because and not evidence_for:
         raise ApplyError("nothing to unlink — give a because or an evidence-for")
     ops, was = [], []
@@ -496,13 +498,18 @@ def compose_unlink(tg: TaskGraph, *, tid: str,
         was.append(had)
     if because:
         current = list(getattr(tg.tasks[tid], "because"))
-        if because not in current:
+        # Every id checked before any is removed, so a batch naming one premise
+        # it does not hold cannot half-apply — the same reason `compose_link`
+        # validates all of them before building an op.
+        missing = [did for did in because if did not in current]
+        if missing:
             raise ApplyError(
-                f"{tid} has no --because {because} to remove — its premises "
-                f"are {', '.join(current) or 'none'}")
-        current.remove(because)
+                f"{tid} has no --because {', '.join(missing)} to remove — its "
+                f"premises are {', '.join(current) or 'none'}")
+        for did in because:
+            current.remove(did)
         ops.append({"op": "set_link", "task": tid, "because": current})
-        was.append(because)
+        was += because
     return ops, was
 
 

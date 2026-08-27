@@ -93,7 +93,7 @@ dg apply            # validate a copy, then write the store
 ```
 
 ```
-✓ applied 3 op(s) → decisions.json
+✓ applied 3 op(s) → decisions.json; the view is regenerated on demand with `dg render`
 ```
 
 `apply` mutates a copy, validates it, and refuses to write at all if the result

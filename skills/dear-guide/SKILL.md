@@ -364,7 +364,7 @@ dg task undep T14 --after T09      # ...and removing one
 dg task clear                      # unstage every task op; `dg clear` is its twin
 dg task render                     # regenerate tasks.md; `dg render` is its twin
 dg task export / dg task import    # move a backlog between projects
-dg task unlink T14 --because       # drop a link recorded against the wrong decision
+dg task unlink T14 --because D02   # drop one premise; work rests on several, so name which
 dg amend D07 --title "..."         # a typo'd or since-clarified wording
 dg task amend T14 --area Eval      # ...the same op, in the other store
 dg dep   D07 --after D03           # a premise discovered later

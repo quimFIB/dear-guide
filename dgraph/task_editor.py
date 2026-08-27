@@ -176,7 +176,8 @@ def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
                         "this one up. Provenance: it makes nothing wait.",
                         ", ".join(seed.get("discovered_during", ())))
         + editor._field("Because",
-                        "Optional. The decision this work exists because of.",
+                        "Optional. Comma-separated decisions this work exists\n"
+                        "because of. Work can rest on several at once.",
                         seed.get("because", ""))
         + editor._field("Evidence for",
                         "Optional. The decision this work will inform.",

@@ -115,9 +115,9 @@ def test_a_directory_with_no_graph_is_allowed(tmp_path):
 
 def test_a_stale_view_warns_and_names_the_remedy(repo):
     """A generated file that lags its store is worth one sentence at the moment
-    a commit records it, and is not worth refusing over: `dg render` rebuilds
-    it, and the next `dg apply` rebuilds it anyway. It denied every commit in
-    the repository until this pass — including commits touching only `src/`,
+    a commit records it, and is not worth refusing over: the view is generated
+    in full from the store and `dg render` rebuilds it. It denied every commit
+    in the repository until this pass — including commits touching only `src/`,
     since `check.run` is repo-global."""
     # The realistic shape: the store moved, nobody rendered, and the store is
     # what the commit carries. The view is left behind *in history*, which is

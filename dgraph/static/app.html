@@ -501,7 +501,7 @@ function unionParents(){
     T.tasks.forEach(x=>T.derived[x.id].prerequisites.forEach(pq=>add(x.id,pq)));
     T.tasks.forEach(x=>{
       const c=T.derived[x.id].cross;
-      if(c.premise && !c.dangling) add(x.id, c.premise);
+      c.premises.forEach(p=>add(x.id, p.id));
       if(c.evidence_for && G.derived[c.evidence_for]) add(c.evidence_for, x.id);
     });
   }
@@ -640,7 +640,7 @@ function drawJoined(){
   }else if(tsel){
     const d=T.derived[tsel];
     related=new Set([tsel,...d.prerequisites,...d.unblocks]);
-    if(d.cross.premise) related.add(d.cross.premise);
+    d.cross.premises.forEach(p=>related.add(p.id));
     if(d.cross.evidence_for) related.add(d.cross.evidence_for);
   }
   const rel=(a,b)=>related?(related.has(a)&&related.has(b)?"hot":"dim"):"";
@@ -657,8 +657,12 @@ function drawJoined(){
      the stores, not a dependency inside either. */
   T.tasks.forEach(x=>{
     const c=T.derived[x.id].cross;
-    if(c.premise && !c.dangling)
-      edges+=edgeSvg(c.premise,x.id,["edge","cross",rel(c.premise,x.id)].join(" "));
+    /* One edge per premise. A task resting on three answers waits on all three,
+       and drawing the first was the joined view asserting a dependency the
+       store does not have while hiding two it does. A premise that resolves to
+       nothing has no node to draw from — the panel names it instead. */
+    c.premises.forEach(p=>
+      edges+=edgeSvg(p.id,x.id,["edge","cross",rel(p.id,x.id)].join(" ")));
     if(c.evidence_for && G.derived[c.evidence_for])
       edges+=edgeSvg(x.id,c.evidence_for,
                      ["edge","cross","evidence",rel(x.id,c.evidence_for)].join(" "));
@@ -1029,8 +1033,8 @@ function newTaskForm(){
     <p class="muted" style="margin:4px 0 0">These are different claims. <b>After</b>
       asserts an order and holds this work back; <b>discovered during</b> only
       records where it came from and blocks nothing.</p>
-    ${G ? `<label>Because — the decision this work exists because of</label>
-    <select id="nBecause">${dec}</select>
+    ${G ? `<label>Because — the decisions this work exists because of (ctrl-click)</label>
+    <select id="nBecause" multiple>${dec}</select>
     <label>Evidence for — a decision this work will inform</label>
     <select id="nEvidence">${dec}</select>` :
     `<p class="muted" style="margin:10px 0 0">This project has no decision graph,
@@ -1052,7 +1056,9 @@ async function stageNewTask(){
     id, title, area:$("#nArea").value,
     after:[...$("#nAfter").selectedOptions].map(o=>o.value),
     discovered_during:[...$("#nDuring").selectedOptions].map(o=>o.value),
-    because:$("#nBecause")?$("#nBecause").value||null:null,
+    /* A set, joined the way the CLI's `--because D01,D05` arrives. The server
+       splits on commas for both doors, so the two stage the identical op. */
+    because:$("#nBecause")?[...$("#nBecause").selectedOptions].map(o=>o.value).join(","):null,
     evidence_for:$("#nEvidence")?$("#nEvidence").value||null:null,
     note:$("#nNote").value.trim()||null,
   }, id);
@@ -1126,9 +1132,15 @@ function taskPanel(){
     h+=`<div>turned up</div><div>${esc(d.prompted.join(", "))}</div>`;
   if(d.waiting_on.length)
     h+=`<div>waiting on</div><div style="color:var(--warn)">${esc(d.waiting_on.join(", "))}</div>`;
-  if(c.premise)
-    h+=`<div>because</div><div>${dgLink(c.premise, c.dangling)}${
-      c.premise_status?` <span class="muted">${esc(c.premise_status)}</span>`:""}</div>`;
+  /* Every premise on its own line with its own status, and the ones that
+     resolve to nothing named as such. `c.premises` is empty rather than falsy
+     when there are none — an empty array is truthy, which is how this row came
+     to be drawn on every task in the graph. */
+  if(c.premises.length || c.dangling.length)
+    h+=`<div>because</div><div>${
+      c.premises.map(p=>`${dgLink(p.id)} <span class="muted">${esc(p.status)}</span>`)
+        .concat(c.dangling.map(id=>dgLink(id, true)))
+        .join("<br>")}</div>`;
   if(c.evidence_for)
     h+=`<div>evidence for</div><div>${dgLink(c.evidence_for)}</div>`;
   if(x.done) h+=`<div>done</div><div>${esc(x.done)}</div>`;
@@ -1367,20 +1379,42 @@ function structureForm(){
   h+=`</p>`;
 
   if(seam){
-    /* A link is one decision per field, not a multi-select: a task rests on at
-       most one premise and informs at most one question, which is what makes
-       the seam a field rather than an edge. */
+    /* A task rests on a set of premises and informs at most one question, so
+       `because` is a multi-select and `evidence for` is not. Both are still
+       fields rather than edges: there is no edge list across the two stores,
+       and `dgraph/cross.py` says why inventing one costs the barrier. */
     spec.seam.forEach(([field,label])=>{
-      const now = (T.tasks.find(t=>t.id===id)||{})[field];
+      const rec = T.tasks.find(t=>t.id===id)||{};
+      /* `because` is a list on the record and `evidence_for` a single id.
+         Normalised here so the four branches below read one shape — the store
+         keeps them different because they *are* different, and this is the one
+         place the page has to care. */
+      const held = field==="because" ? (rec.because||[]) : (rec[field]?[rec[field]]:[]);
       if(verb==="unlink"){
-        h+=`<label style="display:flex;gap:8px;align-items:center">
-          <input type="checkbox" id="r_${field}" style="width:auto"${
-            now?"":" disabled"}> ${esc(label)}
-          <span class="muted">${now?esc(now):"— not set"}</span></label>`;
+        /* Which one goes has to be said: a task rests on several premises, and
+           a checkbox could name none of them. Offered from what the record
+           actually holds, so a link that is not there cannot be asked for. */
+        if(!held.length){
+          h+=`<label class="muted">${esc(label)} — not set</label>`;
+        }else if(field==="because"){
+          h+=`<label>${esc(label)} — remove which? (ctrl-click)</label>
+            <select id="r_${field}" multiple>${
+              held.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join("")}</select>`;
+        }else{
+          h+=`<label style="display:flex;gap:8px;align-items:center">
+            <input type="checkbox" id="r_${field}" style="width:auto"> ${esc(label)}
+            <span class="muted">${esc(held[0])}</span></label>`;
+        }
       }else{
-        const opts=`<option value=""></option>`+(G?idOptions(G.vertices,"id","title"):"");
-        h+=`<label>${esc(label)}${now?` <span class="muted">(now ${esc(now)})</span>`:""}</label>
-          <select id="r_${field}">${opts}</select>`;
+        const opts=(G?idOptions(G.vertices,"id","title"):"");
+        const nowSaid = held.length?` <span class="muted">(now ${esc(held.join(", "))})</span>`:"";
+        if(field==="because"){
+          h+=`<label>${esc(label)}${nowSaid} (ctrl-click)</label>
+            <select id="r_${field}" multiple>${opts}</select>`;
+        }else{
+          h+=`<label>${esc(label)}${nowSaid}</label>
+            <select id="r_${field}"><option value=""></option>${opts}</select>`;
+        }
       }
     });
   }else{
@@ -1418,7 +1452,17 @@ function relateBody(){
   if(verb==="link"||verb==="unlink"){
     spec.seam.forEach(([f])=>{
       const el=$("#r_"+f); if(!el) return;
-      body[f] = verb==="unlink" ? !!el.checked : (el.value||null);
+      /* `because` is comma-joined ids in both directions — the server parses
+         one shape for both doors. `evidence_for` is a single slot, so unlink
+         stays a flag for it and only for it. Sending a bool for `because` is
+         what made the unlink route raise instead of refuse (`V-F2`). */
+      if(f==="because"){
+        body[f] = el.multiple
+          ? [...el.selectedOptions].map(o=>o.value).join(",")
+          : (el.value||null);
+      }else{
+        body[f] = verb==="unlink" ? !!el.checked : (el.value||null);
+      }
     });
   }else{
     spec.add.forEach(([f])=>{
@@ -1433,6 +1477,11 @@ function relateBody(){
    removal is refused nothing — it is legal — so this is not a gate; it is the
    sentence a person needs in order to mean it. */
 async function relateFallout(){
+  /* Read once, here. `postRelate` used to read the form again on the way out,
+     and by then this function has replaced `#side` with the confirmation — so
+     the second read found no form and posted an empty body, which the server
+     correctly refused as "nothing to unlink". The act a person confirmed and
+     the act that gets staged are now literally the same object. */
   const body=relateBody();
   let res;
   try{ res=await api("/api/fallout",{method:"POST",
@@ -1449,12 +1498,12 @@ async function relateFallout(){
     <div class="note" id="note"></div>`;
   $("#side").innerHTML=h;
   $("#rBack").onclick=structureForm;
-  $("#rYes").onclick=postRelate;
+  $("#rYes").onclick=()=>postRelate(body);
 }
 
-async function postRelate(){
+async function postRelate(body){
   const {store, id} = RELATING;
-  const body=relateBody();
+  body = body || relateBody();
   try{
     const res=await api(REL_FORMS[store].route,{method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});

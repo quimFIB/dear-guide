@@ -222,9 +222,8 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
             # picking its own word is how the three renderers came to disagree.
             "stop_label": stop_label(tg.tasks[tid].status),
             "cross": (
-                {"gated_by": None, "ready": tg.ready(tid), "premise": None,
-                 "evidence_for": None, "premise_status": None,
-                 "premise_title": None}
+                {"gated_by": None, "ready": tg.ready(tid), "premises": [],
+                 "dangling": [], "gating": [], "evidence_for": None}
                 if g is None else _task_cross(tg, g, tid)
             ),
         }
@@ -239,18 +238,56 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
     return d
 
 
+def _ids(body: dict, key: str) -> list[str]:
+    """A comma-joined id list off a request body, or a refusal saying so.
+
+    Every seam field arrives this way from both browser forms, and the type is
+    checked rather than assumed: the unlink form used to post a boolean here,
+    which reached `.strip()` and raised `AttributeError` past the handler's
+    `except ApplyError` into a 500 (`V-F2`). A body that is the wrong shape is a
+    bad request, and the one thing it must not do is look like a crash.
+    """
+    raw = body.get(key)
+    if raw is None or raw is False or raw == "":
+        return []
+    if not isinstance(raw, str):
+        raise pending.ApplyError(
+            f"`{key}` must be a comma-separated list of decision ids, "
+            f"not {type(raw).__name__}")
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
 def _task_cross(tg: TaskGraph, g: Graph, tid: str) -> dict:
-    """One task's link to the decision store, resolved for display."""
+    """One task's link to the decision store, resolved for display.
+
+    **Every premise, each resolved.** This used to send one key holding the id
+    list under the name the page read as a single id, with a status and a title
+    beside it describing only the first — so the joined view drew one edge of
+    several, and an empty list, being truthy in JavaScript, drew a `because` row
+    on every task that had no premise at all (`V-F1`).
+
+    Resolved here rather than in the page for the reason `stop_label` is: the
+    browser has no decision store to look a title up in, and a panel that
+    assembled one from two payloads would be the second implementation of
+    `cross.task_link`.
+    """
     link = cross.task_link(tg, g, tid)
-    did = link["premise"]
     return {
         "gated_by": link["gated_by"],
         "ready": link["ready"],
-        "premise": link["because"],
-        "dangling": link["dangling"],
+        # Ids that resolve, with what a reader needs to judge them, in the
+        # order the task names them.
+        "premises": [{"id": did,
+                      "status": g.vertices[did].status,
+                      "title": g.vertices[did].title}
+                     for did in link["premises"]],
+        # Ids that resolve to nothing. Named rather than counted: a task on
+        # three premises with one missing needs to show *which*.
+        "dangling": list(link["dangling"]),
+        # The subset holding the work back, so the page can mark those edges
+        # without deriving settledness from a status string of its own.
+        "gating": list(link["gating"]),
         "evidence_for": link["evidence_for"],
-        "premise_status": g.vertices[did].status if did else None,
-        "premise_title": g.vertices[did].title if did else None,
     }
 
 
@@ -961,8 +998,7 @@ class Handler(BaseHTTPRequestHandler):
                 after=[x for x in (body.get("after") or []) if x],
                 discovered_during=[x for x in
                                    (body.get("discovered_during") or []) if x],
-                because=[x.strip() for x in
-                         (body.get("because") or "").split(",") if x.strip()],
+                because=_ids(body, "because"),
                 evidence_for=(body.get("evidence_for") or "").strip() or None,
                 note=(body.get("note") or "").strip() or None,
                 stored=tg)
@@ -1200,13 +1236,12 @@ class Handler(BaseHTTPRequestHandler):
         elif verb == "link":
             ops = task_pending.compose_link(
                 eff, g, tid=tid,
-                because=[x.strip() for x in
-                         (body.get("because") or "").split(",") if x.strip()],
+                because=_ids(body, "because"),
                 evidence_for=(body.get("evidence_for") or "").strip() or None)
             said = []
         else:
             ops, was = task_pending.compose_unlink(
-                eff, tid=tid, because=(body.get("because") or "").strip() or None,
+                eff, tid=tid, because=_ids(body, "because"),
                 evidence_for=bool(body.get("evidence_for")))
             said = [f"{tid} unlinked from {', '.join(was)}"]
             said += _released_note(eff, g, ops)
@@ -1252,7 +1287,7 @@ class Handler(BaseHTTPRequestHandler):
                                        (body.get("discovered_during") or []) if x])
             else:
                 ops, _ = task_pending.compose_unlink(
-                    eff, tid=tid, because=(body.get("because") or "").strip() or None,
+                    eff, tid=tid, because=_ids(body, "because"),
                     evidence_for=bool(body.get("evidence_for")))
         except pending.ApplyError as exc:
             return self._json({"error": str(exc)}, 400)

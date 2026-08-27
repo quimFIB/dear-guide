@@ -667,7 +667,8 @@ that the skill's command table only names commands that exist.
   ```
   · D01 moved since this batch was staged (DECIDED → REOPENED) — op 1
     (add_edge D01) rests on it
-  ✓ applied 2 op(s) → decisions.json
+  ✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with
+    `dg render`
   ```
 
   Never a refusal: the invariants already refuse the case that matters (a

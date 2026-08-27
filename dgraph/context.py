@@ -231,7 +231,8 @@ def task(tg: TaskGraph, tid: str, g: Graph | None = None) -> dict:
         "discovered_during": tg.discovered_during(tid),
         "prompted": tg.prompted(tid),
         "because": None, "evidence_for": None,
-        "premise": None, "chain": [], "shaky_premises": [],
+        "premises": [], "premise": None, "dangling": [],
+        "chain": [], "shaky_premises": [],
         "gated_by": None, "ready": tg.ready(tid), "verdict": None,
     }
     if g is None:
@@ -245,10 +246,23 @@ def task(tg: TaskGraph, tid: str, g: Graph | None = None) -> dict:
     out["evidence_for"] = link["evidence_for"]
     out["gated_by"] = link["gated_by"]
     out["ready"] = link["ready"]
-    if link["premise"]:
-        out["premise"] = decision(g, link["premise"], tg)
-        out["chain"] = out["premise"]["chain"]
-        out["shaky_premises"] = out["premise"]["shaky_premises"]
+    # Every premise that resolves, in the order the task names them — not the
+    # first one. What an agent is being handed here is the set of constraints it
+    # is about to work under, and a premise left out is one it will not know it
+    # is violating, which is the whole reason this command prints a chain.
+    out["dangling"] = list(link["dangling"])
+    out["premises"] = [decision(g, did, tg) for did in link["premises"]]
+    out["premise"] = out["premises"][0] if out["premises"] else None
+    # One chain across all of them, deduplicated by id and in first-seen order.
+    # Two premises usually share ancestors, and the same row twice reads as two
+    # facts; `_chain_arrow` would draw the id twice as well.
+    seen: dict[str, dict] = {}
+    for prem in out["premises"]:
+        for anc in prem["chain"]:
+            seen.setdefault(anc["id"], anc)
+    out["chain"] = list(seen.values())
+    out["shaky_premises"] = sorted(
+        {sid for prem in out["premises"] for sid in prem["shaky_premises"]})
     out["verdict"] = _verdict(g, link, out)
     return out
 
@@ -261,19 +275,37 @@ def _verdict(g: Graph, link: dict, out: dict) -> str:
     *facts* come from `cross.task_link` and from the chain walk above; only the
     phrasing is decided here.
     """
-    because = ", ".join(link["because"])
+    # Each branch names the premises *it* is about, never the whole list. A task
+    # can rest on three premises with one dangling and one open, and a sentence
+    # that joined all three said "the premise D01, D05, D99 is not in the
+    # decision store" about two decisions that were in it (`V-F4`). The ladder
+    # below is unchanged: one sentence, the most severe condition, and the
+    # BECAUSE block above it carries every premise with its own status.
+    def _these(ids: list[str]) -> tuple[str, str]:
+        """`(the premise D01, is)` / `(the premises D01, D05, are)`."""
+        return (("the premise " if len(ids) == 1 else "the premises ")
+                + ", ".join(ids), "is" if len(ids) == 1 else "are")
+
     if link["dangling"]:
-        return (f"the premise {because} is not in the decision store — the "
-                f"link is dangling and `dg check` will say so")
-    if link["gated_by"]:
-        v = g.vertices[link["gated_by"]]
-        return (f"this work waits on {link['gated_by']} ({_base(v.status)}), "
-                f"which is not settled — starting it now is a bet on the answer")
-    if out["premise"] and _base(out["premise"]["status"]) == "PROVISIONAL":
-        return (f"the premise {because} is PROVISIONAL: it rests on something "
-                f"under review, so this work may not survive the outcome")
+        what, verb = _these(link["dangling"])
+        return (f"{what} {verb} not in the decision store — the link is "
+                f"dangling and `dg check` will say so")
+    if link["gating"]:
+        what, verb = _these(link["gating"])
+        how = ", ".join(f"{did} ({_base(g.vertices[did].status)})"
+                        for did in link["gating"])
+        return (f"this work waits on {how} — {what.split(' ', 1)[0]} "
+                f"{'premise' if len(link['gating']) == 1 else 'premises'} "
+                f"{verb} not settled, so starting it now is a bet on the answer")
+    provisional = [prem["id"] for prem in out["premises"]
+                   if _base(prem["status"]) == "PROVISIONAL"]
+    if provisional:
+        what, verb = _these(provisional)
+        return (f"{what} {verb} PROVISIONAL: {'it rests' if len(provisional) == 1 else 'they rest'} "
+                f"on something under review, so this work may not survive the "
+                f"outcome")
     if out["shaky_premises"]:
-        return (f"the premise {because} is settled, but it rests on "
+        return (f"every premise is settled, but the reasoning rests on "
                 f"{', '.join(out['shaky_premises'])}, which is not — treat the "
                 f"conclusion as load-bearing but not final")
     if out["waiting_on"]:
@@ -282,7 +314,7 @@ def _verdict(g: Graph, link: dict, out: dict) -> str:
     if link["evidence_for"] and link["unfinished"]:
         return (f"this work is evidence for {link['evidence_for']}, which stays "
                 f"open until it lands — record it with `dg task done`")
-    if not because:
+    if not link["because"]:
         return "no premise is recorded for this work, so nothing here can go stale"
     return "the reasoning behind this work is settled all the way down"
 
@@ -489,8 +521,10 @@ def _task_text(d: dict) -> str:
                     if d["stop_label"] and i == last else "")
             out.append(f"  {k['date']}  {k['why']}{mark}")
 
-    p = d["premise"]
-    if p:
+    # Every premise, each with its own answer and falsifier. One block per
+    # premise rather than a list of ids: this is the reading an agent composes
+    # against, and an id it has to go and look up is one it works without.
+    for p in d["premises"]:
         out += ["", f"BECAUSE  {p['id']}  {_base(p['status'])}  {p['title']}"]
         # The sharpest case in the finding: an agent composing against a
         # premise, told one answer, with no way to know a second exists. It is
@@ -505,12 +539,14 @@ def _task_text(d: dict) -> str:
         if p["source"]:
             out.append(f"  source: {p['source']}"
                        + (f"  ·  {p['date']}" if p["date"] else ""))
-        if d["chain"]:
-            out += ["", f"WHICH RESTS ON ({len(d['chain'])}) — nearest premise last"]
-            for q in d["chain"]:
-                out += _premise_lines(q)
-    elif d["because"]:
-        out += ["", f"BECAUSE  {d['because']}  — not found in the decision store"]
+    # Named, never skipped: a premise that resolves to nothing is a different
+    # fact from having no premise, and both the verdict and `dg check` say so.
+    for did in d["dangling"]:
+        out += ["", f"BECAUSE  {did}  — not found in the decision store"]
+    if d["premises"] and d["chain"]:
+        out += ["", f"WHICH RESTS ON ({len(d['chain'])}) — nearest premise last"]
+        for q in d["chain"]:
+            out += _premise_lines(q)
 
     if d["evidence_for"]:
         out += ["", f"EVIDENCE FOR  {d['evidence_for']} — that decision is "
@@ -627,11 +663,11 @@ def compact(d: dict) -> str:
     chain_ids = [p["id"] for p in d["chain"]]
     shaky = set(d["shaky_premises"])
 
-    premise = d["premise"] if d["kind"] == "task" else None
-    if premise:
-        chain_ids = chain_ids + [premise["id"]]
-        if _base(premise["status"]) in SHAKY:
-            shaky.add(premise["id"])
+    premises = d["premises"] if d["kind"] == "task" else []
+    for prem in premises:
+        chain_ids = chain_ids + [prem["id"]]
+        if _base(prem["status"]) in SHAKY:
+            shaky.add(prem["id"])
 
     if chain_ids:
         out += [""] + _chain_lines(chain_ids, shaky, d["id"])
@@ -644,27 +680,27 @@ def compact(d: dict) -> str:
     # exists, and clipping it into the listing's aside column is how it stopped
     # being visible. It gets its own two lines, as `text()` gives it its own
     # section.
-    if premise:
-        lead = f"BECAUSE  {premise['id']}  {_base(premise['status'])}  "
-        out += ["", lead + _c.clip(premise["title"],
-                                   COMPACT_WIDTH - len(lead))]
+    for prem in premises:
+        lead = f"BECAUSE  {prem['id']}  {_base(prem['status'])}  "
+        out += ["", lead + _c.clip(prem["title"], COMPACT_WIDTH - len(lead))]
         # The premise carries the same caveat, and this is where it lands on
         # somebody who is about to act: they asked what this work rests on,
         # and the answer they are shown is one of two.
-        if premise.get("rival_answers"):
-            out += textwrap.wrap("!! " + premise["rival_answers"],
+        if prem.get("rival_answers"):
+            out += textwrap.wrap("!! " + prem["rival_answers"],
                                  COMPACT_WIDTH, initial_indent="         ",
                                  subsequent_indent="         ")
         # Not `_premise_row`: the premise arrives as a `decision()` dict, whose
         # answer lives under different keys and which carries no `shaky` flag.
-        said = _c.gist(premise["answer"], premise.get("answer_format"))
+        said = _c.gist(prem["answer"], prem.get("answer_format"))
         out.append("         " + _c.clip(
-            said or ("not settled" if premise["id"] in shaky
+            said or ("not settled" if prem["id"] in shaky
                      else "no answer recorded"), COMPACT_WIDTH - 9))
-    elif d["kind"] == "task" and d["because"]:
-        out += ["", f"BECAUSE  {d['because']} — not in the decision store"]
-    elif d["kind"] == "task":
-        out += ["", "BECAUSE  no premise is recorded for this work"]
+    if d["kind"] == "task":
+        for did in d["dangling"]:
+            out += ["", f"BECAUSE  {did} — not in the decision store"]
+        if not d["because"]:
+            out += ["", "BECAUSE  no premise is recorded for this work"]
 
     if d["kind"] == "task" and d["evidence_for"]:
         out += ["", f"EVIDENCE FOR  {d['evidence_for']} — that decision is "

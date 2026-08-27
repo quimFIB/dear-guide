@@ -1924,7 +1924,7 @@ def rm(
         con.print(f"[red]{len(holding)} task(s) name {vid}: "
                   f"{', '.join(holding)}[/]\n"
                   f"[dim]point them elsewhere first — `dg task link <T> "
-                  f"--because <D>`, or `dg task unlink <T> --because`[/]")
+                  f"--because <D>`, or `dg task unlink <T> --because {vid}`[/]")
         raise typer.Exit(1)
 
     blocked = _archived(project.find().store)
@@ -3342,8 +3342,8 @@ def task_link(
 def task_unlink(
     tid: str,
     because: str = typer.Option(None, "--because",
-                                help="the premise decision to remove — a task "
-                                     "rests on several, so name the one"),
+                                help="comma-separated premises to remove — a "
+                                     "task rests on several, so name which"),
     evidence_for: bool = typer.Option(False, "--evidence-for",
                                       help="drop the single decision this work informs"),
 ) -> None:
@@ -3361,7 +3361,7 @@ def task_unlink(
         raise typer.Exit(2)
     try:
         ops, was = task_pending.compose_unlink(
-            tg, tid=tid, because=because, evidence_for=evidence_for)
+            tg, tid=tid, because=_csv(because), evidence_for=evidence_for)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None

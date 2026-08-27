@@ -1,6 +1,18 @@
 __pycache__/
 *.pyc
 *.elc
+# Everything this tool writes beside a store. The glob, not a list of names:
+# `project.IGNORE` states `.dgraph-*` and three modules argue their own
+# correctness from it, while this file enumerated — so when the fan-out grew
+# `.dgraph-capture/`, the one path not in the list, 242 KB of session log sat
+# untracked in a published repo one `git add -A` from being committed. A rule
+# the tool states and its own repo does not follow is worse than no rule,
+# because the rule is why nobody looks.
+#
+# The entries below are kept under it, redundant on purpose: each carries the
+# reason *that* file is ignored, and the glob cannot say any of them.
+.dgraph-*
+
 .dgraph-pending.json
 .dgraph-task-pending.json
 .dgraph-edit.org

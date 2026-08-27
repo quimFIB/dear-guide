@@ -8,8 +8,12 @@ somebody has to remember — so everything that needs both stores lives here, an
 
 The link is stored on the task and derived in the other direction, which is the
 codebase's own rule ("dependency is the graph structure, never a stored field")
-applied by cardinality: a task has at most one `because`, a decision has
-unboundedly many dependents, so the "one" side is the stored side. The practical
+applied by cardinality. A task names a bounded handful of decisions — the
+premises it rests on, and the one question its outcome informs — while a
+decision has unboundedly many dependents, so the task is the stored side. That
+`because` became a list on 2026-08-27 does not weaken the argument: bounded and
+enumerable on one side, unbounded on the other, is what makes that side the
+place to keep it. The practical
 consequence is that `decisions.json` never mentions a task, so a change to it
 always means a decision changed — and the one artifact whose git history is
 supposed to be readable stays readable.
@@ -139,7 +143,12 @@ def refuse_close(tg: TaskGraph | None, did: str, owner: str | None,
 
 
 def gated_by(tg: TaskGraph, g: Graph, tid: str) -> str | None:
-    """The decision this task waits on, if it is waiting on one.
+    """The first decision this task waits on, if it is waiting on any.
+
+    `task_link`'s `gating` is the whole set. This stays a single id because its
+    callers ask "is this startable" and one unsettled premise answers that; a
+    reader that means to *name* what is holding work back wants the set, and
+    naming one of three is the shape `V-F4` was filed for.
 
     `None` when the task names no premise *or* every premise is already settled —
     the question every caller actually has is "is this work startable?", not
@@ -167,18 +176,22 @@ def task_link(tg: TaskGraph, g: Graph, tid: str) -> dict:
     to prevent. Callers get the ids from here and never read `Task.because`
     themselves.
 
-    `premise` is the first `because` decision *that exists* — a single id, kept
-    as one for the readers that render a chain off one premise; `dangling` says
-    any link names one that does not, which is a different fact from having no
-    link and is what `dg check` will report.
+    `premises` is every `because` decision *that exists*, in the order the task
+    names them; `premise` is the first of those, kept for the readers that still
+    render a chain off one. `dangling` is the ids that resolve to nothing — the
+    list rather than a flag, because a task can rest on three premises with one
+    missing and a reader told only *that* something dangles has to find which.
+    A separate fact from having no link at all, and what `dg check` reports.
     """
     t = tg.tasks[tid]
     resolving = [did for did in t.because if did in g.vertices]
     return {
         "because": list(t.because),
         "evidence_for": t.evidence_for,
+        "premises": resolving,
         "premise": resolving[0] if resolving else None,
-        "dangling": bool(t.because) and len(resolving) < len(t.because),
+        "dangling": [did for did in t.because if did not in g.vertices],
+        "gating": [did for did in resolving if not g.vertices[did].settled],
         "gated_by": gated_by(tg, g, tid),
         "ready": ready(tg, g, tid),
         "unfinished": t.unfinished,

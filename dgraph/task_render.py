@@ -1,7 +1,8 @@
 """tasks.json -> tasks.md.
 
-The markdown is a generated view. Never hand-edit it: run `dg task render` (or
-any command that applies tasks) and the file is rebuilt from the store.
+The markdown is a generated view. Never hand-edit it: run `dg task render` and
+the file is rebuilt from the store. Nothing else writes it — not `dg apply`,
+not the bootstrap doors — so a view exists only once somebody has asked for one.
 
 Deliberately a separate document from `decision-graph.md`, and nothing about
 tasks is ever rendered into that one. A task count in the decision view would
@@ -26,8 +27,8 @@ NONE = "—"
 
 PREAMBLE = """# Tasks
 
-**Generated from `tasks.json` — do not hand-edit.** Run `dg task render`, or any
-`dg` command that applies tasks, to rebuild it. The store is the source of
+**Generated from `tasks.json` — do not hand-edit.** Run `dg task render` to
+rebuild it; nothing else writes this file. The store is the source of
 truth; this file is the readable view of it. `dg check` enforces the invariants.
 
 - A **task** is a unit of work, with an explicit status.
@@ -43,8 +44,8 @@ truth; this file is the readable view of it. `dg check` enforces the invariants.
   a release is a guess, since work that *produced* what another task consumes
   does not release it but undermines it, so `dg check` asks about anything left
   standing by a drop until somebody acts on it.
-- A task may name the **decision** it exists because of, and the one its
-  outcome will inform. Those live in `decisions.json`; this view names the id
+- A task may name the **decisions** it exists because of — it can rest on
+  several — and the one its outcome will inform. Those live in `decisions.json`; this view names the id
   and nothing more, because it is generated from `tasks.json` alone.
 
 Statuses: `TODO` · `DOING` · `PARKED` · `DONE` · `DROPPED`

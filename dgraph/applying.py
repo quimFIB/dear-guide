@@ -214,7 +214,6 @@ def apply_decisions(ops: list[dict], dry_run: bool = False,
         # `discard`, not `clear`: anything staged while this apply was running
         # belongs to the next batch, and clearing would drop it silently.
         pending.discard(ops, proj.pending)
-        return Result(len(ops), False, proj.store.name, graph=out, drift=moved)
     return Result(len(ops), False, proj.store.name, graph=out, drift=moved)
 
 
@@ -265,5 +264,4 @@ def apply_tasks(ops: list[dict], dry_run: bool = False,
         out.save(proj.tasks)
         _record_holdings(ops, out, proj)
         pending.discard(ops, task_pending.path())
-        return Result(len(ops), False, proj.tasks.name, graph=out)
     return Result(len(ops), False, proj.tasks.name, graph=out)

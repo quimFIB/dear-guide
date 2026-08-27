@@ -80,8 +80,8 @@ and the taxonomy it belongs to is not.
    browser stages the decision **and** `D05 → OPEN`, because it was
    `BLOCKED:D04` and nothing blocks it any more. That propagation is derived,
    never typed.
-7. **Press Apply.** Only now are `decisions.json` and `decision-graph.md`
-   written.
+7. **Press Apply.** Only now is `decisions.json` written. The readable view is
+   built on demand: `dg render` when you want `decision-graph.md`.
 
 `C-c C-k` cancels. So does closing the frame without saving: the browser says
 "Cancelled in the editor — nothing staged."

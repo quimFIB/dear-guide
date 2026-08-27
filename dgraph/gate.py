@@ -639,11 +639,24 @@ def _commit_verdict(command: str, proj: project.Project | None = None) -> dict:
                 # The more fundamental of the two: rendering fixes this *and*
                 # any split, so it is said instead of the split rather than
                 # alongside it.
+                #
+                # **Missing and lagging are not the same sentence.** The views
+                # are built on demand and nothing writes them as a side effect,
+                # so a project that has never rendered is the ordinary state
+                # rather than a corner — and "no longer matches" is false about
+                # a file that has never existed, which is what the first commit
+                # of every new project used to be told. `dg check` already tells
+                # them apart; this says it in the same words.
                 notes.append(
-                    f"{view.name} no longer matches {store.name}, and this "
-                    f"commit records it. `{cmd}` rebuilds it; committing as it "
-                    f"stands leaves the generated view behind until someone "
-                    f"renders again."
+                    (f"{view.name} has never been generated, and this commit "
+                     f"records {store.name} without it. `{cmd}` writes it; the "
+                     f"view is optional, so committing as it stands is a "
+                     f"choice rather than a mistake."
+                     if not view.exists() else
+                     f"{view.name} no longer matches {store.name}, and this "
+                     f"commit records it. `{cmd}` rebuilds it; committing as it "
+                     f"stands leaves the generated view behind until someone "
+                     f"renders again.")
                 )
                 continue
             if store_in == view_in:

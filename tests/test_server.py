@@ -440,8 +440,9 @@ def test_readiness_in_the_payload_accounts_for_the_premise(srv, dual):
     the only module that may look at both."""
     _, body = jreq(srv, "/api/tasks")
     c = body["derived"]["T03"]["cross"]
-    assert c["premise"] == ["D05"] and c["gated_by"] == "D05"
-    assert c["premise_status"] == "OPEN" and c["ready"] is False
+    assert [p["id"] for p in c["premises"]] == ["D05"]
+    assert c["gated_by"] == "D05" and c["gating"] == ["D05"]
+    assert c["premises"][0]["status"] == "OPEN" and c["ready"] is False
 
 
 def test_the_joined_route_reports_both_link_directions(srv, dual):
@@ -822,6 +823,7 @@ def test_the_browser_can_see_the_fallout_the_cli_refuses_on(srv, dual):
 
     code, body = jreq(srv, "/api/task-fallout?task=T02")
     assert code == 200
+    from dgraph.tasks import TaskGraph
     tg = TaskGraph.load(dual / "tasks.json")
     assert [r["id"] for r in body["fallout"]] == sorted(
         tasks_mod.fallout(tg, "T02"))
@@ -921,3 +923,77 @@ def test_a_drop_that_leaves_nothing_standing_asks_nothing(srv, dual):
     `test_a_drop_with_no_fallout_needs_no_verdict`, at the other door."""
     code, body = jreq(srv, "/api/task-fallout?task=T04")
     assert code == 200 and body["fallout"] == []
+
+
+# ---- the shape the page consumes -----------------------------------------
+#
+# `V-F13`: 1618 tests passed while `cross.premise` carried a list under a key
+# four call sites in `app.html` read as one id, and while the unlink form's
+# body reached `.strip()` on a boolean. Both are reachable from here. These
+# assert the *contract the page needs* rather than today's keys — a test
+# pinned to the dict as it stands would have passed through `5643301`
+# unchanged, which is shape 6.
+
+
+@pytest.mark.parametrize("premises", [[], ["D01"], ["D01", "D05"]])
+def test_the_cross_payload_holds_every_premise_at_any_arity(srv, dual, premises):
+    """Zero, one and several — the arities the page has to draw.
+
+    The empty case is the one that bit: `[]` is truthy in JavaScript, so a key
+    that is empty-but-present made every premise-less task draw a `because` row
+    and an edge to nothing. `premises` is a list at every arity, and each entry
+    carries what the panel prints without a second lookup.
+    """
+    from dgraph.tasks import TaskGraph
+    tg = TaskGraph.load(dual / "tasks.json")
+    tg.tasks["T02"].because = list(premises)
+    tg.save(dual / "tasks.json")
+    _, body = jreq(srv, "/api/tasks")
+    c = body["derived"]["T02"]["cross"]
+    assert isinstance(c["premises"], list)
+    assert [p["id"] for p in c["premises"]] == premises
+    for p in c["premises"]:
+        assert p["status"] and p["title"], "the panel prints both without a lookup"
+    assert c["dangling"] == [] and isinstance(c["gating"], list)
+
+
+def test_a_premise_that_resolves_to_nothing_is_named_not_counted(srv, dual):
+    """A task on three premises with one missing has to show *which* — the
+    reason `dangling` is a list of ids and not a flag."""
+    from dgraph.tasks import TaskGraph
+    tg = TaskGraph.load(dual / "tasks.json")
+    tg.tasks["T02"].because = ["D01", "D99"]
+    tg.save(dual / "tasks.json")
+    _, body = jreq(srv, "/api/tasks")
+    c = body["derived"]["T02"]["cross"]
+    assert [p["id"] for p in c["premises"]] == ["D01"]
+    assert c["dangling"] == ["D99"]
+
+
+def test_a_seam_field_of_the_wrong_type_is_refused_not_raised(srv, dual):
+    """The unlink form posted `because: true` for two months of arity change.
+
+    A body the server cannot parse is a bad request; the one thing it must not
+    be is a 500, which reads as "the store did something" when nothing was
+    touched. Asserted as *any* 4xx and a message, not as one wording.
+    """
+    code, body = jreq(srv, "/api/task-dep", method="POST",
+                      body={"verb": "unlink", "id": "T03",
+                               "store": "tasks", "because": True})
+    assert 400 <= code < 500, f"got {code}"
+    assert body.get("error")
+
+
+def test_unlinking_names_which_premises_go(srv, dual):
+    """What the multi-select posts: comma-joined ids, the same shape `link`
+    takes, so the two directions are one vocabulary."""
+    from dgraph.tasks import TaskGraph
+    tg = TaskGraph.load(dual / "tasks.json")
+    tg.tasks["T02"].because = ["D01", "D04", "D05"]
+    tg.save(dual / "tasks.json")
+    code, body = jreq(srv, "/api/task-dep", method="POST",
+                      body={"verb": "unlink", "id": "T02",
+                               "store": "tasks", "because": "D01,D05"})
+    assert code == 200, body
+    op = [o for o in body["staged"] if o.get("op") == "set_link"][0]
+    assert op["because"] == ["D04"]

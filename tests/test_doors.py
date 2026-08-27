@@ -419,7 +419,15 @@ const $ = s => (s === "#side" ? side : el(s.slice(1)));
 const esc = x => String(x == null ? "" : x);
 const draw = () => {}, fit = () => {}, boot = async () => {};
 const say = () => {};
-const api = async () => ({staged: []});
+// A recorder, not a stub returning nothing: two assertions below are about
+// *what was posted*, and a stub that forgets its argument cannot fail them.
+const POSTED = [];
+const api = async (url, opts) => {
+  POSTED.push({url, body: JSON.parse(opts.body)});
+  return url === "/api/fallout"
+    ? {releases: ["T99 becomes startable"], findings: []}
+    : {staged: [{}], notes: []};
+};
 const taskPanel = () => {}, panel = () => {};
 const DRIVER = `
 const want = (html, ids, what) => ids.forEach(i => {
@@ -461,6 +469,39 @@ const taskPanel = () => {}, panel = () => {};
       throw new Error(\`\${store}/\${verb} disagrees about whether it removes\`);
   });
 });
+
+// \`because\` is a set on the way out. The stub select reports itself single by
+// default, so this is the one place the multiple branch is driven.
+RELATING = {store: "tasks", id: process.argv[5], verb: "link"};
+structureForm();
+held.r_because.multiple = true;
+held.r_because.selectedOptions = [{value: "D04"}, {value: "D05"}];
+if (relateBody().because !== "D04,D05")
+  throw new Error("a multi-select premise read back as "
+                  + JSON.stringify(relateBody().because));
+
+// **The act confirmed is the act staged.** \`relateFallout\` replaces \`#side\`
+// with its confirmation, so a \`postRelate\` that read the form again read a
+// form that no longer existed and posted an empty body — which the server
+// refused as "nothing to unlink". Every removing verb failed this way whenever
+// there was fallout to confirm, which is the only time the path runs.
+RELATING = {store: "tasks", id: process.argv[5], verb: "unlink"};
+structureForm();
+held.r_because.multiple = true;
+held.r_because.selectedOptions = [{value: "D04"}];
+POSTED.length = 0;
+relateFallout().then(() => {
+  side.innerHTML = "";                     // as the confirmation did
+  Object.keys(held).forEach(k => { if (k.startsWith("r_")) delete held[k]; });
+  return held.rYes.onclick();
+}).then(() => {
+  const staged = POSTED.filter(p => p.url !== "/api/fallout");
+  if (!staged.length) throw new Error("confirming staged nothing");
+  if (staged[0].body.because !== "D04")
+    throw new Error("the act staged is not the act confirmed: "
+                    + JSON.stringify(staged[0].body));
+  console.log("ok");
+}).catch(e => { console.error(e.message); process.exit(1); });
 
 // The correction form, over both stores, and read back through \`amendOp\` —
 // the same pairing the structure form gets above, and for the same reason: a

@@ -331,3 +331,70 @@ def test_one_table_names_the_stop_for_every_renderer(task_store):
     assert context.task(tg, "T04")["stop_label"] == label
     # The panel is served the word rather than choosing one.
     assert server.task_payload(tg, None)["derived"]["T04"]["stop_label"] == label
+
+
+# ---- several premises ----------------------------------------------------
+#
+# `because` became a list on 2026-08-27 (`5643301`) and this reading did not
+# follow: `premise`, `chain` and `shaky_premises` were all built from the first
+# resolving premise while `_verdict` joined the whole list into sentences
+# written for one decision. `V-F4`. Every test here fails on that code.
+
+
+@pytest.fixture
+def many(both, g):
+    """T02 rests on three premises that disagree: settled, OPEN, and absent."""
+    tg = TaskGraph.load()
+    tg.tasks["T02"].because = ["D04", "D05", "D99"]
+    tg.save()
+    return both
+
+
+def test_every_resolving_premise_is_reported_not_just_the_first(many):
+    """The BECAUSE block is the reading an agent acts on before starting work.
+
+    Wider than "the list round-trips": `because` already held all three before
+    this change, and reporting the ids while resolving one of them is exactly
+    the state the finding describes.
+    """
+    d = context.data(project.find(), "T02")
+    assert d["because"] == ["D04", "D05", "D99"]
+    assert [p["id"] for p in d["premises"]] == ["D04", "D05"]
+
+
+def test_a_dangling_verdict_names_only_the_premise_that_is_missing(many):
+    """The false sentence in the finding: D04 and D05 are both in the store."""
+    d = context.data(project.find(), "T02")
+    assert "D99" in d["verdict"]
+    assert "D04" not in d["verdict"] and "D05" not in d["verdict"]
+
+
+def test_a_gated_verdict_names_the_unsettled_premises_and_no_others(both):
+    """D04 is settled and D05 is OPEN — only D05 holds the work back."""
+    tg = TaskGraph.load()
+    tg.tasks["T02"].because = ["D04", "D05"]
+    tg.save()
+    d = context.data(project.find(), "T02")
+    assert "D05" in d["verdict"] and "D04" not in d["verdict"]
+
+
+def test_the_chain_unions_every_premises_ancestors(many):
+    """One chain, not the first premise's — an agent reads it as the whole
+    set of constraints, so a premise's ancestors left out is a constraint it
+    will not know it is violating."""
+    d = context.data(project.find(), "T02")
+    ids = [p["id"] for p in d["chain"]]
+    assert len(ids) == len(set(ids)), "an ancestor shared by two premises is one row"
+    for p in d["premises"]:
+        for q in p["chain"]:
+            assert q["id"] in ids
+
+
+@pytest.mark.parametrize("form", ["", "--full"])
+def test_both_renderings_show_every_premise(many, form):
+    """`data()` and the two texts come from one walk — the `brief.py` property.
+    A premise present in the dict and absent from the page is the drift the
+    pair exists to catch."""
+    res = dg(many, "context", "T02", *([form] if form else []))
+    assert res.exit_code == 0
+    assert "D04" in res.output and "D05" in res.output

@@ -152,7 +152,7 @@ dg apply
 ```
 
 ```
-✓ applied 3 op(s) → decisions.json
+✓ applied 3 op(s) → decisions.json; the view is regenerated on demand with `dg render`
 ```
 
 Agents apply their own work rather than leaving it for you. `apply` validates a
