@@ -203,11 +203,22 @@ It prints the three facts a supervisor needs and cannot derive — who holds a
 name, what work each of them is holding, and what is sitting unapplied in either
 tray — and then states the procedure the agents have to be launched under:
 `DG_AGENT=$(dg agent claim)` per agent so two cannot conflate their work,
-`$DG_DECIDE` to say how much an agent may settle on its own, and the loop the
-agents run unattended once they are up (`dg task` says what is ready,
-`dg task start` claims it and refuses work somebody else has, `dg task done` or
-`dg task park --why` hands it back). The full procedure is `agentic/README.md`;
-the command is the part that has to be in front of you at launch time.
+`$DG_DECIDE` to say how much an agent may settle on its own, `$DG_WRITE` to say
+where it may write without asking, `--budget` to say how long it may run, and
+the loop the agents run unattended once they are up (`dg task` says what is
+ready, `dg task start` claims it and refuses work somebody else has, `dg task
+done` or `dg task park --why` hands it back). The full procedure is
+`agentic/README.md`; the command is the part that has to be in front of you at
+launch time.
+
+Two of those four are not enforced by the CLI, and the difference is worth
+knowing before you rely on either. `$DG_DECIDE` is checked inside `dg`, because
+every decision goes through it. `$DG_WRITE` cannot be — a write never touches
+`dg` — so it is checked by `dg gate --write`, which both host adapters already
+call, and it answers `ask` rather than refusing: an out-of-scope write goes to
+the person, not to a wall. The budget is not enforced at all; `dg` is not in the
+agent's process tree. `timeout` stops the process, and `dg agent expire` is what
+hands back the work of one that stopped without saying so.
 
 **`/dg:serve` returns immediately.** `dg serve` blocks forever, so a command file
 that ran it would hang the session; `dg serve --detach` starts it in its own

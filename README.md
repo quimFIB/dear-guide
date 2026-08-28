@@ -188,7 +188,10 @@ dg confirm D12                           # a provisional decision, re-examined a
 dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds
 dg repair                                # a store a merge broke: stage the missing propagation
 dg agent claim                           # a free name for one writer, printed bare
-dg agent list                            # who holds a name, and what they have staged
+dg agent claim --budget 30m              # ...and how long it may run before its work is handed back
+dg agent list                            # who holds a name, what they hold, what is staged, time left
+dg agent expire                          # stage a park for whatever an out-of-time agent still holds
+dg gate --write PATH                     # may this agent write here? — what the host adapters ask
 dg pending                               # review; `--full` for the table
 dg pending --agent b                     # ...one writer's proposal alone
 dg apply                                 # validate, then write the store
@@ -586,6 +589,18 @@ at stage time, before an answer and a falsifier have been composed, and never fo
 a caller with no `$DG_AGENT`. Like `$DG_AGENT` it is cooperative rather than a
 boundary — an agent that unset it would be the supervisor — which is a rule the
 launcher sets so an honest mistake is caught, not a lock.
+
+Two further limits sit beside it, both off by default. `$DG_WRITE=launch` keeps
+an agent's *writes* inside the project and `/tmp` and puts anything else to the
+person; reads are never judged. It cannot be checked inside `dg` the way
+`$DG_DECIDE` is, because a write never goes through this CLI — so it is checked
+by `dg gate`, the same host-neutral judge the commit gate uses, which means one
+rule written once is enforced under every host that relays a verdict. And
+`dg agent claim --budget 30m` records how long an agent may run: not to stop it,
+since `dg` is not in its process tree, but so that `dg agent expire` can hand
+back what an agent that died was holding. A task left `DOING` by something that
+stopped is indistinguishable from work in progress, and that is the failure the
+budget exists to make visible.
 
 Neither store learns who did anything. Holdings live in `.dgraph-agents.json`,
 gitignored beside the names themselves, because `tasks.json` is kept forever and

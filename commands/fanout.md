@@ -29,12 +29,21 @@ task backs, which is the case where the falsifier writes itself, and `never`
 sends every answer back to a person. It is checked at stage time and only for a
 caller with `$DG_AGENT` set, so a supervisor is never refused.
 
-**Names come from the tool, and the two variables are the whole contract with
-the host.** `DG_AGENT=$(dg agent claim)` per agent, never a name somebody
-invented — `claim` refuses to hand out one that is held or that has ops in a
-tray, so two agents cannot share one and conflate their work. Whatever spawns an
-agent only has to put those in its environment, which is why a fan-out can mix
-Claude Code, opencode and anything else that can run `dg`.
+**Names come from the tool, and the environment is the whole contract with the
+host.** `DG_AGENT=$(dg agent claim)` per agent, never a name somebody invented —
+`claim` refuses to hand out one that is held or that has ops in a tray, so two
+agents cannot share one and conflate their work. Whatever spawns an agent only
+has to put these in its environment, which is why a fan-out can mix Claude Code,
+opencode and anything else that can run `dg`.
+
+**Two further limits, both optional and both off by default.** `$DG_WRITE=launch`
+confines an agent's *writes* to the project and `/tmp`; anywhere else stops and
+asks the person, and reads are never judged. It is not enforced by the CLI —
+a write does not go through `dg` — but by the same `dg gate` both host adapters
+already relay, as `dg gate --write PATH`, so one rule covers every host.
+`dg agent claim --budget 30m` records how long an agent may run; pair it with
+`timeout` in the launcher, since `dg` is not in the agent's process tree and
+cannot stop anything itself.
 
 **Nobody has to hand out the work either.** `dg task` ends with a computed
 `ready` line, `dg task start` refuses a task somebody already claimed, and
@@ -45,6 +54,13 @@ prompt: `dg apply --mine` right after the claim, since a `start` sitting in the
 tray leaves the queue reading `startable` and shows no `held by`; and
 `dg task park --why` when an agent stops, since a task left `DOING` by an agent
 that died is indistinguishable from one being worked on.
+
+**Hand back before you release.** `dg agent list` shows who is over budget and
+still holding work; `dg agent expire` stages a park for each, under that agent's
+own name. Do this *before* `dg agent prune` — prune releases any name with
+nothing staged, including one that died holding a task, and once the lease is
+gone the task is stranded: still `DOING`, holder unrecorded, and `dg task start`
+refuses it as already taken. Only a hand-written park recovers it.
 
 **Recording the run is OPTIONAL and usually not wanted.** A fan-out leaves
 behind what it decided, which is what the graph is for. If this run needs to

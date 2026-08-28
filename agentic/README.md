@@ -425,10 +425,24 @@ an answer, and is exactly what a fan-out is for.
 ## 6. Close
 
 ```sh
+dg agent expire       # hand back what any out-of-time agent still holds
+dg apply --agent …    # ...and take the parks
 dg task done T01 --outcome "…"
 dg agent prune        # release the names, now that nothing is staged
 dg check
 ```
+
+**`expire` before `prune`, and the order is the whole of it.** `prune` releases
+every name with nothing staged, and that includes an agent that died holding a
+task. Once the lease is gone the task is **stranded**: it stays `DOING`, its
+holder is no longer recorded anywhere, and `dg task start` refuses it — *`T01`
+is already `DOING`* — so no other agent can take it. Only a hand-written
+`dg task park` gets it back, by somebody who noticed. Expiring first turns the
+same situation into a park that names the budget.
+
+A run with no budgets set has nothing to expire, which is exactly when this bites
+and the reason `--budget` is worth setting even when you do not intend to enforce
+one. Either way, check `dg task` for anything still `DOING` before you prune.
 
 ---
 

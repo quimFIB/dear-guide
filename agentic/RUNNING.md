@@ -48,26 +48,37 @@ shell state does not survive between an agent's tool calls, so a name it
 claimed in one call is gone by the next.
 
 ```sh
-DG_AGENT=$(dg agent claim) DG_DECIDE=evidence \
-  claude -p "$(cat agentic/prompts/scout.md)" &
+DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch \
+  timeout 1800 claude -p "$(cat agentic/prompts/scout.md)" &
 
-DG_AGENT=$(dg agent claim) DG_DECIDE=evidence \
-  opencode run "$(cat agentic/prompts/scout.md)" &
+DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch \
+  timeout 1800 opencode run "$(cat agentic/prompts/scout.md)" &
 
-dg agent list          # who holds what, and what each has staged
+dg agent list          # who holds what, what each has staged, time left
 ```
 
 Mixing hosts is fine — two agents under different scaffolds are two names in one
-tray. The whole contract with the host is those two variables:
+tray. The whole contract with the host is these variables:
 
 | | |
 |---|---|
 | `DG_AGENT` | the writer's name, from `dg agent claim`. Never invent one: `claim` refuses a name that is held or that has ops in a tray, so two agents cannot conflate their work. |
 | `DG_DECIDE` | `evidence` — may close a question only where a **finished** `--evidence-for` task backs it · `never` — may not close at all · unset — may close anything. |
+| `DG_WRITE` | `launch` — may write in the project and `/tmp`; anywhere else stops and asks the person · unset/`open` — anywhere, which is what the tool has always done. Reads are never judged. |
+| `DG_BUDGET` | how long before its work is handed back — `1800`, `30m`, `2h`, or `infinite`. `dg agent claim --budget` records it on the lease, which is what `dg agent list` and `dg agent expire` read; the variable is how the *agent* learns its own budget. |
 
 Set `DG_DECIDE` **here and not in the prompt.** A variable is a refusal; a
 sentence in a prompt is a request, and the moment a finished task leaves a
 question owed an answer is exactly when the temptation to write one arrives.
+
+`DG_WRITE` is the same shape, and reaches the agent's host through `dg gate`
+rather than through the CLI: a write does not go through `dg`, so the two host
+adapters ask the gate about it — `dg gate --write PATH`, one policy, every
+host. `agentic/README.md` has the reasoning.
+
+**`timeout` is the launcher's half of the budget, and it is not optional.**
+`dg` is not in the agent's process tree and cannot stop one. What the recorded
+budget buys is the *hand-back* — see §4.
 
 **Your own shell must not have `DG_AGENT` set.** A supervisor is defined as
 anybody without it, and that is what makes you exempt from every `DG_DECIDE`
@@ -97,7 +108,8 @@ briefing, with the current roster, frontier and tray already read in.
 puts it in the *child's* environment only.
 
 ```sh
-DG_AGENT=$(dg agent claim) DG_DECIDE=evidence claude -p "$(cat ...)" &
+DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch \
+  timeout 1800 claude -p "$(cat ...)" &
 ```
 
 This is a per-command assignment. It never exports into the orchestrator's own
@@ -114,12 +126,44 @@ exists to leave with a person. Say so in its prompt; do not rely on it.
 ## 3 · Watching, from your own shell
 
 ```sh
-dg agent list     # names held, since when, how many ops each has staged
+dg agent list     # names held, what each holds and has staged, time left
 dg pending        # the roster: who proposed what, across both trays
 dg task           # the frontier, what is held, what is ready
 ```
 
-## 4 · Reviewing, one proposal at a time
+`dg agent list` is where a stalled run becomes visible. A name whose budget
+reads `SPENT` and that still holds a task is an agent that stopped without
+saying so — the state that otherwise looks exactly like work in progress.
+
+## 4 · When an agent stops without saying so
+
+An agent that finishes cleanly parks or completes its own work. One that is
+killed, rate-limited or hung does not, and leaves a task `DOING` that nobody
+will pick up because it looks taken.
+
+```sh
+dg agent list          # who is over budget, and what they still hold
+dg agent expire        # stage a park for each, naming the budget
+dg apply --agent brisk-beacon
+```
+
+The park lands under the *agent's own name*, so it sits beside whatever that
+agent had already proposed and one `dg apply --agent` takes the batch. Parked
+work stays outstanding — nothing downstream is released — so the next agent
+picks it up, which is the difference between parking and dropping.
+
+Run it even when you saw the agent die: the point is not the diagnosis, it is
+that the queue stops lying. An agent that spent its budget holding *nothing* is
+reported too, which is the only way "died before it started" is visible at all.
+
+Without a budget there is nothing to measure against, so `expire` finds nothing
+— this is what `--budget` is for. Parking by hand still works:
+
+```sh
+dg task park T07 --why "agent stopped at the rate limit, probe half-run"
+```
+
+## 5 · Reviewing, one proposal at a time
 
 ```sh
 dg pending --agent brisk-beacon   # read one alone
@@ -138,7 +182,7 @@ dg agent prune                    # give back every name with nothing staged
 
 ---
 
-## 5 · Optional: recording the run
+## 6 · Optional: recording the run
 
 Only when the run itself has to survive — a demo, or an audit of what was
 *proposed* rather than what was taken. A fan-out with this off still leaves

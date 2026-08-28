@@ -132,6 +132,31 @@ falsifier is a measurement you made rather than a judgement you are inventing.
 caller with no `$DG_AGENT` is never refused. You will be told at stage time, by
 name, before you have written an answer.
 
+**Where you may write** is `$DG_WRITE`, and unlike the rule above it is not
+checked inside `dg` — a write never goes through this CLI. Your host asks
+`dg gate --write <path>` instead, so the answer arrives as a permission prompt
+rather than as a refusal from a `dg` command. Under `launch` you may write
+freely in the project and under `/tmp`; a write anywhere else is put to the
+person. Reading is never restricted. If you are stopped, that is the policy and
+not a broken tool: put the file somewhere in scope, or say what you need and
+why, rather than trying another route to the same path.
+
+**How long you may run** may be set as a budget. `dg agent list` shows what is
+left of it. Nothing kills you when it runs out — but if you stop for any reason
+with work still `DOING`, that work looks exactly like work in progress and
+nobody picks it up. **Park before you stop**, whatever the reason:
+
+```sh
+dg task park T04 --why "budget nearly spent; probe ran, findings written,
+                        nothing recorded yet"
+dg apply --mine
+```
+
+A supervisor can clean up after an agent that never got the chance —
+`dg agent expire` parks what an out-of-time agent holds — but it cannot say what
+state the work was in. Only you can, and that sentence is the difference between
+work the next agent can resume and work somebody has to redo.
+
 **You can pick your own work, too.** `dg task` ends with a `ready` line —
 everything startable right now — and `dg task start` refuses a task somebody
 already claimed, so taking work off the frontier is safe without asking. The
