@@ -38,6 +38,43 @@ def test_the_opencode_adapter_decides_nothing_either():
         assert token not in text, token
 
 
+#: opencode's write tools and the argument each names its target with, read out
+#: of the bundled binary of 1.18.25 (`"write",{filePath`, `"edit",{filePath`)
+#: rather than assumed. If a future opencode renames either, the write scope
+#: silently stops applying to it — a hole that looks exactly like working — so
+#: the pair is asserted here and the verification is written down.
+OPENCODE_WRITERS = {"write": "filePath", "edit": "filePath"}
+
+
+def test_the_write_scope_names_the_tools_opencode_actually_has():
+    ts = ADAPTER.read_text()
+    block = ts[ts.index("const WRITERS"):ts.index("const field")]
+    for tool, field in OPENCODE_WRITERS.items():
+        assert f"{tool}: \"{field}\"" in block, (tool, field)
+
+
+def test_read_is_not_judged_even_though_it_carries_a_path():
+    """`read` takes `filePath` too. An agent that cannot read the repository it
+    is reasoning about is blindfolded rather than constrained, so the writers
+    map is an allowlist and this is the case that proves it is one."""
+    ts = ADAPTER.read_text()
+    block = ts[ts.index("const WRITERS"):ts.index("const field")]
+    for tool in ("read", "grep", "glob", "list"):
+        assert f"{tool}:" not in block, tool
+
+
+def test_patch_is_excluded_and_the_reason_is_written_down():
+    """`patch` takes `patchText`, one diff that may touch many files, so there
+    is no single path to hand the gate. It was in the map with `filePath`,
+    which read as undefined and skipped silently — a write tool with no scope,
+    looking exactly like a working one. Judging it means parsing a diff for its
+    targets, which is policy in an adapter and not what this file may hold."""
+    ts = ADAPTER.read_text()
+    block = ts[ts.index("const WRITERS"):ts.index("const field")]
+    assert "patch:" not in block
+    assert "patchText" in ts and "KNOWN HOLE" in ts
+
+
 def test_the_opencode_adapter_carries_the_reason_into_the_throw():
     """`permission.ask` cannot hold a reason, so throwing is the only way the
     model learns why it was stopped. A throw without the reason would be a

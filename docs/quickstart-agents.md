@@ -31,6 +31,10 @@ pip install -e /path/to/dear-guide
 dg --version        # so an adapter can tell when the two halves have drifted
 ```
 
+Two dependencies, `typer` and `rich`. `'/path/to/dear-guide[tui]'` adds
+`textual` for a full-screen `dg agent setup`; nothing else uses it, and the
+command works without it.
+
 ### 2a. Claude Code
 
 ```

@@ -148,7 +148,13 @@ in full, so nothing is missing without the log.
 ```sh
 cd /path/to/dear-guide
 pip install -e .
+
+pip install -e '.[tui]'      # optional: a full-screen `dg agent setup`
 ```
+
+`typer` and `rich` are the whole of the requirement. The `tui` extra adds
+`textual` and nothing depends on it: `dg agent setup` asks its questions one at
+a time without it, and takes them as flags with no terminal at all.
 
 `dg` then works in any project directory holding **either** store —
 `decisions.json`, `tasks.json`, or both. It is found by walking up from the cwd,
@@ -628,7 +634,8 @@ actually about to be lost.
 ### Install
 
 ```sh
-pip install -e /path/to/dear-guide   # the CLI
+pip install -e /path/to/dear-guide         # the CLI
+pip install -e '/path/to/dear-guide[tui]'  # ...and a full-screen `dg agent setup`
 
 # Claude Code
 /plugin marketplace add /path/to/dear-guide

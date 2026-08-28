@@ -140,10 +140,25 @@ export const DearGuidePlugin: Plugin = async ({ $, directory }) => {
        * the commit gate's does: opencode's `permission.ask` carries no reason
        * field, and a refusal the model cannot read is one it retries.
        */
+      /*
+       * opencode's write tools and the argument each names its target with,
+       * verified against 1.18.25 rather than assumed — the tool schemas are in
+       * the bundled binary, `"write",{filePath`, `"edit",{filePath`.
+       *
+       * `read` also takes `filePath` and is deliberately absent: reads are
+       * never judged.
+       *
+       * `patch` is absent too, and that is a KNOWN HOLE rather than an
+       * oversight. It takes `patchText` — one diff that may touch many files —
+       * so there is no single path to hand the gate. Judging it would mean
+       * parsing a diff for its targets, which is policy in an adapter and
+       * exactly what this file must not hold; a half-parser that failed open
+       * would be worse than an honest gap. Documented in opencode/README.md
+       * beside the subagent one.
+       */
       const WRITERS: Record<string, string> = {
         write: "filePath",
         edit: "filePath",
-        patch: "filePath",
       }
       const field = WRITERS[input.tool]
       if (field && (process.env.DG_AGENT ?? "").trim()) {

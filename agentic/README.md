@@ -112,6 +112,13 @@ Which means a rule written once is enforced under **every** host at once —
 a third scaffold earns it by relaying the same verdict. `tests/test_plugin.py`
 asserts both adapters ask.
 
+What an adapter still owns is *which of its host's tools writes*, and each has
+one tool it cannot judge: a shell redirection under Claude Code (covering it
+means parsing arbitrary shell for write intent) and `patch` under opencode
+(which names its targets inside a diff rather than in an argument). Both are
+stated in the adapter and in `opencode/README.md` rather than papered over — a
+half-parser that failed open would be worse than a gap somebody knows about.
+
 **Reads are never judged.** An agent that cannot read the repository it is
 reasoning about is blindfolded rather than constrained, and every interesting
 thing a fan-out does starts by reading something outside its own directory.
