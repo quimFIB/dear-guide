@@ -162,8 +162,26 @@ def _mark(raw: object) -> int | None:
 
 
 def save(grants: dict[str, Grant], root: Path | None = None) -> None:
-    """Write the file, or remove it when there is nothing left to grant."""
+    """Write the file, or remove it when there is nothing left to grant.
+
+    **Held here**, unlike `issue` below which holds around its own load. That
+    asymmetry is the point: `issue` is a load-modify-save and its critical
+    section starts at the load, while every other writer of this file —
+    `dg range --set`, `dg range --clear` — replaces it outright and has no
+    load to protect. Putting the lock on the *write* rather than on each door
+    is what makes the next door safe without being told: the file had two
+    writers and one lock, which is the shape `W-F3` closed from the other
+    side, and the one that stayed open let a `--set` be told it had granted a
+    range that `issue` then wrote away. `project.held` nests, so `issue`'s
+    call through here costs nothing.
+    """
     p = path(root)
+    with project.held(p):
+        _save_held(grants, p)
+
+
+def _save_held(grants: dict[str, Grant], p: Path) -> None:
+    """The write itself, with the file already held."""
     if not grants:
         p.unlink(missing_ok=True)
         return

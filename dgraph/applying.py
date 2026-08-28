@@ -231,15 +231,32 @@ def _record_holdings(ops, tg, proj) -> None:
     Best-effort by design. A run whose holdings could not be written is still a
     run whose WORK was applied, and the store is the thing that must not be lost;
     this is a convenience for triage during a fan-out.
+
+    **Two ops, not one.** A `set_status` is the ordinary way work leaves DOING
+    and was for a while the only one considered — but `remove_task` takes the
+    task away entirely, and a hold is a claim about a task that exists. Left
+    behind, it outlives the state that made it true: `dg agent list` prints
+    `holding T01` and `agents.silent` reports the name as *"silent while
+    holding work"*, over an id no store has, and `dg task park` refuses the
+    only thing the roster tells a supervisor to do about it. Handled here
+    rather than by filtering at every reader, because this is the one place
+    that knows the store *after* the op — the readers would each need their own
+    copy of the rule, which is the shape most of this tool's findings took.
     """
-    if not any(o.get("op") == "set_status" for o in ops):
+    if not any(o.get("op") in ("set_status", "remove_task") for o in ops):
         return
     try:
         for op in ops:
-            if op.get("op") != "set_status":
+            kind = op.get("op")
+            if kind not in ("set_status", "remove_task"):
                 continue
             tid = op.get("task")
-            if tid is None or tid not in tg.tasks:
+            if tid is None:
+                continue
+            # `tg` is the store as it will stand, so a removed task is simply
+            # absent from it — which is exactly "nobody can be holding this".
+            if tid not in tg.tasks:
+                agents.drop_hold(tid, proj.root)
                 continue
             if tg.tasks[tid].status == "DOING":
                 agents.hold(op.get("by"), tid, proj.root)

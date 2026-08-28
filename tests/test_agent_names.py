@@ -392,6 +392,38 @@ def test_the_guard_reads_real_status_not_a_stale_lease(run, proj, monkeypatch):
     assert holder not in agents.load(proj.root)
 
 
+def test_removing_a_task_takes_the_hold_with_it(run, proj, monkeypatch):
+    """A hold is a claim about a task that exists, so removing the task ends it.
+
+    `set_status` was for a while the only op that touched a lease, and
+    `remove_task` takes the task away without ever setting a status. The lease
+    then outlived the state that made it true: `dg agent list` printed
+    `holding T01` and `agents.silent` reported the name as silent *while
+    holding work*, over an id no store has — and the only act that footnote
+    tells a supervisor to consider, `dg task park T01`, refuses it as unknown.
+    Audit M-F3.
+    """
+    monkeypatch.setenv("DG_AGENT", "")
+    holder = _holding(run, proj)
+    assert agents.holdings(proj.root) == {"T01": holder}
+    # `dg task rm` refuses an uncommitted store: git is the only record of what
+    # a removal takes away.
+    subprocess.run(["git", "add", "-A"], cwd=proj.root, capture_output=True)
+    subprocess.run(["git", "-c", "user.email=t@example.invalid",
+                    "-c", "user.name=t", "commit", "-qm", "state",
+                    "--no-verify"], cwd=proj.root, capture_output=True)
+
+    assert run("task", "rm", "T01", "--yes").exit_code == 0
+    assert run("apply").exit_code == 0
+
+    assert agents.holdings(proj.root) == {}
+    assert agents.silent(proj.root, now=None, after=0) == [], (
+        "the roster reports an agent silent while holding a task that is gone")
+    # The surface, not only the store behind it: the roster is what a
+    # supervisor reads, and it is where the claim was made.
+    assert "T01" not in run("agent", "list").output
+
+
 def test_the_guard_is_silent_in_a_project_with_no_task_store(tmp_path,
                                                              monkeypatch):
     """`dg agent prune` has always worked without one, and a project with no

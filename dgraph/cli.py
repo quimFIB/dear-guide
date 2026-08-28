@@ -2944,8 +2944,17 @@ def agent_prune(
     overridden is a rule people route around, and because the stranding is
     sometimes what you want — a run whose tasks you are about to drop.
     """
-    holders = {} if force else _still_working()
-    gone = agents.prune(keep=holders)
+    # Passed as a callable, not as a set: `agents.prune` evaluates it inside
+    # the lease lock, so an agent claiming work between the judgement and the
+    # delete it authorises cannot be stranded by it. See that function; audit
+    # `M-F6`. `holders` below is what it actually saw, for the message.
+    holders: dict[str, list[str]] = {}
+
+    def keep():
+        holders.update({} if force else _still_working())
+        return holders
+
+    gone = agents.prune(keep=keep)
     kept = sorted(holders)
     if not gone and not kept:
         con.print("[dim]nothing to prune — every name held has ops staged[/]")
@@ -4664,6 +4673,11 @@ def _merge_base(ref: str) -> str:
     return res.stdout.strip()
 
 
+#: How long `dg integrate` waits for the quarantine file — longer
+#: than a `dg incoming` route's, because what is held across is git.
+INTEGRATE_WAIT = 30.0
+
+
 @app.command(rich_help_panel=STORE)
 def integrate(
     ref: str = typer.Argument(..., help="the branch, worktree or commit "
@@ -4691,6 +4705,25 @@ def integrate(
         con.print("[red]integration needs git[/]\n[dim]the base a "
                   "contribution is derived from comes from `git merge-base`[/]")
         raise typer.Exit(1)
+    # Held from the "already waiting" check through the write it guards. That
+    # check is the whole of what keeps one contribution in the file at a time,
+    # and it used to be an unlocked read-check-act while **every** `dg incoming`
+    # route held the file — the producer was the one door onto the quarantine
+    # that took no lock. Two `dg integrate` calls therefore both passed the
+    # check and both reported "quarantined", and the loser's ops were gone with
+    # no error; a plan racing an answer could land on a judgement a person had
+    # just given. Audit W-F1, from the writing side.
+    #
+    # The wait is longer than the routes' because what is held across is git:
+    # a `merge-base` and four `git show`s, plus the replay. Degrading to
+    # unlocked here is the failure this closes, so the budget is generous
+    # rather than tight.
+    with integrate_mod.held(proj.root, wait=INTEGRATE_WAIT):
+        _integrate(proj, ref, base)
+
+
+def _integrate(proj, ref: str, base: str | None) -> None:
+    """The body of `dg integrate`, with the quarantine file already held."""
     if integrate_mod.waiting(proj.root):
         con.print("[red]a contribution is already waiting[/]\n"
                   "[dim]adjudicate it first — one at a time, because the "

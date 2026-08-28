@@ -40,10 +40,11 @@ from __future__ import annotations
 import contextlib
 import json
 import threading
+import time
 
 import pytest
 
-from dgraph import (applying, cross, integrate, pending, project, ranges,
+from dgraph import (agents, applying, cross, integrate, pending, project, ranges,
                     render, task_pending)
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
@@ -584,3 +585,258 @@ def test_the_quarantine_file_is_held_while_it_is_answered(contested, monkeypatch
 
     assert seen == [True], (
         "the quarantine file was not held while it was being answered")
+
+
+# ---- M-F1 · the grant file, written by two doors and locked by one ------
+#
+# `W-F3` locked `ranges.issue`, which is the *watermark* writer. The **grant**
+# writer — `dg range --set`, `dg range --clear`, both straight to `ranges.save`
+# — was never in that reading, so the file went back to two writers and one
+# lock from the other side. The two are not symmetric: `issue` is a
+# load-modify-save whose critical section starts at the load, while a grant is
+# written blind, which is why the lock now sits on the write rather than on
+# each door.
+
+
+def test_a_fresh_grant_is_not_written_away_by_a_watermark(proj, monkeypatch):
+    """`dg range --set` says "granted D50-D99" and the file says something else.
+
+    The operator is told twice — the success line, and the table the same
+    command prints under it, which loads before the other writer's save lands.
+    Afterwards this clone allocates from the range it was told it had given up,
+    which is inside the range another writer is still holding: the one failure
+    `.dgraph-range.json` exists to prevent, reached through the command that
+    sets it up.
+    """
+    ranges.save({p: ranges.Grant(1, 49) for p in ranges.PREFIXES}, proj.root)
+    ready = threading.Barrier(2)
+    real = ranges.load
+
+    def load(root=None):
+        """The watermark's read, held open for the length of the other
+        writer's whole window. Patched on `load` rather than on `issue` so what
+        is forced is the overlap the code permits and nothing else."""
+        got = real(root)
+        _sync(ready)
+        time.sleep(HOLD)
+        return got
+
+    monkeypatch.setattr(ranges, "load", load)
+
+    def issuing(_):
+        return ranges.issue("D", 13, proj.root)
+
+    def setting(ready_):
+        _sync(ready_)
+        return ranges.save({p: ranges.Grant(50, 99) for p in ranges.PREFIXES},
+                           proj.root)
+
+    issued, set_ = _run_both(issuing, setting)
+    # Before the assertion on the file: `_run_both` reports what a writer
+    # raised, so a watermark write that never happened would leave the grant
+    # intact and satisfy this on nothing.
+    for name, out in (("issue", issued), ("save", set_)):
+        assert not isinstance(out, BaseException), f"the {name} writer: {out!r}"
+
+    monkeypatch.setattr(ranges, "load", real)
+    got = ranges.grant("D", proj.root)
+    assert got is not None, "the grant file was lost entirely"
+    assert (got.lo, got.hi) == (50, 99), (
+        f"`dg range --set 50-99` reported a grant of 50-99 and the file holds "
+        f"{got.lo}-{got.hi} — the watermark's save carried the old range back")
+
+
+def test_the_grant_file_is_held_while_a_grant_is_written(proj, monkeypatch):
+    """The structural half. Every writer of this file, not only `issue`."""
+    lock = ranges.path(proj.root).with_name(project.RANGE_NAME + ".lock")
+    seen = []
+    real = project.write_atomic
+    monkeypatch.setattr(project, "write_atomic", lambda p, t:
+                        (seen.append((p.name, lock.exists())), real(p, t))[1])
+    ranges.save({p: ranges.Grant(50, 99) for p in ranges.PREFIXES}, proj.root)
+    assert (project.RANGE_NAME, True) in seen, (
+        f"the grant file was written with nothing holding it: {seen}")
+
+
+# ---- M-F2 · the quarantine's producer, which took no lock ---------------
+#
+# `W-F1` locked every `dg incoming` route — the readers and the answerers. The
+# command that *creates* the file was not among them: `cli.integrate` is
+# `waiting()` -> plan -> `save_incoming`, an unlocked read-check-act whose
+# check is the whole of what keeps one contribution in the file at a time.
+
+
+@pytest.fixture
+def two_contributions(proj):
+    """A repository with two branches, each carrying a decision this clone has
+    not got. Real git, because the window the lock has to cover is the
+    `merge-base` and the four `git show`s `dg integrate` runs inside it."""
+    import subprocess
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(proj.root), *args], check=True,
+                       capture_output=True, text=True)
+
+    git("init", "-q", ".")
+    git("config", "user.email", "t@example.invalid")
+    git("config", "user.name", "t")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    for branch, vid in (("theirs", "D08"), ("theirs2", "D09")):
+        git("checkout", "-q", "-b", branch, "HEAD~0" if branch == "theirs"
+            else "master")
+        raw = json.loads(proj.store.read_text(encoding="utf-8"))
+        raw["vertices"] = [v for v in raw["vertices"]
+                           if v["id"] not in ("D08", "D09")]
+        raw["vertices"].append({"id": vid, "title": f"From {branch}",
+                                "area": "Alpha", "status": "OPEN",
+                                "note": "?"})
+        proj.store.write_text(json.dumps(raw), encoding="utf-8")
+        git("commit", "-qam", branch)
+    git("checkout", "-q", "master")
+    return proj
+
+
+def test_two_integrations_cannot_both_report_a_quarantine(two_contributions,
+                                                          monkeypatch):
+    """One of them has to be refused, and the refusal is what the guard is.
+
+    `dg integrate` already refuses a second contribution — *"one at a time,
+    because the second would be judged against a graph nobody has agreed to
+    yet"* — and that refusal was a read outside every lock. Both callers
+    therefore passed it, both printed `quarantined in .dgraph-incoming.json`,
+    and one contribution was gone with no error anywhere: the ops, the report
+    the operator had just read, and the record that the branch ever arrived.
+    """
+    from dgraph import cli
+
+    root = two_contributions.root
+    ready = threading.Barrier(2)
+    real = integrate.waiting
+
+    def waiting(r=None):
+        """The check, held open across the other caller's whole window."""
+        got = real(r)
+        _sync(ready)
+        time.sleep(HOLD)
+        return got
+
+    monkeypatch.setattr(integrate, "waiting", waiting)
+
+    def integrating(ref):
+        return lambda _: cli.integrate(ref=ref, base=None)
+
+    outcomes = dict(zip(("theirs", "theirs2"),
+                        _run_both(integrating("theirs"),
+                                  integrating("theirs2"))))
+    monkeypatch.setattr(integrate, "waiting", real)
+
+    landed = [ref for ref, out in outcomes.items()
+              if not isinstance(out, BaseException)]
+    raw = integrate.load_incoming(root)
+    # Before the count, and deliberately: `_run_both` reports what a writer
+    # raised, so two refusals would satisfy "at most one landed" on nothing.
+    assert raw, f"neither contribution was quarantined at all: {outcomes}"
+    assert len(landed) == 1, (
+        f"{len(landed)} callers were told their contribution was quarantined "
+        f"and the file holds one: {outcomes}")
+    assert raw.get("source") == landed[0], (
+        f"{landed[0]} was told it was quarantined and the file holds "
+        f"{raw.get('source')!r}")
+
+
+# ---- M-F6 · the stranding guard, computed outside the lock it protects ---
+#
+# `cli.agent_prune` (cli.py:2947-2948) is:
+#
+#     holders = {} if force else _still_working()   # reads tasks.json, no lock
+#     gone    = agents.prune(keep=holders)          # takes the lease lock, inside
+#
+# `_still_working` is the whole of what stops prune stranding work, and it is
+# computed *before* the lock and honoured *inside* it. The guard was added
+# because "the operator knows the round is over" is not reliable — its own
+# docstring calls the trap "the FIRST MINUTE of an agent's life" — so a window
+# that reopens it in the narrow cannot be excused by the same argument.
+
+
+def _agent_taking_work(p, name, tid="T02"):
+    """An agent claiming a task the way a run does: stage under its own name,
+    then apply — which is what reaches `applying._record_holdings` and so
+    `agents.hold`. Driven through the real ops rather than by writing the lease,
+    because the lease write is the thing that has to lose the race."""
+    def go(ready):
+        _sync(ready)
+        with pending.as_owner(name):
+            pending.stage_all([{"op": "set_status", "task": tid,
+                                "status": "DOING"}], p.task_pending)
+        return applying.apply_tasks(pending.load(p.task_pending))
+    return go
+
+
+def test_prune_cannot_strand_work_an_agent_claims_while_it_runs(proj, monkeypatch):
+    """The stranding `keep` exists to prevent, reached through the window.
+
+    An agent that has claimed a name and not staged yet reads as idle, so the
+    guard filters the lease against real task statuses. Between that read and
+    the delete it authorises, the agent starts work: the lease gains
+    `holding: [T02]`, the task becomes `DOING` — and prune, now inside the
+    lease lock, deletes a lease it judged a moment earlier.
+
+    What is left is `DOING` with no holder recorded anywhere and `dg task start`
+    refusing it as taken, recoverable only by a hand-written park. Nothing
+    detects it afterwards either: a task `DOING` with no holder is exactly what
+    an ordinary solo `dg task start` leaves behind. And the operator is told
+    `released <name>`, which is true and complete-looking.
+    """
+    from dgraph import cli
+
+    root = proj.root
+    worker = agents.claim(root)
+    idle = agents.claim(root)
+    ready = threading.Barrier(2)
+    real = cli._still_working
+
+    def still_working():
+        """The guard's read, held open across the agent's whole window."""
+        got = real()
+        _sync(ready)
+        time.sleep(HOLD)
+        return got
+
+    monkeypatch.setattr(cli, "_still_working", still_working)
+
+    pruned, worked = _run_both(lambda _: cli.agent_prune(force=False),
+                               _agent_taking_work(proj, worker))
+    monkeypatch.setattr(cli, "_still_working", real)
+
+    # Before the property: `_run_both` reports what a writer raised, so a prune
+    # that never ran, or work that never applied, would satisfy everything
+    # below on nothing.
+    for label, out in (("prune", pruned), ("the agent", worked)):
+        assert not isinstance(out, BaseException), f"{label}: {out!r}"
+    tg = TaskGraph.load(proj.tasks)
+    assert tg.tasks["T02"].status == "DOING", "the agent never took the work"
+    assert idle not in agents.load(root), "prune released nothing at all"
+
+    assert agents.holdings(root).get("T02") == worker, (
+        f"T02 is DOING and no lease records who has it — prune released "
+        f"{worker!r} in the window between judging it idle and deleting it; "
+        f"holdings are {agents.holdings(root)}")
+
+
+def test_the_keep_set_is_computed_under_the_lease_lock(proj, monkeypatch):
+    """The structural half. What makes the property above hold is that the
+    agent's own `agents.hold` — which takes this lock — cannot land between the
+    judgement and the delete it authorises."""
+    lock = agents.path(proj.root).with_name(agents.AGENTS_NAME + ".lock")
+    from dgraph import cli
+
+    agents.claim(proj.root)
+    seen = []
+    real = cli._still_working
+    monkeypatch.setattr(cli, "_still_working",
+                        lambda: (seen.append(lock.exists()), real())[1])
+    cli.agent_prune(force=False)
+    assert seen == [True], (
+        "the keep set was computed with the lease file unheld, so the lease it "
+        "judges may be a lease another writer has already moved past")

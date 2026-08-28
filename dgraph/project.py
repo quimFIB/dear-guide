@@ -319,8 +319,14 @@ def alive(pid: int) -> bool:
     return True
 
 
-def _holder(lock: Path) -> int | None:
-    """The pid stamped in a lock file, or None if it does not say."""
+def holder(lock: Path) -> int | None:
+    """The pid stamped in a lock file, or None if it does not say.
+
+    Public because `dgraph/editor.py` shares it, exactly as it shares `alive`:
+    the buffer lock and this one both have to answer *is this still mine?*
+    before unlinking, and two implementations of that is how two locks come to
+    disagree. See `_release` below, and audit `C-F12` / `M-F5`.
+    """
     try:
         return int(lock.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
@@ -350,7 +356,7 @@ def _take(lock: Path, wait: float) -> int | None:
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            pid = _holder(lock)
+            pid = holder(lock)
             if pid is not None and not alive(pid):
                 with contextlib.suppress(OSError):
                     lock.unlink()
@@ -383,7 +389,7 @@ def _release(lock: Path, fd: int | None) -> None:
         return
     with contextlib.suppress(OSError):
         os.close(fd)
-    if _holder(lock) == os.getpid():
+    if holder(lock) == os.getpid():
         with contextlib.suppress(OSError):
             lock.unlink()
 

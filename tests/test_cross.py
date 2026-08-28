@@ -571,7 +571,7 @@ def test_only_cross_reasons_about_the_link():
     This is not hypothetical: `brief` first shipped with its own copy of the
     "is this premise shaky?" rule, and this test is what found it.
     """
-    import inspect
+    import pathlib
     import pkgutil
 
     import dgraph
@@ -593,13 +593,26 @@ def test_only_cross_reasons_about_the_link():
     # `also`, and the import assertion above is what holds it to that.
     allowed = {"cross", "tasks", "cli", "task_render", "integrate"}
     offenders = []
-    for info in pkgutil.iter_modules(dgraph.__path__):
-        if info.name in allowed:
+    # Read, never imported. `__import__` here made this guard depend on every
+    # module being importable, and `wizard_tui` is not: `textual` is the `tui`
+    # extra, and pyproject's own claim is that "a two-dependency install stays
+    # a two-dependency install". So in exactly the install the tool documents,
+    # the check that catches cross-store rule drift raised `ModuleNotFoundError`
+    # before testing anything — a guard unavailable in the supported
+    # configuration, which is worse than none, because a guard is why nobody
+    # looks. Reading the source also widens it: a module that cannot import is
+    # now checked rather than skipped. Audit M-F4.
+    for path in sorted(pathlib.Path(dgraph.__path__[0]).glob("*.py")):
+        if path.stem in allowed or path.stem == "__init__":
             continue
-        src = inspect.getsource(__import__(f"dgraph.{info.name}",
-                                           fromlist=["_"]))
+        src = path.read_text(encoding="utf-8")
         if ".because" in src or ".evidence_for" in src:
-            offenders.append(info.name)
+            offenders.append(path.stem)
+    # The walk has to see the package it claims to walk, or "no offenders" is a
+    # statement about an empty list. `pkgutil` is what named the modules before
+    # and is kept as the cross-check.
+    assert {i.name for i in pkgutil.iter_modules(dgraph.__path__)} <= \
+        {p.stem for p in pathlib.Path(dgraph.__path__[0]).glob("*.py")}
     assert offenders == [], (
         f"these reason about the cross-graph link outside cross.py: {offenders}"
     )

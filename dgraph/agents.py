@@ -55,7 +55,7 @@ numbered one, would be the silent conflation this module exists to prevent.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from dgraph import pending, project
@@ -293,7 +293,8 @@ def release(name: str, root: Path | None = None) -> bool:
         return True
 
 
-def prune(root: Path | None = None, keep: Iterable[str] = ()) -> list[str]:
+def prune(root: Path | None = None,
+          keep: Iterable[str] | Callable[[], Iterable[str]] = ()) -> list[str]:
     """Drop every lease with no ops left in either tray, and name what went.
 
     The deliberate act that automatic reaping was not allowed to be. Safe by
@@ -308,18 +309,33 @@ def prune(root: Path | None = None, keep: Iterable[str] = ()) -> list[str]:
     no longer recorded anywhere, and `dg task start` refusing it as taken. Only
     a hand-written park recovers it, by somebody who noticed.
 
-    The set is the caller's to compute, not this module's, and deliberately so:
-    knowing whether a held task is still `DOING` means reading the task store,
-    and `agents.py` does not know what a task is. `cli.agent_prune` has the
-    graph loaded already and passes the answer in. Defaulting to empty keeps
-    every existing caller on the old behaviour.
+    The answer is the caller's to compute, not this module's, and deliberately
+    so: knowing whether a held task is still `DOING` means reading the task
+    store, and `agents.py` does not know what a task is. `cli.agent_prune`
+    passes it in. Defaulting to empty keeps every existing caller on the old
+    behaviour.
+
+    **A callable is computed under the lock, and that is the form to pass.** A
+    set is judged before the lock is taken -- and the one write that can
+    invalidate it, `hold`, takes this same lock, so an agent claiming work in
+    that window is deleted by a judgement made a moment before it existed. The
+    guard's own case is "the FIRST MINUTE of an agent's life", which is exactly
+    when this happens. Holding the lock across the judgement makes that agent's
+    `hold` wait instead: it either lands first and the name is kept, or lands
+    after and re-creates the lease it is entitled to. Audit `M-F6`.
+
+    No lock order is changed by this. The callable reads the task store without
+    holding it -- the move `in_trays` below already makes for the trays, on the
+    same reasoning -- so this function still takes exactly one lock, and the
+    trays -> stores -> agents order every other writer follows is untouched.
     """
-    keep = set(keep)
     proj = project.find() if root is None else project.Project(root)
     with project.held(path(proj.root)):
+        # Inside the lock, so what is judged is the state that is then written.
+        held_by = set(keep() if callable(keep) else keep)
         leases = load(proj.root)
         staged = in_trays(proj)
-        gone = [n for n in leases if n not in staged and n not in keep]
+        gone = [n for n in leases if n not in staged and n not in held_by]
         for n in gone:
             del leases[n]
         save(leases, proj.root)

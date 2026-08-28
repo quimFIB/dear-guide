@@ -8,6 +8,7 @@ to cover the subprocess path itself.
 import os
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -281,6 +282,60 @@ def test_a_live_sessions_lock_refuses_and_names_the_pid(g, store, fake_emacs):
     with pytest.raises(EditorError, match=str(os.getpid())):
         editor.compose(g, "close", vertex="D05")
     (store / ".dgraph-edit.org.lock").unlink()
+
+
+def test_a_session_never_deletes_a_lock_that_is_no_longer_its_own(g, store):
+    """Audit `M-F5` — `C-F12`, in the other lock.
+
+    `run`'s `finally` deleted the lock file unconditionally, so a session whose
+    lock had been replaced under it took the *new* holder's lock away on the way
+    out. That is not a hypothetical interference: both of `_acquire_buffer`'s
+    refusals tell a person to delete this file — *"if it is dead, delete …"* and
+    *"delete the file if it is left over from a crash"* — and a person who
+    misjudges a long build for a dead session does exactly this.
+
+    What it costs is the one thing the buffer lock exists to prevent: two live
+    sessions on one `.dgraph-edit.org`, where the second's
+    `path.write_text(text)` replaces what the first is typing and neither is
+    told anything. `project._release` checks the pid before unlinking for this
+    reason; this release is now held to the same rule.
+    """
+    lock = store / ".dgraph-edit.org.lock"
+    # A real live pid that is not this process: `_alive` asks the OS, so a
+    # made-up number would be answered by whatever happens to hold it.
+    other = subprocess.Popen([sys.executable, "-c",
+                              "import time; time.sleep(30)"])
+    try:
+        def took_over(path):
+            """What a hand-deleted lock and a second session leave behind while
+            this one is still inside its editor."""
+            lock.write_text(str(other.pid), encoding="utf-8")
+            path.write_text(complete(path.read_text(encoding="utf-8")),
+                            encoding="utf-8")
+            return 0
+
+        ops = editor.compose(g, "close", vertex="D05", launcher=took_over)
+        assert ops[0]["vertex"] == "D05"        # this session finished normally
+        assert lock.exists(), \
+            "the departing session deleted the new holder's lock"
+        assert lock.read_text(encoding="utf-8").strip() == str(other.pid)
+        # ...so a third session meets the holder that really has it, rather
+        # than walking in beside it.
+        with pytest.raises(EditorError, match=str(other.pid)):
+            editor.compose(g, "reopen", vertex="D01", launcher=lambda p: 0)
+    finally:
+        other.terminate()
+        other.wait()
+        lock.unlink(missing_ok=True)
+
+
+def test_a_session_still_clears_its_own_lock_when_it_is_the_holder(g, store,
+                                                                   fake_emacs):
+    """The other half, so the pid check cannot be satisfied by never
+    unlinking: an ordinary session leaves nothing behind."""
+    fake_emacs(complete)
+    assert editor.compose(g, "close", vertex="D05")[0]["op"] == "close"
+    assert not (store / ".dgraph-edit.org.lock").exists()
 
 
 def test_an_unreadable_lock_is_never_stolen(g, store, fake_emacs):

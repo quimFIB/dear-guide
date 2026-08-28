@@ -711,7 +711,15 @@ def _acquire_buffer(path: Path) -> Path:
 #: One implementation, shared with the tray lock in `dgraph/project.py`: both
 #: locks decide whether to steal by asking whether the holder still exists, and
 #: two answers to that question is how two locks come to disagree.
+#:
+#: The same is true of *releasing*, which took a second finding to see. The two
+#: locks differ in how they acquire — this one refuses where `project.held`
+#: waits, because a person is typing in the file it guards and making them wait
+#: is the wrong answer — and that difference does not reach the release. "Is
+#: this still my lock?" has one right answer either way, so it is answered here
+#: by the same function. Audit `M-F5`.
 _alive = project.alive
+_holder = project.holder
 
 
 def compose(
@@ -766,4 +774,13 @@ def run(text: str, parse_back, *, launcher=None) -> list[dict]:
             raise EditorAbort("buffer was not changed — nothing staged")
         return parse_back(after)
     finally:
-        lock.unlink(missing_ok=True)
+        # Only a lock this process still holds. Both refusals in
+        # `_acquire_buffer` tell a person to delete this file, so a lock
+        # replaced under a live session is a case that happens — and deleting
+        # the *new* holder's lock on the way out admits a second composer to
+        # one buffer, which is the single thing this lock exists to prevent.
+        # A lock that has become unreadable is left for the person those
+        # refusals already ask to look. Audit `M-F5`, and `C-F12` in the lock
+        # this shares its answer with.
+        if _holder(lock) == os.getpid():
+            lock.unlink(missing_ok=True)
