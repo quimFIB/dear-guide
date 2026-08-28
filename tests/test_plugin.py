@@ -26,7 +26,7 @@ from dgraph.render import write
 ROOT = Path(__file__).resolve().parent.parent
 SKILL = ROOT / "skills" / "dear-guide" / "SKILL.md"
 HOOKS = ROOT / "hooks"
-ADAPTERS = [HOOKS / "brief.py", HOOKS / "precommit.py"]
+ADAPTERS = [HOOKS / "brief.py", HOOKS / "precommit.py", HOOKS / "prewrite.py"]
 MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
 MARKET = ROOT / ".claude-plugin" / "marketplace.json"
 COMMANDS = sorted((ROOT / "commands").glob("*.md"))
@@ -659,6 +659,71 @@ def test_precommit_asks_before_a_removal(project_dir, command):
     assert "removes a node" in decision["permissionDecisionReason"]
 
 
+# ---- the write-scope adapter --------------------------------------------
+
+
+def _write(project_dir, path, tool="Write", agent="brisk-beacon",
+           policy="launch"):
+    env = dict(os.environ, DG_WRITE=policy)
+    if agent:
+        env["DG_AGENT"] = agent
+    else:
+        env.pop("DG_AGENT", None)
+    return run_hook(ADAPTERS[2], {
+        "tool_name": tool, "cwd": str(project_dir),
+        "tool_input": {"file_path": str(path)},
+    }, env=env)
+
+
+def test_prewrite_is_silent_for_a_supervisor(project_dir):
+    """No `$DG_AGENT` is a person, and a person is never scoped. This is also
+    the fast path: an ordinary session must not pay for a subprocess on every
+    single write."""
+    assert _write(project_dir, "/etc/passwd", agent=None).stdout == ""
+
+
+def test_prewrite_is_silent_inside_the_project(project_dir):
+    """Silence is the allow, for `precommit.py`'s reason: an explicit allow
+    would override the user's own permission rules for every write."""
+    assert _write(project_dir, project_dir / "findings" / "new.md").stdout == ""
+
+
+def test_prewrite_asks_outside_the_project(project_dir):
+    out = json.loads(_write(project_dir, "/etc/passwd").stdout)
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "ask"
+    assert "/etc/passwd" in decision["permissionDecisionReason"]
+
+
+def test_prewrite_ignores_reads(project_dir):
+    """Reads are never judged. An agent that cannot read the repository it is
+    reasoning about is blindfolded rather than constrained."""
+    for tool in ("Read", "Grep", "Glob", "Bash"):
+        assert _write(project_dir, "/etc/passwd", tool=tool).stdout == ""
+
+
+def test_prewrite_is_silent_when_the_policy_is_open(project_dir):
+    """`open` is the default, and has to remain today's behaviour."""
+    assert _write(project_dir, "/etc/passwd", policy="open").stdout == ""
+
+
+def test_both_adapters_relay_the_write_scope():
+    """The generalisation, asserted rather than assumed.
+
+    The point of putting the scope behind `dg gate` is that a rule written
+    once is enforced under every host. If only one adapter ever asked, the
+    other would be a hole the size of a whole scaffold — which is exactly what
+    happened to the removal verdict when one fast path went stale.
+    """
+    py = (HOOKS / "prewrite.py").read_text()
+    ts = (ROOT / "opencode" / "dear-guide.ts").read_text()
+    for source, name in ((py, "prewrite.py"), (ts, "dear-guide.ts")):
+        assert "--write" in source, name
+        # The `$DG_AGENT` fast path, in both: a supervisor is never scoped, so
+        # neither host may spawn `dg` for one.
+        assert "DG_AGENT" in source, name
+
+
 def test_precommit_never_emits_an_allow_decision(project_dir):
     for command in ("git commit -m x", "git commit --dry-run", "git status"):
         assert '"allow"' not in _pre(project_dir, command).stdout
@@ -707,7 +772,9 @@ def test_every_hook_command_points_at_a_file_that_exists():
                 assert m, hook["command"]
                 assert (ROOT / m.group(1)).exists(), m.group(1)
                 seen += 1
-    assert seen == 3
+    # Two SessionStart entries for the brief, and two PreToolUse: the commit
+    # gate on Bash and the agent write scope on the editing tools.
+    assert seen == 4
 
 
 def test_the_hooks_cover_both_mechanisms():

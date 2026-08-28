@@ -46,8 +46,16 @@ def test_the_opencode_adapter_carries_the_reason_into_the_throw():
     throws = [ln for ln in text.splitlines() if "throw new Error" in ln]
     assert throws
     body = text[text.index('"tool.execute.before"'):]
-    assert body.count("throw new Error") == 2          # deny, and ask
+    # Three: the commit gate's `deny` and `ask`, and the write scope's, which
+    # collapses both into one throw because that gate answers only `ask` —
+    # `deny` is honoured there purely so a future rule that refuses arrives
+    # working rather than silently ignored.
+    assert body.count("throw new Error") == 3
     assert "verdict.reason" in body
+    # The write scope's throw carries its own reason under a different name.
+    # Asserted separately rather than by scanning each `throw` line, because a
+    # throw spans several lines and the reason is not on the first of them.
+    assert "v.reason" in body
 
 
 #: The opencode hooks this adapter is allowed to register, and why each one.

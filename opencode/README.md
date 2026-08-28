@@ -66,6 +66,7 @@ directory. The two mechanisms do not depend on them.
 | `/dg-context <id>` | every premise a decision or a task rests on — what to read before dispatching work |
 | `/dg-serve` | the graphs in a browser, started detached so the session keeps its prompt |
 | `/dg-fanout` | who holds a name, what each of them is holding, and what is staged — before running several agents against one graph |
+| the agent write scope | when `$DG_AGENT` is set, `dg gate --write` judges every `write`, `edit` and `patch` call. Out of scope throws, carrying the reason and saying whose call it is; in scope and unowned sessions cost nothing. Reads are never judged. The policy is `$DG_WRITE`, shared with Claude Code — see `agentic/README.md` |
 | the commit gate | `dg gate` judges every `bash` call carrying one of `dg gate --triggers`' words — `commit` and `rm` today. It answers four ways: `deny` and `ask` both stop the call and arrive as the tool's error, carrying the reason and the fix, with `ask` saying whose call it is; `warn` stops nothing and is the third limit below; `allow` says nothing |
 | the `dear-guide` skill | loaded by opencode's own `skill` tool when a decision or a piece of work is in play |
 
@@ -75,10 +76,14 @@ the plugin's environment is the host's.
 
 ## Three limits worth knowing
 
-- **The gate does not see subagent shell calls.** `tool.execute.before` is not
+- **The gate does not see subagent tool calls.** `tool.execute.before` is not
   invoked for tools run by agents spawned through the `task` tool
   ([opencode#5894](https://github.com/sst/opencode/issues/5894)), so a commit
-  made from inside one is not gated.
+  made from inside one is not gated — and neither is a write, which matters
+  more now that the write scope rides the same hook. A fan-out launched as
+  separate `opencode run` processes is unaffected; one launched through the
+  `task` tool is not scoped at all. Claude Code has no equivalent gap, so this
+  is a reason to prefer separate processes here.
 - **Injecting the brief is the one part not guaranteed by the API.** opencode has
   no session-start hook; the plugin edits the first user message instead. If a
   future version stops honouring that, `/dg-brief` still works, and

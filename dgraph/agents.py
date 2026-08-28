@@ -180,8 +180,15 @@ class Exhausted(RuntimeError):
         super().__init__(f"all {total} names are held")
 
 
-def claim(root: Path | None = None, *, today: str | None = None) -> str:
+def claim(root: Path | None = None, *, today: str | None = None,
+          budget: int | None = None, now: str | None = None) -> str:
     """Take the first free name, record the lease, and return it.
+
+    `budget` is seconds the agent may run before its work is handed back, or
+    `None` for no limit. It is recorded here rather than left in the launcher's
+    environment so that a supervisor reading `dg agent list` sees the same
+    number the agent was given, and so `dg agent expire` has something to
+    measure against. See `limits`.
 
     Under the lease file's own lock: two launchers starting agents at the same
     moment is the case this exists for, and an unlocked read-modify-write here
@@ -198,7 +205,16 @@ def claim(root: Path | None = None, *, today: str | None = None) -> str:
         taken = set(leases) | set(staged)
         for name in sequence():
             if name not in taken:
-                leases[name] = {"since": today or _today()}
+                rec = {"since": today or _today()}
+                if budget is not None:
+                    # `started` is a timestamp and `since` a date, and both are
+                    # kept: the date is what a person reads, the timestamp is
+                    # what expiry subtracts. Deriving one from the other would
+                    # mean either a lease that cannot be read at a glance or a
+                    # budget with a day's resolution.
+                    rec["budget"] = int(budget)
+                    rec["started"] = now or _now()
+                leases[name] = rec
                 save(leases, proj.root)
                 return name
         raise Exhausted(len(sequence()),
@@ -299,3 +315,51 @@ def _today() -> str:
     """The local date, matching how `dg confirm --against` files one."""
     from datetime import date
     return date.today().isoformat()
+
+
+def _now() -> str:
+    """A timestamp for a budget to be measured from. Naive local, like `_today`.
+
+    The lease is scratch, per-checkout and gone with the run, so it never
+    crosses a machine and has nothing to reconcile against another clock.
+    """
+    from datetime import datetime
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def remaining(rec: dict, now: str | None = None) -> int | None:
+    """Seconds left on this lease's budget. Negative is over; `None` no limit.
+
+    A lease with a budget but no `started` is treated as no limit rather than
+    as instantly spent. That combination means a file written by an older
+    version or edited by hand, and reading it as "expired" would park an
+    agent's work on the strength of a field that was never set.
+    """
+    if rec.get("budget") is None or not rec.get("started"):
+        return None
+    from datetime import datetime
+    try:
+        began = datetime.fromisoformat(rec["started"])
+    except (TypeError, ValueError):
+        return None
+    at = datetime.fromisoformat(now) if now else datetime.now()
+    return int(rec["budget"]) - int((at - began).total_seconds())
+
+
+def over_budget(root: Path | None = None, now: str | None = None) -> list[dict]:
+    """Agents past their budget, with what each is still holding.
+
+    Holding nothing is included on purpose. An agent that spent its budget
+    without ever claiming a task has nothing to park, but a supervisor still
+    wants to know it is out of time -- the difference between "finished early"
+    and "died before it started" is exactly what a fan-out cannot otherwise
+    see.
+    """
+    out = []
+    for name, rec in sorted(load(root).items()):
+        left = remaining(rec, now)
+        if left is not None and left < 0:
+            out.append({"agent": name, "over": -left,
+                        "budget": int(rec["budget"]),
+                        "holding": list(rec.get("holding") or ())})
+    return out

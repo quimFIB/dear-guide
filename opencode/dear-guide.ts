@@ -121,7 +121,59 @@ export const DearGuidePlugin: Plugin = async ({ $, directory }) => {
      * tool (opencode issue #5894).
      */
     "tool.execute.before": async (input, output) => {
-      if (off() || input.tool !== "bash") return
+      if (off()) return
+
+      /*
+       * The agent write scope, relayed exactly as the commit gate below is.
+       * The policy is `dgraph/limits.py` reached through `dg gate --write`, so
+       * this host and Claude Code enforce one rule rather than two copies of
+       * one — which is the whole reason the gate takes a thing and returns a
+       * verdict instead of the adapters each deciding.
+       *
+       * The fast path is `$DG_AGENT` rather than a word list: a path carries
+       * no substring separating an in-scope write from an out-of-scope one,
+       * and the scope is never consulted for a supervisor anyway. Reads are
+       * absent on purpose — an agent that cannot read the repository it is
+       * reasoning about is blindfolded, not constrained.
+       *
+       * `ask` degrades to a refusal naming whose call it is, for the reason
+       * the commit gate's does: opencode's `permission.ask` carries no reason
+       * field, and a refusal the model cannot read is one it retries.
+       */
+      const WRITERS: Record<string, string> = {
+        write: "filePath",
+        edit: "filePath",
+        patch: "filePath",
+      }
+      const field = WRITERS[input.tool]
+      if (field && (process.env.DG_AGENT ?? "").trim()) {
+        const target = String((output.args as any)?.[field] ?? "")
+        if (target) {
+          const { code, out } = await run("gate", "--write", target, "--json")
+          // Silent on every failure, unlike the commit gate below. An
+          // unjudged commit may record a contradiction permanently; an
+          // unjudged write is an ordinary file operation nobody asked to be
+          // consulted about, and a notice on each would train the reader to
+          // ignore the one that matters. `gate.write_verdict` fails open for
+          // the same reason.
+          if (code === 0) {
+            let v: { verdict?: string; reason?: string }
+            try {
+              v = JSON.parse(out)
+            } catch {
+              return
+            }
+            if (v.verdict === "ask" || v.verdict === "deny") {
+              throw new Error(
+                `${v.reason ?? ""}\nThis is the user's call, not yours — ask ` +
+                  `them before writing there.`,
+              )
+            }
+          }
+        }
+      }
+
+      if (input.tool !== "bash") return
       const command = String((output.args as any)?.command ?? "")
       // A fast path, not a policy: a command containing none of these cannot
       // earn anything but `allow`, so skipping it can never hide a refusal, and

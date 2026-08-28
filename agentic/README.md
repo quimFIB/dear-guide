@@ -73,6 +73,96 @@ the launcher sets so an honest mistake is caught.
 
 ---
 
+## The other two limits: where an agent may write, and for how long
+
+`$DG_DECIDE` limits what an agent may *record*. Two more variables limit what it
+may do to the machine and to the clock, and all three are read the same way —
+declared by the launcher, never consulted for a supervisor.
+
+| variable | values | what it does |
+|---|---|---|
+| `$DG_WRITE` | `open` *(default)* · `launch` | where the agent may write without asking |
+| `$DG_BUDGET` | `infinite` *(default)* · `1800` · `30m` · `2h` | how long before its work is handed back |
+
+```sh
+DG_AGENT=$(dg agent claim --budget 30m) \
+DG_DECIDE=evidence \
+DG_WRITE=launch \
+  timeout 1800 claude -p "$(cat agentic/prompts/scout.md)"
+```
+
+### Why this is not enforced here, and where it is
+
+`$DG_DECIDE` can be a rule because **every decision goes through `dg`**. A write
+does not — an agent writes with its host's own tools, and `dg` is not in that
+path at all. A check that lived only in this tool would be a rule nothing ever
+consulted.
+
+The enforcement point that does exist is **`dg gate`**, and it was already
+general: it takes a thing about to happen and answers `allow` / `warn` / `ask` /
+`deny` with a reason, and *both host adapters relay that answer holding no
+policy of their own*. So the scope is a second question the same gate answers:
+
+```sh
+dg gate --write /etc/passwd --json
+```
+
+Which means a rule written once is enforced under **every** host at once —
+`hooks/prewrite.py` under Claude Code, `tool.execute.before` under opencode, and
+a third scaffold earns it by relaying the same verdict. `tests/test_plugin.py`
+asserts both adapters ask.
+
+**Reads are never judged.** An agent that cannot read the repository it is
+reasoning about is blindfolded rather than constrained, and every interesting
+thing a fan-out does starts by reading something outside its own directory.
+
+**An out-of-scope write is `ask`, never `deny`.** The rule is consent, not
+prohibition: the person approves it where they are standing. `dg gate --write`
+has no verdict that refuses outright.
+
+Under `launch` the writable roots are **the project** — where the graph is — and
+the system temporary directory. The project rather than the agent's current
+directory, because a `cd` is not a change of remit and a scope anchored to the
+working directory would widen every time an agent walked somewhere else.
+
+### The budget buys the hand-back, not the stopping
+
+`dg` is not in the agent's process tree and never was. Stopping the process is
+the launcher's half and looks like `timeout 1800 …` under any host.
+
+What the budget buys is the thing a fan-out cannot otherwise see. A task left
+`DOING` by an agent that died reads exactly like one being worked on — and
+`dg task park --why` is the verb that already fixes it:
+
+```sh
+dg agent list          # who is over, and what they are still holding
+dg agent expire        # stage a park for each, naming the budget
+dg apply --agent brisk-beacon
+```
+
+```
+┃ Name          ┃ Since      ┃ Staged ┃ Holding ┃ Budget           ┃
+│ agile-azimuth │ 2026-08-28 │ 0      │ T07     │ SPENT +12m       │
+│ brisk-beacon  │ 2026-08-28 │ 4      │ T11     │ 30m (18m left)   │
+```
+
+Each park is staged **under the agent's own name**, so it lands beside whatever
+that agent had already proposed and `dg apply --agent <name>` takes the batch.
+Parked work is still outstanding, so nothing downstream is released and the next
+agent can pick it up — which is the whole point of parking rather than dropping.
+
+An agent that spent its budget holding *nothing* is reported too. "Died before it
+started" is invisible in every other reading of a run, because no task is `DOING`
+for a roster of parked work to show.
+
+Run `dg agent expire` even when an agent died on its own; the budget is what
+makes the queue honest afterwards, and this is a real case rather than a
+hypothetical — a rate limit killed three scouts mid-wave in the run that
+`.dgraph-capture/` was built from, and every one of their tasks had to be parked
+by hand.
+
+---
+
 ## 1. The graph, and what you already decided
 
 ```sh
@@ -191,17 +281,21 @@ stores are committed and kept forever, agent names are recycled the moment they
 are released, and "who finished this" is noise six months on that a recycled
 name no longer even identifies. Who holds work is a fact about a run.
 
-**The whole contract with the host is two environment variables.** Whatever
-spawns an agent has to put `DG_AGENT` — and, if you want the rule rather than the
-habit, `DG_DECIDE` — in its environment; nothing else about the host matters,
-because everything the agent does to the graph it does through the `dg` CLI. That is what keeps this workflow independent of which model or which
+**The whole contract with the host is environment variables.** Whatever spawns
+an agent has to put `DG_AGENT` in its environment — and, if you want rules
+rather than habits, `DG_DECIDE`, `DG_WRITE` and `DG_BUDGET` beside it. Nothing
+else about the host matters, because everything the agent does *to the graph* it
+does through the `dg` CLI, and the one thing it does outside the CLI — writing
+files — reaches the same policy through `dg gate`, which both adapters already
+relay. That is what keeps this workflow independent of which model or which
 scaffold is running it.
 
 Each agent gets its name from the tool, never one you invent:
 
 ```sh
 for role in …; do
-  DG_AGENT=$(dg agent claim) DG_DECIDE=evidence <however you spawn an agent> &
+  DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch \
+    timeout 1800 <however you spawn an agent> &
 done
 dg agent list        # who holds what, and what each has staged
 ```
@@ -253,9 +347,17 @@ Each prompt should carry four things:
    to do this once stops when it is done and leaves the rest of the queue sitting
    there.
 3. **The rule** from the top of this file — add questions and work, decide
-   nothing — **and which `$DG_DECIDE` it is running under**, so a refusal at
-   stage time reads as the policy it is rather than as a broken tool.
-4. **What it may read.** Point at the files; it will not find them.
+   nothing — **and which `$DG_DECIDE`, `$DG_WRITE` and `$DG_BUDGET` it is
+   running under**, so a refusal at stage time or a prompt about a write reads
+   as the policy it is rather than as a broken tool.
+4. **What it may read, and where it may write.** Point at the files; it will not
+   find them. Under `DG_WRITE=launch` say so — an agent that knows the scope
+   puts its findings in the project instead of discovering the rule by being
+   stopped.
+5. **Its budget, and that expiry parks rather than discards.** An agent told it
+   has thirty minutes can decide what to finish; one told nothing runs until
+   something kills it. Say `dg task park --why` is how to hand work back early,
+   because an agent that stops without parking leaves work that looks alive.
 
 ## 4. Review, one proposal at a time
 

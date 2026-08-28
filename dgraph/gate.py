@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dgraph import check as _check
-from dgraph import pending, project
+from dgraph import limits, pending, project
 
 # `&&`, `||`, `;`, `|`, `&` end a command; `shlex` with `punctuation_chars`
 # hands each of them over as its own token.
@@ -477,6 +477,38 @@ def verdict(command: str, proj: project.Project | None = None) -> dict:
                       f"`dg check` and `dg pending` show the state it failed "
                       f"to read; fix that first, then retry.",
         }
+
+
+def write_verdict(path: str, proj: project.Project | None = None) -> dict:
+    """The same gate, asked about a write instead of a command.
+
+    This is what makes the agent write scope host-neutral. The policy is
+    `limits.refuse_write`; the two adapters already relay a verdict and hold no
+    policy of their own, so widening the gate here widens it under Claude Code
+    and opencode at once, and a third host earns it by relaying the same shape.
+
+    Only ever `allow` or `ask`. The rule is consent rather than prohibition —
+    see `limits` — so there is no write this can deny outright, and an adapter
+    that only knows how to relay a refusal still passes the reason on.
+
+    Never raises, for the reason `verdict` gives: an exception reads as "no
+    verdict" and the write proceeds. Unlike `verdict` the fallback is `allow`
+    rather than `deny`, and the asymmetry is deliberate. A commit the gate
+    could not judge might contradict the record permanently; a write it could
+    not judge is an ordinary file operation the person did not ask to be
+    consulted about. Failing closed here would turn every unreadable project
+    into a wall of prompts about writes nobody was worried about.
+    """
+    try:
+        p = proj if proj is not None else project.find()
+        root = getattr(p, "root", None)
+    except Exception:
+        root = None
+    try:
+        reason = limits.refuse_write(path, pending.owner(), root)
+    except Exception:
+        return _allow()
+    return {"verdict": "ask", "reason": reason} if reason else _allow()
 
 
 #: The verdicts, weakest first. `combine` returns the strongest, which is the

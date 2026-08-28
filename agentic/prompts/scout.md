@@ -86,3 +86,28 @@ agent that guesses reads the wrong thing confidently.⟩
 
 ⟨Anything it must NOT touch — a store to leave alone, a directory that is
 somebody else's, credentials. Say it plainly.⟩
+
+## Where you may write
+
+You are running under **`$DG_WRITE=⟨open|launch⟩`**. ⟨If `launch`: you may write
+freely inside ⟨PROJECT PATH⟩ and under `/tmp`. A write anywhere else stops and
+asks the person — that is the policy, not a broken tool, so put your findings
+somewhere in scope rather than working around it.⟩ Reading is never restricted.
+
+Put what you produce at ⟨PATH — e.g. `findings/<task-id>-<slug>.md`⟩, one file
+per task, and name it in the `--outcome` when you finish.
+
+## Your budget
+
+⟨If a budget was set: You have **⟨30m⟩**. Decide what to finish rather than
+being cut off mid-way.⟩ **Before you stop — for any reason — hand back what you
+are holding:**
+
+```sh
+dg task park ⟨id⟩ --why "what stopped it, and what state the work is in"
+dg apply --mine
+```
+
+A task left `DOING` by an agent that stopped is indistinguishable from one being
+worked on, so nobody picks it up. A park says what happened and makes it
+reclaimable; the reason is kept even after the work resumes.

@@ -183,11 +183,63 @@ def test_every_staging_command_is_covered():
         ("agent", "claim"), ("agent", "list"), ("agent", "release"),
         ("agent", "prune"),
     }
+    #: Commands that DO write a tray but cannot be expressed as a `CASES` entry,
+    #: with the test that covers them instead. Separate from `NO_TRAY` because
+    #: that set means "touches no tray", and putting one of these there would be
+    #: a false statement that also switched the check off.
+    #:
+    #: `agent expire` stages only for an agent whose budget has run out, and a
+    #: budget runs out by the clock — no sequence of CLI setup commands can
+    #: produce one, since `claim` stamps `started` at the moment it is called.
+    #: `test_limits.test_expire_is_one_tray_write_per_agent` backdates the
+    #: lease and arms the same counter this file does.
+    COVERED_ELSEWHERE = {("agent", "expire")}
     covered = {tuple(a for a in argv if not a.startswith("-"))[:2]
                for _, argv in CASES}
     covered = {c[:2] if c[0] == "task" else c[:1] for c in covered}
-    missing = names(app) - NO_TRAY - covered
+    missing = names(app) - NO_TRAY - COVERED_ELSEWHERE - covered
     assert not missing, (
         f"staging command(s) with no write-count case: {sorted(missing)} — "
         f"add them to CASES, or to NO_TRAY if they touch no tray"
     )
+
+
+def test_expire_is_one_tray_write_per_agent(both_stores, tray_writes,
+                                            monkeypatch):
+    """`agent expire`, the one staging command `CASES` cannot express.
+
+    It stages only for an agent whose budget has run out, and a budget runs out
+    by the clock — `claim` stamps `started` at the moment it is called, so no
+    sequence of CLI setup commands can produce one. The lease is backdated here
+    instead, and the same counter armed.
+
+    A hand-back is a group: a tray read between two parks shows half of it. It
+    cannot be one write across *all* agents either, because `pending.as_owner`
+    stamps a whole call and each batch carries its own agent's name — so the
+    floor is one write per agent, and this pins that it is also the ceiling.
+
+    Named by `COVERED_ELSEWHERE` above; if this is renamed, rename it there.
+    """
+    from dgraph import agents
+
+    name = agents.claim(both_stores, budget=60)
+    leases = agents.load(both_stores)
+    leases[name]["started"] = "2000-01-01T00:00:00"
+    leases[name]["holding"] = ["T01", "T02"]
+    agents.save(leases, both_stores)
+    for tid in ("T01", "T02"):
+        with pending.as_owner(name):
+            assert runner.invoke(
+                app, ["--project", str(both_stores), "task", "start", tid]
+            ).exit_code == 0
+        assert runner.invoke(
+            app, ["--project", str(both_stores), "apply", "--agent", name]
+        ).exit_code == 0
+
+    counted = tray_writes()
+    res = runner.invoke(app, ["--project", str(both_stores), "agent", "expire"])
+    assert res.exit_code == 0, res.output
+    assert len(counted) == 1, (
+        f"one agent's hand-back wrote a tray {len(counted)} times "
+        f"({', '.join(counted)}) — a group of ops that only means something "
+        f"together must be one write")

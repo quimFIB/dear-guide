@@ -21,7 +21,8 @@ over — say so and stop rather than inventing work.
 ⟨N⟩ agents on ⟨WHICH PART OF THE FRONTIER⟩. One line each:
 
 ```sh
-DG_AGENT=$(dg agent claim) DG_DECIDE=⟨evidence|never⟩ \
+DG_AGENT=$(dg agent claim --budget ⟨30m⟩) DG_DECIDE=⟨evidence|never⟩ \
+  DG_WRITE=⟨launch⟩ timeout ⟨1800⟩ \
   ⟨claude -p|opencode run⟩ "$(cat agentic/prompts/scout.md)" &
 ```
 

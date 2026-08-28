@@ -22,7 +22,7 @@ from dgraph import agents, applying
 from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
-from dgraph import cross, editor, pending, project, ranges, render, task_editor
+from dgraph import cross, editor, limits, pending, project, ranges, render, task_editor
 from dgraph import integrate as integrate_mod
 from dgraph import task_pending, task_render
 from dgraph import query as _query
@@ -1106,23 +1106,34 @@ def brief(
 def gate(
     command: str = typer.Option(None, "--command", metavar="CMD",
                                 help="The shell command a host is about to run."),
+    write: str = typer.Option(None, "--write", metavar="PATH",
+                              help="A path a host is about to write to."),
     as_json: bool = typer.Option(False, "--json", help="Machine form."),
     triggers: bool = typer.Option(False, "--triggers",
                                   help="Print the substrings an adapter's fast "
                                        "path must let through, one per line."),
 ) -> None:
-    """Judge a shell command before a host runs it: allow, warn, ask or deny.
+    """Judge a shell command or a write before a host does it.
 
-    The commit gate, host-neutral. Both agent adapters call this and translate
-    the answer, so the rule lives here rather than twice in two languages. Always
-    exits 0 — the verdict is the output, and an adapter must be able to tell a
-    refusal from a crash.
+    Host-neutral, and the only place either rule lives. Both agent adapters
+    call this and translate the answer, so a rule written here is enforced
+    under every host at once and a third host earns it by relaying the same
+    verdict. Always exits 0 — the verdict is the output, and an adapter must be
+    able to tell a refusal from a crash.
+
+    `--command` is the commit gate: allow, warn, ask or deny.
+
+    `--write` is the agent write scope, and answers only allow or ask. It reads
+    `$DG_WRITE`, is never consulted for a caller with no `$DG_AGENT`, and never
+    judges a read — see `dgraph/limits.py` for why each of those is the case.
 
     `--triggers` prints `gate.TRIGGERS` instead of judging anything. An adapter
     skips this command entirely for a shell command containing none of them, so
     a third host — or a check on the two that exist — can read the list from the
     tool rather than copy it and let it go stale, which is how the removal
-    verdict came to be unreachable from both.
+    verdict came to be unreachable from both. It says nothing about `--write`,
+    which has no fast path: every write is judged, because a path carries no
+    substring that could tell an in-scope one from an out-of-scope one.
     """
     from dgraph import gate as _gate
     if triggers:
@@ -1131,10 +1142,19 @@ def gate(
         else:
             print("\n".join(_gate.TRIGGERS))
         return
-    if command is None:
-        con.print("[red]--command is required (or --triggers)[/]")
+    if command is None and write is None:
+        con.print("[red]--command or --write is required (or --triggers)[/]")
         raise typer.Exit(2)
-    v = _gate.verdict(command)
+    if command is not None and write is not None:
+        # Refused rather than combined. `gate.combine` exists for two rules
+        # reached by one command; these are two different questions about two
+        # different things, and answering them with one verdict would attach a
+        # write's `ask` to a commit or the reverse.
+        con.print("[red]--command and --write are separate questions — "
+                  "ask them one at a time[/]")
+        raise typer.Exit(2)
+    v = (_gate.write_verdict(write) if write is not None
+         else _gate.verdict(command))
     if as_json:
         print(json.dumps(v, ensure_ascii=False))
         return
@@ -2736,7 +2756,11 @@ app.add_typer(agent_app, name="agent", rich_help_panel=WRITERS)
 
 
 @agent_app.command("claim")
-def agent_claim() -> None:
+def agent_claim(
+    budget: str = typer.Option(
+        None, "--budget", "-b",
+        help="how long this agent may run: `1800`, `30m`, `2h`, or `infinite`"),
+) -> None:
     """Take a free name and hold it. Prints the name, and nothing else.
 
     **Bare stdout on purpose**, because the only sensible caller is a
@@ -2747,9 +2771,24 @@ def agent_claim() -> None:
     A launcher's job, not an agent's: shell state does not survive between a
     coding agent's tool calls, so one that claimed a name for itself could not
     hold on to it.
+
+    `--budget` records how long the agent may run. Nothing here stops it at
+    that point — `dg` is not in the agent's process tree, and `timeout 1800
+    <however you spawn one>` is the launcher's half. What the budget buys is
+    the *hand-back*: `dg agent expire` parks whatever an out-of-time agent is
+    holding, so work stops looking like it is being done by something that
+    stopped. See `dg agent expire` and `agentic/README.md`.
     """
     try:
-        name = agents.claim()
+        seconds = limits.span(budget)
+    except limits.BadSpan as exc:
+        # Raised, where a bad `$DG_WRITE` is merely ignored. A misread budget
+        # is not a wider rule, it is a different number, and this is the one
+        # moment the launcher can still fix it.
+        con.print(f"[red]✗ {_x(exc)}[/]")
+        raise typer.Exit(1)
+    try:
+        name = agents.claim(budget=seconds)
     except agents.Exhausted as exc:
         # An error, never a fallback. Handing back a name somebody holds — or
         # inventing a numbered one outside the lists — is the silent conflation
@@ -2777,15 +2816,31 @@ def agent_list() -> None:
         con.print("[dim]no names claimed[/]")
         return
     t = Table(header_style="bold", title="Names held")
-    for c in ("Name", "Since", "Staged"):
+    for c in ("Name", "Since", "Staged", "Holding", "Budget"):
         t.add_column(c)
     # Names with ops but no lease are listed too, and marked. That is what a
     # hand-set `$DG_AGENT` looks like, and a roster of leases alone would say
     # the tray was unowned while somebody's drafts sat in it.
     for name in sorted(set(leases) | set(staged)):
-        since = leases.get(name, {}).get("since", "[dim]not claimed here[/]")
-        t.add_row(_x(name), since, str(staged.get(name, 0)))
+        rec = leases.get(name, {})
+        since = rec.get("since", "[dim]not claimed here[/]")
+        left = agents.remaining(rec)
+        if rec.get("budget") is None:
+            spend = "[dim]—[/]"
+        elif left is not None and left < 0:
+            # The one cell worth a colour: an agent past its budget and still
+            # holding work is the state `dg agent expire` exists for, and it is
+            # invisible in every other reading of a run.
+            spend = f"[red]SPENT +{limits.show_span(-left)}[/]"
+        else:
+            spend = (f"{limits.show_span(rec['budget'])}"
+                     f" ({limits.show_span(left)} left)")
+        t.add_row(_x(name), since, str(staged.get(name, 0)),
+                  ", ".join(rec.get("holding") or ()) or "[dim]—[/]", spend)
     con.print(t)
+    if any(agents.over_budget()):
+        con.print("[dim]`dg agent expire` hands back what the spent ones "
+                  "hold[/]")
     con.print(f"[dim]{len(agents.sequence()) - len(set(leases) | set(staged))} "
               f"of {len(agents.sequence())} names free[/]")
 
@@ -2820,6 +2875,67 @@ def agent_prune() -> None:
         con.print("[dim]nothing to prune — every name held has ops staged[/]")
         return
     con.print(f"[green]released[/] {len(gone)}: {_x(', '.join(sorted(gone)))}")
+
+
+@agent_app.command("expire")
+def agent_expire() -> None:
+    """Hand back what an out-of-budget agent is holding.
+
+    A task left `DOING` by an agent that stopped reads exactly like one being
+    worked on. That is the failure the lease file exists to make visible, and
+    `dg task park --why` is the verb that already fixes it — so an expired
+    budget parks, naming the budget as what stopped the work. Parked work is
+    still outstanding, so nothing downstream is released: the next agent can
+    pick it up, which is the whole point.
+
+    **This does not stop a process.** `dg` is not in the agent's process tree
+    and never was; `timeout 1800 <however you spawn one>` is the launcher's
+    half. This is the half that makes the queue honest afterwards, and it is
+    worth running even when the agent died on its own.
+
+    Staged, like everything else — each park goes into the tray under the
+    *agent's own name*, so `dg pending --agent <name>` shows it beside whatever
+    that agent had already proposed and `dg apply --agent <name>` takes the
+    batch. There is no `--apply` here on purpose: `dg apply` is the only door
+    that writes, and a second one would be a second place the tray's ownership
+    rules have to be right.
+    """
+    spent = agents.over_budget()
+    if not spent:
+        con.print("[dim]nothing expired — every budget has time on it[/]")
+        return
+    tg = _teff(_tg())
+    staged = 0
+    for rec in spent:
+        name, over = rec["agent"], limits.show_span(rec["over"])
+        held = [t for t in rec["holding"]
+                if t in tg.tasks and tg.tasks[t].status == "DOING"]
+        idle = [t for t in rec["holding"] if t not in held]
+        if not held:
+            # Said, not skipped silently. An agent that spent its budget
+            # holding nothing is the "died before it started" case, and it is
+            # the one a roster of parked tasks would never show.
+            con.print(f"[yellow]{_x(name)}[/] is {over} over budget and holds "
+                      f"nothing" + (f" (already left {', '.join(idle)})"
+                                    if idle else ""))
+            continue
+        why = (f"budget spent: {name} was given "
+               f"{limits.show_span(rec['budget'])} and is {over} past it")
+        # One write per agent, not one per task. A hand-back is a group: a tray
+        # read between two of these would show half of it, and `_tstage_all`
+        # exists for exactly that. It cannot be one write across *all* agents,
+        # because `as_owner` stamps a whole call and each batch carries its own
+        # agent's name.
+        with pending.as_owner(name):
+            _tstage_all([{"op": "set_status", "task": tid, "status": "PARKED",
+                          "why": why, "date": _date.today().isoformat()}
+                         for tid in held])
+        staged += len(held)
+        con.print(f"[green]staged[/] park of {', '.join(held)} "
+                  f"[dim]as {_x(name)}, {over} over budget[/]")
+    if staged:
+        con.print(f"[dim]{staged} park(s) staged — `dg pending` to read them, "
+                  f"`dg apply` to take them[/]")
 
 
 # ---- tasks ---------------------------------------------------------------

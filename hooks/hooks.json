@@ -32,6 +32,16 @@
             "timeout": 25
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/prewrite.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
