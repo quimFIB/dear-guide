@@ -504,6 +504,52 @@ def test_relinking_a_task_to_a_second_decision_is_refused(run_cli, both):
     assert TaskGraph.load(both / "tasks.json").tasks["T02"].evidence_for == "D05"
 
 
+def test_the_relink_refusal_says_why_one_slot_and_not_two(run_cli, both):
+    """Audit `V-F14`. A refusal is this tool's main teaching surface, and one
+    that states a rule without saying why reads as arbitrary at exactly the
+    moment somebody is being told no.
+
+    The reasoning was written into `README.md`, `how-it-works.md` and
+    `quickstart-web.md` when the refusal arrived, and correctly deleted from the
+    `because` half of all three when premises became a list — it applies to
+    `evidence_for` and not to premises. What was left was the rule with its
+    argument removed from most of where it lived, and the one place it always
+    belonged is here.
+
+    Asserted as *a shape*, not as wording: the message has to offer the second
+    task, because "you cannot have two" without "here is what you do instead" is
+    the half that makes a refusal read as arbitrary.
+    """
+    assert run_cli("task", "link", "T02", "--evidence-for", "D05").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    out = run_cli("task", "link", "T02", "--evidence-for", "D04").output
+    assert "two tasks" in out, \
+        f"the refusal does not offer the shape that answers both questions:\n{out}"
+    assert "dg task add" in out, \
+        f"the refusal names no command for the alternative it proposes:\n{out}"
+
+
+def test_the_relink_refusal_argues_its_rule_in_full(both):
+    """The counter and the reopen trigger, which a one-line message cannot
+    carry and which this codebase holds every non-goal to.
+
+    Read off the source rather than the output: the message is for the person
+    being refused, and the argument is for whoever next wonders whether the
+    single slot should become a list. Both have to exist; only one belongs on a
+    terminal.
+    """
+    import inspect
+
+    from dgraph import task_pending
+    src = inspect.getsource(task_pending.compose_link)
+    for want, what in (
+        ("outcome sentence", "the test that separates the two cases"),
+        ("counter", "the counter, stated as a counter"),
+        ("reopen", "what would reopen the rule"),
+    ):
+        assert want in src, f"`compose_link` does not carry {what}"
+
+
 def test_because_accumulates_premises_and_unlinks_one(run_cli, both):
     """A task rests on a set of decisions. Linking adds a premise (never drops
     the ones it has); unlinking names the one premise to remove, not the whole

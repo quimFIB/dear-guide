@@ -448,6 +448,42 @@ def compose_link(tg: TaskGraph, g: Graph | None, *, tid: str,
         # evidence walks away from a question nobody closed. Refuse a link onto
         # a different decision and say the correction, rather than letting the
         # second link erase the first.
+        #
+        # **Why one slot, when `because` above holds a set.** The two fields
+        # are not the same shape and the asymmetry is the design, not an
+        # oversight. A task rests on however many premises hold it up, and each
+        # of them gates it: adding one duplicates nothing. But a task informs a
+        # question by *producing a sentence* — its outcome — and one sentence
+        # answers one question.
+        #
+        # So the test that separates the two cases is: **does one outcome
+        # sentence answer both questions?** One benchmarking effort can bear on
+        # "pick an LLM" and "pick a server to host it", and the honest record
+        # there is two tasks — "Benchmark LLM" and "Benchmark servers to host
+        # the LLM" — because they vary different things, finish at different
+        # times, and end in different sentences. If it takes two sentences,
+        # they were always two pieces of work and the field was never the
+        # problem. If one sentence really does answer both, the work should not
+        # be split at all, and the reading belongs against one question with the
+        # other left open — see *Maybe later: one measurement read against a
+        # second question*, which is that case written down.
+        #
+        # **The counter, which is real and is not softened.** Under the split, a
+        # later reader sees two results and cannot tell they came from one
+        # measurement. That is a genuine loss: two outcomes transcribed from one
+        # run are the same fact stored twice, in the arrangement where the
+        # copies can disagree, which is what `Stop`'s docstring gives as the
+        # reason that record was folded rather than duplicated.
+        #
+        # **What would reopen it:** finding yourself writing two tasks whose
+        # outcomes transcribe one run — worth counting when it happens rather
+        # than predicting. The model is most of the way to the alternative
+        # already: `Reading.against` is a free `D`-id and `read_evidence`
+        # deliberately declines to check it against `evidence_for`, so a result
+        # could be read against a second question without the link moving. Two
+        # enforcement points stand in the way, and `task_reading_stale` would
+        # have to tell "read against a question this work never informed" apart
+        # from "read against one the link has since moved off".
         current = getattr(tg.tasks[tid], "evidence_for")
         if current and current != evidence_for:
             raise ApplyError(
@@ -455,7 +491,10 @@ def compose_link(tg: TaskGraph, g: Graph | None, *, tid: str,
                 f"a task informs one decision, so link it across "
                 f"(unlink {current}, then link {evidence_for}):\n"
                 f"  dg task unlink {tid} --evidence-for\n"
-                f"  dg task link {tid} --evidence-for {evidence_for}")
+                f"  dg task link {tid} --evidence-for {evidence_for}\n"
+                f"if it informs both, that is two tasks — one outcome sentence "
+                f"answers one question:\n"
+                f"  dg task add -t '…' --evidence-for {evidence_for}")
         op["evidence_for"] = evidence_for
     return [op]
 
