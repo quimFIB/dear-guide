@@ -50,8 +50,10 @@ def test_launch_asks_about_anywhere_else(tmp_path):
 def test_a_symlink_out_of_the_project_is_outside_it(tmp_path):
     """The scope is about where the bytes land, not what the path looks like.
 
-    A project holding a link to somewhere else — `dev-docs` in this very
-    workshop is one — would otherwise be a hole the length of the repository.
+    A project that holds a symlink pointing outside itself would otherwise be a
+    hole the length of whatever it links to, and a checkout linking its notes
+    or its data in from elsewhere is an ordinary arrangement rather than an
+    exotic one.
     """
     # Deliberately NOT a link into another temporary directory: `/tmp` is a
     # writable root in its own right, so such a link is in scope and the test

@@ -1024,6 +1024,31 @@ def test_nothing_published_cites_a_document_only_the_private_notes_hold():
         "published files citing a document only `dev-docs/` holds — state the "
         "reasoning inline instead:\n  " + "\n  ".join(bad))
 
+    # The weaker half of the same rule: naming the private tree *at all* as an
+    # aside — "`dev-docs` in this workshop is one" — assumes a reader who knows
+    # the author's layout, and a published repo has no such reader. It is not
+    # the dangling reference the loop above bans, and it slipped past that loop
+    # for exactly that reason, reaching a pre-push check rather than a test.
+    #
+    # `.gitignore` must name it (the rule that keeps the symlink out of a
+    # commit lives there), and this file states the rule.
+    allowed = {"tests/test_plugin.py", ".gitignore"}
+    asides = []
+    for rel in tracked:
+        if rel in allowed:
+            continue
+        try:
+            text = (root / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if "dev-docs" in line:
+                asides.append(f"{rel}:{i}  {line.strip()[:70]}")
+    assert not asides, (
+        "published files naming the private notes tree — say what you mean "
+        "about the arrangement instead of pointing at it:\n  "
+        + "\n  ".join(asides))
+
 
 def test_the_private_notes_symlink_is_ignored_by_a_committed_rule():
     """`.git/info/exclude` is not committed and does not survive a clone.
