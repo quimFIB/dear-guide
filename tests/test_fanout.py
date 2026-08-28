@@ -218,3 +218,24 @@ def test_the_tui_and_the_flags_produce_identical_files(proj):
     from_flags = (proj.root / fanout.OUT_DIR / "scout.md").read_text()
 
     assert from_tui == from_flags
+
+
+def test_the_missing_textual_hint_keeps_the_extra_it_names():
+    """`[tui]` is rich markup unless escaped, and the first version of this
+    message rendered as `pip install 'dear-guide'` — an install hint that
+    silently drops the extra it is telling you to install.
+
+    Rendered through a real console rather than reached by blocking the import:
+    `sys.modules["textual"] = None` does not stop `from textual.app import App`
+    once another test has cached the submodule, and the test then launches a
+    TUI that blocks forever waiting on a terminal.
+    """
+    import io
+
+    from rich.console import Console
+
+    from dgraph import cli
+
+    out = io.StringIO()
+    Console(file=out, width=200).print(cli.TUI_HINT)
+    assert "dear-guide[tui]" in out.getvalue()

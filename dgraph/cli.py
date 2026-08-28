@@ -3107,6 +3107,17 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
     )
 
 
+#: What a missing `textual` says. A constant so a test can render it: `[tui]`
+#: is rich markup unless escaped, and the first version of this message came
+#: out as `pip install 'dear-guide'` — an install hint that silently dropped
+#: the extra it was telling you to install.
+TUI_HINT = ("[yellow]![/] the interactive wizard needs `textual`\n"
+            "[dim]`pip install " + escape("'dear-guide[tui]'") +
+            "` — or give the answers as flags, which needs nothing: "
+            "`dg agent setup --json` prints the defaults and what it still "
+            "has to ask[/]")
+
+
 def _setup_interactively(plan: fanout.Plan, proj) -> fanout.Plan | None:
     """The TUI, imported here so the import cost falls on the one path.
 
@@ -3116,10 +3127,7 @@ def _setup_interactively(plan: fanout.Plan, proj) -> fanout.Plan | None:
     try:
         from dgraph import wizard
     except ImportError:
-        con.print("[yellow]![/] the interactive wizard needs `textual`\n"
-                  "[dim]`pip install 'dear-guide[tui]'` — or give the answers "
-                  "as flags, which needs nothing: `dg agent setup --json` "
-                  "prints the defaults and what it still has to ask[/]")
+        con.print(TUI_HINT)
         raise typer.Exit(2) from None
     return wizard.run(plan, proj)
 
