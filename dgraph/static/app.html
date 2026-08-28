@@ -67,6 +67,9 @@
     overflow:auto;padding:14px}
   aside h2{font-size:14px;margin:0 0 2px}
   .muted{color:var(--dim)}
+  /* An area the graph has not used before. A mark, not a warning: nothing is
+     wrong with a new area — see `dgraph/areas.py`. Audit `R-F7`. */
+  .fresh-area{color:var(--warn,#d29922)}
   .kv{display:grid;grid-template-columns:92px 1fr;gap:3px 8px;margin:10px 0}
   .kv div:nth-child(odd){color:var(--dim)}
   .answer{background:#0d1117;border:1px solid var(--line);
@@ -2192,6 +2195,23 @@ async function composeIn(kind){
   }
 }
 
+/* Every area either store already uses. `G.areas` and `T.areas` are the
+   registry the server sends — declared plus used — so an area absent from both
+   is one no record here carries. Recomputed per render rather than cached: a
+   tray redraw follows an apply, which is exactly when the answer changes. */
+function knownAreas(){
+  return new Set([...(G?G.areas:[]), ...(T?T.areas:[])]);
+}
+
+/* What a `set_fields` op writes, read off the op rather than from a copy of
+   `pending.FIELDS` kept here. A hard-coded list beside a mechanism that
+   derives field names is shape 8, and the first draft of this line got the
+   tuple wrong — it guessed `outcome`, which `set_fields` cannot write. The
+   bookkeeping keys are the ones the tray adds and the op's own address. */
+const OP_KEYS = new Set(["op","vertex","task","from","id","ref","saw","by",
+                         "derived_from"]);
+function fieldsOf(o){ return Object.keys(o).filter(k=>!OP_KEYS.has(k)); }
+
 /* ---- pending tray ----
    Two batches, side by side and labelled, because `apply` treats them as two:
    a task batch that will not apply cannot stop a decision batch that would,
@@ -2204,7 +2224,23 @@ function opRow(o, i, kind){
         + (o.why?` <span class="muted">${esc(o.why.slice(0,50))}</span>`:"")
         + (o.derived_from?` <span class="muted">(from ${esc(o.derived_from)})</span>`:"")
     : o.op==="add_dep"||o.op==="remove_dep"?esc((o.after||[]).join(", "))
+    /* `add_vertex` and `add_task` had no branch and fell through to the JSON
+       dump below, which put the area next to `saw`, `ref` and `by` in a cell
+       built for a sentence — so the browser's failure and the CLI's were one
+       fact: no surface that reviews staged work said what a record is filed
+       under, or that the area is new here. The kind was already known two
+       lines down, in the list that earns a ✎ button. Audit `R-F7`. */
+    : o.op==="add_vertex"||o.op==="add_task"?esc(o.title||"")
+    : o.op==="set_fields"?fieldsOf(o)
+        .map(f=>`${f} ${esc(o[f]||"—")}`).join(", ")
     : esc(JSON.stringify(o));
+  /* Said, never refused: `refuse_area` decides from two strings and cannot
+     see a sub-area, so the second line is a person told which corner this is
+     filed under and whether the graph has used it before. */
+  const area = (o.area||"").trim();
+  const mark = !area ? ""
+    : knownAreas().has(area) ? ` <span class="muted">[${esc(area)}]</span>`
+    : ` <span class="fresh-area">[${esc(area)} — new]</span>`;
   const node = o.vertex||o.task||o.from||o.id||"";
   /* Revise, and only where it can work: a derived op is not composed and has
      no buffer, and the editor is offered only where a windowed one exists —
@@ -2212,7 +2248,7 @@ function opRow(o, i, kind){
   const editable = kind==="d" && ED && ED.available &&
                    ["close","reopen","add_vertex"].includes(o.op) && o.ref;
   return `<tr><td>${i}</td><td>${esc(o.op)}</td><td>${esc(node)}</td>
-    <td>${det}</td><td style="white-space:nowrap">${
+    <td>${det}${mark}</td><td style="white-space:nowrap">${
       editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" title="Revise this op in ${esc(ED.editor||"the editor")}">✎</button>`:""
     }<button class="x" data-i="${i}" data-k="${kind}">✕</button></td></tr>`;
 }

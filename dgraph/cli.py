@@ -336,7 +336,7 @@ def _vet_all(g: Graph, ops: list[dict], *, new_area: bool = False) -> None:
         raise typer.Exit(1) from None
 
 
-def _stage_all(ops, path=None, *, against=None) -> None:
+def _stage_all(ops, path=None, *, against=None, new_area: bool = False) -> None:
     """`pending.stage_all`, with a refusal turned into a clean CLI exit.
 
     `_vet_all`'s twin, and here for the same reason. Staging is where
@@ -352,7 +352,13 @@ def _stage_all(ops, path=None, *, against=None) -> None:
     that already vetted.
     """
     try:
-        pending.stage_all(ops, path, against=against)
+        # `new_area_allowed` rather than a parameter passed down: `stage_all`
+        # judges the area now, and the permission is scoped to this call so
+        # that nothing between here and the write has to carry it and nothing
+        # writes it into the tray. See `pending.new_area_allowed`; audit
+        # `R-F2`.
+        with pending.new_area_allowed(new_area):
+            pending.stage_all(ops, path, against=against)
     except pending.ApplyError as exc:
         con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
@@ -1196,7 +1202,7 @@ def areas_rename(
     if d_ops:
         eff = _eff(g)
         _vet_all(eff, d_ops, new_area=True)
-        _stage_all(d_ops, against=eff)
+        _stage_all(d_ops, against=eff, new_area=True)
     if t_ops:
         _tstage_all(t_ops, new_area=True)
     con.print(f"[green]staged[/] {len(d_ops) + len(t_ops)} op(s): "
@@ -1224,29 +1230,46 @@ def areas_prune() -> None:
     a label would be a staged act with nothing to review. What makes that safe
     is that it is not a claim — no record moves, no answer changes, and the
     next record filed under a pruned name registers it again.
+
+    **Writing them directly is what makes the lock this function's own job.**
+    Every other writer of the two stores reaches them through `applying.py`,
+    which holds `project.stores` across the pair; this one does not, so it
+    holds them itself. See the comment below, and audit `R-F1`.
     """
     proj = project.find()
-    g, unreadable = _decisions_state()
-    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
-    if unreadable is not None:
-        con.print(f"[red]{project.STORE_NAME} could not be read[/]\n"
-                  f"[dim]{_x(unreadable)}[/]")
-        raise typer.Exit(1)
-    freed: list[str] = []
-    if g is not None:
-        used = {v.area for v in g.vertices.values()}
-        gone = [a for a in g.areas if a not in used]
-        if gone:
-            g.areas = [a for a in g.areas if a in used]
-            g.save(proj.store)
-            freed += [f"{a} (decisions)" for a in gone]
-    if tg is not None:
-        used = {t.area for t in tg.tasks.values()}
-        gone = [a for a in tg.areas if a not in used]
-        if gone:
-            tg.areas = [a for a in tg.areas if a in used]
-            tg.save(proj.tasks)
-            freed += [f"{a} (tasks)" for a in gone]
+    # The only command in this tool that read-modify-writes the two committed
+    # stores outside `dgraph/applying.py`, and so the only one that has to take
+    # the store lock for itself. Held across the loads as well as the saves,
+    # because the critical section starts at the load: unheld, a batch another
+    # writer applied in between is read as absent and written away — the op was
+    # accepted, reported as applied, and then erased with nothing in any diff.
+    # That is `C-F10` in a command written after `C-F10` closed. Audit `R-F1`.
+    #
+    # `project.stores` rather than two `held`s, because this reads both
+    # registries and writes both: the pair is the unit, it is taken in one
+    # order so two holders cannot deadlock, and it nests under anything above.
+    with project.stores(proj):
+        g, unreadable = _decisions_state()
+        tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+        if unreadable is not None:
+            con.print(f"[red]{project.STORE_NAME} could not be read[/]\n"
+                      f"[dim]{_x(unreadable)}[/]")
+            raise typer.Exit(1)
+        freed: list[str] = []
+        if g is not None:
+            used = {v.area for v in g.vertices.values()}
+            gone = [a for a in g.areas if a not in used]
+            if gone:
+                g.areas = [a for a in g.areas if a in used]
+                g.save(proj.store)
+                freed += [f"{a} (decisions)" for a in gone]
+        if tg is not None:
+            used = {t.area for t in tg.tasks.values()}
+            gone = [a for a in tg.areas if a not in used]
+            if gone:
+                tg.areas = [a for a in tg.areas if a in used]
+                tg.save(proj.tasks)
+                freed += [f"{a} (tasks)" for a in gone]
     if not freed:
         con.print("[dim]nothing to prune — every registered area holds a "
                   "record[/]")
@@ -1850,7 +1873,7 @@ def add(
         # `pending.vet`, and this ran neither, so a buffer could stage an op
         # that could never apply — in a tray every other writer shares. F30.
         _vet_all(eff, ops, new_area=new_area)
-        _stage_all(ops, against=eff)
+        _stage_all(ops, against=eff, new_area=new_area)
         con.print(f"[green]staged[/] {len(ops)} op(s) — add {ops[0]['id']}")
         _warn_stuck()
         return
@@ -1881,7 +1904,7 @@ def add(
     # One write, and the site that most needed it: a vertex staged without its
     # edges is only a `no_orphans` warning, so unlike every other group here a
     # half-staged one could be applied and pass.
-    _stage_all(ops, against=eff)
+    _stage_all(ops, against=eff, new_area=new_area)
     con.print(f"[green]staged[/] add {vid}")
     _warn_stuck()
 
@@ -1945,7 +1968,7 @@ def amend(
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    _stage_all([op], against=eff)
+    _stage_all([op], against=eff, new_area=new_area)
     con.print(f"[green]staged[/] {vid}")
     for line in lines:
         con.print(f"  [dim]{line}[/]")
@@ -2379,8 +2402,12 @@ def _trays_roster() -> dict[str, int]:
     return pending.roster(read(proj.pending), read(proj.task_pending))
 
 
-def _tray_detail(o: dict, details: dict) -> str:
+def _tray_detail(o: dict, details: dict, known: set[str] | None = None) -> str:
     """The detail cell for one staged op.
+
+    `known` is the areas both stores already use; passing it marks an op filing
+    under one they do not. Optional so that a caller with no listing to compute
+    it for — `_op_summary`'s drop confirmation — reads exactly as before.
 
     `.get` with a fallback, never a direct index: this is what every stuck-tray
     message sends the reader to ("`dg pending` to review"), so it has to run on
@@ -2389,7 +2416,7 @@ def _tray_detail(o: dict, details: dict) -> str:
     traceback here leaves `dg clear` as the only exit. The same holds for a
     known kind missing a field, which is what a hand-edit also looks like.
     """
-    return details.get(o.get("op"), _raw_op)(o)
+    return details.get(o.get("op"), _raw_op)(o) + _area_cell(o, known)
 
 
 def _tray_listing(ops: list[dict], *, details: dict, subject: str,
@@ -2408,6 +2435,9 @@ def _tray_listing(ops: list[dict], *, details: dict, subject: str,
     answer or a title, whose first words say which op this is.
     """
     con.print(f"[bold]{heading}[/]  {len(ops)} op(s)")
+    # Once per listing, not per row: an area two staged ops share is new to the
+    # *graph*, and marking only the first would call the second ordinary.
+    known = _known_areas()
     kinds = [_x(o.get("op") or "?") for o in ops]
     kw = max(len(compact.visible(k)) for k in kinds)
     iw = len(str(len(ops) - 1))
@@ -2418,7 +2448,7 @@ def _tray_listing(ops: list[dict], *, details: dict, subject: str,
     _say(compact.listing(
         [(f"{i:>{iw}}  {o.get('ref') or '—'}",
           compact.pad(k, kw) + "  " + _op_subject(o, subject),
-          _tray_detail(o, details), _by(o))
+          _tray_detail(o, details, known), _by(o))
          for i, (o, k) in enumerate(zip(ops, kinds))],
         width=_width(), markup=True))
 
@@ -2434,15 +2464,29 @@ def _tray_table(ops: list[dict], *, details: dict, subject: str,
     """The detailed tray: every detail in full, every field its own column.
 
     The owner column appears only when the tray has one, for the reason
-    `_tray_listing` gives.
+    `_tray_listing` gives, and the **Area** column the same way.
+
+    That column is here because this docstring already promised it and did not
+    keep it: an `add_vertex` rendered as its title alone, in both this view and
+    the listing, so the field the area guard is entirely about was the one field
+    a review could not see. A new area is marked rather than merely shown —
+    said, never refused. Audit `R-F7`.
     """
     t = Table(header_style="bold", title=title)
+    known = _known_areas()
     owned = any(o.get("by") for o in ops)
-    for c in ("#", "id", "Op", column, "Detail", *(["By"] if owned else [])):
+    filed = any((o.get("area") or "").strip() for o in ops)
+    for c in ("#", "id", "Op", column, *(["Area"] if filed else []), "Detail",
+              *(["By"] if owned else [])):
         t.add_column(c)
     for i, o in enumerate(ops):
+        area = (o.get("area") or "").strip()
+        cell = ("" if not area else
+                f"[yellow]{_x(area)} — new[/]" if area not in known
+                else _x(area))
         t.add_row(str(i), o.get("ref") or "—", _x(o.get("op") or "?"),
-                  _op_subject(o, subject), _tray_detail(o, details),
+                  _op_subject(o, subject), *([cell] if filed else []),
+                  _tray_detail(o, details),
                   *([_x(o.get("by") or "—")] if owned else []))
     con.print(t)
 
@@ -2502,6 +2546,50 @@ def _fields_detail(o: dict) -> str:
     """
     return ", ".join(f"{k} {_x(o[k] or '—')}"
                      for k in pending.FIELDS if k in o)
+
+
+#: Areas the two stores already know, for the tray listings. Computed once per
+#: listing rather than per row, and read off the stores rather than the tray —
+#: an area two staged ops share is new *to the graph*, and marking only the
+#: first would say the second was ordinary.
+def _known_areas() -> set[str]:
+    proj = project.find()
+    return set(_areas.stored_counts(proj.store)) | \
+        set(_areas.stored_counts(proj.tasks))
+
+
+def _area_cell(o: dict, known: set[str] | None = None) -> str:
+    """One op's area, marked where the graph has not used it before.
+
+    **Said, not refused, and that is the division.** `pending.refuse_area`
+    decides at the door from two strings alone, and there is a whole class it
+    cannot decide — `corpus-design` under a project that has `corpus` is a
+    sub-area, not a typo. Nothing else told a supervisor an area was new, so a
+    similarity threshold was the only thing standing between a fan-out and a
+    fragmented vocabulary, which is a great deal of weight for a threshold to
+    carry. This is the second line: it states the fact and leaves the judgement
+    to the person who can make it. Audit `R-F7`.
+
+    `agents.silent`'s shape — *"Nothing acts on this. It is read by a person,
+    who can tell a forty-minute build from a corpse in ways this cannot."*
+    """
+    area = (o.get("area") or "").strip()
+    # No `known` means a caller that is not drawing a listing — `_tray_table`,
+    # which gives the area a column of its own, and `_op_summary`'s drop
+    # confirmation, which is about one op the reader already named. Returning
+    # nothing there is what keeps the area out of the table's Detail cell as
+    # well as its Area one.
+    if not area or known is None:
+        return ""
+    fresh = area not in known
+    # `set_fields` already prints `area  x`, so repeating the name there would
+    # be the same fact twice in one cell. What it does not print is whether the
+    # name is new, which is the whole reason this exists.
+    if o.get("op") == "set_fields":
+        return "  [yellow](new area)[/]" if fresh else ""
+
+    return (f"  [yellow]\\[{_x(area)} — new][/]" if fresh
+            else f"  [dim]\\[{_x(area)}][/]")
 
 
 _PENDING_DETAIL = {
@@ -2994,10 +3082,18 @@ def _teff(tg: TaskGraph, skip: int | None = None) -> TaskGraph:
         raise typer.Exit(1) from None
 
 
-def _tstage(op: dict) -> None:
+def _tstage(op: dict, *, new_area: bool = False) -> None:
     """Vet an op against the effective task graph, then stage it. The singular
-    of `_tstage_all`, for a command whose whole change really is one op."""
-    _tstage_all([op])
+    of `_tstage_all`, for a command whose whole change really is one op.
+
+    **It has to carry `new_area`**, and did not: `dg task amend --new-area`
+    reached here through the singular and the flag stopped at the door, so the
+    one command that could not override the area guard was the one whose
+    refusal said *"restage with --new-area"* to somebody who had just passed
+    it. `dg amend`, its decision-store twin, went through `_stage_all` and
+    worked. Audit `R-F8`.
+    """
+    _tstage_all([op], new_area=new_area)
 
 
 def _tstage_all(ops: list[dict], *, new_area: bool = False) -> None:
@@ -3027,7 +3123,7 @@ def _tstage_all(ops: list[dict], *, new_area: bool = False) -> None:
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    _stage_all(ops, task_pending.path())
+    _stage_all(ops, task_pending.path(), new_area=new_area)
 
 
 def _next_hint(offer) -> str:
@@ -3137,11 +3233,13 @@ def task_init() -> None:
     disagree in three commands.
     """
     proj = project.find()
-    if proj.has_tasks:
-        con.print(f"[red]{proj.tasks} already exists[/]")
-        raise typer.Exit(1)
-    tg = TaskGraph()
-    tg.save(proj.tasks)
+    # `init`'s twin — see there for why the lock spans the check. Audit `R-F1`.
+    with project.held(proj.tasks):
+        if proj.has_tasks:
+            con.print(f"[red]{proj.tasks} already exists[/]")
+            raise typer.Exit(1)
+        tg = TaskGraph()
+        tg.save(proj.tasks)
     con.print(f"[green]✓[/] created {proj.tasks}; run `dg task render` for "
               f"{proj.task_view.name}")
     _report_ignored(proj)
@@ -3241,7 +3339,7 @@ def task_add(
     said = [(kind, *task_pending.relation_ops(tg, tid, others, kind)[1:])
             for others, kind in ((parents, "precedes"),
                                  (prompted, "prompted")) if others]
-    _tstage_all(ops)
+    _tstage_all(ops, new_area=new_area)
     con.print(f"[green]staged[/] add {tid}")
     for kind, fresh, already in said:
         _say_relation(tid, kind, fresh, already)
@@ -3413,7 +3511,7 @@ def task_amend(
     lines = _amended(tg.tasks[tid], op)
     # `_tstage` vets, and `task_pending.vet` holds every rule for the same
     # reason the decision store's does: the browser can post this op as data.
-    _tstage(op)
+    _tstage(op, new_area=new_area)
     con.print(f"[green]staged[/] {tid}")
     for line in lines:
         con.print(f"  [dim]{line}[/]")
@@ -4247,11 +4345,18 @@ def init() -> None:
     registers it, in the store it writes, and every reader takes the union.
     """
     proj = project.find()
-    if proj.has_decisions:
-        con.print(f"[red]{proj.store} already exists[/]")
-        raise typer.Exit(1)
-    g = Graph()
-    g.save(proj.store)
+    # Held across the check *and* the write, not around the write alone: this
+    # is a read-check-act, and "already exists" outside the lock is the shape
+    # `M-F1` and `M-F2` were, one layer earlier in a file's life. Two `dg init`
+    # at once both see nothing and both write. `project.stores` would lock
+    # neither store, since it locks only the ones that are there — and the
+    # point here is that this one is not there yet. Audit `R-F1`.
+    with project.held(proj.store):
+        if proj.has_decisions:
+            con.print(f"[red]{proj.store} already exists[/]")
+            raise typer.Exit(1)
+        g = Graph()
+        g.save(proj.store)
     con.print(f"[green]✓[/] created {proj.store}; run `dg render` for "
               f"{proj.view.name}")
     _report_ignored(proj)
@@ -4282,6 +4387,14 @@ def _adopt(graph, store: pathlib.Path, view: pathlib.Path,
 
     Like `init`, the store is written but the generated view is left to
     `dg render` / `dg task render`, built on demand.
+
+    **The overwrite refusal is re-made here, under the lock.** Each caller
+    already runs `_refuse_overwrite` before parsing, which is right — a refusal
+    that made you wait for a large file to be read would be a worse refusal.
+    But a check outside the lock is a check another bootstrap can pass at the
+    same moment, and what a bootstrap creates is the whole store. So the early
+    one stays as the fast path and this one is the one that decides. Audit
+    `R-F1`.
     """
     problems = graph.validate()
     for v in problems:
@@ -4294,7 +4407,9 @@ def _adopt(graph, store: pathlib.Path, view: pathlib.Path,
                   f"[dim]fix {source}, or `--force` to write it anyway and "
                   f"repair with `dg` afterwards[/]")
         raise typer.Exit(1)
-    graph.save(store)
+    with project.held(store):
+        _refuse_overwrite(store.exists(), store)
+        graph.save(store)
     render_cmd_name = "task render" if view.name == project.TASK_VIEW_NAME \
         else "render"
     con.print(f"[green]✓[/] imported {counted} → {store}; run `dg "
@@ -4570,6 +4685,10 @@ def incoming(
                               help="its wording (default: this one's)"),
     area: str = typer.Option(None, "--area",
                              help="its area (default: this one's)"),
+    new_area: bool = typer.Option(
+        False, "--new-area",
+        help="accept an arriving area nobody here has used, even where it "
+             "resembles one that is in use"),
     adopt: bool = typer.Option(False, "--adopt",
                                help="move it into the trays, to review and "
                                     "apply like your own work"),
@@ -4598,10 +4717,11 @@ def incoming(
     # and it nests, so they cost nothing here. Audit W-F1.
     with integrate_mod.held(proj.root):
         return _incoming(proj, take, keep, split, as_id, title, area,
-                         adopt, discard)
+                         new_area, adopt, discard)
 
 
-def _incoming(proj, take, keep, split, as_id, title, area, adopt, discard):
+def _incoming(proj, take, keep, split, as_id, title, area, new_area, adopt,
+              discard):
     """The body of `dg incoming`, with the quarantine file already held."""
     raw = integrate_mod.load_incoming(proj.root)
     if not raw:
@@ -4711,11 +4831,34 @@ def _incoming(proj, take, keep, split, as_id, title, area, adopt, discard):
         raise typer.Exit(1)
 
     def stage(d_ops, t_ops):
-        if d_ops:
-            _vet_all(_eff(_g()), d_ops)
-            _stage_all(d_ops)
-        if t_ops:
-            _tstage_all(t_ops)
+        # `--new-area` reaches both halves. Adoption is all or nothing, so an
+        # arriving area that resembles a local one would otherwise make the
+        # whole contribution unadoptable: the ops are in the quarantine file
+        # and not in a tray, so the guard's own advice — *"restage with
+        # --new-area"* — named a flag this command did not have, and the only
+        # exits were `--discard` and a hand-edit. Audit `R-F4`.
+        try:
+            with pending.new_area_allowed(new_area):
+                if d_ops:
+                    pending.vet_all(_eff(_g()), d_ops, new_area=new_area)
+                    pending.stage_all(d_ops)
+                if t_ops:
+                    task_pending.vet_all(_teff(_tg()), t_ops,
+                                         new_area=new_area)
+                    pending.stage_all(t_ops, task_pending.path())
+        except pending.ApplyError as exc:
+            # Reworded here rather than at the guard, because the question a
+            # person is being asked is a different one. Somebody who just typed
+            # an area is being asked "did you mean this?"; somebody adopting is
+            # being asked whether a *second writer's* corner is the same as one
+            # of theirs — and the answer may be `--split`, or a `dg areas
+            # rename` afterwards, rather than the override. Audit `R-F4`.
+            con.print(f"[red]✗ nothing adopted[/]\n{_x(exc)}")
+            con.print(f"[dim]this is {_x(raw.get('source', 'the contribution'))}"
+                      f"'s wording, not yours. `--new-area` accepts it as a "
+                      f"corner of its own; `dg areas rename` merges it into "
+                      f"yours after it lands. The contribution is untouched.[/]")
+            raise typer.Exit(1) from None
 
     # Staging and clearing as one act, so two adopters cannot each stage the
     # whole contribution and each delete the only record that it arrived.

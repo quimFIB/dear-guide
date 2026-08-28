@@ -193,3 +193,90 @@ def test_an_apply_writes_both_stores_held(tmp_path, monkeypatch, watch_writes):
     for name in (project.STORE_NAME, project.TASKS_NAME,
                  project.PENDING_NAME, project.TASK_PENDING_NAME):
         assert matrix.get(name) is True, f"{name} written unheld by apply"
+
+
+# ---- every command, not the four somebody remembered ----------------------
+#
+# `M04` asked for a mechanism rather than a list and got one: the spy fails for
+# a door nobody has written yet, *provided a test drives that door*. `R-F1` is
+# what that proviso costs — `dg areas prune` writes both committed stores
+# unheld, went in with the four tests above already green, and is the one
+# command in the tool that read-modify-writes a store outside `applying.py`.
+#
+# So the door list is derived too: walk both apps, run every command against a
+# project that has something to write, and assert that whatever guarded path it
+# wrote was held while it wrote it. A command that writes nothing passes
+# vacuously and costs a subprocess-free invocation; a command added tomorrow is
+# covered the day it lands, which is the property the four above only have for
+# the doors somebody thought of.
+
+def _commands(app, prefix=()):
+    """`(argv-prefix, callback)` for every command in a typer app, groups too."""
+    out = []
+    for cmd in app.registered_commands:
+        name = cmd.name or cmd.callback.__name__.replace("_", "-")
+        out.append((*prefix, name))
+    for grp in app.registered_groups:
+        out += _commands(grp.typer_instance, (*prefix, grp.name))
+    return out
+
+
+def _seeded(root):
+    """A project with both stores, both trays, a grant and a lease.
+
+    Every guarded file present, so a command that would rewrite one has one to
+    rewrite. The stores carry an area holding nothing, which is what gives
+    `dg areas prune` something to do — a command that no-ops writes nothing and
+    proves nothing.
+    """
+    store = json.loads(json.dumps(FIXTURE))
+    store["areas"] = [*store["areas"], "Ghost"]
+    (root / project.STORE_NAME).write_text(json.dumps(store))
+    tasks = json.loads(json.dumps(TASK_FIXTURE))
+    tasks["areas"] = [*tasks["areas"], "Phantom"]
+    (root / project.TASKS_NAME).write_text(json.dumps(tasks))
+
+
+#: Commands this sweep does not run, each because running it is not a test of
+#: locking. Nothing here is exempt from the *rule* — `dg serve` blocks forever
+#: and `dg-agent run` spawns a child, so they are excluded from the sweep and
+#: not from the matrix, and each is reached by its own test elsewhere.
+_NOT_SWEPT = {("serve",), ("run",), ("setup",)}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [a for a in _commands(__import__("dgraph.cli", fromlist=["app"]).app)
+     if a not in _NOT_SWEPT],
+    ids=lambda a: " ".join(a))
+def test_no_command_writes_a_guarded_path_unheld(argv, tmp_path, monkeypatch,
+                                                 watch_writes):
+    """Whatever this command wrote, it held while writing it.
+
+    The assertion is on the writes that happened, so a command that refuses for
+    want of a flag is not a failure — it wrote nothing, and a command with
+    nothing to write cannot write it unheld. What this catches is the command
+    that *does* reach a store and did not take the lock, which is `R-F1`.
+    """
+    from typer.testing import CliRunner
+
+    from dgraph import cli
+    monkeypatch.setattr(project, "_override", tmp_path)
+    _seeded(tmp_path)
+    CliRunner().invoke(cli.app, ["--project", str(tmp_path), *argv],
+                       input="\n" * 4)
+    proj = project.find()
+    for name, held in _matrix(watch_writes, proj).items():
+        assert held, f"`dg {' '.join(argv)}` wrote {name} unheld"
+
+
+def test_the_sweep_actually_reaches_a_store_writer():
+    """The sweep's own falsifier.
+
+    A parametrised test over commands that all decline for want of an argument
+    is a green suite asserting nothing — shape 5, and the exact way a door-list
+    test rots. So one command in the sweep must be known to write a store, and
+    it is the one `R-F1` was about.
+    """
+    from dgraph import cli
+    assert ("areas", "prune") in _commands(cli.app)

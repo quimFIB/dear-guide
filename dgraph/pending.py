@@ -75,11 +75,28 @@ FIELD_KEYS = ("op", "vertex", "task", "ref", "saw", "by")
 #
 # WHAT REPLACES IT. Membership was catching typos, and dropping it without a
 # replacement would let a multi-writer fan-out fragment `corpus` into `Corpus`
-# and `corpus-design` with nothing to notice. So a **genuinely new** area is
-# checked for similarity against the ones already in use; an area that already
-# exists is silent, which is both the common case and the one that matters --
-# an `amend` *toward* an existing area is the fix for a typo, and a guard that
-# refused it because it resembles the typo would be backwards.
+# with nothing to notice. So a **genuinely new** area is checked for similarity
+# against the ones already in use; an area that already exists is silent, which
+# is both the common case and the one that matters -- an `amend` *toward* an
+# existing area is the fix for a typo, and a guard that refused it because it
+# resembles the typo would be backwards.
+#
+# WHAT IT DOES NOT REPLACE, and this paragraph used to claim otherwise. The
+# guard catches what a machine can be certain of from two strings: a spelling
+# that normalises to one in use, and a slip of a character or two. It does not
+# catch `corpus-design` under a project that has `corpus`, at any threshold
+# that does not also flag unrelated short names -- and should not, because that
+# is a *sub-area* and not a misspelling. Whether an agent may coin one at all
+# is `$DG_AREA`, set by the launcher and refusing an agent every area new to
+# the union; whether anybody should look at the one it coined is a question for
+# the surfaces that review staged work, not for a refusal. See
+# `dgraph/areas.py`; audit `R-F3`.
+#
+# WHERE IT IS JUDGED. At `stage_all`, the one staging function -- for both
+# trays and every door, exactly as `$DG_TERSE` is, and for the same sentence.
+# It was on three composing doors and missing from the one that takes ops as
+# data, which is `POST /api/pending` and every op adopted from another writer's
+# contribution. Audit `R-F2`.
 #
 # READ THE UNION, WRITE YOUR OWN STORE. The guard reads both stores' areas,
 # because sharing the areas is the point; but every op appends only to the
@@ -337,6 +354,48 @@ def as_owner(name: str | None):
             _as.name = prev
 
 
+#: Whether this call may file under an area nobody has used yet. Thread-local
+#: for the reason `_as` above is: `dg serve` is a `ThreadingHTTPServer`, and two
+#: requests are two threads that must not see each other's permission.
+_fresh_area = threading.local()
+
+
+@contextlib.contextmanager
+def new_area_allowed(allowed: bool = True):
+    """Let this call file under a genuinely new area, for the duration of a block.
+
+    **A carrier, not a field on the op**, and that is the whole design. `apply`
+    never rechecks the area, so a `new_area` written into the tray would be a
+    *permission travelling with a record* — staged by one writer, applied by
+    another, in a tray this tool has always treated as shared. `refuse_area`
+    settled that when the flag was born; this is what lets the check move to the
+    one staging door without taking it back.
+
+    Scoped to the call rather than passed down it because the alternative is a
+    `new_area=False` parameter on every function between a command and
+    `stage_all` — `expand`, the editor's composers, `integrate.adopt`'s injected
+    `stage` — which is the list-of-doors problem the move is meant to end. A
+    door that says nothing gets the guard, which is the safe default; a door
+    that means it says so here.
+
+    `as_owner`'s twin in every respect, including that only the doors offering
+    `--new-area` (and `dg areas rename`, where the person typed the target) use
+    it. Audit `R-F2`.
+    """
+    prev = getattr(_fresh_area, "ok", False)
+    _fresh_area.ok = allowed
+    try:
+        yield
+    finally:
+        _fresh_area.ok = prev
+
+
+def new_area_ok() -> bool:
+    """Whether the caller has said this area is deliberate. False by default,
+    which is what makes a door that has never heard of this a guarded one."""
+    return getattr(_fresh_area, "ok", False)
+
+
 def mine(ops: list[dict], me=_INHERIT) -> tuple[list[dict], list[dict]]:
     """`ops` split into the caller's and everybody else's.
 
@@ -545,6 +604,51 @@ def stage(op: dict, path: Path | None = None, *,
     return stage_all([op], path, against=against)
 
 
+def _refuse_new_areas(ops: list[dict], tray: list[dict],
+                      path: Path | None) -> None:
+    """Raise if any op files under an area this project has not used.
+
+    The registries are read the way `vet_new` reads them and then widened by
+    the tray, which is what makes a second record under an area staged a minute
+    ago silent: `own` is the store this tray feeds plus every area already
+    staged into it, `other` is the twin store. `stored_counts` caches on the
+    file's mtime and size, so the ordinary path — no `area` on any op — costs
+    one `.get` per op and no read at all.
+
+    Sequential, accumulating, exactly as `vet_all` vets against the graph the
+    ops before it produce: a group filing two records under one new area is one
+    new area, and the refusal names it once.
+
+    Which store is which comes from the tray path, since that is the only thing
+    `stage_all` is told — against `project.TASK_PENDING_NAME` rather than
+    `task_pending.path()`, because `task_pending` imports this module and the
+    name is the constant both of them already resolve through.
+    """
+    if not any((op.get("area") or "").strip() for op in ops):
+        return
+    proj = project.find()
+    p = path or proj.pending
+    is_task = p.name == project.TASK_PENDING_NAME
+    own_store, other_store = ((proj.tasks, proj.store) if is_task
+                              else (proj.store, proj.tasks))
+    own = dict(_areas.stored_counts(own_store))
+    for staged in tray:
+        area = (staged.get("area") or "").strip()
+        if area:
+            own[area] = own.get(area, 0) + 1
+    other = _areas.stored_counts(other_store)
+    allowed, me = new_area_ok(), owner()
+    for op in ops:
+        area = (op.get("area") or "").strip()
+        if not area:
+            continue
+        why = refuse_area(area, own=own, other=other, owner=me,
+                          new_area=allowed)
+        if why is not None:
+            raise ApplyError(why)
+        own[area] = own.get(area, 0) + 1
+
+
 def stage_all(ops: list[dict], path: Path | None = None, *,
               against: Graph | None = None) -> list[dict]:
     """Stage a group of ops as one write. The plural of `stage`, and the one to
@@ -586,6 +690,20 @@ def stage_all(ops: list[dict], path: Path | None = None, *,
         ops = [stamp(against, op) for op in ops]
     with held(path):
         current = load(path)
+        # `$DG_AREA` and the similarity guard, here for the reason `$DG_TERSE`
+        # above is and `area_known` no longer can be. The invariant used to
+        # catch an unknown area in `validate`, which is one place by
+        # construction; dropping it for a stage-time check turned that into a
+        # list of call sites, and the list was missing the door that takes ops
+        # **as data** — `POST /api/pending`, and every op adopted from another
+        # writer's contribution. That is the multi-writer fan-out fragmenting
+        # one area into two, arriving through the one door built for another
+        # writer's work. Audit `R-F2`.
+        #
+        # Inside the lock and before the extend, so the tray it judges against
+        # is the tray it is about to be part of, and a refusal leaves the file
+        # untouched — the property every other stage-time guard is for.
+        _refuse_new_areas(ops, current, path)
         # Under the lock, so uniqueness is judged against the tray as it is —
         # another writer may have staged since this call started.
         current.extend(_with_refs(ops, current))
@@ -860,8 +978,11 @@ def vet_fields(op: dict, *, own: dict, other: dict, current: dict,
     in one store and not its twin is the shape most of this tool's audit
     findings took.
 
-    Refused at *stage* time rather than left to `validate`, though `area_known`
-    would catch an unknown area at apply. Two reasons. A tray may be shared, so
+    Refused at *stage* time, and there is no longer anything behind it: this
+    used to argue itself as the earlier of two nets, with `area_known` catching
+    an unknown area at apply, and that invariant is gone — the list is a
+    registry now, so a record filed under an unlisted area is legal. Two
+    reasons it is here rather than later. A tray may be shared, so
     an op that cannot apply wedges it for every other writer until somebody
     drops it — audit `F30`, and the argument for `vet_all` existing at all. And
     there is no invariant at all for a blank title: nothing in either store's
@@ -1191,12 +1312,16 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
                       owner=owner(), new_area=new_area)
     if why is not None:
         raise ApplyError(why)
-    # Checked here *as well as* in `vet`, and both are needed. This function is
-    # the flag path and `/api/add`; `vet` is the raw-op path and the editor.
-    # Both now check the area too: there is no longer an invariant behind it to
-    # catch what slips through, because a store whose records use an area its
-    # list does not mention is legal — the list is a registry, and every reader
-    # takes the union of what is declared and what is used.
+    # The area is checked here *as well as* at the write, and the two are not
+    # the same check doing the same job. `stage_all` is where the rule is —
+    # the one staging function, which no door can miss — and this one runs
+    # earlier so the message can name the flag the caller typed, `--area`,
+    # rather than an op they never wrote. The same division `editor._parse_add`
+    # makes for `** Area`, and the same one the id and status checks have.
+    #
+    # This comment used to say *"both now check the area too"* of `vet`, which
+    # judged a `set_fields` and never an `add_vertex` — so the raw-op door was
+    # unguarded and the sentence was why nobody looked. Audit `R-F2`.
     bad = ranges.fault("D", vid)
     if bad:
         raise ApplyError(bad)

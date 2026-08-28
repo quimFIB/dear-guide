@@ -43,6 +43,7 @@ import threading
 import time
 
 import pytest
+import typer
 
 from dgraph import (agents, applying, cross, integrate, pending, project, ranges,
                     render, task_pending)
@@ -840,3 +841,146 @@ def test_the_keep_set_is_computed_under_the_lease_lock(proj, monkeypatch):
     assert seen == [True], (
         "the keep set was computed with the lease file unheld, so the lease it "
         "judges may be a lease another writer has already moved past")
+
+
+# ---- R-F1 · the doors that CREATE a store ---------------------------------
+#
+# Pass 11 asked which door *creates* each file the tool writes and whether it is
+# held to the rule its maintainers are. It asked it of the scratch files and
+# answered it there (`M-F1`, `M-F2`). The two committed stores were not part of
+# that reading, because they already had a lock — `project.stores`, taken by
+# `applying.py` on every apply — and a file with a lock is the file nobody
+# re-reads. But `applying` is not the only writer: `dg areas prune` maintains
+# them and five bootstrap doors create them, and none of the six held anything.
+#
+# `tests/test_write_lock_matrix.py` sweeps every command against a project that
+# already has both stores, which is what catches `dg areas prune`. It cannot
+# catch these three: what they need is a project with *no* store, so the sweep's
+# fixture is the wrong one by construction and the creating door needs its own
+# test — which is `R-F1` restating pass 11's question about itself.
+
+
+def _empty(tmp_path, monkeypatch):
+    """A project directory with neither store. What a bootstrap starts from."""
+    monkeypatch.setattr(project, "_override", tmp_path)
+    return project.find()
+
+
+def test_two_inits_do_not_both_create_one_store(tmp_path, monkeypatch):
+    """`dg init` is a read-check-act, and the act creates the whole store.
+
+    The check is `proj.has_decisions`; unheld, two of them both see nothing and
+    both write, and whichever lands second is the store — so a second `init`
+    that should have been refused silently replaces the first. Harmless while
+    the graph is empty, and not harmless at all in `_adopt` below, which is the
+    same three lines with an imported graph behind them.
+
+    Real threads, because mutual exclusion is the property: a simulated race
+    cannot be fixed by a lock, so simulating one would produce a test no fix
+    could pass.
+
+    **`cli.init` directly, not `CliRunner`.** The runner replaces the process's
+    stdout for the duration of a call and restores it at the end, so two of
+    them in two threads tear each other's streams down — a harness that fails
+    for a reason the subject has nothing to do with. The command function is
+    what the runner would have called.
+    """
+    from dgraph import cli
+    p = _empty(tmp_path, monkeypatch)
+    refused = []
+    ready = threading.Barrier(2, timeout=HOLD * 10)
+
+    real = Graph.save
+
+    def slow_save(self, path=None):
+        # Inside the critical section: the window a lock has to close is
+        # between the `has_decisions` check and this write.
+        time.sleep(HOLD)
+        return real(self, path)
+
+    monkeypatch.setattr(Graph, "save", slow_save)
+
+    def go():
+        ready.wait()
+        try:
+            cli.init()
+        except typer.Exit as exc:
+            refused.append(exc.exit_code)
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=HOLD * 20)
+
+    assert p.store.exists()
+    assert len(refused) == 1, \
+        "both `dg init` calls created the store; one had to be refused"
+
+
+def test_a_bootstrap_refuses_a_store_that_appeared_while_it_parsed(tmp_path,
+                                                                   monkeypatch):
+    """`_adopt` re-checks under the lock, and that is the check that decides.
+
+    The consequence test for the import doors. Each caller runs
+    `_refuse_overwrite` before parsing — right, because a refusal you wait for a
+    large file to reach is a worse refusal — but a check outside the lock is one
+    another bootstrap can pass in the same moment. What a bootstrap creates is
+    the whole store, so the loser's entire import is what goes.
+
+    Driven at `_adopt` rather than through two `dg import` invocations, because
+    what is being pinned is that the *second* check exists: the store appears
+    after the caller's early check has already passed.
+    """
+    from dgraph import cli
+    p = _empty(tmp_path, monkeypatch)
+
+    # The early check passes: there is no store yet.
+    cli._refuse_overwrite(p.has_decisions, p.store)
+    # Somebody else's bootstrap lands while this one was parsing its input.
+    p.store.write_text(json.dumps(FIXTURE), encoding="utf-8")
+
+    # A graph that `validate` is perfectly happy with, so that the refusal this
+    # asserts can only be the overwrite one. Clearing the vertices of the
+    # loaded fixture instead left the edges dangling, and `_adopt` then exited
+    # on `no_dangling_refs` — a test that passed against the unfixed code, for
+    # a reason that had nothing to do with the finding. Shape 14, caught by
+    # running it against the tree it was written for.
+    mine = Graph()
+    with pytest.raises(typer.Exit):
+        cli._adopt(mine, p.store, p.view, False, "0 decisions", "input.json")
+
+    assert Graph.load(p.store).vertices, \
+        "`_adopt` overwrote a store that appeared after its caller's check"
+
+
+@pytest.mark.parametrize("cmd,attr", [("init", "store"),
+                                      ("task init", "tasks")])
+def test_a_bootstrap_holds_the_store_it_is_creating(cmd, attr, tmp_path,
+                                                    monkeypatch):
+    """Structural twin: the lock file is held at the moment of the write.
+
+    `project.stores` deliberately locks only the stores a project *has*, so it
+    is the wrong instrument here and these take `project.held` on the path
+    directly. This asserts they take something — the depth is per path, so it
+    answers "held by whoever is writing it" without knowing which route took it.
+    """
+    from typer.testing import CliRunner
+
+    from dgraph import cli
+    p = _empty(tmp_path, monkeypatch)
+    target = getattr(p, attr)
+    depth = []
+
+    real = project.write_atomic
+
+    def spy(path, text):
+        if path.name == target.name:
+            depth.append(project._single_depth().get(str(path), 0))
+        return real(path, text)
+
+    monkeypatch.setattr(project, "write_atomic", spy)
+    res = CliRunner().invoke(cli.app, ["--project", str(p.root), *cmd.split()])
+    assert res.exit_code == 0, res.output
+    assert depth and all(d > 0 for d in depth), \
+        f"`dg {cmd}` wrote {target.name} unheld"

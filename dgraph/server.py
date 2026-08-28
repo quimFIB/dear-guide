@@ -522,9 +522,15 @@ def stage(g: Graph, op: dict) -> list[dict]:
         why = cross.refuse_close(tg, op.get("vertex"), pending.owner())
         if why is not None:
             raise pending.ApplyError(why)
-    pending.vet(eff, op, new_area=bool(op.pop("new_area", False)))
+    fresh = bool(op.pop("new_area", False))
+    pending.vet(eff, op, new_area=fresh)
     ops = pending.expand(eff, op)
-    pending.stage_all(ops, against=eff)   # one write, each op stamped
+    # The area guard lives in `stage_all` now, so the page's `new_area` has to
+    # reach it — scoped to this request, never written into the op. `expand`
+    # sits between the two and knows nothing about either, which is the reason
+    # the permission is carried rather than passed. Audit `R-F2`.
+    with pending.new_area_allowed(fresh):
+        pending.stage_all(ops, against=eff)   # one write, each op stamped
     return ops
 
 
@@ -593,11 +599,13 @@ def stage_tasks(tg: TaskGraph, ops: list[dict], *,
     was rather than holding the first half of something that was given up on.
     """
     task_pending.vet_all(task_pending.preview(tg), ops, new_area=new_area)
-    pending.stage_all(ops, task_pending.path())
+    # `stage`'s twin — see there. Audit `R-F2`.
+    with pending.new_area_allowed(new_area):
+        pending.stage_all(ops, task_pending.path())
     return ops
 
 
-def stage_task(tg: TaskGraph, op: dict) -> list[dict]:
+def stage_task(tg: TaskGraph, op: dict, *, new_area: bool = False) -> list[dict]:
     """One task op, staged. The singular of `stage_tasks`, which is the path.
 
     Kept because most posts are one op, and delegating rather than duplicating
@@ -607,7 +615,7 @@ def stage_task(tg: TaskGraph, op: dict) -> list[dict]:
     `PROVISIONAL`; finishing a task changes nothing but the task, because
     blocked is derived and never stored.
     """
-    return stage_tasks(tg, [op])
+    return stage_tasks(tg, [op], new_area=new_area)
 
 
 def find_payload(q: str) -> dict:
@@ -840,13 +848,20 @@ class Handler(BaseHTTPRequestHandler):
             # gives the CLI; half a cascade in the tray says the opposite of
             # what the operator answered.
             ops_in = body if isinstance(body, list) else [body]
+            # `/api/pending`'s twin: the page's answer to "is this new area
+            # deliberate?" travels beside the op and is taken off it here, so
+            # it never reaches the tray. Popped from every op in the group,
+            # because a group is one act and one answer covers it. Audit
+            # `R-F2`.
+            fresh = any(bool(o.pop("new_area", False)) for o in ops_in
+                        if isinstance(o, dict))
             tg = TaskGraph.load(proj.tasks)
             # Read against the tray, and read *before* staging, which is what
             # `dg task start` does through `_teff`. A prerequisite dropped but
             # not yet applied has to be visible to both doors or to neither.
             eff = task_pending.preview(tg)
             try:
-                ops = stage_tasks(tg, ops_in)
+                ops = stage_tasks(tg, ops_in, new_area=fresh)
             except Exception as exc:
                 return self._json({"error": str(exc)}, 400)
             # Same shape as `/api/pending` above: notes are staged-anyway

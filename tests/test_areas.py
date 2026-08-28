@@ -26,7 +26,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from dgraph import areas, pending, project, render, task_render
+from dgraph import areas, pending, project, render, task_pending, task_render
 from dgraph.agent_cli import app as agent_app
 from dgraph.cli import app
 from dgraph.model import Graph
@@ -459,3 +459,359 @@ def test_a_project_with_one_store_reads_a_union_of_one(tmp_path, monkeypatch):
     monkeypatch.setattr(project, "_override", tmp_path)
     assert areas.stored_counts(tmp_path / "tasks.json") == {}
     assert pending.refuse_area("Anything", own={}, other={}, owner=None) is None
+
+
+# ---- R-F2 · the guard is on the one staging door ---------------------------
+#
+# `area_known` was an invariant, and an invariant is enforced in one place by
+# construction. Replacing it with a stage-time check turned that into a list of
+# call sites — `vet_new`, `vet_fields`, `editor._parse_add` — and the list was
+# missing the door that takes ops **as data**: `pending.vet` judged the area of
+# a `set_fields` and never that of an `add_vertex`, so `POST /api/pending` and
+# every op adopted from a contribution went unjudged. The comment above the
+# check in `vet_new` said *"Both now check the area too"*.
+#
+# So the check moved to `pending.stage_all`, which is where `$DG_TERSE` already
+# is and for the reason its own comment gives: **that is the one staging
+# function, for both trays and every door, and a rule a second door did not
+# consult is not a rule.** These tests are about the door, not about `dg add` —
+# they reach `stage_all` by routes that never touch a composing guard.
+
+
+def test_the_guard_is_the_write_and_not_the_composer(both):
+    """`pending.stage_all` refuses, with no command and no `vet` in front of it.
+
+    The property, stated at the only place all the doors meet. A test through
+    `dg add` would pass against the unfixed tree, because `vet_new` was one of
+    the three that already checked.
+    """
+    with pytest.raises(pending.ApplyError, match="Alpha"):
+        pending.stage_all([{"op": "add_vertex", "id": "D09", "title": "x",
+                            "area": "alpha", "status": "OPEN"}])
+    assert pending.load() == [], "a refused op reached the tray"
+
+
+def test_the_guard_is_on_the_task_tray_by_the_same_call(both):
+    """One function, both trays — the property `TERSE_FIELDS` has and the area
+    guard did not: it was written twice, in `vet` and in `task_pending.vet`,
+    and the `add_` branch was missing from both."""
+    with pytest.raises(pending.ApplyError, match="Alpha"):
+        pending.stage_all([{"op": "add_task", "id": "T09", "title": "x",
+                            "area": "alpha", "status": "TODO"}],
+                          task_pending.path())
+    assert pending.load(task_pending.path()) == []
+
+
+def test_an_area_already_staged_is_not_refused_a_second_time(both):
+    """The registry a stage is judged against is the store **plus the tray**.
+
+    `vet_new` reads the effective graph, so a second record under an area
+    staged a minute ago has always been silent, and moving the guard must not
+    lose that — it would refuse the ordinary case of filing two records under
+    one new corner.
+    """
+    with pending.new_area_allowed():
+        pending.stage_all([{"op": "add_vertex", "id": "D09", "title": "x",
+                            "area": "Provenance", "status": "OPEN"}])
+    pending.stage_all([{"op": "add_vertex", "id": "D10", "title": "y",
+                        "area": "Provenance", "status": "OPEN"}])
+    assert len(pending.load()) == 2
+
+
+def test_the_permission_is_scoped_to_the_call_and_never_reaches_the_tray(both):
+    """`new_area` is a carrier, not a field on the op.
+
+    `apply` never rechecks the area, so a permission written into the tray
+    would be one writer's answer applied by another — `refuse_area` settled
+    that when the flag was born, and moving the guard must not take it back.
+    """
+    with pending.new_area_allowed():
+        pending.stage_all([{"op": "add_vertex", "id": "D09", "title": "x",
+                            "area": "alpha", "status": "OPEN"}])
+    staged = pending.load()
+    assert staged and "new_area" not in staged[0]
+    # And the permission is gone with the block that granted it.
+    assert pending.new_area_ok() is False
+    with pytest.raises(pending.ApplyError):
+        pending.stage_all([{"op": "add_vertex", "id": "D10", "title": "y",
+                            "area": "beta", "status": "OPEN"}])
+
+
+def test_a_door_that_says_nothing_gets_the_guard(both):
+    """The default is refusal, which is what makes a door nobody has written
+    yet a guarded one. This is the whole argument for a carrier over a
+    parameter threaded down."""
+    assert pending.new_area_ok() is False
+
+
+# ---- R-F4 · adopting another writer's vocabulary --------------------------
+
+
+def _contribution(root, area):
+    """A branch introducing one decision filed under `area`."""
+    import subprocess
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(root), *a], check=True,
+                       capture_output=True, text=True)
+    git("init", "-q", ".")
+    git("config", "user.email", "t@example.invalid")
+    git("config", "user.name", "t")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    git("checkout", "-qb", "theirs")
+    theirs = json.loads((root / "decisions.json").read_text())
+    theirs["areas"].append(area)
+    theirs["vertices"].append({"id": "D09", "title": "Their question",
+                               "area": area, "status": "OPEN"})
+    (root / "decisions.json").write_text(json.dumps(theirs, indent=2))
+    git("commit", "-qam", "theirs")
+    git("checkout", "-q", "-")
+
+
+def test_a_contribution_cannot_fragment_the_vocabulary_silently(run, both):
+    """The multi-writer case the guard exists for, through the door built for
+    another writer's work.
+
+    `pending.py` names this as the reason membership had to be bought back:
+    *"dropping it without a replacement would let a multi-writer fan-out
+    fragment `corpus` into `Corpus`"*. It arrived through `dg incoming
+    --adopt`, which stages a whole contribution as raw ops.
+    """
+    _contribution(both, "alpha")
+    assert run("integrate", "theirs").exit_code == 0
+
+    res = run("incoming", "--adopt")
+    assert res.exit_code == 1, res.output
+    assert "Alpha" in res.output, "the refusal has to name what it resembles"
+    assert "alpha" not in Graph.load(both / "decisions.json").areas
+    assert pending.load() == [], "a refused adoption left ops in the tray"
+
+
+def test_a_refused_adoption_leaves_the_contribution_where_it_was(run, both):
+    """Adoption is all or nothing, so a refusal must not consume it.
+
+    `integrate.adopt` stages under the quarantine lock and clears the file
+    afterwards; a refusal raising out of `stage` has to leave both the trays
+    and the file untouched, or the contribution is gone with nothing adopted.
+    """
+    _contribution(both, "alpha")
+    run("integrate", "theirs")
+    run("incoming", "--adopt")
+
+    assert (both / ".dgraph-incoming.json").exists(), \
+        "a refused adoption consumed the contribution"
+    assert pending.load() == []
+    assert run("incoming", "--adopt", "--new-area").exit_code == 0
+    assert not (both / ".dgraph-incoming.json").exists()
+    assert len(pending.load()) == 1
+
+
+def test_the_adoption_refusal_says_whose_wording_it_is_about(run, both):
+    """A person adopting is answering a different question from a person who
+    just typed an area — *they* filed under this, is it a corner of its own? —
+    so the refusal names the contribution and both ways out, not `restage`."""
+    _contribution(both, "alpha")
+    run("integrate", "theirs")
+    out = run("incoming", "--adopt").output
+
+    assert "theirs" in out
+    assert "--new-area" in out and "areas rename" in out
+    assert "nothing adopted" in out
+
+
+# ---- R-F8 · a flag drawn and never bound ----------------------------------
+
+
+def test_task_amend_new_area_is_bound(run, both):
+    """`dg task amend --new-area` reached `_tstage`, the singular, which took
+    no such argument — so the one command that could not override the guard was
+    the one whose refusal told the caller to pass the flag they had just
+    passed. `dg amend`, its twin, went through `_stage_all` and worked."""
+    assert run("task", "amend", "T01", "--area", "alpha").exit_code == 1
+    res = run("task", "amend", "T01", "--area", "alpha", "--new-area")
+    assert res.exit_code == 0, res.output
+    assert run("apply").exit_code == 0
+    assert TaskGraph.load(both / "tasks.json").tasks["T01"].area == "alpha"
+
+
+def test_both_amends_answer_the_override_the_same_way(run, both):
+    """The pair, side by side. Two doors onto one act that refuse different
+    things is the shape most of this tool's findings took, and a flag bound on
+    one store and inert on the other is that shape at its smallest.
+
+    The area has to be one the guard actually fires on, or the test asserts
+    nothing: `gamma` against `Alpha`/`Beta` resembles neither, so the first
+    draft of this passed against the unfixed tree with both flags ignored.
+    `alpha` is an exact match after normalising, which is the branch that is
+    certain.
+    """
+    assert run("amend", "D05", "--area", "alpha").exit_code == 1
+    assert run("task", "amend", "T01", "--area", "alpha").exit_code == 1
+
+    assert run("amend", "D05", "--area", "alpha", "--new-area").exit_code == 0
+    assert run("task", "amend", "T01", "--area",
+               "alpha", "--new-area").exit_code == 0
+
+
+# ---- R-F3 · what the guard catches, and what it deliberately does not ------
+#
+# Every test above this line exercises `areas.normal` — case, and how words are
+# joined. The `difflib` half went a week with no test at all, and its docstring
+# was wrong about it for the whole of that week: it named `corpus-design`
+# against `corpus` as the case `difflib` caught, and the ratio is 0.63 against a
+# cutoff of 0.8. Both sides are pinned here, because a threshold with a test on
+# one side only is a threshold anybody may quietly move.
+
+
+@pytest.mark.parametrize("typo,canonical", [
+    ("harnes", "harness"),      # a dropped character
+    ("harnesss", "harness"),    # a doubled one
+    ("corpu", "corpus"),
+    ("copus", "corpus"),        # a transposition
+])
+def test_a_slip_of_a_character_is_caught(typo, canonical):
+    """What `CUTOFF` actually buys. The class where intent is unambiguous:
+    nobody means a word that differs from one in use by one keystroke."""
+    assert areas.similar(typo, [canonical]) == [canonical]
+
+
+@pytest.mark.parametrize("narrower,wider", [
+    ("corpus-design", "corpus"),
+    ("corpus-ingest", "corpus"),
+    ("harness-timing", "harness"),
+])
+def test_a_sub_area_is_deliberately_not_caught(narrower, wider):
+    """**The decision, pinned as a decision.**
+
+    A narrower area is not a misspelling of a wider one, and no string-distance
+    function tells the two apart — so this guard does not try. Lowering
+    `CUTOFF` far enough to reach these would flag unrelated short labels
+    against each other, and it would refuse the case dropping the whitelist was
+    *for*: a scout that has found a new corner of a project and named it.
+
+    Whether an agent may coin at all is `$DG_AREA`, which is the launcher's
+    rule and is tested above. Whether anybody should look at what it coined is
+    a question for the surfaces that review staged work.
+
+    If this test is ever deleted to "fix" a fragmented vocabulary, the thing to
+    read first is `areas.similar`'s docstring and audit `R-F3`.
+    """
+    assert areas.similar(narrower, [wider]) == []
+
+
+def test_the_two_branches_are_both_reachable():
+    """The falsifier for the pair above: a guard that never fired and a guard
+    that always fired would each satisfy one of them."""
+    assert areas.similar("Corpus", ["corpus"]) == ["corpus"]   # normalised
+    assert areas.similar("harnes", ["harness"]) == ["harness"]  # difflib
+    assert areas.similar("provenance", ["corpus"]) == []        # neither
+
+
+def test_a_sub_area_an_agent_coins_is_refused_by_the_launchers_rule(run,
+                                                                    monkeypatch):
+    """Where the sub-area question is actually answered.
+
+    `similar` is silent on `corpus-design`, by decision. `$DG_AREA=strict` is
+    not: it refuses an agent *every* area new to the union and names the
+    proposal route, which is the dial a supervisor sets when a fan-out should
+    not be inventing vocabulary. The two are different questions and this is
+    the test that says so.
+    """
+    monkeypatch.setenv("DG_AGENT", "agile-azimuth")
+    monkeypatch.setenv("DG_AREA", "strict")
+    res = run("add", "--id", "D07", "-t", "x", "--area", "Alpha-design")
+
+    assert res.exit_code == 1
+    assert "strict" in res.output and "Alpha" in res.output
+    # And not overridable by the author's own flag, which is the point of it
+    # being the launcher's rule rather than the writer's.
+    assert run("add", "--id", "D07", "-t", "x", "--area", "Alpha-design",
+               "--new-area").exit_code == 1
+
+
+def test_without_that_rule_a_sub_area_is_simply_filed(run, both):
+    """The other half, and the reason the guard is narrow: by default a scout
+    naming a corner it found files under it, which is what the whitelist could
+    not do."""
+    assert run("add", "--id", "D07", "-t", "x",
+               "--area", "Alpha-design").exit_code == 0
+    assert run("apply").exit_code == 0
+    assert "Alpha-design" in Graph.load(both / "decisions.json").areas
+
+
+# ---- R-F7 · the tray says which area, and whether it is new ----------------
+
+
+def test_the_tray_listing_names_the_area_and_marks_a_new_one(run, both):
+    """`dg pending` rendered an `add_vertex` as its title alone.
+
+    So the one field the area guard is entirely about was the one field a
+    review could not see — and `refuse_area` decides from two strings, which
+    means it cannot see a sub-area at all. Said, never refused: nothing is
+    wrong with a new area, and the person reading is the one who can tell a
+    fresh corner from a fragment.
+    """
+    assert run("add", "--id", "D07", "-t", "x", "--area", "Alpha").exit_code == 0
+    assert run("add", "--id", "D08", "-t", "y", "--area", "Provenance",
+               "--new-area").exit_code == 0
+    out = run("pending").output
+
+    assert "Alpha" in out and "Provenance" in out
+    assert "Provenance — new" in out
+    assert "Alpha — new" not in out, "an area already in use is not new"
+
+
+def test_the_full_table_gives_the_area_its_own_column(run, both):
+    """`_tray_table`'s docstring promises *"every detail in full, every field
+    its own column"* and did not keep it for the one field this pass is
+    about."""
+    run("add", "--id", "D07", "-t", "x", "--area", "Provenance", "--new-area")
+    out = run("pending", "--full").output
+
+    assert "Area" in out and "Provenance" in out
+    assert "new" in out
+
+
+def test_the_task_tray_says_it_too(run, both):
+    """Both trays, since `add_task` rendered as its title alone in the same
+    way and a fan-out fills both."""
+    assert run("task", "add", "--id", "T09", "-t", "x", "--area", "Provenance",
+               "--new-area").exit_code == 0
+    assert "Provenance — new" in run("task", "pending").output
+
+
+def test_an_area_new_to_one_store_and_used_in_the_other_is_not_marked(run,
+                                                                      both):
+    """The union, here as everywhere. The stores share their areas, so an area
+    a task already carries is not new to a decision that files under it — and
+    marking it would contradict `dg areas`, which lists one vocabulary."""
+    assert run("task", "add", "--id", "T09", "-t", "x", "--area", "Provenance",
+               "--new-area").exit_code == 0
+    assert run("apply").exit_code == 0
+    assert run("add", "--id", "D07", "-t", "y",
+               "--area", "Provenance").exit_code == 0
+
+    assert "Provenance — new" not in run("pending").output
+
+
+def test_two_ops_under_one_new_area_are_both_marked(run, both):
+    """The mark is about the *graph*, not about the row above it. Marking only
+    the first would say the second was ordinary, which is the reading a
+    supervisor scanning a fan-out's proposals would take."""
+    with_new = ("--area", "Provenance", "--new-area")
+    assert run("add", "--id", "D07", "-t", "x", *with_new).exit_code == 0
+    assert run("add", "--id", "D08", "-t", "y", *with_new).exit_code == 0
+
+    assert run("pending").output.count("Provenance — new") == 2
+
+
+def test_an_amend_toward_a_new_area_is_marked_without_repeating_it(run, both):
+    """`set_fields` already prints `area x`, so the row says what is new
+    without saying the name twice."""
+    assert run("amend", "D05", "--area", "Provenance",
+               "--new-area").exit_code == 0
+    out = run("pending").output
+
+    assert "new area" in out
+    assert out.count("Provenance") == 1

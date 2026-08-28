@@ -1779,3 +1779,91 @@ def test_a_supervisor_at_the_same_door_is_not_refused(store, monkeypatch):
                             "--falsifier", "it moves"])
     assert r.exit_code == 0, r.output
     assert pending.load()
+
+
+# ---- R-F7 · the tray says what an area is, and whether it is new -----------
+#
+# `opRow` had no `add_vertex` branch and fell through to `JSON.stringify(o)`,
+# so the browser's failure and the CLI's were one fact told two ways: no
+# surface that reviews staged work said what a record is filed under. That
+# matters because `refuse_area` is the only other thing standing between a
+# fan-out and a fragmented vocabulary, and it decides from two strings — it
+# cannot see a sub-area at all. A person can, given the fact.
+#
+# Run in node against the real `opRow`, not against the payload: a renderer
+# that was never exercised with an `add_vertex` is `B-F1`'s shape, and a test
+# at the HTTP layer would not have seen it.
+
+OPROW_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+// The real block, cut at its own comment banners — `opRow` plus the two
+// helpers it now reads. Stubbing `knownAreas` would be shape 14: the whole
+// question is whether the row knows an area is new, and a stub would answer
+// it for free.
+const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
+const block = cut("/* Every area either store already uses.",
+                  "/* Rows carry the index they had");
+const G = JSON.parse(process.argv[3]), T = JSON.parse(process.argv[4]);
+const esc = x => String(x == null ? "" : x);
+const ED = null;
+eval(block);
+const out = JSON.parse(process.argv[5]).map((o, i) => opRow(o, i, "d"));
+console.log(JSON.stringify(out));
+"""
+
+
+def _oprow(tmp_path, ops, areas_declared=("corpus",)):
+    """Render staged ops through the page's own `opRow`."""
+    harness = tmp_path / "oprow.js"
+    harness.write_text(OPROW_HARNESS)
+    g = {"areas": list(areas_declared), "vertices": [], "edges": [],
+         "derived": {}}
+    res = subprocess.run(
+        ["node", str(harness), str(server.STATIC / "app.html"),
+         json.dumps(g), json.dumps(None), json.dumps(ops)],
+        capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    return json.loads(res.stdout)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_browser_names_the_area_and_marks_a_new_one(tmp_path):
+    """The row states the fact. A known area is shown; an unknown one is
+    marked, because that is the one somebody might want to look at."""
+    rows = _oprow(tmp_path, [
+        {"op": "add_vertex", "id": "D09", "title": "Theirs",
+         "area": "corpus-design", "ref": "abcd", "saw": {}, "by": "scout"},
+        {"op": "add_vertex", "id": "D10", "title": "Mine", "area": "corpus"},
+    ])
+    assert "corpus-design — new" in rows[0]
+    assert "corpus-design" in rows[0] and "fresh-area" in rows[0]
+    assert "corpus" in rows[1] and "new" not in rows[1]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_browser_no_longer_dumps_the_op_as_json(tmp_path):
+    """The failure this closed, asserted as itself.
+
+    The fallthrough put `saw`, `ref` and `by` into a cell built for a sentence,
+    which is how the area came to be *technically* visible and unreadable. A
+    branch that regressed to the dump would put them back.
+    """
+    row = _oprow(tmp_path, [
+        {"op": "add_vertex", "id": "D09", "title": "Theirs", "area": "corpus",
+         "ref": "abcd", "saw": {"D01": "x"}, "by": "agile-azimuth"}])[0]
+    for bookkeeping in ('"saw"', '"ref"', '"by"', '"op"'):
+        assert bookkeeping not in row, f"the op is still dumped: {row}"
+    assert "Theirs" in row
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_browser_reads_set_fields_off_the_op(tmp_path):
+    """`set_fields` had no branch either, and the fix must not hard-code the
+    field list — a copy of `pending.FIELDS` in the page is shape 8, and the
+    first draft of it guessed a field `set_fields` cannot write."""
+    row = _oprow(tmp_path, [
+        {"op": "set_fields", "vertex": "D01", "area": "corpora",
+         "ref": "abcd", "by": "scout"}])[0]
+    assert "area corpora" in row
+    assert '"ref"' not in row and "scout" not in row

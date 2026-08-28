@@ -53,6 +53,81 @@ def commands() -> set[str]:
     return out
 
 
+def agent_commands() -> set[str]:
+    """Every invocation `dg-agent` accepts. `commands()`'s twin.
+
+    A second binary needs a second answer, and it did not have one: the guard
+    below matches `\\bdg ([a-z][a-z-]*)` and resolves the result against
+    `cli.app`, and `dg-agent` does not match that pattern — the hyphen is not a
+    space. `3807d66` moved six commands across and the guard did not follow, so
+    the surfaces went from one checked vocabulary to one checked and one not,
+    in the commit that said *"everything a person could type it into says
+    `dg-agent`"*. Audit `R-F5`.
+    """
+    from dgraph.agent_cli import app as agent_app
+    return _names(agent_app)
+
+
+#: Where a `dg-agent` invocation can appear. Wider than `commands/` and the
+#: skill, because the split put the launcher in the *procedure* documents and
+#: the prompts as well — `agentic/README.md` is the file a supervisor follows
+#: line by line, and a command that has moved is a step that fails.
+AGENT_SURFACES = [
+    *sorted((ROOT / "commands").glob("*.md")),
+    *sorted((ROOT / "docs").glob("*.md")),
+    *sorted((ROOT / "agentic").glob("*.md")),
+    *sorted((ROOT / "opencode").glob("*.md")),
+    *sorted((ROOT / "dgraph" / "prompts").glob("*.md")),
+    ROOT / "README.md",
+    SKILL,
+]
+
+#: `dg-agent <word>` where the word is a command. The negative lookahead keeps
+#: a prose sentence that happens to follow the binary's name — `agentic/bin/dg`
+#: and `dg-agent afterwards`, in a listing of the two wrapper files — out of the
+#: vocabulary being checked. It is the only such line and it is a file list, not
+#: an invocation.
+_AGENT_CALL = re.compile(r"\bdg-agent ([a-z][a-z-]*)")
+
+
+@pytest.mark.parametrize("path", AGENT_SURFACES,
+                         ids=lambda p: str(p.relative_to(ROOT)))
+def test_every_surface_mentions_only_dg_agent_commands_that_exist(path):
+    """The `dg` guard, pointed at the binary that did not have one.
+
+    132 mentions across seven trees when this was written, every one of them
+    valid — so this is a guard gap closed before it became a drift, which is
+    the only reason `R-F5` was filed `low`. Delete a command from
+    `agent_cli.app` and this goes red.
+    """
+    if not path.exists():
+        return
+    known = agent_commands()
+    used = set(_AGENT_CALL.findall(path.read_text(encoding="utf-8")))
+    # Prose that follows the binary's name rather than invoking it. Kept as an
+    # explicit set of one, so a second entry has to be argued for rather than
+    # absorbed by a looser pattern.
+    used -= {"afterwards"}
+    assert used <= known, \
+        f"{path.relative_to(ROOT)} names {sorted(used - known)}"
+
+
+def test_the_dg_agent_guard_would_catch_a_removal():
+    """This guard's own falsifier.
+
+    A regex that silently matches nothing is `H-F3`'s shape, and this file is
+    where that was found. So: the surfaces must actually name commands, and a
+    name that does not resolve must fail the check the test above makes.
+    """
+    seen = set()
+    for path in AGENT_SURFACES:
+        if path.exists():
+            seen |= set(_AGENT_CALL.findall(path.read_text(encoding="utf-8")))
+    assert len(seen & agent_commands()) >= 4, \
+        "the pattern matched almost nothing; it is not checking a vocabulary"
+    assert not ({"frobnicate"} <= agent_commands())
+
+
 def frontmatter(text: str) -> dict:
     """The skill's frontmatter, without taking a YAML dependency for it."""
     _, fm, _ = text.split("---", 2)

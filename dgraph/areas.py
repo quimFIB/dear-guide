@@ -22,9 +22,17 @@ from a sink the areas are a *finding*.
 ## What that costs, and what pays for it
 
 It costs the typo check, which was the whitelist's real work. That is bought
-back by `pending.refuse_area`: a **genuinely new** area is compared against the
-ones already in use, and a near match is refused with `--new-area` as the
-override. It lives there rather than here because it needs a writer --
+back in two places, and the division matters. `pending.refuse_area` catches
+what a machine can be certain of -- a spelling that normalises to one already
+in use, or a slip of a character or two -- and is judged at `pending.stage_all`,
+the one staging door, with `--new-area` as the override. Everything wider is a
+question about *intent*, which two strings cannot answer: `corpus-design` under
+a project that has `corpus` is a sub-area, not a misspelling, and it is neither
+refused nor caught. What answers that is `$DG_AREA` for whether an agent may
+coin at all, and saying so where staged work is reviewed for whether anybody
+should look. See `similar` below.
+
+`refuse_area` lives in `pending` rather than here because it needs a writer --
 `pending.owner()` and the launcher's `$DG_AREA` -- while everything in this
 module is a question about strings and records that any reader may ask.
 
@@ -57,9 +65,16 @@ _SEP = re.compile(r"[-_\s]+")
 #: How close two area names have to be before the guard says anything.
 #: `difflib` over short lowercase labels, so nothing is added to the dependency
 #: footprint -- the same principle `dg-agent setup --plain` is built on, that a
-#: guard must need nothing the tool did not already have. No measurement was
-#: taken and none is needed at this size: the registry is a handful of short
-#: strings and the comparison happens once, on a genuinely new area.
+#: guard must need nothing the tool did not already have.
+#:
+#: **What this number buys, measured rather than assumed.** At 0.8 over short
+#: labels it reports a slip of one or two characters and nothing wider:
+#: `harnes`/`harness` is 0.92 and reported, `corpus-design`/`corpus` is 0.63
+#: and is not. Lowering it far enough to reach the second would flag unrelated
+#: short names against each other, and the second is not a typo anyway -- see
+#: `similar` below, which is where the argument is. `test_areas.py` pins both
+#: sides, because the branch this number governs went a week with no test on it
+#: and a docstring that was wrong about it. Audit `R-F3`.
 CUTOFF = 0.8
 
 #: How many near matches a refusal names. Three, because the refusal's job is
@@ -176,10 +191,35 @@ def stored_counts(path: Path | None) -> dict[str, int]:
 def similar(area: str, known: Iterable[str]) -> list[str]:
     """The areas already in use that this one might be a misspelling of.
 
-    Normalised matches first and exactly: they are typos with near certainty,
-    and reporting one as a mere resemblance would understate it -- the refusal
-    can name the canonical form. Then `difflib`, which is what catches
-    `corpus-design` against `corpus`.
+    Two branches, and they catch different things.
+
+    **Normalised matches, first and exactly.** `Corpus` against `corpus`,
+    `corpus_design` against `corpus-design`: case and how words are joined are
+    never meaningful, so an exact match after normalising is a typo with near
+    certainty, and reporting one as a mere resemblance would understate it --
+    the refusal can name the canonical form.
+
+    **Then `difflib`, which catches a slip of one or two characters** --
+    `harnes` against `harness`, `corpu` against `corpus`. That is the whole of
+    what it catches at `CUTOFF`, and the whole of what a machine can decide
+    from two strings.
+
+    **What it deliberately does NOT catch is a sub-area.** `corpus-design`
+    under a project that has `corpus` scores 0.63 and is not reported, and
+    lowering `CUTOFF` to reach it would flag every short label against every
+    other. That is the right outcome and not a gap: a narrower area is not a
+    misspelling of a wider one, no threshold distinguishes the two, and a scout
+    naming a corner it has just found is the case dropping the whitelist was
+    *for* -- refusing it would put back the wall of identical refusals that
+    `integrate.py` could only file as `unexpressible`.
+
+    So *may an agent coin vocabulary at all* is not asked here. It is
+    `$DG_AREA` -- `strict` refuses an agent any area new to the union and sends
+    it back as a proposal a person reads -- which is the launcher's rule and is
+    argued where it is set. And *is this new area worth a second look* is
+    answered by saying so where staged work is reviewed, not by refusing it.
+    This docstring named `corpus-design` as a case `difflib` caught for a week,
+    while no test reached the `difflib` branch at all. Audit `R-F3`.
     """
     want = normal(area)
     by_normal: dict[str, list[str]] = {}

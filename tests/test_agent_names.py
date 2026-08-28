@@ -2,7 +2,7 @@
 
 `$DG_AGENT` was a string somebody had to invent, and every value it went wrong
 on was invented: a name colliding with `unowned`, a name carrying the roster's
-own separator, a name that was two names. `dg agent claim` hands one out
+own separator, a name that was two names. `dg-agent claim` hands one out
 instead.
 
 The promise is **distinctness among the writers running now**, and it has to be
@@ -238,7 +238,7 @@ def test_the_refusal_says_which_names_could_be_freed(proj, run, tiny, arun):
 
 
 def test_claim_prints_a_bare_name_and_nothing_else(proj, run, arun):
-    """`DG_AGENT=$(dg agent claim)` is the only sensible caller, so the whole
+    """`DG_AGENT=$(dg-agent claim)` is the only sensible caller, so the whole
     of stdout has to be the name — no markup, no heading, and no wrap."""
     out = arun("claim").output
 
@@ -407,7 +407,7 @@ def test_removing_a_task_takes_the_hold_with_it(run, proj, monkeypatch, arun):
 
     `set_status` was for a while the only op that touched a lease, and
     `remove_task` takes the task away without ever setting a status. The lease
-    then outlived the state that made it true: `dg agent list` printed
+    then outlived the state that made it true: `dg-agent list` printed
     `holding T01` and `agents.silent` reported the name as silent *while
     holding work*, over an id no store has — and the only act that footnote
     tells a supervisor to consider, `dg task park T01`, refuses it as unknown.
@@ -436,7 +436,7 @@ def test_removing_a_task_takes_the_hold_with_it(run, proj, monkeypatch, arun):
 
 def test_the_guard_is_silent_in_a_project_with_no_task_store(tmp_path,
                                                              monkeypatch):
-    """`dg agent prune` has always worked without one, and a project with no
+    """`dg-agent prune` has always worked without one, and a project with no
     tasks cannot strand anything."""
     (tmp_path / "decisions.json").write_text(json.dumps(FIXTURE, indent=2),
                                              encoding="utf-8")

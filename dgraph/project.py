@@ -427,8 +427,16 @@ def stores(proj, *, wait: float = LOCK_WAIT):
       repository.
 
     Always in the same order, so two holders cannot deadlock against each other.
-    Stores the project does not have are not locked: there is nothing to race
-    on, and a lock file beside a file that does not exist is litter.
+    Stores the project does not have are not locked, because a caller of *this*
+    function is reading and writing a pair that exists — and a lock file beside
+    a file that does not exist would be litter.
+
+    **That is a statement about this function's callers, not about the file.**
+    There is one race on a store that is not there: two bootstraps creating it,
+    where the loser's whole import is gone with nothing said. `dg init`,
+    `dg task init` and `cli._adopt` therefore take `held` on the store
+    directly, spanning their "already exists" check as well as the write, and
+    must not be moved onto this function to tidy them up. Audit `R-F1`.
 
     **Nests.** An inner `stores()` for a project this thread already holds is a
     no-op, so `applying.apply_decisions` can be called on its own *or* inside a
