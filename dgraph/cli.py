@@ -2981,6 +2981,9 @@ def agent_setup(
     capture: bool = typer.Option(False, "--capture",
                                  help="record every `dg` call of the run"),
     out: str = typer.Option(None, "--out", help=f"output dir (default {fanout.OUT_DIR}/)"),
+    plain: bool = typer.Option(False, "--plain",
+                               help="ask a question at a time, never the "
+                                    "full-screen form"),
     dry_run: bool = typer.Option(False, "--dry-run",
                                  help="print both artefacts, write nothing"),
     as_json: bool = typer.Option(False, "--json",
@@ -2988,13 +2991,15 @@ def agent_setup(
 ) -> None:
     """Set up a fan-out: check what is ready, then write the prompt and launcher.
 
-    Three ways in, one result. **With no arguments and a real terminal** it
-    opens a TUI (`pip install dear-guide[tui]`). **With flags** it is entirely
-    non-interactive, which is how an agent inside Claude Code or opencode uses
-    it — those cannot drive a full-screen app, and a wizard only a human can
-    run is not a wizard for this tool. **With `--json`** it reports readiness
-    and the defaults it would use, so an agent can ask the person the three
-    questions the graph cannot answer and then call back with flags.
+    Three ways in, one result. **With no arguments and a terminal** it asks:
+    a single-screen form where `textual` is installed, a question at a time
+    otherwise — the second needs nothing the tool does not already have, so
+    interactive setup always works and `--plain` picks it deliberately.
+    **With flags** it is entirely non-interactive, which is how an agent inside
+    Claude Code or opencode uses it, since neither can drive a full-screen app.
+    **With `--json`** it reports readiness and the defaults it would use, so an
+    agent can put the three questions the graph cannot answer to the person and
+    then call back with flags.
 
     Everything else the template asks for is filled from the graph: the
     project, the chain behind each focus id pasted verbatim from
@@ -3037,7 +3042,7 @@ def agent_setup(
         raise typer.Exit(2)
 
     if interactive:
-        plan = _setup_interactively(plan, proj)
+        plan = _setup_interactively(plan, proj, plain)
         if plan is None:
             con.print("[dim]cancelled — nothing written[/]")
             raise typer.Exit(1)
@@ -3111,25 +3116,39 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
 #: is rich markup unless escaped, and the first version of this message came
 #: out as `pip install 'dear-guide'` — an install hint that silently dropped
 #: the extra it was telling you to install.
-TUI_HINT = ("[yellow]![/] the interactive wizard needs `textual`\n"
-            "[dim]`pip install " + escape("'dear-guide[tui]'") +
-            "` — or give the answers as flags, which needs nothing: "
-            "`dg agent setup --json` prints the defaults and what it still "
-            "has to ask[/]")
+TUI_HINT = ("[dim]a single-screen form is available with `pip install "
+            + escape("'dear-guide[tui]'") + "`[/]")
 
 
-def _setup_interactively(plan: fanout.Plan, proj) -> fanout.Plan | None:
-    """The TUI, imported here so the import cost falls on the one path.
-
-    A missing `textual` is not an error: the whole command works without it,
-    and the message says the two ways forward rather than only the install.
-    """
+def _has_tui() -> bool:
     try:
-        from dgraph import wizard
+        import textual  # noqa: F401
     except ImportError:
-        con.print(TUI_HINT)
+        return False
+    return True
+
+
+def _setup_interactively(plan: fanout.Plan, proj,
+                         plain: bool) -> fanout.Plan | None:
+    """Ask, however this terminal allows. `wizard.collect` decides between the
+    full-screen form and the question-at-a-time one.
+
+    A missing `textual` costs nothing here: the plain collector asks the same
+    questions and writes the same files, so the extra is mentioned once, as an
+    upgrade, and never as a refusal. It used to be a refusal, which made
+    interactive setup unavailable to anyone who had not installed an optional
+    dependency — for a command whose whole job is being the easy way in.
+    """
+    from dgraph import wizard
+    try:
+        got = wizard.collect(plan, proj, interactive=_interactive(),
+                             prefer_tui=not plain)
+    except wizard.NoTerminal as exc:
+        con.print(f"[yellow]![/] {_x(exc)}")
         raise typer.Exit(2) from None
-    return wizard.run(plan, proj)
+    if not plain and not _has_tui():
+        con.print(TUI_HINT)
+    return got
 
 
 def _still_working() -> dict[str, list[str]]:

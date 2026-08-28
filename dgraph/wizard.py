@@ -1,188 +1,180 @@
-"""The fan-out setup wizard, as a terminal UI.
+"""Collecting a fan-out's answers, and choosing how to ask for them.
 
-**This module collects answers and does nothing else.** Every question it asks
-maps to one field of `fanout.Plan`, and the moment it has one it hands it back;
-what a plan turns into lives in `fanout.py`, where it is tested and where the
-non-interactive path reaches it too. An adapter that also decided something
-would be a second implementation of the setup, in the one file this repo cannot
-easily test — the same argument `hooks/precommit.py` makes about the gate.
+Three collectors, one result. Each fills a `fanout.Plan` and does nothing else
+— what a plan turns into is `fanout.py`, tested once, reached identically by
+all of them:
 
-That split is why the wizard can be optional. `textual` is an extra, the CLI
-works without it, and an agent inside Claude Code or opencode — which cannot
-drive a full-screen app at all — reaches the identical result through flags.
+    wizard_tui.run     a full-screen form. Needs `textual`, an extra.
+    ask                a question at a time. Needs nothing the tool does not
+                       already have, so interactive setup always works.
+    CLI flags          `cli._setup_from_flags`, and the only one an agent
+                       inside Claude Code or opencode can drive.
 
-Imported lazily by `cli._setup_interactively`, so the import cost and the
-dependency both fall on the one path that needs them.
+`collect` picks between the first two. **The order is: no terminal at all
+first.** A command that starts prompting with nothing on the other end gets
+EOF, and click turns that into a bare `Aborted.` — true, and useless to an
+agent, which needed to be told that flags exist. So an absent terminal is
+answered rather than attempted, which is the same rule `cli._ask` follows.
+
+The plain collector is not a degraded mode. It asks the same eleven questions
+in the same order and produces the same bytes, which a test asserts across all
+three paths; what the TUI adds is seeing them together, because `never` with a
+45-minute budget is a different run from `evidence` with fifteen and a
+question-at-a-time flow cannot show you that.
 """
 
 from __future__ import annotations
 
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import (Button, Checkbox, Footer, Header, Input, Label,
-                             RadioButton, RadioSet, Static, TextArea)
+from dataclasses import replace
+
+from rich.console import Console
+from rich.prompt import Confirm, Prompt
 
 from dgraph import cross, fanout, limits
 
-#: The budgets offered as buttons. A free-text field is there too — these are
-#: the ones worth one keystroke, chosen to bracket what a scout actually needs
-#: rather than to enumerate anything.
-BUDGETS = ("15m", "30m", "1h", "2h", "infinite")
+con = Console()
 
 
-class Wizard(App):
-    """One screen, everything visible. Deliberately not a sequence of pages.
+class NoTerminal(RuntimeError):
+    """Nobody to ask. Carries what to do instead, not just that it failed."""
 
-    A page-at-a-time wizard hides what it already asked, and the interesting
-    thing about these answers is how they read *together*: `never` with a
-    45-minute budget is a different run from `evidence` with fifteen. Scrolling
-    beats paging when the whole form fits in a screen and a half.
+
+def _para(label: str, hint: str, default: str) -> str:
+    """One free-text answer, with its guidance printed above it.
+
+    The hint is not optional decoration. "What is this fan-out for?" answered
+    without being told that the agents get the sentence verbatim produces a
+    note to self rather than a brief.
     """
+    con.print(f"\n[bold]{label}[/]")
+    con.print(f"[dim]{hint}[/]")
+    return Prompt.ask("", default=default, show_default=bool(default)).strip()
 
-    CSS = """
-    Screen { layout: vertical; }
-    #body { padding: 1 2; }
-    .q { margin-top: 1; text-style: bold; }
-    .hint { color: $text-muted; margin-bottom: 1; }
-    Input, TextArea { margin-bottom: 1; }
-    TextArea { height: 5; }
-    #actions { height: auto; padding: 1 2; }
-    Button { margin-right: 2; }
+
+def _reads(existing: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """`path: what it is`, until a blank line.
+
+    A loop rather than one comma-separated answer: the second half of each
+    entry is prose, and prose in a delimited list is prose somebody truncates
+    to avoid the delimiter.
     """
+    con.print("\n[bold]What may the agents read?[/]")
+    con.print("[dim]One per line, as `path: what it is`. They will not find "
+              "these on their own, and one that guesses reads the wrong thing "
+              "confidently. Blank line when done.[/]")
+    out = list(existing)
+    for path, what in out:
+        con.print(f"  [dim]· {path} — {what}[/]")
+    while True:
+        line = Prompt.ask("", default="", show_default=False).strip()
+        if not line:
+            return out
+        path, _, what = line.partition(":")
+        out.append((path.strip(), what.strip() or "(not described)"))
 
-    BINDINGS = [
-        Binding("ctrl+s", "save", "Write the files"),
-        Binding("escape", "cancel", "Cancel"),
-    ]
 
-    def __init__(self, plan: fanout.Plan, proj):
-        super().__init__()
-        self.plan = plan
-        self.proj = proj
-        self.result: fanout.Plan | None = None
+def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
+    """The plain collector: a question at a time, with `rich` and nothing else.
 
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with VerticalScroll(id="body"):
-            yield Static(f"Fan-out in [b]{self.proj.root.name}[/]", classes="q")
-            yield Static("Everything below is written into fanout/scout.md and "
-                         "fanout/launch.sh. The graph fills the rest.",
-                         classes="hint")
+    Returns `None` if the person declines at the summary — the last chance to
+    back out before anything is written, and the reason the summary exists at
+    all rather than the answers simply being applied.
+    """
+    con.print(f"\n[bold]Setting up a fan-out in {proj.root.name}[/]")
+    con.print("[dim]Enter accepts the default in brackets. Everything else — "
+              "the chain, the areas, what each policy means — is filled from "
+              "the graph.[/]")
 
-            yield Label("What is this fan-out for?", classes="q")
-            yield Static("One paragraph: the area of the graph being worked, "
-                         "and what a good session produces. The agents get "
-                         "this verbatim.", classes="hint")
-            yield TextArea(self.plan.brief, id="brief")
+    brief = _para(
+        "What is this fan-out for?",
+        "One paragraph. The area being worked and what a good session looks "
+        "like; the agents get this verbatim. \"The Search frontier\" beats "
+        "\"help with the project\".", plan.brief)
 
-            yield Label("Which ids is it aimed at?", classes="q")
-            yield Static("Comma-separated. Each one's full chain is pasted "
-                         "into the prompt — the part a fresh context cannot "
-                         "reconstruct.", classes="hint")
-            yield Input(",".join(self.plan.focus), id="focus")
+    focus = _para(
+        "Which ids is it aimed at?",
+        "Comma-separated. Each one's full chain is pasted into the prompt — "
+        "the part a fresh context cannot reconstruct for itself.",
+        ",".join(plan.focus))
 
-            yield Label("What may the agents read?", classes="q")
-            yield Static("One per line, as PATH: what it is. They will not "
-                         "find these on their own.", classes="hint")
-            yield TextArea("\n".join(f"{p}: {w}" for p, w in self.plan.reads),
-                           id="reads")
+    reads = _reads(plan.reads)
 
-            yield Label("Where does an agent put what it produces?", classes="q")
-            yield Input(self.plan.findings, id="findings")
+    findings = _para("Where does an agent put what it produces?",
+                     "One file per task, named in its `--outcome`.",
+                     plan.findings)
 
-            yield Label("How many agents, and on which host?", classes="q")
-            yield Input(str(self.plan.agents), id="agents", type="integer")
-            with RadioSet(id="host"):
-                for h in fanout.HOSTS:
-                    yield RadioButton(h, value=(h == self.plan.host))
+    con.print("\n[bold]How many agents, and on which host?[/]")
+    agents = Prompt.ask("  agents", default=str(plan.agents))
+    host = Prompt.ask("  host", choices=sorted(fanout.HOSTS),
+                      default=plan.host)
 
-            yield Label("What may an agent settle on its own?  $DG_DECIDE",
-                        classes="q")
-            yield Static("evidence: only a question a finished --evidence-for "
-                         "task backs · never: nothing · open: anything",
-                         classes="hint")
-            with RadioSet(id="decide"):
-                for p in cross.POLICIES:
-                    yield RadioButton(p, value=(p == self.plan.decide))
+    con.print("\n[bold]What may an agent settle on its own?[/]  [dim]$DG_DECIDE[/]")
+    con.print("[dim]evidence: only a question a finished --evidence-for task "
+              "backs · never: nothing · open: anything[/]")
+    decide = Prompt.ask("", choices=list(cross.POLICIES), default=plan.decide)
 
-            yield Label("Where may an agent write?  $DG_WRITE", classes="q")
-            yield Static("launch: this project and /tmp; anywhere else asks "
-                         "the person. Reads are never restricted.",
-                         classes="hint")
-            with RadioSet(id="write"):
-                for p in limits.WRITE_POLICIES:
-                    yield RadioButton(p, value=(p == self.plan.write))
+    con.print("\n[bold]Where may an agent write?[/]  [dim]$DG_WRITE[/]")
+    con.print("[dim]launch: this project and /tmp, anywhere else asks the "
+              "person · open: unrestricted. Reads are never judged.[/]")
+    write = Prompt.ask("", choices=list(limits.WRITE_POLICIES),
+                       default=plan.write)
 
-            yield Label("How long before its work is handed back?", classes="q")
-            yield Static("Nothing kills the agent — `timeout` in the launcher "
-                         "does that. This is what `dg agent expire` measures.",
-                         classes="hint")
-            yield Input(limits.show_span(self.plan.budget), id="budget")
-
-            yield Checkbox("Record the run (.dgraph-capture/)", self.plan.capture,
-                           id="capture")
-        with Horizontal(id="actions"):
-            yield Button("Write files", variant="primary", id="save")
-            yield Button("Cancel", id="cancel")
-        yield Footer()
-
-    # ---- collecting ------------------------------------------------------
-
-    def _chosen(self, rid: str, fallback: str) -> str:
-        pressed = self.query_one(f"#{rid}", RadioSet).pressed_button
-        return str(pressed.label) if pressed is not None else fallback
-
-    def _plan(self) -> fanout.Plan:
-        """Every widget, read once, into a `Plan`. No validation beyond what
-        cannot be expressed in the widget: the radio sets can only hold real
-        values, and the budget is the one free-text field that can be wrong."""
-        from dataclasses import replace
-
-        reads = []
-        for line in self.query_one("#reads", TextArea).text.splitlines():
-            if not line.strip():
-                continue
-            path, _, what = line.partition(":")
-            reads.append((path.strip(), what.strip() or "(not described)"))
+    con.print("\n[bold]How long before its work is handed back?[/]")
+    con.print("[dim]Nothing kills the agent — `timeout` in the launcher does "
+              "that. This is what `dg agent expire` measures against.[/]")
+    while True:
+        raw = Prompt.ask("", default=limits.show_span(plan.budget))
         try:
-            budget = limits.span(self.query_one("#budget", Input).value)
-        except limits.BadSpan:
-            budget = self.plan.budget
+            budget = limits.span(raw)
+            break
+        except limits.BadSpan as exc:
+            con.print(f"[yellow]  {exc}[/]")
+
+    capture = Confirm.ask("\nRecord the run (.dgraph-capture/)?",
+                          default=plan.capture)
+
+    try:
+        n = max(1, int(agents))
+    except ValueError:
+        n = plan.agents
+
+    out = replace(plan, brief=brief,
+                  focus=[s.strip() for s in focus.split(",") if s.strip()],
+                  reads=reads, findings=findings or plan.findings, agents=n,
+                  host=host, decide=decide, write=write, budget=budget,
+                  capture=capture)
+
+    con.print(f"\n[bold]{out.agents} agent(s) on {out.host}[/] · "
+              f"$DG_DECIDE={out.decide} · $DG_WRITE={out.write} · "
+              f"budget {limits.show_span(out.budget)}"
+              + (" · captured" if out.capture else ""))
+    con.print(f"[dim]focus {', '.join(out.focus) or '(none)'} · "
+              f"findings at {out.findings}[/]")
+    return out if Confirm.ask("Write the files?", default=True) else None
+
+
+def collect(plan: fanout.Plan, proj, *, interactive: bool,
+            prefer_tui: bool = True) -> fanout.Plan | None:
+    """Ask, whichever way this terminal allows. `None` if the person backed out.
+
+    `interactive` is the caller's `_interactive()` — passed rather than read so
+    the one "is there a person there" decision stays in a single place and a
+    test can say otherwise without owning stdin.
+    """
+    if not interactive:
+        raise NoTerminal(
+            "no terminal to ask on. Give the answers as flags — "
+            "`dg agent setup --json` prints the defaults and the three it "
+            "still has to ask for")
+    if prefer_tui:
         try:
-            n = max(1, int(self.query_one("#agents", Input).value or 1))
-        except ValueError:
-            n = self.plan.agents
-        return replace(
-            self.plan,
-            brief=self.query_one("#brief", TextArea).text.strip(),
-            focus=[s.strip() for s
-                   in self.query_one("#focus", Input).value.split(",")
-                   if s.strip()],
-            reads=reads,
-            findings=(self.query_one("#findings", Input).value.strip()
-                      or self.plan.findings),
-            agents=n,
-            host=self._chosen("host", self.plan.host),
-            decide=self._chosen("decide", self.plan.decide),
-            write=self._chosen("write", self.plan.write),
-            budget=budget,
-            capture=self.query_one("#capture", Checkbox).value,
-        )
-
-    def action_save(self) -> None:
-        self.result = self._plan()
-        self.exit(self.result)
-
-    def action_cancel(self) -> None:
-        self.result = None
-        self.exit(None)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        (self.action_save if event.button.id == "save"
-         else self.action_cancel)()
-
-
-def run(plan: fanout.Plan, proj) -> fanout.Plan | None:
-    """Collect answers. `None` if the person cancelled."""
-    return Wizard(plan, proj).run()
+            from dgraph import wizard_tui
+        except ImportError:
+            # Not worth a word. The plain collector asks the same questions and
+            # produces the same files; announcing a missing optional dependency
+            # before every setup would be noise about a difference that does
+            # not change the result.
+            pass
+        else:
+            return wizard_tui.run(plan, proj)
+    return ask(plan, proj)

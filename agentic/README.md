@@ -347,11 +347,12 @@ it is the same for an agent that spawns and watches rather than works.
 the project, the areas, the policies in force and what each means, the write
 roots, the budget, and each focus id's full chain pasted from
 `dg context --full`. Three do not: what the fan-out is for, what the agents may
-read, where findings go. A TUI if you are at a terminal
-(`pip install 'dear-guide[tui]'`), flags otherwise, and the flag form is what an
-agent inside Claude Code or opencode uses since neither can drive a full-screen
-app. `RUNNING.md` §0.5 has it; `RUNNING.md` end to end is the procedure it
-automates.
+read, where findings go. Three ways to answer them — a full-screen form where
+`textual` is installed, a question at a time otherwise (which needs nothing the
+tool did not already depend on, so interactive setup always works), and flags,
+which is what an agent inside Claude Code or opencode uses since it can drive
+neither. All three produce the same bytes. `RUNNING.md` §0.5 has it;
+`RUNNING.md` end to end is the procedure it automates.
 
 Both files live in `dgraph/prompts/` and are reached here by symlink, so an
 installed `dg` carries them and there is exactly one copy to keep true.

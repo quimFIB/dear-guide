@@ -61,9 +61,15 @@ the budget — and the full chain behind each focus id, pasted verbatim from
 reconstruct. Three answers are yours: what the fan-out is for, what the agents
 may read, and where findings go.
 
-**The TUI is optional and so is its dependency.** `pip install 'dear-guide[tui]'`
-adds `textual`; without it the command still works, because every answer is also
-a flag:
+**Interactive setup always works; the full-screen form is the upgrade.** With
+`textual` installed (`pip install 'dear-guide[tui]'`) you get one screen with
+every answer visible at once — worth it, because `never` with a 45-minute
+budget is a different run from `evidence` with fifteen, and you can only see
+that if both are on the screen. Without it, the same eleven questions are asked
+one at a time using nothing the tool did not already depend on. `--plain` picks
+that deliberately.
+
+Every answer is also a flag, and this form needs no terminal at all:
 
 ```sh
 dg agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
@@ -72,11 +78,15 @@ dg agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
 ```
 
 **That flag form is how this works from inside Claude Code or opencode.** An
-agent cannot drive a full-screen app, so it reads `dg agent setup --json` —
-readiness, the defaults, and the three things it must still ask — puts those
-questions to the person, and calls back with flags. Both paths run the same
-code and produce the same bytes, which a test asserts; a wizard whose two doors
-disagreed would set up a run one way and describe it the other.
+agent can drive neither a full-screen app nor a prompt, so it reads
+`dg agent setup --json` — readiness, the defaults, and the three things it must
+still ask — puts those questions to the person, and calls back with flags. With
+no terminal the command says so and names the flags rather than prompting into
+EOF, which is what click's bare `Aborted.` would otherwise amount to.
+
+All three collectors produce the **same bytes**, which a test asserts by
+driving each of them with the same answers. A wizard whose doors disagreed
+would set a run up one way and describe it another.
 
 `--dry-run` prints both files and writes nothing.
 

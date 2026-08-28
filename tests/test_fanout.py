@@ -40,8 +40,9 @@ def proj(both_stores, monkeypatch):
     return project.Project(both_stores)
 
 
-def run(proj, *args):
-    return runner.invoke(app, ["--project", str(proj.root), *args])
+def run(proj, *args, input=None):
+    return runner.invoke(app, ["--project", str(proj.root), *args],
+                         input=input)
 
 
 # ---- the artefacts -------------------------------------------------------
@@ -178,27 +179,90 @@ def test_a_project_with_no_graph_is_refused_with_the_fix(tmp_path, monkeypatch):
 # ---- the two paths must not diverge --------------------------------------
 
 
-def test_the_tui_and_the_flags_produce_identical_files(proj):
+ANSWERS = [
+    "settle the search area",          # brief
+    "T01",                            # focus
+    "spec.md: the criteria", "",      # reads, then blank to finish
+    "findings/<id>.md",               # findings
+    "3", "claude",                    # agents, host
+    "never", "launch", "45m",         # decide, write, budget
+    "n",                              # capture
+    "y",                              # write the files
+]
+
+
+def test_the_plain_collector_asks_and_writes(proj, monkeypatch):
+    """Interactive setup with no optional dependency at all. `rich` is already
+    a hard requirement, so this path always exists — which is the whole point
+    of it, since a wizard available only to people who installed an extra is
+    not the easy way in it claims to be."""
+    from dgraph import cli
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    res = run(proj, "agent", "setup", "--plain", input="\n".join(ANSWERS) + "\n")
+    assert res.exit_code == 0, res.output
+    scout = (proj.root / fanout.OUT_DIR / "scout.md").read_text()
+    assert "settle the search area" in scout and "45m" in scout
+
+
+def test_declining_the_summary_writes_nothing(proj, monkeypatch):
+    """The last chance to back out, and the reason the summary is there rather
+    than the answers simply being applied."""
+    from dgraph import cli
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    res = run(proj, "agent", "setup", "--plain",
+              input="\n".join(ANSWERS[:-1] + ["n"]) + "\n")
+    assert res.exit_code == 1 and "cancelled" in res.output
+    assert not (proj.root / fanout.OUT_DIR).exists()
+
+
+def test_no_terminal_names_the_flags_rather_than_aborting(proj, monkeypatch):
+    """With nothing on the other end, prompting gets EOF and click prints a
+    bare `Aborted.` — true, and useless to an agent that needed to be told
+    flags exist. This is the case inside Claude Code."""
+    from dgraph import cli
+    monkeypatch.setattr(cli, "_interactive", lambda: False)
+    res = run(proj, "agent", "setup")
+    assert res.exit_code == 2
+    assert "--json" in res.output and "flags" in res.output
+
+
+def test_a_bad_budget_is_re_asked_rather_than_swallowed(proj, monkeypatch):
+    """Free text, so it is the one answer that can be wrong. Silently keeping
+    the default would run the fan-out on a number nobody chose."""
+    from dgraph import cli
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    answers = list(ANSWERS)
+    # ANSWERS is brief, focus, reads, blank, findings, agents, host, decide,
+    # write, budget — so the budget is index 9, and a rejected one goes there.
+    answers[9:9] = ["half an hour"]
+    res = run(proj, "agent", "setup", "--plain", input="\n".join(answers) + "\n")
+    assert res.exit_code == 0, res.output
+    assert "is not a budget" in res.output
+
+
+def test_all_three_collectors_produce_identical_files(proj, monkeypatch):
     """The invariant the whole split rests on.
 
-    The TUI collects answers and does nothing else; `fanout.py` turns a plan
-    into files. So the same answers given either way must produce the same
-    bytes — otherwise a run set up in the terminal and one set up from inside
-    an agent are different runs, and the docs can only describe one of them.
+    Each collector fills a `fanout.Plan` and does nothing else; `fanout.py`
+    turns a plan into files. So the same answers given any of the three ways
+    must produce the same bytes — otherwise a run set up in the terminal, one
+    set up at the prompt, and one set up from inside an agent are three
+    different runs, and the docs can only describe one of them.
     """
     import asyncio
 
     pytest.importorskip("textual", reason="the tui extra is not installed")
     from textual.widgets import Input, RadioSet, TextArea
 
-    from dgraph import wizard
+    from dgraph import wizard_tui
 
-    app_ = wizard.Wizard(fanout.defaults(proj), proj)
+    app_ = wizard_tui.Wizard(fanout.defaults(proj), proj)
 
     async def drive():
         async with app_.run_test() as pilot:
             app_.query_one("#brief", TextArea).text = "settle the search area"
             app_.query_one("#focus", Input).value = "T01"
+            app_.query_one("#findings", Input).value = "findings/<id>.md"
             app_.query_one("#reads", TextArea).text = "spec.md: the criteria"
             app_.query_one("#budget", Input).value = "45m"
             app_.query_one("#agents", Input).value = "3"
@@ -213,11 +277,20 @@ def test_the_tui_and_the_flags_produce_identical_files(proj):
 
     res = run(proj, "agent", "setup", "--focus", "T01", "--agents", "3",
               "--brief", "settle the search area", "--budget", "45m",
-              "--decide", "never", "--read", "spec.md:the criteria")
+              "--decide", "never", "--read", "spec.md:the criteria",
+              "--findings", "findings/<id>.md")
     assert res.exit_code == 0, res.output
     from_flags = (proj.root / fanout.OUT_DIR / "scout.md").read_text()
-
     assert from_tui == from_flags
+
+    from dgraph import cli
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    (proj.root / fanout.OUT_DIR / "scout.md").unlink()
+    res = run(proj, "agent", "setup", "--plain",
+              input="\n".join(ANSWERS) + "\n")
+    assert res.exit_code == 0, res.output
+    from_plain = (proj.root / fanout.OUT_DIR / "scout.md").read_text()
+    assert from_plain == from_flags
 
 
 def test_the_missing_textual_hint_keeps_the_extra_it_names():

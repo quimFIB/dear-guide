@@ -80,8 +80,9 @@ reconstruct), which policies are in force and what each means, the write roots,
 the budget. Three answers are not: what the fan-out is *for*, what the agents
 may read, and where findings go.
 
-From a session, ask the person those three, then call it with flags — the TUI
-form needs a real terminal and cannot be driven from here:
+From a session, ask the person those three, then call it with flags — both
+interactive forms need a real terminal and cannot be driven from here, and the
+command says so rather than prompting into EOF:
 
 ```sh
 dg agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
