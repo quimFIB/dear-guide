@@ -743,13 +743,27 @@ def _plan_conflicts(spec: dict, readings: list[env.Reading]) -> list[str]:
     Read in the *launcher's* shell, where none of these is normally set — an
     unset variable is therefore silent, and what is reported is a launcher that
     exported something the plan contradicts.
+
+    **Compared on the parsed value, never on the two strings.** `plan_env`
+    renders a budget through `show_span`, so a plan holding `1800` reaches here
+    as `30m` — and `agentic/README.md` lists `1800` and `30m` side by side as
+    spellings of one remit. A string compare called those a conflict, and
+    `launch.sh` runs this under `set -euo pipefail` before the first agent, so
+    a launcher that had followed the documentation had its whole fan-out
+    refused over two spellings of the same number. `$DG_TERSE` had it too:
+    `400` against `on`, both `TERSE_DEFAULT`.
+
+    `Var.parse` is what normalises them, which is the field's first real use —
+    it is the table's answer to "what does this string mean", and asking it
+    here means the report and the enforcement cannot disagree about when two
+    remits are the same one.
     """
     want = fanout.plan_env(spec)
     out = []
     for r in readings:
         if not r.set or r.var.name not in want:
             continue
-        if r.raw.strip() != want[r.var.name]:
+        if r.value != r.var.parse(want[r.var.name]):
             out.append(f"${r.var.name} is {r.raw.strip()} in this shell and "
                        f"{want[r.var.name]} in the plan the prompt was "
                        f"rendered from")

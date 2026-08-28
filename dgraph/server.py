@@ -598,6 +598,20 @@ def stage_tasks(tg: TaskGraph, ops: list[dict], *,
     produces, before any of it is staged, so a refusal leaves the tray as it
     was rather than holding the first half of something that was given up on.
     """
+    # The page's answer to "is this new area deliberate?" travels beside the op
+    # and comes off it here, so it never reaches the tray — `apply` never
+    # rechecks an area, and a permission on a staged record is one writer's
+    # answer applied by another. Stripped in *this* function rather than in the
+    # route, for the reason the guard it feeds is in `stage_all`: this is what
+    # every task-staging caller goes through, and a strip a second door did not
+    # run is not a strip.
+    #
+    # A loop, because the pop is the point and `any(...)` over a generator
+    # short-circuits — the first truthy op was cleaned and every op behind it
+    # kept the field. Audit `R-F2`.
+    for op in ops:
+        if isinstance(op, dict) and op.pop("new_area", False):
+            new_area = True
     task_pending.vet_all(task_pending.preview(tg), ops, new_area=new_area)
     # `stage`'s twin — see there. Audit `R-F2`.
     with pending.new_area_allowed(new_area):
@@ -848,20 +862,13 @@ class Handler(BaseHTTPRequestHandler):
             # gives the CLI; half a cascade in the tray says the opposite of
             # what the operator answered.
             ops_in = body if isinstance(body, list) else [body]
-            # `/api/pending`'s twin: the page's answer to "is this new area
-            # deliberate?" travels beside the op and is taken off it here, so
-            # it never reaches the tray. Popped from every op in the group,
-            # because a group is one act and one answer covers it. Audit
-            # `R-F2`.
-            fresh = any(bool(o.pop("new_area", False)) for o in ops_in
-                        if isinstance(o, dict))
             tg = TaskGraph.load(proj.tasks)
             # Read against the tray, and read *before* staging, which is what
             # `dg task start` does through `_teff`. A prerequisite dropped but
             # not yet applied has to be visible to both doors or to neither.
             eff = task_pending.preview(tg)
             try:
-                ops = stage_tasks(tg, ops_in, new_area=fresh)
+                ops = stage_tasks(tg, ops_in)
             except Exception as exc:
                 return self._json({"error": str(exc)}, 400)
             # Same shape as `/api/pending` above: notes are staged-anyway

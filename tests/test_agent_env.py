@@ -28,7 +28,7 @@ import sys
 import pytest
 from typer.testing import CliRunner
 
-from dgraph import agents, env, fanout, pending, project
+from dgraph import agent_cli, agents, env, fanout, pending, project
 from dgraph.agent_cli import app as agent_app
 from dgraph.cli import app as dg_app
 from dgraph.tasks import TaskGraph
@@ -433,3 +433,61 @@ def test_run_composes_from_a_plan_and_flags_override_it(run, proj, capfd):
 def test_nothing_to_run_is_a_refusal_and_not_an_empty_launch(run):
     res = run("run", "--decide", "never")
     assert res.exit_code == 2 and "after `--`" in res.output
+
+
+# ---- what the cloud review found -----------------------------------------
+
+
+@pytest.mark.parametrize("shell,plan", [
+    ({"DG_BUDGET": "1800"}, {"budget": 1800}),   # `plan_env` renders `30m`
+    ({"DG_BUDGET": "30m"}, {"budget": 1800}),
+    ({"DG_TERSE": "400"}, {"terse": "on"}),      # both are `TERSE_DEFAULT`
+    ({"DG_TERSE": "on"}, {"terse": 400}),
+])
+def test_two_spellings_of_one_remit_are_not_a_conflict(shell, plan):
+    """`plan_env` renders a budget through `show_span`, so a plan holding
+    `1800` arrives as `30m` — and `agentic/README.md` lists both as spellings
+    of one value. Compared as strings they read as drift, and `launch.sh` runs
+    `dg-agent env --check` under `set -euo pipefail` before the first agent, so
+    a launcher that had followed the documentation had its whole fan-out
+    refused over two ways of writing one number.
+    """
+    assert agent_cli._plan_conflicts(plan, env.readings(shell)) == []
+
+
+@pytest.mark.parametrize("shell,plan", [
+    ({"DG_BUDGET": "3600"}, {"budget": 1800}),
+    ({"DG_DECIDE": "open"}, {"decide": "evidence"}),
+    ({"DG_TERSE": "off"}, {"terse": "on"}),
+])
+def test_real_drift_between_shell_and_plan_still_reports(shell, plan):
+    """The falsifier for the pair above: normalising must not make the check
+    silent. This is the drift the command exists for — a prompt asserting a
+    policy in the second person while the launcher enforces another."""
+    assert agent_cli._plan_conflicts(plan, env.readings(shell))
+
+
+@pytest.mark.parametrize("bad", [0, -1, -3600, True, False, "1800", 1.5])
+def test_a_plan_budget_is_range_checked_and_not_only_typed(bad, tmp_path):
+    """`read_env_plan` promises to refuse a bad value *"here, at the launcher,
+    where it can still be fixed"* and range-checked every field but this one.
+
+    `0` and negatives passed `isinstance(int)`, `plan_env` rendered `0` as
+    `"0s"`, and `dg-agent run` then raised `BadSpan` from `env.span` — the one
+    line outside the try/except that promises "nothing was spawned and no name
+    was claimed". A traceback, on exactly the hand-edited-plan case this
+    file's contract is for.
+    """
+    path = tmp_path / "env.json"
+    path.write_text(json.dumps({"budget": bad}))
+    with pytest.raises(ValueError):
+        fanout.read_env_plan(str(path))
+
+
+@pytest.mark.parametrize("good", [1, 1800, 86400, None])
+def test_a_plan_budget_that_means_something_is_kept(good, tmp_path):
+    """The other side, so the guard above cannot pass by refusing everything.
+    `None` is no limit and is what an unbudgeted plan holds."""
+    path = tmp_path / "env.json"
+    path.write_text(json.dumps({"budget": good}))
+    assert fanout.read_env_plan(str(path))["budget"] == good

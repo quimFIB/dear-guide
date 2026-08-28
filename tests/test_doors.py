@@ -1797,12 +1797,20 @@ def test_a_supervisor_at_the_same_door_is_not_refused(store, monkeypatch):
 OPROW_HARNESS = r"""
 const src = require("fs").readFileSync(process.argv[2], "utf8");
 const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
-// The real block, cut at its own comment banners — `opRow` plus the two
-// helpers it now reads. Stubbing `knownAreas` would be shape 14: the whole
-// question is whether the row knows an area is new, and a stub would answer
-// it for free.
+// The real blocks, cut at their own comment banners: `knownAreas` where the
+// page actually declares it, then `fieldsOf` and `opRow`. Stubbing
+// `knownAreas` would be shape 14 — the whole question is whether the row knows
+// an area is new, and a stub answers it for free.
+//
+// **Cutting the page is why this harness once passed against a broken page.**
+// An earlier version pulled a second `knownAreas` declared beside `opRow`,
+// which in the browser was shadowing the real one 1150 lines above and
+// breaking every add form and side panel. One cut cannot see two declarations
+// in different cuts, so `test_no_top_level_function_is_declared_twice_in_the_page`
+// reads the whole script and is what actually guards that.
 const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
-const block = cut("/* Every area either store already uses.",
+const block = cut("/* Every area either store knows.", "function newDecisionForm(){")
+            + cut("/* What a `set_fields` op writes,",
                   "/* Rows carry the index they had");
 const G = JSON.parse(process.argv[3]), T = JSON.parse(process.argv[4]);
 const esc = x => String(x == null ? "" : x);
@@ -1867,3 +1875,48 @@ def test_the_browser_reads_set_fields_off_the_op(tmp_path):
          "ref": "abcd", "by": "scout"}])[0]
     assert "area corpora" in row
     assert '"ref"' not in row and "scout" not in row
+
+
+def test_no_top_level_function_is_declared_twice_in_the_page():
+    """The page is one classic `<script>`, so a duplicate declaration wins
+    silently and breaks every caller of the one it shadowed.
+
+    That happened: a second `knownAreas()` returning a `Set` was added beside
+    the tray listing, 1150 lines below the one returning an Array, and it took
+    over — `areaField`'s `known.map(...)` and `amendForm`'s `areas.map(...)`
+    then threw on every add form and every side panel. No test saw it, because
+    the harnesses `eval` one cut of the file at a time and the two declarations
+    are in different cuts. This reads the whole script, which is the only way
+    the collision is visible at all.
+    """
+    src = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    js = src[src.index("<script>") + 8:src.rindex("</script>")]
+    names = re.findall(r"^function ([A-Za-z_$][\w$]*)\s*\(", js, re.M)
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    assert not dupes, f"declared more than once at top level: {dupes}"
+
+
+def test_a_batched_new_area_is_stripped_from_every_op(tmp_path, monkeypatch):
+    """`new_area` is a carrier and must never reach the tray, on any op.
+
+    The first version of this read `any(o.pop(...) for o in ops)`, and `any`
+    stops at the first truthy value — so the op that granted the permission was
+    cleaned and every op behind it kept the field, which `_with_refs` spreads
+    straight into the staged record. Latent today (no shipped view batches two
+    `add_task`s carrying it) and a broken invariant either way: `apply` never
+    rechecks an area, so a permission on a record in a shared tray is one
+    writer's answer applied by another.
+    """
+    monkeypatch.setattr(project, "_override", tmp_path)
+    (tmp_path / "tasks.json").write_text(json.dumps(
+        {"areas": ["Alpha"], "tasks": [], "edges": []}))
+    from dgraph.tasks import TaskGraph
+    ops = [{"op": "add_task", "id": f"T0{i}", "title": "x",
+            "area": "Provenance", "status": "TODO", "new_area": True}
+           for i in (1, 2, 3)]
+    server.stage_tasks(TaskGraph.load(tmp_path / "tasks.json"), ops)
+
+    for op in ops:
+        assert "new_area" not in op, f"not popped: {op}"
+    for staged in pending.load(task_pending.path()):
+        assert "new_area" not in staged, f"reached the tray: {staged}"

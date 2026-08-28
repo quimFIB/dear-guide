@@ -189,9 +189,25 @@ def read_env_plan(path) -> dict:
         if word not in _env.TERSE_OFF and _env.terse_limit(word) is None:
             raise ValueError(f"{path}: terse is {raw['terse']!r}, not `on`, "
                              f"`off`, or a character count")
-    if raw.get("budget") is not None and not isinstance(raw["budget"], int):
-        raise ValueError(f"{path}: budget is {raw['budget']!r} — seconds, or "
-                         f"null for no limit")
+    if raw.get("budget") is not None:
+        # The type *and* the range, because every other field here is
+        # range-checked and this one was not: `isinstance(int)` let `0` and
+        # every negative through, `plan_env` rendered `0` as `"0s"`, and
+        # `dg-agent run` then raised `BadSpan` from the one line outside its
+        # own try/except — a traceback where the surrounding code promises
+        # "nothing was spawned and no name was claimed".
+        #
+        # `env.span` is the judge rather than a second `<= 0` written here, so
+        # the file reader and `--budget` refuse the same values for the same
+        # reason. Zero is refused rather than read as `infinite` for the reason
+        # `env.INFINITE` gives: they are opposites, so it is not guessed at.
+        if not isinstance(raw["budget"], int) or isinstance(raw["budget"], bool):
+            raise ValueError(f"{path}: budget is {raw['budget']!r} — seconds, "
+                             f"or null for no limit")
+        try:
+            _env.span(str(raw["budget"]))
+        except _env.BadSpan as exc:
+            raise ValueError(f"{path}: {exc}") from None
     return raw
 
 

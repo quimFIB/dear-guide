@@ -2195,14 +2195,6 @@ async function composeIn(kind){
   }
 }
 
-/* Every area either store already uses. `G.areas` and `T.areas` are the
-   registry the server sends — declared plus used — so an area absent from both
-   is one no record here carries. Recomputed per render rather than cached: a
-   tray redraw follows an apply, which is exactly when the answer changes. */
-function knownAreas(){
-  return new Set([...(G?G.areas:[]), ...(T?T.areas:[])]);
-}
-
 /* What a `set_fields` op writes, read off the op rather than from a copy of
    `pending.FIELDS` kept here. A hard-coded list beside a mechanism that
    derives field names is shape 8, and the first draft of this line got the
@@ -2238,8 +2230,13 @@ function opRow(o, i, kind){
      see a sub-area, so the second line is a person told which corner this is
      filed under and whether the graph has used it before. */
   const area = (o.area||"").trim();
+  /* `knownAreas` already exists above and answers exactly this — declared plus
+     used, across both stores. A second copy of it was declared here returning a
+     Set, and in a classic script the later declaration wins, so every
+     Array-consuming caller (`areaField`, `amendForm`) started throwing. One
+     definition; the Set is built at the one call site that wants membership. */
   const mark = !area ? ""
-    : knownAreas().has(area) ? ` <span class="muted">[${esc(area)}]</span>`
+    : new Set(knownAreas()).has(area) ? ` <span class="muted">[${esc(area)}]</span>`
     : ` <span class="fresh-area">[${esc(area)} — new]</span>`;
   const node = o.vertex||o.task||o.from||o.id||"";
   /* Revise, and only where it can work: a derived op is not composed and has
