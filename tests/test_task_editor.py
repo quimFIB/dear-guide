@@ -225,11 +225,18 @@ def test_an_empty_outcome_stages_nothing(run_cli, fake_emacs, task_store):
     assert tray(task_store) == []
 
 
-def test_an_unknown_area_is_refused_by_the_buffer(run_cli, fake_emacs,
-                                                  task_store):
+def test_a_new_area_is_taken_and_a_near_miss_is_refused(run_cli, fake_emacs,
+                                                        task_store):
+    """`editor`'s twin. Areas accumulate, so `Gamma` is a legitimate thing to
+    type into the buffer; `alpha` is a misspelling of an area in use and is
+    refused in the buffer's own vocabulary, naming what it resembles."""
     fake_emacs(lambda t: fill(t, title="Something", area="Gamma"))
+    assert run_cli("task", "add", "--edit").exit_code == 0
+    assert tray(task_store)[0]["area"] == "Gamma"
+
+    fake_emacs(lambda t: fill(t, title="Another", area="alpha"))
     res = run_cli("task", "add", "--edit")
-    assert res.exit_code == 1 and "Gamma" in res.output and "Alpha" in res.output
+    assert res.exit_code == 1 and "Alpha" in res.output and "Area" in res.output
 
 
 def test_an_unknown_prerequisite_names_the_field_it_was_typed_in(

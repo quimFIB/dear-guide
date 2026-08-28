@@ -1,0 +1,1117 @@
+"""`dg-agent` — the launcher: names, budgets, and the environment they compose.
+
+`dg` is for the graphs. Everything about spawning agents, naming them,
+budgeting them and composing their environment is here, on the other side of
+one sentence:
+
+> **`dg-agent` writes the environment. `dg` reads it.**
+
+`dg` must keep reading it, because that is where the rules are enforced — on
+the path of every stage (`$DG_TERSE`), every close (`$DG_DECIDE`), every judged
+write (`$DG_WRITE`), every new area (`$DG_AREA`) and every op's ownership stamp
+(`$DG_AGENT`). None of that moved. What moved is everything that *decides what
+those variables say* and everything that *spawns something to run under them*.
+
+That is not an interface invented for the split. `agentic/README.md` has always
+said the whole contract with the host is environment variables, and two
+binaries either side of a documented contract express that better than one
+binary that is both.
+
+## Why the move was worth making
+
+Because the boundary finally owns the thing that was missing. Three of the
+variables **fail open** — `$DG_DECIDE=nevr` is `open`, the widest policy, and
+looks exactly like a policy somebody chose — and each of the three docstrings
+justified that by promising the CLI would report the typo where it is set.
+Nothing did. `dg-agent env` is that report, and `dg-agent run` is the place a
+bad value can fail *closed* without contradicting the argument for failing
+open: the fail-open case is a supervisor sharing a tray on the path of every
+call, and this is a launcher composing one child, once.
+
+## One package, two entry points
+
+Not two distributions. `dg-agent expire` stages parks into the task tray, so it
+needs `task_pending` and the tray lock; the parsers in `dgraph/env.py` are
+shared by construction, which is the one bug this whole split is about arrived
+at from the other direction; and two packages that must agree on the meaning of
+`DG_DECIDE=evidence` is a coupling nobody can see in a lockfile.
+
+## What stayed with `dg`
+
+The two graphs, both trays, `apply`, `gate`, both host adapters, the heartbeat,
+and the `--agent NAME` scoping on `pending` / `apply` / `clear`. Those flags
+scope a *tray*, and the tray is graph machinery that happens to be shared: the
+name in them is a label, not a lease.
+
+**`dg agent` is gone outright — not aliased, and not left as a stub.** A
+forwarding shim would let every generated `launch.sh` in the wild keep working,
+which sounds kind and means nobody migrates; a stub that named its replacement
+would keep a whole subcommand alive in `dg --help` to say one sentence. So the
+split is a split: `dg --help` names no agent command, `dg-agent --help` names no
+graph command, and a stale launcher fails the way any typo'd command fails.
+Everything a person could type it into — the slash command's allowlist, the
+generated launcher, both prompt templates, the guides — says `dg-agent`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import subprocess
+import sys
+from dataclasses import replace
+from datetime import date as _date
+
+import typer
+from rich.markup import escape
+from rich.table import Table
+
+from dgraph import agents, cli, cross, env, fanout, limits, pending, project
+from dgraph import task_pending  # noqa: F401  (kept beside the tray it writes)
+from dgraph.tasks import TaskGraph
+
+NAMES = "Names for a shared tray"
+ENVIRONMENT = "The environment an agent runs under"
+FANOUT = "Setting up a fan-out, and taking it apart again"
+
+#: The whole help screen in one place, exactly as `dg`'s `LAYOUT` is: the
+#: panels, their order, and the order of the commands inside each. Read down
+#: it and you have the life of one agent — it is given a name, told what it
+#: may do, run under that, and handed back what it was holding.
+LAYOUT = (
+    (NAMES, ("claim", "list", "release", "prune")),
+    (ENVIRONMENT, ("env", "run")),
+    (FANOUT, ("setup", "expire")),
+)
+
+app = typer.Typer(
+    cls=cli._ordered(LAYOUT),
+    add_completion=False,
+    help="Launch agents against a development graph: hand out names, compose "
+         "the environment that says what each may do, and hand back what one "
+         "was holding when it stopped. `dg` reads what this sets.",
+)
+
+
+@app.callback()
+def _root(
+    project_dir: str = typer.Option(
+        None, "--project", "-C", metavar="PATH",
+        help="Project directory. Defaults to $DG_PROJECT, else the nearest "
+             "ancestor holding decisions.json, else the cwd.",
+    ),
+) -> None:
+    """The same session-level refusal `dg` makes, for the same reason.
+
+    A launcher with `$DG_AGENT` exported is the failure `render_launch` has
+    always warned about in a comment, and `unowned` is the one name staging
+    reserves. Refusing the session here rather than at the op keeps the two
+    binaries' answer to "who are you" identical — and this is the binary that
+    can actually fix it, since it is the one composing the environment.
+
+    No heartbeat is stamped. `dg`'s root callback touches the lease because
+    every graph call passes through it and liveness is what those calls
+    evidence; a launcher calling `dg-agent list` is not the agent, and
+    stamping it alive here would make a dead agent look busy every time
+    somebody checked on it.
+    """
+    project.use(project_dir)
+    if pending.owner() == pending.UNOWNED:
+        cli.con.print(f"[red]✗ `{pending.UNOWNED}` is reserved — it is how this "
+                      f"tool names ops nobody signed, so a writer cannot also "
+                      f"be called that[/]\n"
+                      f"[dim]set ${pending.AGENT_ENV} to something else, or "
+                      f"unset it to work as the supervisor[/]")
+        raise typer.Exit(2)
+
+
+@app.command("claim")
+def agent_claim(
+    budget: str = typer.Option(
+        None, "--budget", "-b",
+        help="how long this agent may run: `1800`, `30m`, `2h`, or `infinite`"),
+) -> None:
+    """Take a free name and hold it. Prints the name, and nothing else.
+
+    **Bare stdout on purpose**, because the only sensible caller is a
+    substitution:
+
+        DG_AGENT=$(dg-agent claim) claude -p "..."
+
+    A launcher's job, not an agent's: shell state does not survive between a
+    coding agent's tool calls, so one that claimed a name for itself could not
+    hold on to it.
+
+    `--budget` records how long the agent may run, on the lease, so a
+    supervisor reading `dg-agent list` sees the same number the agent was
+    given. **Nothing here stops it at that point** — this command hands out a
+    name and returns, and whatever spawns the agent is somewhere else.
+    `dg-agent run` is that somewhere else: it claims and spawns in one act, so
+    it is the child's parent and the budget is real. Reach for `claim` when you
+    are spawning the agent yourself and want only the name.
+
+    Either way what the budget buys is the *hand-back*: `dg-agent expire` parks
+    whatever an out-of-time agent is holding, so work stops looking like it is
+    being done by something that stopped. See `dg-agent expire` and
+    `agentic/README.md`.
+    """
+    try:
+        seconds = limits.span(budget)
+    except limits.BadSpan as exc:
+        # Raised, where a bad `$DG_WRITE` is merely ignored. A misread budget
+        # is not a wider rule, it is a different number, and this is the one
+        # moment the launcher can still fix it.
+        cli.con.print(f"[red]✗ {cli._x(exc)}[/]")
+        raise typer.Exit(1)
+    try:
+        name = agents.claim(budget=seconds)
+    except agents.Exhausted as exc:
+        # An error, never a fallback. Handing back a name somebody holds — or
+        # inventing a numbered one outside the lists — is the silent conflation
+        # the whole ownership stamp exists to prevent, and the numbered one is
+        # worse for looking deliberate.
+        cli.con.print(f"[red]✗ no name to claim — {cli._x(exc)}[/]")
+        if exc.releasable:
+            # `releasable` counts leases with nothing staged, which is what
+            # `prune` used to free. It now keeps back the ones still holding
+            # DOING work, so the count is an upper bound and saying "frees
+            # those now" would promise names that stay held. The subtraction
+            # happens here because `Exhausted` is raised in a module that
+            # cannot read the task store.
+            free = exc.releasable - len(_still_working())
+            if free > 0:
+                cli.con.print(f"[dim]{free} have nothing staged under them: "
+                          f"`dg-agent prune` frees those now[/]")
+            else:
+                cli.con.print("[dim]every idle name is still holding work — "
+                          "`dg-agent expire`, or park what is DOING, then "
+                          "`dg-agent prune`[/]")
+        else:
+            cli.con.print("[dim]every name has ops in a tray — `dg apply` or "
+                      "`dg clear` first, then `dg-agent prune`[/]")
+        raise typer.Exit(1)
+    # `print`, not `cli.con.print`: rich wraps at the terminal width and would put a
+    # newline inside a long name, and this string is going into a variable.
+    print(name)
+
+
+@app.command("list")
+def agent_list() -> None:
+    """Every name held, when it was claimed, and what it still has staged."""
+    leases = agents.load()
+    staged = agents.in_trays(project.find())
+    if not leases and not staged:
+        cli.con.print("[dim]no names claimed[/]")
+        return
+    t = Table(header_style="bold", title="Names held")
+    for c in ("Name", "Since", "Staged", "Holding", "Budget", "Seen"):
+        t.add_column(c)
+    quiet_names = {r["agent"] for r in agents.silent()}
+    # Names with ops but no lease are listed too, and marked. That is what a
+    # hand-set `$DG_AGENT` looks like, and a roster of leases alone would say
+    # the tray was unowned while somebody's drafts sat in it.
+    for name in sorted(set(leases) | set(staged)):
+        rec = leases.get(name, {})
+        since = rec.get("since", "[dim]not claimed here[/]")
+        left = agents.remaining(rec)
+        if rec.get("budget") is None:
+            spend = "[dim]—[/]"
+        elif left is not None and left < 0:
+            # The one cell worth a colour: an agent past its budget and still
+            # holding work is the state `dg-agent expire` exists for, and it is
+            # invisible in every other reading of a run.
+            spend = f"[red]SPENT +{limits.approx_span(-left)}[/]"
+        else:
+            spend = (f"{limits.show_span(rec['budget'])}"
+                     f" ({limits.approx_span(left)} left)")
+        quiet = agents.quiet_for(rec)
+        if quiet is None:
+            seen = "[dim]—[/]"
+        elif name in quiet_names:
+            # Yellow, never red: this is the one column that can be wrong. An
+            # agent in a long build is silent in exactly the same way a dead
+            # one is, and the colour should not claim otherwise.
+            seen = f"[yellow]silent {limits.approx_span(quiet)}[/]"
+        else:
+            seen = limits.approx_span(quiet)
+        t.add_row(cli._x(name), since, str(staged.get(name, 0)),
+                  ", ".join(rec.get("holding") or ()) or "[dim]—[/]", spend,
+                  seen)
+    cli.con.print(t)
+    if any(agents.over_budget()):
+        cli.con.print("[dim]`dg-agent expire` hands back what the spent ones "
+                  "hold[/]")
+    if quiet_names:
+        # No command is offered, deliberately. An elapsed budget is a fact and
+        # `expire` acts on it; silence is a suspicion, and the only safe next
+        # step is a person deciding whether that agent is thinking or gone.
+        cli.con.print(f"[dim]silent = no `dg` call and no file write for "
+                  f"{limits.approx_span(limits.silent_after())}, while holding "
+                  f"work. A long build looks the same as a dead agent — check "
+                  f"before parking anything. ${limits.SILENT_ENV} sets the "
+                  f"window[/]")
+    cli.con.print(f"[dim]{len(agents.sequence()) - len(set(leases) | set(staged))} "
+              f"of {len(agents.sequence())} names free[/]")
+
+
+@app.command("release")
+def agent_release(
+    name: str = typer.Argument(..., help="the name to stop holding"),
+    force: bool = typer.Option(
+        False, "--force",
+        help="release even while it holds DOING work, stranding those tasks"),
+) -> None:
+    """Stop holding one name, so it can be claimed again.
+
+    Says nothing about the tray: releasing a name whose ops are still staged is
+    legitimate — the launcher is done, the review is not — and `dg-agent claim`
+    still will not hand it out while those ops are there.
+
+    It does say something about held **work**, and refuses. The same stranding
+    `dg-agent prune` avoids arrives through this door one name at a time; see
+    that command for what it costs. `--force` overrides.
+    """
+    if not force:
+        held = _still_working().get(name)
+        if held:
+            cli.con.print(f"[red]✗ {cli._x(name)} still holds {', '.join(held)}[/]\n"
+                      f"[dim]releasing it now strands that work — DOING, with "
+                      f"no holder recorded and `dg task start` refusing it. "
+                      f"`dg-agent expire`, or `dg task park <id> --why …`, "
+                      f"then release. `--force` releases anyway[/]")
+            raise typer.Exit(1)
+    if not agents.release(name):
+        cli.con.print(f"[red]nothing released — {cli._x(name)} is not held[/]\n"
+                  f"[dim]`dg-agent list` shows what is[/]")
+        raise typer.Exit(1)
+    cli.con.print(f"[green]released[/] {cli._x(name)}")
+
+
+@app.command("prune")
+def agent_prune(
+    force: bool = typer.Option(
+        False, "--force",
+        help="release names still holding DOING work, stranding those tasks"),
+) -> None:
+    """Release every name with no ops left in either tray.
+
+    Deliberate, and never run on your behalf. A name with nothing staged can
+    still belong to an agent that has not staged *yet*, so this is safe when a
+    person knows the round is over and unsafe as a rule a timer applies.
+
+    **A name still holding DOING work is kept back**, because "nothing staged"
+    and "finished" are not the same thing and the gap between them is the first
+    minute of every agent's life. Dropping such a lease strands the task: it
+    stays `DOING`, its holder stops being recorded anywhere, and `dg task start`
+    refuses it as taken — so no other agent can pick it up and only a
+    hand-written park recovers it. Nothing detects that afterwards either,
+    because a task `DOING` with no holder is exactly what an ordinary solo
+    `dg task start` leaves behind.
+
+    `--force` releases them anyway. It is here because a rule that cannot be
+    overridden is a rule people route around, and because the stranding is
+    sometimes what you want — a run whose tasks you are about to drop.
+    """
+    # Passed as a callable, not as a set: `agents.prune` evaluates it inside
+    # the lease lock, so an agent claiming work between the judgement and the
+    # delete it authorises cannot be stranded by it. See that function; audit
+    # `M-F6`. `holders` below is what it actually saw, for the message.
+    holders: dict[str, list[str]] = {}
+
+    def keep():
+        holders.update({} if force else _still_working())
+        return holders
+
+    gone = agents.prune(keep=keep)
+    kept = sorted(holders)
+    if not gone and not kept:
+        cli.con.print("[dim]nothing to prune — every name held has ops staged[/]")
+        return
+    if gone:
+        cli.con.print(f"[green]released[/] {len(gone)}: {cli._x(', '.join(sorted(gone)))}")
+    for line in _stranding(kept, holders):
+        cli.con.print(line)
+    if kept:
+        cli.con.print("[dim]`dg-agent expire` parks what an out-of-time agent "
+                  "holds, or `dg task park <id> --why …` by hand — then prune "
+                  "again. `--force` releases them and strands the work[/]")
+
+
+@app.command("setup")
+def agent_setup(
+    focus: str = typer.Option(None, "--focus",
+                              help="comma-separated ids the fan-out is for; "
+                                   "their chains are pasted into the prompt"),
+    n: int = typer.Option(None, "--agents", "-n", help="how many to launch"),
+    host: str = typer.Option(None, "--host", help="claude | opencode"),
+    decide: str = typer.Option(None, "--decide", help="open | evidence | never"),
+    write_scope: str = typer.Option(None, "--write", help="open | launch"),
+    area: str = typer.Option(None, "--area-policy",
+                             help="open | strict — whether a scout may file "
+                                  "under an area nobody has used yet"),
+    budget: str = typer.Option(None, "--budget",
+                               help="`30m`, `1800`, or `infinite`"),
+    terse: str = typer.Option(None, "--terse",
+                              help="`on`, a character count, or `off` — how "
+                                   "long a field may be before the "
+                                   "development belongs in a file"),
+    brief: str = typer.Option(None, "--brief",
+                              help="one paragraph: what a good session produces"),
+    read: list[str] = typer.Option(None, "--read", metavar="PATH:WHAT",
+                                   help="a file the agents may read, and what "
+                                        "it is; repeatable"),
+    findings: str = typer.Option(None, "--findings",
+                                 help="where an agent puts what it produces"),
+    capture: bool = typer.Option(False, "--capture",
+                                 help="record every `dg` call of the run"),
+    out: str = typer.Option(None, "--out", help=f"output dir (default {fanout.OUT_DIR}/)"),
+    plain: bool = typer.Option(False, "--plain",
+                               help="ask a question at a time, never the "
+                                    "full-screen form"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="print both artefacts, write nothing"),
+    as_json: bool = typer.Option(False, "--json",
+                                 help="readiness and defaults, machine form"),
+) -> None:
+    """Set up a fan-out: check what is ready, then write the prompt and launcher.
+
+    Three ways in, one result. **With no arguments and a terminal** it asks:
+    a single-screen form where `textual` is installed, a question at a time
+    otherwise — the second needs nothing the tool does not already have, so
+    interactive setup always works and `--plain` picks it deliberately.
+    **With flags** it is entirely non-interactive, which is how an agent inside
+    Claude Code or opencode uses it, since neither can drive a full-screen app.
+    **With `--json`** it reports readiness and the defaults it would use, so an
+    agent can put the three questions the graph cannot answer to the person and
+    then call back with flags.
+
+    Everything else the template asks for is filled from the graph: the
+    project, the chain behind each focus id pasted verbatim from
+    `dg context --full`, which policies are in force and what each means, the
+    write roots, the budget. Only three answers are yours — what the fan-out is
+    for, what the agents may read, and where findings go.
+
+    Writes `fanout/scout.md` and `fanout/launch.sh`. Neither is scratch: a
+    filled prompt is the thing you want to read back and reuse, so it is not
+    hidden under `.dgraph-*`.
+    """
+    proj = project.find()
+    checks = fanout.readiness(proj)
+    plan = fanout.defaults(proj)
+
+    if as_json:
+        print(json.dumps({
+            "ready": all(c.ok for c in checks),
+            "checks": [{"ok": c.ok, "label": c.label, "fix": c.fix}
+                       for c in checks],
+            "defaults": {"focus": plan.focus, "agents": plan.agents,
+                         "host": plan.host, "decide": plan.decide,
+                         "write": plan.write, "budget": plan.budget,
+                         "terse": plan.terse, "area": plan.area,
+                         "findings": plan.findings, "out": plan.out},
+            "asks": ["--brief", "--read PATH:WHAT", "--findings"],
+        }, ensure_ascii=False))
+        return
+
+    given = {"focus": focus, "agents": n, "host": host, "decide": decide,
+             "write": write_scope, "area": area, "budget": budget,
+             "terse": terse, "brief": brief, "read": read,
+             "findings": findings, "out": out}
+    interactive = not any(v not in (None, (), []) for v in given.values())
+
+    for c in checks:
+        cli.con.print(f"[{'green' if c.ok else 'yellow'}]"
+                  f"{'✓' if c.ok else '!'}[/] {cli._x(c.label)}"
+                  + (f"  [dim]{c.fix}[/]" if not c.ok and c.fix else ""))
+    if not all(c.ok for c in checks[:2]):
+        cli.con.print("[red]✗ this project has no graph to fan out against[/]")
+        raise typer.Exit(2)
+
+    if interactive:
+        plan = _setup_interactively(plan, proj, plain)
+        if plan is None:
+            cli.con.print("[dim]cancelled — nothing written[/]")
+            raise typer.Exit(1)
+    else:
+        try:
+            plan = _setup_from_flags(plan, given)
+        except ValueError as exc:
+            cli.con.print(f"[red]✗ {cli._x(exc)}[/]")
+            raise typer.Exit(2) from None
+        plan = replace(plan, capture=capture)
+
+    if dry_run:
+        cli.con.print("[dim]— fanout/scout.md —[/]")
+        print(fanout.render_scout(plan, proj))
+        cli.con.print("[dim]— fanout/launch.sh —[/]")
+        print(fanout.render_launch(plan, proj))
+        cli.con.print("[dim]--dry-run: nothing written[/]")
+        return
+    written = fanout.write(plan, proj)
+    for p in written:
+        cli.con.print(f"[green]wrote[/] {p.relative_to(proj.root)}")
+    cli.con.print(f"[dim]read {written[0].relative_to(proj.root)} before launching "
+              f"— the three answers only you can give are near the top. Then "
+              f"`./{written[1].relative_to(proj.root)}`[/]")
+
+
+def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
+    """CLI flags to a `Plan`, refusing a value that is not one of the choices.
+
+    Refused rather than defaulted: a launcher that typed `--decide evidenced`
+    means to constrain its agents, and quietly running them unconstrained is
+    the failure the flag exists to prevent. `$DG_WRITE` defaults a bad value
+    because it is read on every judged write; this is read once, out loud.
+    """
+    #: Where a flag is not spelled the way its `Plan` field is. `--area-policy`
+    #: rather than `--area` because `dg-agent setup --area corpus` would read as
+    #: "fan out over the corpus area", which is a focus and not a policy.
+    FLAG = {"area": "area-policy"}
+
+    def one_of(name, value, allowed):
+        if value is None:
+            return getattr(plan, name)
+        if value not in allowed:
+            raise ValueError(f"--{FLAG.get(name, name)} must be one of "
+                             f"{', '.join(sorted(allowed))}, not {value!r}")
+        return value
+
+    reads = []
+    for item in (given["read"] or ()):
+        path, _, what = item.partition(":")
+        if not path:
+            raise ValueError(f"--read wants PATH:WHAT, got {item!r}")
+        reads.append((path, what.strip() or "(not described)"))
+
+    budget = plan.budget
+    if given["budget"] is not None:
+        budget = limits.span(given["budget"])
+
+    # Refused rather than defaulted, like `--decide`, and unlike the
+    # environment variable this ends up in. `limits.terse_limit` fails open
+    # because it is read on the path of every stage; a typo *here* is read
+    # once, out loud, by somebody who meant to constrain their agents.
+    terse = plan.terse
+    if given["terse"] is not None:
+        terse = given["terse"].strip().lower()
+        if terse not in limits.TERSE_OFF and limits.terse_limit(terse) is None:
+            raise ValueError(
+                f"--terse wants `on`, `off`, or a character count, not "
+                f"{given['terse']!r}")
+
+    return replace(
+        plan,
+        focus=[s.strip() for s in given["focus"].split(",") if s.strip()]
+              if given["focus"] else plan.focus,
+        agents=given["agents"] or plan.agents,
+        host=one_of("host", given["host"], set(fanout.HOSTS)),
+        decide=one_of("decide", given["decide"], set(cross.POLICIES)),
+        write=one_of("write", given["write"], set(limits.WRITE_POLICIES)),
+        area=one_of("area", given["area"], set(env.AREA_POLICIES)),
+        budget=budget,
+        terse=terse,
+        brief=given["brief"] or plan.brief,
+        reads=reads or plan.reads,
+        findings=given["findings"] or plan.findings,
+        out=given["out"] or plan.out,
+    )
+
+
+#: What a missing `textual` says. A constant so a test can render it: `[tui]`
+#: is rich markup unless escaped, and the first version of this message came
+#: out as `pip install 'dear-guide'` — an install hint that silently dropped
+#: the extra it was telling you to install.
+TUI_HINT = ("[dim]a single-screen form is available with `pip install "
+            + escape("'dear-guide[tui]'") + "`[/]")
+
+
+def _has_tui() -> bool:
+    try:
+        import textual  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _setup_interactively(plan: fanout.Plan, proj,
+                         plain: bool) -> fanout.Plan | None:
+    """Ask, however this terminal allows. `wizard.collect` decides between the
+    full-screen form and the question-at-a-time one.
+
+    A missing `textual` costs nothing here: the plain collector asks the same
+    questions and writes the same files, so the extra is mentioned once, as an
+    upgrade, and never as a refusal. It used to be a refusal, which made
+    interactive setup unavailable to anyone who had not installed an optional
+    dependency — for a command whose whole job is being the easy way in.
+    """
+    from dgraph import wizard
+    try:
+        got = wizard.collect(plan, proj, interactive=cli._interactive(),
+                             prefer_tui=not plain)
+    except wizard.NoTerminal as exc:
+        cli.con.print(f"[yellow]![/] {cli._x(exc)}")
+        raise typer.Exit(2) from None
+    if not plain and not _has_tui():
+        cli.con.print(TUI_HINT)
+    return got
+
+
+def _still_working() -> dict[str, list[str]]:
+    """`{agent: [tids]}` for leases holding work that is genuinely still DOING.
+
+    The guard behind `prune` and `release`, and the reason it is here rather
+    than in `agents.py`: answering it means reading the task store, which that
+    module deliberately knows nothing about.
+
+    Soft on purpose. A project with no task store cannot strand a task, and
+    `dg-agent prune` has always worked without one — so a missing store is an
+    empty answer rather than the exit `_tg` would raise. The lease's `holding`
+    list is filtered against real statuses because `drop_hold` clears it only
+    when work leaves DOING through this CLI; a task parked by somebody else
+    leaves an entry behind, and keeping a name alive over a stale one would
+    make `prune` useless exactly when a run is over.
+    """
+    proj = project.find()
+    if not proj.has_tasks:
+        return {}
+    try:
+        tg = cli._teff(TaskGraph.load(proj.tasks))
+    except (OSError, ValueError, typer.Exit):
+        # A store that will not load, or a tray that no longer applies. Both
+        # are real problems with their own messages elsewhere; neither is a
+        # reason for this guard to refuse, and treating them as "nothing is
+        # held" only restores the behaviour prune had before the guard.
+        return {}
+    out: dict[str, list[str]] = {}
+    for name, rec in agents.load().items():
+        live = [t for t in (rec.get("holding") or ())
+                if t in tg.tasks and tg.tasks[t].status == "DOING"]
+        if live:
+            out[name] = live
+    return out
+
+
+def _stranding(names: list[str], holders: dict[str, list[str]]) -> list[str]:
+    """The lines explaining what was kept back, and how to release it anyway."""
+    return [f"[yellow]kept[/] {cli._x(n)} — still holds "
+            f"{', '.join(holders[n])}" for n in names]
+
+
+@app.command("expire")
+def agent_expire() -> None:
+    """Hand back what an out-of-budget agent is holding.
+
+    A task left `DOING` by an agent that stopped reads exactly like one being
+    worked on. That is the failure the lease file exists to make visible, and
+    `dg task park --why` is the verb that already fixes it — so an expired
+    budget parks, naming the budget as what stopped the work. Parked work is
+    still outstanding, so nothing downstream is released: the next agent can
+    pick it up, which is the whole point.
+
+    **This does not stop a process, and it is still the backstop.** `dg-agent
+    run` parks what a child of *its own* dropped, when the information is
+    freshest — but it cannot see itself being killed, the machine going down or
+    the terminal closing, and an agent spawned some other way has no parent
+    watching it at all. This is the half that makes the queue honest
+    afterwards, and it is worth running even when you saw the agent die.
+
+    Staged, like everything else — each park goes into the tray under the
+    *agent's own name*, so `dg pending --agent <name>` shows it beside whatever
+    that agent had already proposed and `dg apply --agent <name>` takes the
+    batch. There is no `--apply` here on purpose: `dg apply` is the only door
+    that writes, and a second one would be a second place the tray's ownership
+    rules have to be right.
+    """
+    spent = agents.over_budget()
+    if not spent:
+        cli.con.print("[dim]nothing expired — every budget has time on it[/]")
+        return
+    tg = cli._teff(cli._tg())
+    staged = 0
+    for rec in spent:
+        name, over = rec["agent"], limits.approx_span(rec["over"])
+        held = [t for t in rec["holding"]
+                if t in tg.tasks and tg.tasks[t].status == "DOING"]
+        idle = [t for t in rec["holding"] if t not in held]
+        if not held:
+            # Said, not skipped silently. An agent that spent its budget
+            # holding nothing is the "died before it started" case, and it is
+            # the one a roster of parked tasks would never show.
+            cli.con.print(f"[yellow]{cli._x(name)}[/] is {over} over budget and holds "
+                      f"nothing" + (f" (already left {', '.join(idle)})"
+                                    if idle else ""))
+            continue
+        why = (f"budget spent: {name} was given "
+               f"{limits.show_span(rec['budget'])} and is {over} past it")
+        # One write per agent, not one per task. A hand-back is a group: a tray
+        # read between two of these would show half of it, and `_tstage_all`
+        # exists for exactly that. It cannot be one write across *all* agents,
+        # because `as_owner` stamps a whole call and each batch carries its own
+        # agent's name.
+        with pending.as_owner(name):
+            cli._tstage_all([{"op": "set_status", "task": tid, "status": "PARKED",
+                          "why": why, "date": _date.today().isoformat()}
+                         for tid in held])
+        staged += len(held)
+        cli.con.print(f"[green]staged[/] park of {', '.join(held)} "
+                  f"[dim]as {cli._x(name)}, {over} over budget[/]")
+    if staged:
+        cli.con.print(f"[dim]{staged} park(s) staged — `dg pending` to read them, "
+                  f"`dg apply` to take them[/]")
+
+
+
+
+# ---- the environment -----------------------------------------------------
+#
+# The half of the split that is new. Everything above moved; everything below
+# is what the move was for — a place where the seven variables an agent's remit
+# is written in can be seen, checked, and handed to a child.
+
+
+def _effect(r: env.Reading, proj: project.Project) -> str:
+    """The `read as` column: what this value actually does, in a person's words.
+
+    A value is not a behaviour. `launch` is a word, and what a launcher needs to
+    see is the two directories it resolved to; `evidence` is a word, and what it
+    means is which closes are about to be refused. The whole defect this command
+    exists for is that `open` looks identical whether it was chosen or fallen
+    into, so the column that says what is in force has to say it in the
+    vocabulary of the refusal, not of the variable.
+    """
+    name, value = r.var.name, r.value
+    if name == env.AGENT_ENV:
+        return "agent — refusals apply" if value else "supervisor — no refusal applies"
+    if name == env.POLICY_ENV:
+        return {"open": "may close any question",
+                "evidence": "closes only what finished evidence backs",
+                "never": "every answer goes back to a person"}[value]
+    if name == env.WRITE_ENV:
+        if value == "open":
+            return "anywhere"
+        return ", ".join(limits.writable_roots(proj.root))
+    if name == env.AREA_ENV:
+        return ("any area; a new one is checked against the ones in use"
+                if value == "open" else "only areas already in use")
+    if name == env.BUDGET_ENV:
+        return _budget_effect(r)
+    if name == env.TERSE_ENV:
+        return ("no limit on a field"
+                if value is None else f"a field over {value} chars is refused")
+    if name == env.SILENT_ENV:
+        return ("default" if not r.set
+                else f"quiet for {env.show_span(value)} is reported")
+    return r.note or str(value)
+
+
+def _budget_effect(r: env.Reading) -> str:
+    """What is left, read off the **lease** rather than off the variable.
+
+    `agents.claim` records the budget on the lease so that a supervisor reading
+    `dg-agent list` sees the same number the agent was given. That makes the
+    lease the authority and `$DG_BUDGET` a copy — so a disagreement between
+    them is itself a finding, and this is the one place both are to hand.
+
+    Not a `--check` failure, deliberately: the variable parsed, and what the
+    agent is actually running against is the lease. Said out loud, and left to
+    a person.
+    """
+    name = pending.owner()
+    rec = agents.load().get(name or "", {})
+    left = agents.remaining(rec) if rec else None
+    if left is None:
+        return "infinite" if r.value is None else env.show_span(r.value)
+    lease = rec.get("budget")
+    said = f"{env.approx_span(max(left, 0))} left on this lease"
+    if r.set and r.value != lease:
+        said += (f" — but the lease says {env.show_span(lease)}, not "
+                 f"{env.show_span(r.value)}")
+    return said
+
+
+def _plan_conflicts(spec: dict, readings: list[env.Reading]) -> list[str]:
+    """Where the ambient environment contradicts the plan a prompt was made from.
+
+    The failure this catches is drift between two artefacts generated from one
+    answer. `fanout/scout.md` asserts each policy to the agent in the second
+    person — "You are running under `$DG_DECIDE=evidence`" — and the launcher
+    sets it separately; edit one afterwards and the prompt goes on asserting a
+    policy nobody is enforcing, to an agent with no way to check. One file feeds
+    both, and this asserts they still agree.
+
+    Read in the *launcher's* shell, where none of these is normally set — an
+    unset variable is therefore silent, and what is reported is a launcher that
+    exported something the plan contradicts.
+    """
+    want = fanout.plan_env(spec)
+    out = []
+    for r in readings:
+        if not r.set or r.var.name not in want:
+            continue
+        if r.raw.strip() != want[r.var.name]:
+            out.append(f"${r.var.name} is {r.raw.strip()} in this shell and "
+                       f"{want[r.var.name]} in the plan the prompt was "
+                       f"rendered from")
+    return out
+
+
+@app.command("env")
+def agent_env(
+    check: bool = typer.Option(
+        False, "--check",
+        help="exit non-zero if a variable is set and not understood"),
+    plan_path: str = typer.Option(
+        None, "--plan", metavar="PATH",
+        help=f"a {fanout.ENV_NAME} written by `dg-agent setup`: validate its "
+             f"values, and report where this shell contradicts it"),
+    export: bool = typer.Option(
+        False, "--export",
+        help="print assignments for `eval`, for a host that cannot take a "
+             "wrapper process"),
+    as_json: bool = typer.Option(False, "--json", help="the same, machine form"),
+) -> None:
+    """What every `$DG_*` says, what it means, and where one was mistyped.
+
+    **Three things `env | grep DG_` cannot do.** It cannot name a fallback as a
+    fallback — and that is the whole defect, because `$DG_DECIDE=nevr` runs as
+    `open`, the widest policy, and looks exactly like a policy somebody chose.
+    It cannot show the budget against the *lease*, which is the number the agent
+    is actually running against. And it cannot resolve `$DG_PROJECT` to the
+    graph it found, which is how a stale environment file — pointing at a root
+    the graph has since moved out of — ran a whole fan-out against no store at
+    all while looking perfectly correct.
+
+    `--check` is the promise three docstrings in this tool have made for as long
+    as they have existed: those variables fail open *because* something reports
+    the typo where it is set. Only **set and not understood** is a finding.
+    Unset is a legitimate choice and the documented default for all of them, so
+    flagging it would flag every project that has never heard of this.
+
+    A lease that disagrees with `$DG_BUDGET` is shown but is not a `--check`
+    failure: the variable parsed, and the lease is what the hand-back reads.
+    """
+    proj = project.find()
+    readings = env.readings()
+    spec = None
+    if plan_path is not None:
+        try:
+            spec = fanout.read_env_plan(plan_path)
+        except (OSError, ValueError) as exc:
+            cli.con.print(f"[red]✗ {cli._x(exc)}[/]")
+            raise typer.Exit(2) from None
+
+    if export:
+        # `$DG_AGENT` is deliberately absent, and this is the one place the
+        # rule can be *enforced* rather than commented: an exported name makes
+        # the launcher an agent, and its own policy then refuses it. A name is
+        # per command — `dg-agent run` puts it in one child's environment, or
+        # `DG_AGENT=$(dg-agent claim) …` does it by hand.
+        want = (fanout.plan_env(spec) if spec is not None
+                else {r.var.name: r.raw.strip() for r in readings
+                      if r.set and r.var.settable
+                      and r.var.name != env.AGENT_ENV})
+        for name, value in want.items():
+            print(f"export {name}={shlex.quote(value)}")
+        print(f"# {env.AGENT_ENV} is deliberately not exported: it is per "
+              f"command. `dg-agent run --` sets it for one child.")
+        return
+
+    faults = [r for r in readings if not r.ok]
+    conflicts = _plan_conflicts(spec, readings) if spec is not None else []
+
+    if as_json:
+        print(json.dumps({
+            "ok": not faults and not conflicts,
+            "project": str(proj.root),
+            "variables": [
+                {"name": r.var.name, "what": r.var.what, "set": r.raw,
+                 "effective": r.effective, "reads_as": _effect(r, proj),
+                 "ok": r.ok, "fails_open": r.var.fails_open,
+                 "complaint": r.complaint or None}
+                for r in readings],
+            "plan": spec,
+            "conflicts": conflicts,
+        }, ensure_ascii=False))
+        if check and (faults or conflicts):
+            raise typer.Exit(1)
+        return
+
+    t = Table(header_style="bold", box=None, pad_edge=False)
+    for c, just in (("variable", "left"), ("set to", "left"),
+                    ("effective", "left"), ("read as", "left")):
+        t.add_column(c, justify=just)
+    for r in readings:
+        mark = "" if r.ok else "[red]✗[/] "
+        t.add_row(cli._x(r.var.name),
+                  cli._x(r.raw.strip()) if r.set else "[dim]—[/]",
+                  mark + cli._x(r.effective),
+                  cli._x(_effect(r, proj)))
+    cli.con.print(t)
+
+    for r in faults:
+        cli.con.print(f"[red]✗[/] {cli._x(r.complaint)}")
+    for line in conflicts:
+        cli.con.print(f"[red]✗[/] {cli._x(line)}\n"
+                      f"[dim]the prompt asserts the plan's value to the agent "
+                      f"in the second person, so the two must agree — "
+                      f"re-run `dg-agent setup`, or unset it here[/]")
+    if not faults and not conflicts:
+        cli.con.print("[dim]every variable set here was understood[/]")
+    if (faults or conflicts) and check:
+        raise typer.Exit(1)
+
+
+# ---- running one child ---------------------------------------------------
+
+
+def _compose(spec: dict | None, given: dict) -> dict[str, str]:
+    """The child's `$DG_*`, from a plan and the flags that override it.
+
+    **Every value is refused rather than defaulted**, which is the opposite of
+    what the same variables do when `dg` reads them, and the split is what makes
+    that a structural distinction rather than a judgement about which code path
+    you are on. Failing open is right on the path of every judged write, where a
+    typo must not take the graph away from the supervisor sharing the tray.
+    Here there is exactly one child, once, and the launcher is standing at the
+    terminal: a value it cannot read is a value it can still fix.
+    """
+    out: dict[str, str] = {}
+    if spec is not None:
+        out.update(fanout.plan_env(spec))
+    words = {"decide": (env.POLICY_ENV, env.POLICIES),
+             "write": (env.WRITE_ENV, env.WRITE_POLICIES),
+             "area": (env.AREA_ENV, env.AREA_POLICIES)}
+    for flag, (name, allowed) in words.items():
+        value = given.get(flag)
+        if value is None:
+            continue
+        if value not in allowed:
+            raise ValueError(f"--{flag} must be one of {', '.join(allowed)}, "
+                             f"not {value!r}")
+        out[name] = value
+    if given.get("terse") is not None:
+        terse = given["terse"].strip().lower()
+        if terse not in env.TERSE_OFF and env.terse_limit(terse) is None:
+            raise ValueError(f"--terse wants `on`, `off`, or a character "
+                             f"count, not {given['terse']!r}")
+        out[env.TERSE_ENV] = terse
+    if given.get("budget") is not None:
+        # Raises, where `$DG_WRITE` is merely ignored. A misread budget is not
+        # a wider rule, it is a different number, and both directions are
+        # wrong in a way nobody notices until an agent is parked hours early
+        # or never.
+        seconds = env.span(given["budget"])
+        out[env.BUDGET_ENV] = env.show_span(seconds)
+    return out
+
+
+def _hold_back(name: str, why: str) -> list[str]:
+    """Park whatever `name` still holds as DOING. The `expire` mechanism, run
+    when the information is freshest.
+
+    Staged under that agent's own name, exactly as `dg-agent expire` stages it,
+    so `dg pending --agent <name>` shows the park beside whatever that agent had
+    already proposed. There is no apply here for the reason there is none there:
+    `dg apply` is the only door that writes.
+    """
+    held = _still_working().get(name) or []
+    if not held:
+        return []
+    with pending.as_owner(name):
+        cli._tstage_all([{"op": "set_status", "task": tid, "status": "PARKED",
+                          "why": why, "date": _date.today().isoformat()}
+                         for tid in held])
+    return held
+
+
+@app.command("run", context_settings={"allow_interspersed_args": False})
+def agent_run(
+    command: list[str] = typer.Argument(
+        None, metavar="-- COMMAND …",
+        help="what to spawn, after `--`; anything the host takes"),
+    plan_path: str = typer.Option(
+        None, "--plan", metavar="PATH",
+        help=f"a {fanout.ENV_NAME} written by `dg-agent setup`"),
+    decide: str = typer.Option(None, "--decide", help="open | evidence | never"),
+    write_scope: str = typer.Option(None, "--write", help="open | launch"),
+    area: str = typer.Option(None, "--area-policy", help="open | strict"),
+    terse: str = typer.Option(None, "--terse",
+                              help="`on`, a character count, or `off`"),
+    budget: str = typer.Option(None, "--budget",
+                               help="`30m`, `1800`, or `infinite`"),
+    name: str = typer.Option(
+        None, "--agent", metavar="NAME",
+        help="run under a name already claimed, instead of claiming one"),
+) -> None:
+    """Claim a name, compose the environment, and run one agent under it.
+
+    `dg` cannot set its caller's environment and neither can this — so it
+    composes one and hands it to a **child**, which is what turns three
+    separate rules into one command:
+
+    - **`$DG_AGENT` is set for the child only.** That is the rule
+      `render_launch` has always written into `launch.sh` as a comment: an
+      exported name makes the launcher an agent, and its own policy then
+      refuses it. A behaviour beats a comment somebody has to obey.
+    - **Every value is validated before anything is spawned**, so a typo is
+      caught before an agent starts rather than after a wave of them have
+      filed proposals under the widest policy there is.
+    - **One number, not two.** `--budget 30m` and `timeout 1800` were two
+      independent values in one generated line, agreeing only until somebody
+      edited the file the README expects them to edit. Here the budget is the
+      timeout.
+
+    **What the budget buys, and what it does not.** This process is the child's
+    parent, so it can stop it and — more useful — do the hand-back by itself:
+    a child killed for time, or one that died holding work, has whatever it
+    holds parked under its own name, with the reason naming what stopped it.
+    A child that exited clean has nothing parked, because a park filed over a
+    finished session records a stop that never happened.
+
+    That covers the child timing out and the child crashing. It does **not**
+    cover this process being killed — a `kill -9` on the group, the machine
+    going down, the terminal closing. `dg-agent expire` therefore stays exactly
+    as it is and remains the backstop the procedure tells you to run. This
+    narrows the window; nothing closes it.
+
+    **The name is not released.** An agent that staged a proposal is holding
+    something a person has to read, and auto-release would recycle a name whose
+    tray still matters.
+    """
+    if not command:
+        cli.con.print("[red]✗ nothing to run — put the command after `--`[/]\n"
+                      "[dim]`dg-agent run --plan fanout/env.json -- claude -p "
+                      "\"$(cat fanout/scout.md)\"`[/]")
+        raise typer.Exit(2)
+    spec = None
+    if plan_path is not None:
+        try:
+            spec = fanout.read_env_plan(plan_path)
+        except (OSError, ValueError) as exc:
+            cli.con.print(f"[red]✗ {cli._x(exc)}[/]")
+            raise typer.Exit(2) from None
+    try:
+        composed = _compose(spec, {"decide": decide, "write": write_scope,
+                                   "area": area, "terse": terse,
+                                   "budget": budget})
+    except (ValueError, env.BadSpan) as exc:
+        cli.con.print(f"[red]✗ {cli._x(exc)}[/]\n"
+                      f"[dim]nothing was spawned and no name was claimed[/]")
+        raise typer.Exit(2) from None
+
+    seconds = env.span(composed.get(env.BUDGET_ENV))
+    if name is None:
+        try:
+            name = agents.claim(budget=seconds)
+        except agents.Exhausted as exc:
+            cli.con.print(f"[red]✗ no name to claim — {cli._x(exc)}[/]\n"
+                          f"[dim]`dg-agent prune` frees what is finished[/]")
+            raise typer.Exit(1) from None
+
+    child = dict(os.environ, **composed)
+    child[env.AGENT_ENV] = name
+    cli.con.print(f"[green]running[/] as {cli._x(name)} "
+                  f"[dim]{' '.join(f'{k}={v}' for k, v in sorted(composed.items()))}"
+                  f"{'' if seconds is None else f' · {env.show_span(seconds)}'}[/]")
+
+    # `start_new_session` so the whole tree can be stopped, not just the shell
+    # the host wrapped it in: a host that spawns a model runner leaves the
+    # runner behind when only the direct child is signalled, and a budget that
+    # stopped the wrapper while the work carried on would be the advisory
+    # budget this command exists to replace.
+    try:
+        proc = subprocess.Popen(list(command), env=child, start_new_session=True)
+    except OSError as exc:
+        cli.con.print(f"[red]✗ could not run {cli._x(command[0])} — "
+                      f"{cli._x(exc)}[/]\n[dim]{cli._x(name)} stays claimed; "
+                      f"`dg-agent release {name}` if it is not wanted[/]")
+        raise typer.Exit(127) from None
+
+    timed_out = False
+    try:
+        code = proc.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _stop(proc)
+        code = proc.returncode if proc.returncode is not None else -1
+    except KeyboardInterrupt:
+        _stop(proc)
+        code = 130
+
+    why = None
+    if timed_out:
+        why = (f"budget spent: {name} was given {env.show_span(seconds)} and "
+               f"was stopped at it")
+    elif code != 0:
+        why = f"{name} exited {code} while holding this"
+    if why is not None:
+        parked = _hold_back(name, why)
+        if parked:
+            cli.con.print(f"[green]staged[/] park of {', '.join(parked)} "
+                          f"[dim]as {cli._x(name)} — `dg pending --agent "
+                          f"{cli._x(name)}` to read it[/]")
+    if timed_out:
+        cli.con.print(f"[yellow]{cli._x(name)} was stopped at its budget[/]")
+    elif code != 0:
+        cli.con.print(f"[yellow]{cli._x(name)} exited {code}[/]")
+    cli.con.print(f"[dim]{cli._x(name)} stays claimed — it may be holding a "
+                  f"proposal somebody has to read. `dg-agent list`, then "
+                  f"`dg-agent release {cli._x(name)}`[/]")
+    raise typer.Exit(_exit_code(code, timed_out))
+
+
+#: What `timeout(1)` exits when it stops a command, and what this exits for the
+#: same reason -- a budget that ended the run is not a run that succeeded, and a
+#: launcher checking `$?` in a loop should see the same number it saw when the
+#: line was `timeout 1800 …`.
+TIMED_OUT = 124
+
+
+def _exit_code(code: int, timed_out: bool) -> int:
+    """The child's exit status, as a shell can read it.
+
+    A signalled child reports a *negative* number through `Popen`, which is not
+    an exit status at all: returned as-is it comes back as 0 through typer, so a
+    run stopped at its budget would look like a run that finished. `TIMED_OUT`
+    for the budget, and the shell's `128 + n` for any other signal.
+    """
+    if timed_out:
+        return TIMED_OUT
+    if code < 0:
+        return 128 - code
+    return code
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    """Stop the child's whole process group, politely and then not.
+
+    The group rather than the process, for the reason `start_new_session` is
+    set. `SIGTERM` first because a host that keeps a session file wants the
+    chance to close it, and `SIGKILL` after a short grace because a budget that
+    can be ignored is the advisory budget this replaced.
+    """
+    import signal
+    for sig, grace in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+        try:
+            proc.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def main() -> None:
+    if len(sys.argv) == 1:
+        # The roster, for the same reason `dg` alone shows the graph: the
+        # question somebody arrives with is "who is running", and a help screen
+        # answers a question nobody asked.
+        sys.argv.append("list")
+    app()
+
+
+if __name__ == "__main__":
+    main()

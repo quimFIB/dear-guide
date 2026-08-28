@@ -65,6 +65,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dgraph import areas as _areas
 from dgraph import project
 from dgraph.violation import Violation, cycle_from
 
@@ -588,8 +589,9 @@ class TaskGraph:
         )
 
     def to_dict(self) -> dict:
-        order = {a: i for i, a in enumerate(self.areas)}
-        rows = sorted(self.tasks.values(), key=lambda t: (order.get(t.area, 99), t.id))
+        # `pending._register`'s twin reading — see `model.Graph.to_dict`.
+        order = _areas.order(self.areas)
+        rows = sorted(self.tasks.values(), key=lambda t: (order(t.area), t.id))
         return {
             "areas": self.areas,
             "tasks": [
@@ -758,8 +760,6 @@ class TaskGraph:
             if not ID_RE.fullmatch(tid):
                 add("task_ids_wellformed",
                     f"malformed id {tid!r} — expected something like T07")
-            if t.area not in self.areas:
-                add("task_area_known", f"{tid}: unknown area {t.area!r}")
             if t.status not in STATUSES:
                 add("task_status_legal",
                     f"{tid}: illegal status {t.status!r} — one of "

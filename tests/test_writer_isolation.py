@@ -747,7 +747,7 @@ def test_two_integrations_cannot_both_report_a_quarantine(two_contributions,
 
 # ---- M-F6 · the stranding guard, computed outside the lock it protects ---
 #
-# `cli.agent_prune` (cli.py:2947-2948) is:
+# `agent_cli.agent_prune` — the launcher's, since the split — is:
 #
 #     holders = {} if force else _still_working()   # reads tasks.json, no lock
 #     gone    = agents.prune(keep=holders)          # takes the lease lock, inside
@@ -788,7 +788,7 @@ def test_prune_cannot_strand_work_an_agent_claims_while_it_runs(proj, monkeypatc
     an ordinary solo `dg task start` leaves behind. And the operator is told
     `released <name>`, which is true and complete-looking.
     """
-    from dgraph import cli
+    from dgraph import agent_cli as cli
 
     root = proj.root
     worker = agents.claim(root)
@@ -829,7 +829,7 @@ def test_the_keep_set_is_computed_under_the_lease_lock(proj, monkeypatch):
     agent's own `agents.hold` — which takes this lock — cannot land between the
     judgement and the delete it authorises."""
     lock = agents.path(proj.root).with_name(agents.AGENTS_NAME + ".lock")
-    from dgraph import cli
+    from dgraph import agent_cli as cli
 
     agents.claim(proj.root)
     seen = []

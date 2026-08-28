@@ -855,7 +855,7 @@ def test_init_ignores_everything_it_can_write(fresh_repo):
     Asserted over every path the tool can write rather than over the block it
     writes, so a new scratch file that nothing ignores fails here.
     """
-    _init(fresh_repo, "init", "--areas", "Core")
+    _init(fresh_repo, "init")
     _init(fresh_repo, "task", "init")
 
     assert [n for n in IGNORABLE if not _ignored(fresh_repo, n)] == []
@@ -1269,7 +1269,8 @@ def test_a_real_refusal_still_reads_as_one(run, store):
     """The other side: a batch that genuinely cannot apply must keep its red ✗,
     or the distinction buys nothing."""
     pending.save([{"op": "add_vertex", "id": "D09", "title": "x",
-                   "area": "nowhere"}], store / ".dgraph-pending.json")
+                   "area": "Alpha", "status": "BLOCKED:D99"}],
+                 store / ".dgraph-pending.json")
     res = run("apply")
     assert res.exit_code == 1
     assert "aborted, nothing written" in res.output
@@ -1914,7 +1915,7 @@ def test_an_area_change_does_not_carry_the_citation_warning(run):
 @pytest.mark.parametrize("args,says", [
     (("amend", "D05"), "nothing to change"),
     (("amend", "D05", "--title", "  "), "needs a title"),
-    (("amend", "D05", "--area", "Nope"), "unknown area"),
+    (("amend", "D05", "--area", "alpha"), "close to areas already"),
     (("amend", "D99", "--title", "x"), "unknown decision"),
 ])
 def test_the_correction_is_refused_where_it_would_not_hold(run, args, says):

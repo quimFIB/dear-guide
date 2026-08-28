@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
-# Record every `dg` invocation, then delegate. It is NAMED `dg` and lives alone
-# in a directory, which is the whole mechanism: put that directory first on
-# $PATH and every `dg` call in the session comes through here.
+# Record every `dg-agent` invocation, then delegate. `dg`'s sibling, and the
+# same mechanism: it is NAMED `dg-agent` and lives in the same directory, so
+# putting that directory first on $PATH routes both binaries through a wrapper.
 #
 #     export PATH="/path/to/dear-guide/agentic/bin:$PATH"
-#     command -v dg          # should print .../agentic/bin/dg
-#     dg pending             # ...and it is recorded
+#     command -v dg-agent    # should print .../agentic/bin/dg-agent
+#     dg-agent list          # ...and it is recorded
 #
-# The directory holds nothing else, so putting it first shadows `dg` and
-# nothing else on the system.
+# WHY THERE ARE TWO. The launcher split out of `dg` into `dg-agent`, and most
+# of what a capture of a *fan-out* is for went with it: the claims, the setup,
+# the launch, the parks. A capture that wrapped only `dg` would record the
+# proposals and lose every act that produced them, while looking complete.
+#
+# The directory holds these two and nothing else, so putting it first shadows
+# `dg` and `dg-agent` and nothing else on the system. Both write the same log,
+# in one stream, because the interleaving is the thing worth having: a park
+# staged by `dg-agent run` and the `dg pending` that read it are one story.
 #
 # THIS IS OPTIONAL. Running a fan-out does not need it -- see agentic/README.md,
 # which is the procedure; this is for when you want the RUN ITSELF afterwards.
@@ -49,24 +56,25 @@
 #
 set -uo pipefail
 
-# --- find the real dg ------------------------------------------------------
+# --- find the real dg-agent ------------------------------------------------
 #
-# The first `dg` on $PATH that is not this one. Resolved rather than hardcoded,
-# so the script works from a venv, a pipx install or a checkout without being
-# edited -- and $DG_REAL overrides it for the case none of those is true.
+# The first `dg-agent` on $PATH that is not this one. Resolved rather than
+# hardcoded, so the script works from a venv, a pipx install or a checkout
+# without being edited -- and $DG_AGENT_REAL overrides it for the case none of
+# those is true.
 _self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REAL="${DG_REAL:-}"
+REAL="${DG_AGENT_REAL:-}"
 if [ -z "$REAL" ]; then
   IFS=: read -ra _dirs <<< "$PATH"
   for _d in "${_dirs[@]}"; do
     [ -n "$_d" ] || continue
     [ "$(cd "$_d" 2>/dev/null && pwd)" = "$_self" ] && continue
-    if [ -x "$_d/dg" ]; then REAL="$_d/dg"; break; fi
+    if [ -x "$_d/dg-agent" ]; then REAL="$_d/dg-agent"; break; fi
   done
 fi
 if [ -z "$REAL" ]; then
-  echo "capture: no real \`dg\` on \$PATH besides this wrapper" >&2
-  echo "         set \$DG_REAL to it, or install dear-guide" >&2
+  echo "capture: no real \`dg-agent\` on \$PATH besides this wrapper" >&2
+  echo "         set \$DG_AGENT_REAL to it, or install dear-guide" >&2
   exit 127
 fi
 
@@ -78,13 +86,19 @@ fi
 LOG_DIR="${DG_CAPTURE:-$PWD/.dgraph-capture}"
 LOG="$LOG_DIR/dg.jsonl"
 
-# --- interactive commands pass straight through ----------------------------
+# --- interactive and long-running commands pass straight through -----------
 #
-# `serve` blocks, `--edit` opens an editor, and the full-screen readings expect
-# a terminal. Capturing any of them through a pipe breaks them, and a wrapper
-# that broke `dg serve` would be a capture nobody could run a review under.
+# `setup` without flags is a full-screen form, and `run` is the parent of an
+# agent that may run for half an hour and whose stdout is the agent's own.
+# Buffering either through a pipe breaks it -- `run` would hold the whole
+# session's output and hand it over at the end, which is not a launcher.
+#
+# THE COST, SAID OUT LOUD: `dg-agent run` is therefore absent from the log. The
+# `dg` calls its child makes are all captured, which is the record of what the
+# agent did; what is lost is the launch line itself, and `fanout/env.json` and
+# `fanout/launch.sh` are both on disk and say it.
 case " $* " in
-  *" serve "*|*" --edit "*) exec "$REAL" "$@" ;;
+  *" run "*|*" setup "*) exec "$REAL" "$@" ;;
 esac
 
 out="$(mktemp)"; err="$(mktemp)"

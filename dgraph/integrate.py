@@ -83,7 +83,13 @@ def decisions(base: Graph, theirs: Graph) -> Derived:
     one, since it is what makes two runs of this comparable.
     """
     out = Derived()
-    _areas(base.areas, theirs.areas, "decision", out)
+
+    # An arriving area used to be reported here as `unexpressible` — no op
+    # wrote the `areas` list, so a contribution introducing one arrived with
+    # every record in it refused, and this module could only name the cause.
+    # Areas register themselves now, from the `add_vertex` below: a fresh one
+    # arrives as part of the record that uses it, which is an expressible act
+    # and needs no line of its own.
 
     # Additions first, so that an edge or a removal later in the list can name
     # a vertex this contribution introduced.
@@ -126,7 +132,6 @@ def decisions(base: Graph, theirs: Graph) -> Derived:
 def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
     """The arriving task store as ops against `base`. `decisions`' twin."""
     out = Derived()
-    _areas(base.areas, theirs.areas, "task", out)
 
     for tid in sorted(set(theirs.tasks) - set(base.tasks)):
         t = theirs.tasks[tid]
@@ -156,24 +161,6 @@ def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
 
 
 # ---- the pieces ----------------------------------------------------------
-
-
-def _areas(base: list[str], theirs: list[str], what: str,
-           out: Derived) -> None:
-    """An area list that grew. Reported, never expressed.
-
-    No op writes `areas` — it is the one field of either store that only
-    `init` and `import` set — so a contribution that added one arrives with
-    every record in it failing `area_known`. Saying so here turns a wall of
-    identical refusals into one line naming the cause, which is the same
-    grouping every finding in this pass gets.
-    """
-    fresh = [a for a in theirs if a not in base]
-    if fresh:
-        out.unexpressible.append(
-            f"the arriving {what} store adds the area(s) "
-            f"{', '.join(fresh)} — no op writes an area list, so every record "
-            f"filed under one will be refused until it exists here")
 
 
 def _fields(was, now, rid: str, what: str, out: Derived, skip=()) -> None:

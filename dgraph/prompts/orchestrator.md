@@ -9,7 +9,7 @@ person makes every final call, and that person is not you.
 ## Before you spawn anything
 
 ```sh
-dg show && dg task && dg agent list && dg pending
+dg show && dg task && dg-agent list && dg pending && dg-agent env
 ```
 
 Know what is already open, what is ready, who is already holding a name, and
@@ -21,23 +21,32 @@ over — say so and stop rather than inventing work.
 ⟨N⟩ agents on ⟨WHICH PART OF THE FRONTIER⟩. One line each:
 
 ```sh
-DG_AGENT=$(dg agent claim --budget ⟨30m⟩) DG_DECIDE=⟨evidence|never⟩ \
-  DG_WRITE=⟨launch⟩ DG_TERSE=⟨on⟩ timeout ⟨1800⟩ \
-  ⟨claude -p|opencode run⟩ "$(cat agentic/prompts/scout.md)" &
+dg-agent run --plan fanout/env.json \
+  -- ⟨claude -p|opencode run⟩ "$(cat fanout/scout.md)" &
 ```
 
-**The assignment is per command and must never be exported.** `DG_AGENT=… cmd`
-puts the name in that child's environment only. If you `export DG_AGENT`, you
-become an agent yourself, and your own `DG_DECIDE` policy will start refusing
-you — you would lose the ability to apply and to report.
+One line, one blank. It used to be a shell line with six ⟨…⟩ in it, filled by a
+model, with nothing checking any value — and the three policy variables **fail
+open**, so a typo did not weaken a rule by a notch, it removed it silently in
+the direction of more permission.
 
-`dg agent claim` gives a name that cannot collide. Never invent one, and never
-reuse a name from an earlier run.
+`dg-agent run` claims a name, validates every value *before* it spawns anything,
+and puts `$DG_AGENT` in that one child's environment. **Never export
+`DG_AGENT`.** An exported name makes you an agent, and your own `DG_DECIDE`
+policy then starts refusing you — you would lose the ability to apply and to
+report. `dg-agent run` is how that rule stops being something you have to
+remember.
 
-`DG_TERSE=on` refuses a record field longer than 400 characters, so an agent
-puts the development in a file and cites it rather than in the store. Set it if
-anybody is going to *read* this fan-out — you are about to hand somebody a tray
-of proposals to choose between, and they read them in a panel.
+The remit itself is in `fanout/env.json`, written by `dg-agent setup` — which
+is also what `fanout/scout.md` was rendered from, so what the prompt tells each
+agent and what the launcher sets cannot drift. `dg-agent env --check --plan
+fanout/env.json` asserts that before the first agent starts; run it, or run
+`fanout/launch.sh`, which already does.
+
+Because `dg-agent run` is the child's parent, the budget is real: a child
+stopped at it, or one that dies holding work, has that work parked under its own
+name. `dg-agent expire` afterwards is still the backstop, for what this cannot
+see — the launcher itself being killed.
 
 Give each agent its own prompt file, or the same one with a different
 ⟨WHAT YOU ARE HERE TO DO⟩ section. Two agents with identical prompts do
@@ -46,7 +55,7 @@ identical work under different names.
 ## While they run
 
 ```sh
-dg agent list     # names held, and how many ops each has staged
+dg-agent list     # names held, and how many ops each has staged
 dg pending        # who proposed what, across both trays
 dg task           # what is held, what is ready, what is blocked
 ```

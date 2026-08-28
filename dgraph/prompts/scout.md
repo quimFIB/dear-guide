@@ -1,6 +1,6 @@
 <!-- A worker agent in a fan-out.
 
-     `dg agent setup` fills this in — every ⟨TOKEN⟩ below is substituted, and
+     `dg-agent setup` fills this in — every ⟨TOKEN⟩ below is substituted, and
      the comment above each one says what goes there. Filling it by hand works
      too: replace the tokens, delete the comments, delete this block.
 
@@ -66,9 +66,17 @@ dg task add  --id T<n> --title "…" --area <area> \
              --because D<n> --evidence-for D<n>       # work, and why it exists
 ```
 
-<!-- ⟨AREAS⟩: the areas this graph already uses, so a proposal lands in one of
-     them rather than inventing a synonym. -->
+<!-- ⟨AREAS⟩: the areas both stores already use, with counts, so a proposal
+     lands in one of them rather than inventing a synonym. -->
 The areas in use: ⟨AREAS⟩.
+
+**Areas accumulate — nothing has to be declared first.** File under one of the
+above where the work belongs in it. Where it genuinely does not, name a new
+area and the op registers it; if the name resembles one already in use you will
+be refused and shown what it resembles, and `--new-area` says you meant it.
+Prefer an existing area: two spellings of one corner of a project is the failure
+that guard is there to catch, and the person reviewing your proposals is the one
+who pays for it.
 
 Adding an open question is cheap and reversible. Deciding writes a falsifier for
 a question nobody made you live with, so a person makes the call — with your
@@ -78,6 +86,12 @@ proposals as input.
 You are running under **`$DG_DECIDE=⟨DECIDE⟩`**, which enforces this rather than
 trusting it. ⟨DECIDE_PROSE⟩ A refusal at stage time is that policy, not a broken
 tool: record what you measured with `dg task done --outcome` and move on.
+
+**Run `dg-agent env` to see what you are actually running under.** This
+paragraph and every other policy sentence below were written when your prompt
+was generated; if one of them disagrees with `dg-agent env`, `dg-agent env` is
+right and the prompt is stale. It also names any variable that was mistyped —
+those fail *open*, so a typo does not weaken a rule by a notch, it removes it.
 
 Everything you stage is a **proposal**. A person reads it with
 `dg pending --agent $DG_AGENT` and either takes it or turns it down. Stage
@@ -149,6 +163,6 @@ worked on, so nobody picks it up. A park says what happened and makes it
 reclaimable; the reason is kept even after the work resumes.
 
 A supervisor can hand back your work if you never get the chance —
-`dg agent expire` parks what an out-of-time agent holds — but it cannot say what
+`dg-agent expire` parks what an out-of-time agent holds — but it cannot say what
 state the work was in. Only you can, and that sentence is the difference between
 work the next agent resumes and work somebody redoes.

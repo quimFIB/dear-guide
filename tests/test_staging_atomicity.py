@@ -21,12 +21,14 @@ view writes out of the number.
 
 import json
 import pathlib
+from collections import Counter
 import subprocess
 
 import pytest
 from typer.testing import CliRunner
 
 from dgraph import pending, project
+from dgraph.agent_cli import app as agent_app
 from dgraph.cli import app
 from tests.conftest import FIXTURE, TASK_FIXTURE
 
@@ -120,6 +122,12 @@ CASES = [
     ([], ("task", "unlink", "T01", "--because", "D01")),
     ([], ("task", "amend", "T02", "--title", "reworded")),
     ([], ("task", "rm", "T03", "--yes")),
+    # Across both stores, and therefore two writes — one per tray. That is the
+    # rule rather than an exception to it: `dg apply` keeps the two batches
+    # independent so one that cannot apply can never stop one that can, and a
+    # rename that tried to be a single act across both would give that up for
+    # the one command whose whole job is undoing a divergence.
+    ([], ("areas", "rename", "Alpha", "Gamma")),
 ]
 
 
@@ -131,10 +139,17 @@ def test_one_staging_command_is_one_tray_write(run, tray_writes, setup, argv):
     counted = tray_writes()
     res = run(*argv)
     assert res.exit_code == 0, res.output
-    assert len(counted) <= 1, (
-        f"`dg {' '.join(argv)}` wrote a tray {len(counted)} times "
-        f"({', '.join(counted)}). A group of ops that only means something "
-        f"together must be one write — see `pending.stage_all`."
+    # Counted **per tray**, because the two trays are deliberately independent:
+    # a command touching both writes each once, and `dg apply` applies them as
+    # separate batches so one that cannot apply never stops one that can. What
+    # must never happen is one tray written twice, which is a tray somebody can
+    # read holding half a group.
+    per_tray = Counter(counted)
+    assert all(n <= 1 for n in per_tray.values()), (
+        f"`dg {' '.join(argv)}` wrote a tray more than once "
+        f"({', '.join(f'{k} x{n}' for k, n in per_tray.items() if n > 1)}). A "
+        f"group of ops that only means something together must be one write — "
+        f"see `pending.stage_all`."
     )
 
 
@@ -172,39 +187,60 @@ def test_every_staging_command_is_covered():
         # every group command makes, and covered by their cases.
         ("incoming",),
         ("drop",), ("clear",), ("edit",), ("repair",), ("confirm",),
+        # Writes the two stores directly, and is the one command that does.
+        # There is no op for it and there should not be: `areas` is not a
+        # record, nothing in either tray addresses it, and an op kind whose
+        # whole effect is to forget a label would be a staged act with nothing
+        # to review.
+        ("areas", "prune"),
         ("task", "init"), ("task", "pending"), ("task", "render"),
         ("task", "node"), ("task", "tree"), ("task", "drop-op"),
         ("task", "clear"), ("task", "import"), ("task", "export"),
-        # `.dgraph-agents.json` is not a tray either: it holds names, not ops,
-        # and nothing applies it. `claim` and `prune` *read* both trays to work
-        # out what is in use, under the lease file's own lock and never a
-        # tray's — which is also what keeps them out of `applying.trays`' lock
-        # order.
-        ("agent", "claim"), ("agent", "list"), ("agent", "release"),
-        ("agent", "prune"),
-        # Writes `fanout/scout.md` and `fanout/launch.sh` — files a person
-        # reads and edits, not ops anybody applies. Nothing it produces goes
-        # near a tray.
-        ("agent", "setup"),
+    }
+
+    #: The launcher's own commands, walked from its own app. `dg-agent` is a
+    #: second entry point over the same package — it stages parks into the task
+    #: tray, so it is exactly as subject to this rule as `dg` is, and a check
+    #: that only walked `dg` would have stopped covering the one command here
+    #: that writes a tray the moment the split landed.
+    AGENT_NO_TRAY = {
+        # `.dgraph-agents.json` is not a tray: it holds names, not ops, and
+        # nothing applies it. `claim` and `prune` *read* both trays to work out
+        # what is in use, under the lease file's own lock and never a tray's —
+        # which is also what keeps them out of `applying.trays`' lock order.
+        ("claim",), ("list",), ("release",), ("prune",),
+        # Writes `fanout/scout.md`, `fanout/launch.sh` and `fanout/env.json` —
+        # files a person reads and edits, not ops anybody applies. Nothing it
+        # produces goes near a tray.
+        ("setup",),
+        # Reports; writes nothing at all.
+        ("env",),
     }
     #: Commands that DO write a tray but cannot be expressed as a `CASES` entry,
     #: with the test that covers them instead. Separate from `NO_TRAY` because
     #: that set means "touches no tray", and putting one of these there would be
     #: a false statement that also switched the check off.
     #:
-    #: `agent expire` stages only for an agent whose budget has run out, and a
-    #: budget runs out by the clock — no sequence of CLI setup commands can
+    #: `dg-agent expire` stages only for an agent whose budget has run out, and
+    #: a budget runs out by the clock — no sequence of CLI setup commands can
     #: produce one, since `claim` stamps `started` at the moment it is called.
-    #: `test_limits.test_expire_is_one_tray_write_per_agent` backdates the
-    #: lease and arms the same counter this file does.
-    COVERED_ELSEWHERE = {("agent", "expire")}
+    #: `test_expire_is_one_tray_write_per_agent` below backdates the lease and
+    #: arms the same counter. `dg-agent run` is the same shape one step further
+    #: out: it parks what a child was holding, and producing one means spawning
+    #: a child and letting a budget elapse — `test_limits` covers the park.
+    COVERED_ELSEWHERE = {("expire",), ("run",)}
     covered = {tuple(a for a in argv if not a.startswith("-"))[:2]
                for _, argv in CASES}
-    covered = {c[:2] if c[0] == "task" else c[:1] for c in covered}
-    missing = names(app) - NO_TRAY - COVERED_ELSEWHERE - covered
+    covered = {c[:2] if c[0] in ("task", "areas") else c[:1] for c in covered}
+    missing = names(app) - NO_TRAY - covered
     assert not missing, (
         f"staging command(s) with no write-count case: {sorted(missing)} — "
         f"add them to CASES, or to NO_TRAY if they touch no tray"
+    )
+    missing = names(agent_app) - AGENT_NO_TRAY - COVERED_ELSEWHERE
+    assert not missing, (
+        f"`dg-agent` command(s) with no write-count case: {sorted(missing)} — "
+        f"add them to AGENT_NO_TRAY if they touch no tray"
     )
 
 
@@ -241,7 +277,7 @@ def test_expire_is_one_tray_write_per_agent(both_stores, tray_writes,
         ).exit_code == 0
 
     counted = tray_writes()
-    res = runner.invoke(app, ["--project", str(both_stores), "agent", "expire"])
+    res = runner.invoke(agent_app, ["--project", str(both_stores), "expire"])
     assert res.exit_code == 0, res.output
     assert len(counted) == 1, (
         f"one agent's hand-back wrote a tray {len(counted)} times "

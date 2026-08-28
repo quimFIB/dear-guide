@@ -235,7 +235,7 @@ def _record_holdings(ops, tg, proj) -> None:
     **Two ops, not one.** A `set_status` is the ordinary way work leaves DOING
     and was for a while the only one considered — but `remove_task` takes the
     task away entirely, and a hold is a claim about a task that exists. Left
-    behind, it outlives the state that made it true: `dg agent list` prints
+    behind, it outlives the state that made it true: `dg-agent list` prints
     `holding T01` and `agents.silent` reports the name as *"silent while
     holding work"*, over an id no store has, and `dg task park` refuses the
     only thing the roster tells a supervisor to do about it. Handled here

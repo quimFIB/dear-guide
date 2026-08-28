@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from dgraph import fanout, project
-from dgraph.cli import app
+from dgraph.agent_cli import app
 
 runner = CliRunner()
 
@@ -41,6 +41,9 @@ def proj(both_stores, monkeypatch):
 
 
 def run(proj, *args, input=None):
+    """`dg-agent`, not `dg`. The wizard moved with the launcher: `dg` is for the
+    graphs, and everything that composes an agent's environment or spawns
+    something to run under it is the other binary's."""
     return runner.invoke(app, ["--project", str(proj.root), *args],
                          input=input)
 
@@ -94,24 +97,36 @@ def test_the_policies_reach_the_prompt_as_prose(proj):
     assert "asks the person" in out and "not a broken tool" in out
 
 
-def test_the_launcher_never_exports_the_agent_name(proj):
-    """The one rule that makes an orchestrator work: a per-command assignment.
-    An exported $DG_AGENT makes the launcher an agent, and its own policy then
-    refuses it."""
+def test_the_launcher_spells_no_environment_and_no_timeout(proj):
+    """The two things that used to be in this file, and both had to go.
+
+    A bare `DG_DECIDE=evidence` in a shell line is a value nothing validates,
+    and the policy variables **fail open** — mistype one and it is read as the
+    widest setting, silently. And `--budget 30m` beside `timeout 1800` was two
+    independent numbers saying one thing, agreeing in generated output and
+    only until somebody edited the file, which the README expects.
+
+    `dg-agent run` replaces both: it validates before it spawns, it is the
+    child's parent so the budget *is* the timeout, and it sets `$DG_AGENT` for
+    that child alone — the rule this file used to carry as a comment.
+    """
     out = fanout.render_launch(fanout.defaults(proj), proj)
+
     assert "export DG_AGENT" not in out
-    assert "DG_AGENT=$(dg agent claim" in out
+    assert "DG_AGENT=" not in out, "a bare assignment is a value nothing checks"
+    assert "timeout " not in out, "the budget is the timeout now"
+    assert "dg-agent run --plan fanout/env.json" in out
 
 
-def test_the_launcher_pairs_the_budget_with_a_timeout(proj):
-    """`dg` is not in the agent's process tree. A budget with no `timeout` is
-    a number nothing acts on until the run is already over."""
-    from dataclasses import replace
-    out = fanout.render_launch(replace(fanout.defaults(proj), budget=1800), proj)
-    assert "timeout 1800" in out and "--budget 30m" in out
-
-    none = fanout.render_launch(replace(fanout.defaults(proj), budget=None), proj)
-    assert "timeout" not in none and "--budget" not in none
+def test_the_launcher_checks_the_plan_before_any_agent_starts(proj):
+    """`dg-agent env --check --plan` first, so a typo in the remit is caught
+    before a wave of agents has filed proposals under the widest policy there
+    is — and so the prompt's claims and the launcher's settings are asserted to
+    still agree."""
+    out = fanout.render_launch(fanout.defaults(proj), proj)
+    check = out.index("dg-agent env --check --plan fanout/env.json")
+    assert check < out.index("dg-agent run"), (
+        "the check has to run before the loop, not after it")
 
 
 def test_the_capture_path_is_absolute(proj):
@@ -125,11 +140,49 @@ def test_the_capture_path_is_absolute(proj):
         assert '$PWD/agentic' not in out
 
 
-def test_write_produces_both_files_and_marks_the_launcher_runnable(proj):
+def test_write_produces_three_files_and_marks_the_launcher_runnable(proj):
     written = fanout.write(fanout.defaults(proj), proj)
-    assert [p.name for p in written] == ["scout.md", "launch.sh"]
+    assert [p.name for p in written] == ["scout.md", "launch.sh", "env.json"]
     assert all(p.exists() for p in written)
     assert written[1].stat().st_mode & stat.S_IXUSR
+
+
+def test_the_plan_is_the_remit_and_nothing_else(proj):
+    """`env.json` holds the environment and stops there. A plan file that also
+    carried the focus ids, the host and the brief would be a second copy of
+    `scout.md`, free to disagree with it — which is the failure it is being
+    written to close, arrived at from the other direction."""
+    written = fanout.write(fanout.defaults(proj), proj)
+    spec = json.loads(written[2].read_text(encoding="utf-8"))
+
+    assert set(spec) == {"decide", "write", "area", "terse", "budget"}
+    assert fanout.plan_env(spec) == {
+        "DG_DECIDE": "evidence", "DG_WRITE": "launch", "DG_AREA": "open",
+        "DG_TERSE": "on", "DG_BUDGET": "30m"}
+
+
+def test_the_plan_is_read_back_and_a_bad_value_in_it_is_refused(proj, tmp_path):
+    """Checked rather than trusted, because this file's whole purpose is to be
+    read back by something that then spawns agents under it: `"decide":
+    "nevr"` would compose the widest policy for every child of the run."""
+    good = tmp_path / "env.json"
+    good.write_text(json.dumps({"decide": "evidence", "budget": 1800}))
+    assert fanout.read_env_plan(good)["decide"] == "evidence"
+
+    for bad, says in (({"decide": "nevr"}, "not one of"),
+                      ({"terse": "on!"}, "not `on`"),
+                      ({"budget": "30m"}, "seconds"),
+                      ({"focus": ["T01"]}, "unknown key")):
+        (tmp_path / "bad.json").write_text(json.dumps(bad))
+        with pytest.raises(ValueError, match=says):
+            fanout.read_env_plan(tmp_path / "bad.json")
+
+
+def test_a_null_budget_is_absent_rather_than_the_word_infinite(proj):
+    """Unset is what the tool documents as no limit. Writing the word would
+    make an unset variable and a deliberate `infinite` render differently in
+    `dg-agent env` while meaning the same thing."""
+    assert "DG_BUDGET" not in fanout.plan_env({"budget": None, "decide": "open"})
 
 
 # ---- the three doors -----------------------------------------------------
@@ -138,7 +191,7 @@ def test_write_produces_both_files_and_marks_the_launcher_runnable(proj):
 def test_json_reports_readiness_and_what_it_must_still_ask(proj):
     """The door an agent inside Claude Code uses: it cannot drive a TUI, so it
     reads what the graph already answers and asks the person the rest."""
-    res = run(proj, "agent", "setup", "--json")
+    res = run(proj, "setup", "--json")
     assert res.exit_code == 0
     payload = json.loads(res.stdout)
     assert payload["ready"] is True
@@ -147,7 +200,7 @@ def test_json_reports_readiness_and_what_it_must_still_ask(proj):
 
 
 def test_flags_alone_write_the_files(proj):
-    res = run(proj, "agent", "setup", "--focus", "T01", "--agents", "3",
+    res = run(proj, "setup", "--focus", "T01", "--agents", "3",
               "--brief", "settle the search area", "--budget", "45m")
     assert res.exit_code == 0, res.output
     scout = (proj.root / fanout.OUT_DIR / "scout.md").read_text()
@@ -157,13 +210,13 @@ def test_flags_alone_write_the_files(proj):
 def test_a_bad_policy_is_refused_rather_than_defaulted(proj):
     """A launcher that typed `--decide evidenced` means to constrain its
     agents; running them unconstrained is the failure the flag prevents."""
-    res = run(proj, "agent", "setup", "--decide", "evidenced")
+    res = run(proj, "setup", "--decide", "evidenced")
     assert res.exit_code == 2 and "must be one of" in res.output
     assert not (proj.root / fanout.OUT_DIR).exists()
 
 
 def test_dry_run_writes_nothing(proj):
-    res = run(proj, "agent", "setup", "--focus", "T01", "--dry-run")
+    res = run(proj, "setup", "--focus", "T01", "--dry-run")
     assert res.exit_code == 0
     assert "scout.md" in res.output
     assert not (proj.root / fanout.OUT_DIR).exists()
@@ -171,7 +224,7 @@ def test_dry_run_writes_nothing(proj):
 
 def test_a_project_with_no_graph_is_refused_with_the_fix(tmp_path, monkeypatch):
     monkeypatch.setattr(project, "_override", tmp_path)
-    res = runner.invoke(app, ["--project", str(tmp_path), "agent", "setup"])
+    res = runner.invoke(app, ["--project", str(tmp_path), "setup"])
     assert res.exit_code == 2
     assert "dg init" in res.output
 
@@ -185,7 +238,8 @@ ANSWERS = [
     "spec.md: the criteria", "",      # reads, then blank to finish
     "findings/<id>.md",               # findings
     "3", "claude",                    # agents, host
-    "never", "launch", "45m",         # decide, write, budget
+    "never", "launch", "open",        # decide, write, area
+    "45m",                            # budget
     "on",                             # terse
     "n",                              # capture
     "y",                              # write the files
@@ -199,7 +253,7 @@ def test_the_plain_collector_asks_and_writes(proj, monkeypatch):
     not the easy way in it claims to be."""
     from dgraph import cli
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    res = run(proj, "agent", "setup", "--plain", input="\n".join(ANSWERS) + "\n")
+    res = run(proj, "setup", "--plain", input="\n".join(ANSWERS) + "\n")
     assert res.exit_code == 0, res.output
     scout = (proj.root / fanout.OUT_DIR / "scout.md").read_text()
     assert "settle the search area" in scout and "45m" in scout
@@ -210,7 +264,7 @@ def test_declining_the_summary_writes_nothing(proj, monkeypatch):
     than the answers simply being applied."""
     from dgraph import cli
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    res = run(proj, "agent", "setup", "--plain",
+    res = run(proj, "setup", "--plain",
               input="\n".join(ANSWERS[:-1] + ["n"]) + "\n")
     assert res.exit_code == 1 and "cancelled" in res.output
     assert not (proj.root / fanout.OUT_DIR).exists()
@@ -222,7 +276,7 @@ def test_no_terminal_names_the_flags_rather_than_aborting(proj, monkeypatch):
     flags exist. This is the case inside Claude Code."""
     from dgraph import cli
     monkeypatch.setattr(cli, "_interactive", lambda: False)
-    res = run(proj, "agent", "setup")
+    res = run(proj, "setup")
     assert res.exit_code == 2
     assert "--json" in res.output and "flags" in res.output
 
@@ -234,9 +288,10 @@ def test_a_bad_budget_is_re_asked_rather_than_swallowed(proj, monkeypatch):
     monkeypatch.setattr(cli, "_interactive", lambda: True)
     answers = list(ANSWERS)
     # ANSWERS is brief, focus, reads, blank, findings, agents, host, decide,
-    # write, budget — so the budget is index 9, and a rejected one goes there.
-    answers[9:9] = ["half an hour"]
-    res = run(proj, "agent", "setup", "--plain", input="\n".join(answers) + "\n")
+    # write, area, budget — so the budget is index 10, and a rejected one goes
+    # there.
+    answers[10:10] = ["half an hour"]
+    res = run(proj, "setup", "--plain", input="\n".join(answers) + "\n")
     assert res.exit_code == 0, res.output
     assert "is not a budget" in res.output
 
@@ -277,7 +332,7 @@ def test_all_three_collectors_produce_identical_files(proj, monkeypatch):
     asyncio.run(drive())
     from_tui = fanout.render_scout(app_.result, proj)
 
-    res = run(proj, "agent", "setup", "--focus", "T01", "--agents", "3",
+    res = run(proj, "setup", "--focus", "T01", "--agents", "3",
               "--brief", "settle the search area", "--budget", "45m",
               "--decide", "never", "--terse", "on",
               "--read", "spec.md:the criteria",
@@ -289,7 +344,7 @@ def test_all_three_collectors_produce_identical_files(proj, monkeypatch):
     from dgraph import cli
     monkeypatch.setattr(cli, "_interactive", lambda: True)
     (proj.root / fanout.OUT_DIR / "scout.md").unlink()
-    res = run(proj, "agent", "setup", "--plain",
+    res = run(proj, "setup", "--plain",
               input="\n".join(ANSWERS) + "\n")
     assert res.exit_code == 0, res.output
     from_plain = (proj.root / fanout.OUT_DIR / "scout.md").read_text()
@@ -310,10 +365,10 @@ def test_the_missing_textual_hint_keeps_the_extra_it_names():
 
     from rich.console import Console
 
-    from dgraph import cli
+    from dgraph import agent_cli
 
     out = io.StringIO()
-    Console(file=out, width=200).print(cli.TUI_HINT)
+    Console(file=out, width=200).print(agent_cli.TUI_HINT)
     assert "dear-guide[tui]" in out.getvalue()
 
 
@@ -326,7 +381,10 @@ def test_the_launcher_sets_the_field_limit(proj):
     """The whole contract with the host is environment variables, and a policy
     the launcher does not set is a policy nothing enforces."""
     plan = replace(fanout.defaults(proj), terse="250")
-    assert "DG_TERSE=250" in fanout.render_launch(plan, proj)
+    # In the plan the launcher names, which is where the remit lives now — the
+    # launcher spells no assignment at all.
+    assert fanout.env_plan(plan)["terse"] == "250"
+    assert "fanout/env.json" in fanout.render_launch(plan, proj)
 
 
 def test_the_prompt_says_which_limit_is_in_force(proj):
@@ -348,5 +406,5 @@ def test_a_bad_field_limit_is_refused_rather_than_defaulted(proj):
     """`--decide evidenced` reasoning: a launcher that typed this meant to
     constrain its agents, and running them unconstrained is the failure the
     flag exists to prevent."""
-    res = run(proj, "agent", "setup", "--terse", "loose", "--brief", "x")
+    res = run(proj, "setup", "--terse", "loose", "--brief", "x")
     assert res.exit_code == 2 and "--terse" in res.output

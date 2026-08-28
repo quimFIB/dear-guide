@@ -31,6 +31,7 @@ import pytest
 from typer.testing import CliRunner
 
 from dgraph import agents, pending, project, task_pending
+from dgraph.agent_cli import app as agent_app
 from dgraph.cli import app
 from tests.conftest import FIXTURE, TASK_FIXTURE
 
@@ -60,6 +61,15 @@ def proj(tmp_path, monkeypatch):
 def run(proj):
     def go(*args):
         return runner.invoke(app, ["--project", str(proj.root), *args])
+    return go
+
+
+@pytest.fixture
+def arun(proj):
+    """`dg-agent`, the other binary. Names moved there with the rest of the
+    launcher: `dg` reads the environment, `dg-agent` writes it."""
+    def go(*args):
+        return runner.invoke(agent_app, ["--project", str(proj.root), *args])
     return go
 
 
@@ -204,7 +214,7 @@ def test_exhaustion_raises_rather_than_inventing_a_name(proj, tiny):
     assert exc.value.total == 2 and exc.value.releasable == 2
 
 
-def test_the_refusal_says_which_names_could_be_freed(proj, run, tiny):
+def test_the_refusal_says_which_names_could_be_freed(proj, run, tiny, arun):
     """Two messages, because the two situations have different exits: some
     leases are idle and `prune` frees them now, or every name has ops in a tray
     and the tray is what has to move first."""
@@ -212,14 +222,14 @@ def test_the_refusal_says_which_names_could_be_freed(proj, run, tiny):
     agents.claim(proj.root)
     pending.save([{**D07, "by": busy, "ref": "aaaa"}], proj.pending)
 
-    some = run("agent", "claim")
+    some = arun("claim")
     assert some.exit_code == 1
     assert "prune" in some.output and "1 have nothing staged" in some.output
 
     pending.save([{**D07, "by": busy, "ref": "aaaa"},
                   {**D07, "id": "D08", "by": agents.sequence()[1], "ref": "bbbb"}],
                  proj.pending)
-    none = run("agent", "claim")
+    none = arun("claim")
     assert none.exit_code == 1
     assert "dg apply" in none.output and "dg clear" in none.output
 
@@ -227,20 +237,20 @@ def test_the_refusal_says_which_names_could_be_freed(proj, run, tiny):
 # ---- the door a launcher uses --------------------------------------------
 
 
-def test_claim_prints_a_bare_name_and_nothing_else(proj, run):
+def test_claim_prints_a_bare_name_and_nothing_else(proj, run, arun):
     """`DG_AGENT=$(dg agent claim)` is the only sensible caller, so the whole
     of stdout has to be the name — no markup, no heading, and no wrap."""
-    out = run("agent", "claim").output
+    out = arun("claim").output
 
     assert out.strip() == agents.sequence()[0]
     assert re.fullmatch(r"[a-z]+-[a-z]+\n?", out), repr(out)
 
 
-def test_a_claimed_name_is_one_staging_accepts(proj, run, monkeypatch):
+def test_a_claimed_name_is_one_staging_accepts(proj, run, monkeypatch, arun):
     """The round trip, and the point of the whole module: what `claim` hands
     out is a legal identity, so a launcher cannot produce the values that had
     to be refused."""
-    name = run("agent", "claim").output.strip()
+    name = arun("claim").output.strip()
     monkeypatch.setenv("DG_AGENT", name)
 
     assert run("add", "--id", "D07", "--title", "seven",
@@ -248,17 +258,17 @@ def test_a_claimed_name_is_one_staging_accepts(proj, run, monkeypatch):
     assert [o.get("by") for o in pending.load(proj.pending)] == [name]
 
 
-def test_list_marks_a_name_that_has_ops_but_no_lease(proj, run):
+def test_list_marks_a_name_that_has_ops_but_no_lease(proj, run, arun):
     """A hand-set `$DG_AGENT` looks exactly like this, and a roster of leases
     alone would report the tray unowned while somebody's drafts sat in it."""
     pending.save([{**D07, "by": "hand-set", "ref": "aaaa"}], proj.pending)
 
-    out = run("agent", "list").output
+    out = arun("list").output
 
     assert "hand-set" in out and "not claimed here" in out
 
 
-def test_the_lease_file_is_ignored_by_git(proj, run):
+def test_the_lease_file_is_ignored_by_git(proj, run, arun):
     """`.dgraph-*` already covers it, and it has to: a lease is a claim about a
     writer running in *this* checkout, and one that travelled between clones
     would be a claim about somebody else's.
@@ -270,7 +280,7 @@ def test_the_lease_file_is_ignored_by_git(proj, run):
     `.dgraph-agents.json.lock` left by a killed process is not a commit either.
     """
     project.ensure_ignored(proj.root)
-    run("agent", "claim")
+    arun("claim")
     assert agents.path(proj.root).exists()
     (proj.root / (agents.AGENTS_NAME + ".lock")).write_text("")
 
@@ -334,7 +344,7 @@ def _holding(run, proj, tid="T01"):
     return name
 
 
-def test_prune_keeps_back_a_name_still_holding_work(run, proj, monkeypatch):
+def test_prune_keeps_back_a_name_still_holding_work(run, proj, monkeypatch, arun):
     """The trap this guard exists for, and it is the FIRST MINUTE of an agent's
     life: it has claimed a task and not staged anything yet, which reads as
     idle. Releasing it strands the task — DOING, holder unrecorded, and
@@ -344,7 +354,7 @@ def test_prune_keeps_back_a_name_still_holding_work(run, proj, monkeypatch):
     holder = _holding(run, proj)
     idle = agents.claim(proj.root)
 
-    out = run("agent", "prune").output
+    out = arun("prune").output
     assert idle in out and "released" in out
     assert holder in out and "kept" in out
     assert holder in agents.load(proj.root)
@@ -352,30 +362,30 @@ def test_prune_keeps_back_a_name_still_holding_work(run, proj, monkeypatch):
     assert agents.holdings(proj.root) == {"T01": holder}
 
 
-def test_prune_force_strands_it_deliberately(run, proj, monkeypatch):
+def test_prune_force_strands_it_deliberately(run, proj, monkeypatch, arun):
     """A rule that cannot be overridden is one people route around, and the
     stranding is sometimes wanted — a run whose tasks are about to be dropped.
     """
     monkeypatch.setenv("DG_AGENT", "")
     holder = _holding(run, proj)
-    assert holder in run("agent", "prune", "--force").output
+    assert holder in arun("prune", "--force").output
     assert holder not in agents.load(proj.root)
 
 
-def test_release_refuses_a_name_still_holding_work(run, proj, monkeypatch):
+def test_release_refuses_a_name_still_holding_work(run, proj, monkeypatch, arun):
     """The same stranding arrives one name at a time through this door."""
     monkeypatch.setenv("DG_AGENT", "")
     holder = _holding(run, proj)
 
-    refused = run("agent", "release", holder)
+    refused = arun("release", holder)
     assert refused.exit_code == 1 and "still holds T01" in refused.output
     assert holder in agents.load(proj.root)
 
-    assert run("agent", "release", holder, "--force").exit_code == 0
+    assert arun("release", holder, "--force").exit_code == 0
     assert holder not in agents.load(proj.root)
 
 
-def test_the_guard_reads_real_status_not_a_stale_lease(run, proj, monkeypatch):
+def test_the_guard_reads_real_status_not_a_stale_lease(run, proj, monkeypatch, arun):
     """`drop_hold` clears `holding` only when work leaves DOING through this
     CLI, so a task parked another way leaves an entry behind. Keeping a name
     alive over a stale one would make `prune` useless exactly when a run ends.
@@ -388,11 +398,11 @@ def test_the_guard_reads_real_status_not_a_stale_lease(run, proj, monkeypatch):
     leases[holder]["holding"] = ["T01"]          # the stale entry
     agents.save(leases, proj.root)
 
-    assert holder in run("agent", "prune").output
+    assert holder in arun("prune").output
     assert holder not in agents.load(proj.root)
 
 
-def test_removing_a_task_takes_the_hold_with_it(run, proj, monkeypatch):
+def test_removing_a_task_takes_the_hold_with_it(run, proj, monkeypatch, arun):
     """A hold is a claim about a task that exists, so removing the task ends it.
 
     `set_status` was for a while the only op that touched a lease, and
@@ -421,7 +431,7 @@ def test_removing_a_task_takes_the_hold_with_it(run, proj, monkeypatch):
         "the roster reports an agent silent while holding a task that is gone")
     # The surface, not only the store behind it: the roster is what a
     # supervisor reads, and it is where the claim was made.
-    assert "T01" not in run("agent", "list").output
+    assert "T01" not in arun("list").output
 
 
 def test_the_guard_is_silent_in_a_project_with_no_task_store(tmp_path,
@@ -433,6 +443,6 @@ def test_the_guard_is_silent_in_a_project_with_no_task_store(tmp_path,
     monkeypatch.setattr(project, "_override", tmp_path)
     monkeypatch.delenv("DG_AGENT", raising=False)
     name = agents.claim(tmp_path)
-    out = runner.invoke(app, ["--project", str(tmp_path), "agent", "prune"])
+    out = runner.invoke(agent_app, ["--project", str(tmp_path), "prune"])
     assert out.exit_code == 0 and name in out.output
     assert agents.load(tmp_path) == {}

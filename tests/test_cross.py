@@ -1011,7 +1011,7 @@ def test_a_batch_is_never_judged_against_one_that_will_not_apply(both, direction
     else:
         _stage(both, ".dgraph-pending.json",
                [{"op": "add_vertex", "id": "D09", "title": "new",
-                 "area": "nowhere"}])          # unknown area: refused
+                 "area": "Alpha", "status": "BLOCKED:D99"}])   # refused
         _stage(both, ".dgraph-task-pending.json",
                [{"op": "set_link", "task": "T04", "because": "D09"}])
 
@@ -1050,7 +1050,7 @@ def test_a_refused_decision_batch_does_not_stop_the_task_batch(run_cli, both):
     """
     _stage(both, ".dgraph-pending.json",
            [{"op": "add_vertex", "id": "D09", "title": "new",
-             "area": "nowhere"}])                      # refused
+             "area": "Alpha", "status": "BLOCKED:D99"}])   # refused
     _stage(both, ".dgraph-task-pending.json",
            [{"op": "set_status", "task": "T02", "status": "DOING"}])
 

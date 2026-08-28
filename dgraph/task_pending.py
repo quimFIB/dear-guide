@@ -24,7 +24,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dgraph import project, ranges
-from dgraph.pending import FIELDS, ApplyError, already, vet_fields
+from dgraph.pending import (FIELDS, ApplyError, already,
+                            area_counts, owner, refuse_area,
+                            stored_area_counts, vet_fields)
+from dgraph.pending import _register
 from dgraph.model import Graph
 from dgraph.tasks import (ID_RE, KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
                           Completion, Reading, Stop, Task, TaskEdge,
@@ -64,6 +67,10 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             # rather than reimplemented, because a rule applied in one store and
             # not its twin is the shape most of this tool's audit findings took.
             raise already(op["id"], matches(tg.tasks[op["id"]], op), "task")
+        # The same registration `pending._apply_one` makes, through the same
+        # function: an area is registered by the op that first files a record
+        # under it, in the store that op writes and only that one.
+        _register(tg, op.get("area"))
         tg.tasks[op["id"]] = Task(
             id=op["id"], title=op["title"], area=op["area"],
             status=op.get("status", "TODO"), note=op.get("note"),
@@ -225,6 +232,7 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
         if tid not in tg.tasks:
             raise ApplyError(f"unknown task {tid!r}")
         t = tg.tasks[tid]
+        _register(tg, op.get("area"))
         for fld in FIELDS:
             if fld in op:
                 setattr(t, fld, op[fld])
@@ -597,7 +605,8 @@ def releases(tg: TaskGraph, g: Graph | None, ops: list[dict]) -> list[str]:
 
 
 def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
-                area: str, after: list[str] | None = None,
+                area: str, new_area: bool = False,
+                after: list[str] | None = None,
                 discovered_during: list[str] | None = None,
                 because: list[str] | None = None,
                 evidence_for: str | None = None,
@@ -640,10 +649,15 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
                          + (" in the staging area"
                             if stored is not None and tid not in stored.tasks
                             else ""))
-    if area not in tg.areas:
-        raise ApplyError("unknown area. one of: " + ", ".join(tg.areas))
-    # `pending.compose_add`'s twin — see there for why the check is in both the
-    # composer and `vet` when the area rule is in only one.
+    why = refuse_area(area, own=area_counts(tg.areas, tg.tasks.values()),
+                      other=stored_area_counts(project.find().store),
+                      owner=owner(), new_area=new_area)
+    if why is not None:
+        raise ApplyError(why)
+    # `pending.compose_add`'s twin — see there. The area is checked in both the
+    # composer and `vet` for the same reason the grant is: there is no longer
+    # an invariant behind it to catch what slips through, because a store whose
+    # records use an area its list does not mention is now legal.
     bad = ranges.fault("T", tid)
     if bad:
         raise ApplyError(bad)
@@ -699,7 +713,7 @@ def preview(tg: TaskGraph, p: Path | None = None, *, skip: int | None = None) ->
     return out
 
 
-def vet(tg: TaskGraph, op: dict) -> None:
+def vet(tg: TaskGraph, op: dict, *, new_area: bool = False) -> None:
     """Raise if `op` could not be staged against `tg`.
 
     The shared stage-time floor, matching `pending.vet`: the op must apply, its
@@ -727,7 +741,9 @@ def vet(tg: TaskGraph, op: dict) -> None:
         raise ApplyError(f"illegal status {status!r} — one of {', '.join(STATUSES)}")
     if op.get("op") == "set_fields":
         t = tg.tasks[op["task"]]
-        vet_fields(op, areas=tg.areas, record="task",
+        vet_fields(op, own=area_counts(tg.areas, tg.tasks.values()),
+                   other=stored_area_counts(project.find().store),
+                   record="task", new_area=new_area,
                    current={k: getattr(t, k) for k in FIELDS})
     # `outcome` is not among the fields that exempt an op from this: it used to
     # be, and that is half of how a second `dg task done` reached the store —
@@ -742,7 +758,8 @@ def vet(tg: TaskGraph, op: dict) -> None:
         raise ApplyError(f"{op['task']} is already {status}")
 
 
-def vet_all(tg: TaskGraph, ops: list[dict]) -> None:
+def vet_all(tg: TaskGraph, ops: list[dict], *,
+            new_area: bool = False) -> None:
     """Raise if these ops could not be staged **as a group**.
 
     The plural of `vet`, and the shape every group-building task command needs:
@@ -758,7 +775,7 @@ def vet_all(tg: TaskGraph, ops: list[dict]) -> None:
     """
     probe = copy.deepcopy(tg)
     for op in ops:
-        vet(probe, op)
+        vet(probe, op, new_area=new_area)
         _apply_one(probe, op)
 
 

@@ -43,6 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from dgraph import areas
 from dgraph import (applying, check, cross, editor, pending, project, ranges,
                     render, task_editor, task_pending)
 from dgraph.model import Graph, rival_note
@@ -97,6 +98,12 @@ _editing = threading.Lock()
 
 def graph_payload(g: Graph) -> dict:
     d = g.to_dict()
+    # The registry, not the declared list. `areas` accumulates and a record may
+    # be filed under one the list does not mention, so the page's legend, its
+    # colour assignment and its area field all want the union of declared and
+    # used — otherwise a record renders in an unlisted colour the legend has no
+    # row for, and the area field cannot offer an area that is plainly in use.
+    d["areas"] = areas.registry(g.areas, g.vertices.values())
     d["derived"] = {
         vid: {
             "depends": g.depends(vid),
@@ -200,6 +207,8 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
     `because`.
     """
     d = tg.to_dict()
+    # `graph_payload`'s twin — the registry, not the declared list. See there.
+    d["areas"] = areas.registry(tg.areas, tg.tasks.values())
     depth = task_depth(tg)
     d["derived"] = {
         tid: {
@@ -377,16 +386,36 @@ def areas_payload() -> dict:
     the stores share their areas and not their vocabularies, and a row summing
     `OPEN` with `TODO` would be counting questions and work as if they were the
     same thing.
+
+    **Both blocks list every area either store knows**, which is what "share
+    their areas" has always claimed and did not used to mean: the two `areas`
+    lists were independent fields written only by `init`. They are registries
+    now, appended to by the op that first files a record under one, and every
+    reader takes the union — so an area used only for work still has a row on
+    the decision side, holding zero. That zero is a real answer.
     """
     g, tg = _stores()
+    every = _area_union(g, tg)
     return {
-        "decisions": ({"areas": g.areas, "counts": _by_area_status(
+        "decisions": ({"areas": every, "counts": _by_area_status(
             {v.id: (v.area, v.status.split(":")[0]) for v in g.vertices.values()})}
             if g is not None else None),
-        "tasks": ({"areas": tg.areas, "counts": _by_area_status(
+        "tasks": ({"areas": every, "counts": _by_area_status(
             {t.id: (t.area, t.status) for t in tg.tasks.values()})}
             if tg is not None else None),
     }
+
+
+def _area_union(g, tg) -> list[str]:
+    """`cli._area_union`'s twin — every area either store declares or uses, the
+    decision store's registry first. A project with only one store reads a
+    union of one, which is the case this endpoint has always been careful to
+    allow."""
+    out = list(areas.registry(g.areas, g.vertices.values())) if g else []
+    for a in (areas.registry(tg.areas, tg.tasks.values()) if tg else []):
+        if a not in out:
+            out.append(a)
+    return out
 
 
 def _by_area_status(rows: dict) -> dict:
@@ -493,7 +522,7 @@ def stage(g: Graph, op: dict) -> list[dict]:
         why = cross.refuse_close(tg, op.get("vertex"), pending.owner())
         if why is not None:
             raise pending.ApplyError(why)
-    pending.vet(eff, op)
+    pending.vet(eff, op, new_area=bool(op.pop("new_area", False)))
     ops = pending.expand(eff, op)
     pending.stage_all(ops, against=eff)   # one write, each op stamped
     return ops
@@ -549,7 +578,8 @@ def _decide_note(op: dict) -> str | None:
     return cross.deciding_ahead_of_evidence(tg, op["vertex"])
 
 
-def stage_tasks(tg: TaskGraph, ops: list[dict]) -> list[dict]:
+def stage_tasks(tg: TaskGraph, ops: list[dict], *,
+                new_area: bool = False) -> list[dict]:
     """Vet a batch of task ops and stage them as **one** tray write.
 
     A drop and the cascade its verdicts imply are one judgement — the operator
@@ -562,7 +592,7 @@ def stage_tasks(tg: TaskGraph, ops: list[dict]) -> list[dict]:
     produces, before any of it is staged, so a refusal leaves the tray as it
     was rather than holding the first half of something that was given up on.
     """
-    task_pending.vet_all(task_pending.preview(tg), ops)
+    task_pending.vet_all(task_pending.preview(tg), ops, new_area=new_area)
     pending.stage_all(ops, task_pending.path())
     return ops
 
@@ -990,11 +1020,13 @@ class Handler(BaseHTTPRequestHandler):
         tg = TaskGraph.load(proj.tasks)
         eff = task_pending.preview(tg)
         body = self._body()
+        fresh = bool(body.get("new_area"))
         try:
             ops = task_pending.compose_add(
                 eff, g, tid=(body.get("id") or "").strip(),
                 title=(body.get("title") or "").strip(),
                 area=(body.get("area") or "").strip(),
+                new_area=fresh,
                 after=[x for x in (body.get("after") or []) if x],
                 discovered_during=[x for x in
                                    (body.get("discovered_during") or []) if x],
@@ -1002,7 +1034,7 @@ class Handler(BaseHTTPRequestHandler):
                 evidence_for=(body.get("evidence_for") or "").strip() or None,
                 note=(body.get("note") or "").strip() or None,
                 stored=tg)
-            staged = stage_tasks(eff, ops)
+            staged = stage_tasks(eff, ops, new_area=fresh)
         except Exception as exc:
             return self._json({"error": str(exc)}, 400)
         # No notes: `dg task add` prints none either. The staged-anyway warnings

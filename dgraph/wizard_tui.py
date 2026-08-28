@@ -28,7 +28,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import (Button, Checkbox, Footer, Header, Input, Label,
                              RadioButton, RadioSet, Static, TextArea)
 
-from dgraph import cross, fanout, limits
+from dgraph import cross, env, fanout, limits
 
 #: The budgets offered as buttons. A free-text field is there too — these are
 #: the ones worth one keystroke, chosen to bracket what a scout actually needs
@@ -119,9 +119,21 @@ class Wizard(App):
                 for p in limits.WRITE_POLICIES:
                     yield RadioButton(p, value=(p == self.plan.write))
 
+            yield Label("May an agent file under a new area?  $DG_AREA",
+                        classes="q")
+            yield Static("open: any area — one resembling an area in use is "
+                         "refused, and --new-area overrides · strict: only "
+                         "areas already in use. `open` is usually right: a "
+                         "scout finding a corner nobody had named is a "
+                         "finding.", classes="hint")
+            with RadioSet(id="area"):
+                for p in env.AREA_POLICIES:
+                    yield RadioButton(p, value=(p == self.plan.area))
+
             yield Label("How long before its work is handed back?", classes="q")
-            yield Static("Nothing kills the agent — `timeout` in the launcher "
-                         "does that. This is what `dg agent expire` measures.",
+            yield Static("`dg-agent run` stops the child at this and parks "
+                         "what it was holding; `dg-agent expire` is the "
+                         "backstop for what that cannot see.",
                          classes="hint")
             yield Input(limits.show_span(self.plan.budget), id="budget")
 
@@ -185,6 +197,7 @@ class Wizard(App):
             host=self._chosen("host", self.plan.host),
             decide=self._chosen("decide", self.plan.decide),
             write=self._chosen("write", self.plan.write),
+            area=self._chosen("area", self.plan.area),
             budget=budget,
             terse=terse,
             capture=self.query_one("#capture", Checkbox).value,

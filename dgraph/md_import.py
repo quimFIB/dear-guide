@@ -108,7 +108,11 @@ def parse(text: str) -> tuple[list[str], list[dict], list[dict]]:
 
 def import_markdown(path: Path) -> Graph:
     areas, nodes, sup = parse(path.read_text(encoding="utf-8"))
-    g = Graph(areas=areas or ["General"])
+    # No `or ["General"]`. An empty registry is now the honest state of a
+    # document that declared no areas, and the areas its records use register
+    # themselves as those records are filed — where inventing "General" put a
+    # heading in the rendered view that the source never had.
+    g = Graph(areas=areas)
     by_id = {n["id"]: n for n in nodes}
 
     for n in nodes:

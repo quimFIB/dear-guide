@@ -28,8 +28,12 @@ use ones you declared here.
 
 ```sh
 cd my-project
-dg init --areas "Search,Serving,Index"
+dg init
 ```
+
+No vocabulary is declared. Areas accumulate: the first record filed under
+`Search` registers it, in the store that record goes into, and every reader
+takes the union of both stores.
 
 `decisions.json` (the store — source of truth) appears. Its view,
 `decision-graph.md`, is generated **on demand** — run `dg render` when you want

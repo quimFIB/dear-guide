@@ -5,11 +5,16 @@ and then delegates. Two properties carry the whole thing and both fail silently,
 which is why they are pinned here rather than left to a smoke test somebody
 remembers to run.
 
-**Stdout must stay byte-clean.** `dg agent claim` prints a bare name precisely
-so `DG_AGENT=$(dg agent claim)` works. A wrapper that prepended a banner, or
+**Stdout must stay byte-clean.** `dg-agent claim` prints a bare name precisely
+so `DG_AGENT=$(dg-agent claim)` works. A wrapper that prepended a banner, or
 that let a stray `echo` reach stdout, would break every launch that used it --
 and break it into a name with a newline and a sentence in it, which fails later
 and somewhere else.
+
+**There are two wrappers, because there are two binaries.** The launcher split
+out of `dg` into `dg-agent`, and most of what a capture of a *fan-out* is for
+went with it: the claims, the setup, the parks. A capture that wrapped only
+`dg` would look complete and hold none of them.
 
 **A dropped op must survive.** That is the reason the capture exists at all. The
 graph keeps what landed and deliberately not what was proposed: `dg drop`,
@@ -47,6 +52,8 @@ def project(tmp_path):
     real = shutil.which("dg") or os.path.join(os.path.dirname(sys.executable), "dg")
     if not os.path.exists(real):
         pytest.skip("no `dg` on PATH to wrap")
+    if not os.path.exists(os.path.join(os.path.dirname(real), "dg-agent")):
+        pytest.skip("no `dg-agent` beside it")
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join(
         [CAPTURE_BIN, os.path.dirname(real), env.get("PATH", "")])
@@ -57,9 +64,14 @@ def project(tmp_path):
         return subprocess.run(["dg", *args], cwd=tmp_path, env={**env, **kw.pop("env", {})},
                               capture_output=True, text=True, **kw)
 
+    def arun(*args, **kw):
+        return subprocess.run(["dg-agent", *args], cwd=tmp_path,
+                              env={**env, **kw.pop("env", {})},
+                              capture_output=True, text=True, **kw)
+
     run("init")
     run("task", "init")
-    return tmp_path, run
+    return tmp_path, run, arun
 
 
 def entries(root):
@@ -72,19 +84,24 @@ def test_the_wrapper_is_what_runs(project):
     """The mechanism, asserted rather than assumed: a directory holding only
     `dg`, first on `$PATH`. If this resolves to the real one the rest of this
     file is testing nothing."""
-    root, run = project
+    root, run, arun = project
     assert os.path.isfile(os.path.join(CAPTURE_BIN, "dg"))
-    assert os.listdir(CAPTURE_BIN) == ["dg"], (
+    assert os.path.isfile(os.path.join(CAPTURE_BIN, "dg-agent")), (
+        "after the split, a capture with no `dg-agent` wrapper records none of "
+        "the claims, the setup or the parks -- which is most of what a capture "
+        "of a fan-out is for")
+    assert sorted(os.listdir(CAPTURE_BIN)) == ["dg", "dg-agent"], (
         "the capture directory must hold nothing else -- putting it first on "
         "$PATH shadows whatever is in it")
     assert entries(root), "nothing was recorded for `dg init`"
 
 
 def test_stdout_stays_clean_enough_to_substitute(project):
-    """`DG_AGENT=$(dg agent claim)` is the only sensible caller of `claim`, so
-    the whole of stdout has to be the name."""
-    root, run = project
-    r = run("agent", "claim")
+    """`DG_AGENT=$(dg-agent claim)` is the only sensible caller of `claim`, so
+    the whole of stdout has to be the name -- and it goes through the second
+    wrapper now, which is the one that could most easily have broken it."""
+    root, run, arun = project
+    r = arun("claim")
 
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() and "\n" not in r.stdout.strip(), repr(r.stdout)
@@ -96,9 +113,9 @@ def test_the_exit_code_is_the_real_one(project):
     """A wrapper that swallowed a refusal would turn every failed `dg` into a
     success, and a launcher checking `$?` would carry on into a sweep that had
     not been set up."""
-    root, run = project
+    root, run, arun = project
 
-    assert run("agent", "release", "nobody-holds-this").returncode != 0
+    assert arun("release", "nobody-holds-this").returncode != 0
     assert run("pending").returncode == 0
 
 
@@ -110,8 +127,8 @@ def test_an_op_that_never_reached_the_graph_is_still_in_the_log(project):
     record of a project's decisions, and wrongly for watching a fan-out, where
     the proposals nobody took are most of what there is to see.
     """
-    root, run = project
-    name = run("agent", "claim").stdout.strip()
+    root, run, arun = project
+    name = arun("claim").stdout.strip()
     run("add", "--id", "D02", "--title", "a proposal nobody kept",
         "--area", "General", env={"DG_AGENT": name})
     run("drop", "0")
@@ -143,7 +160,7 @@ def test_a_refused_call_is_recorded_as_a_reason_and_not_as_a_crash(project):
     Pinned with the tray beside it, because a refusal that also emptied a
     shared tray would take another writer's proposals with it.
     """
-    root, run = project
+    root, run, arun = project
     env = {"DG_AGENT": "brisk-beacon", "DG_TERSE": "on"}
     run("add", "--id", "D01", "--title", "A question", "--area", "General",
         env=env)
@@ -167,8 +184,8 @@ def test_a_refused_call_is_recorded_as_a_reason_and_not_as_a_crash(project):
 
 
 def test_every_entry_says_who_and_what(project):
-    root, run = project
-    name = run("agent", "claim").stdout.strip()
+    root, run, arun = project
+    name = arun("claim").stdout.strip()
     run("pending", env={"DG_AGENT": name})
 
     last = entries(root)[-1]
@@ -184,7 +201,7 @@ def test_the_record_is_scratch_that_git_already_ignores(project):
     so a capture never has to be remembered about at commit time -- and a run
     that was recorded cannot accidentally be committed as if it were part of
     the graph."""
-    root, run = project
+    root, run, arun = project
     run("pending")
     assert os.path.isdir(os.path.join(root, ".dgraph-capture"))
 

@@ -110,13 +110,20 @@ def _check(tg, name):
     return [v for v in tg.validate() if v.check == name]
 
 
-def test_detects_malformed_id_and_unknown_area(tg):
-    """Two rules, two names: the plugin gives a project one test per check, so
-    filing an area problem under the id check loses the distinction there."""
+def test_detects_a_malformed_id_and_no_longer_judges_the_area(tg):
+    """`task_area_known` is gone, and its absence is the point.
+
+    Membership was the one rule no op could satisfy — nothing wrote the `areas`
+    list — so a store whose records used an area the list did not mention was
+    uncommittable over a *label*. `areas` is a registry now: an unlisted area is
+    legal, every reader takes the union of declared and used, and only the id
+    check still has something to say about this record.
+    """
     from dgraph.tasks import Task
     tg.tasks["X9"] = Task(id="X9", title="bad", area="Nope")
     assert len(_check(tg, "task_ids_wellformed")) == 1
-    assert len(_check(tg, "task_area_known")) == 1
+    assert _check(tg, "task_area_known") == []
+    assert not [v for v in tg.validate() if "area" in v.message.lower()]
 
 
 def test_detects_illegal_status(tg):
@@ -217,7 +224,7 @@ def test_an_absent_task_store_is_silence(store, g):
 def test_task_init_works_with_no_decision_store(tmp_path, monkeypatch):
     monkeypatch.setattr(project, "_override", tmp_path)
     res = runner.invoke(app, ["--project", str(tmp_path), "task", "init",
-                              "--areas", "Infra"])
+                              ])
     assert res.exit_code == 0
     # The view is generated on demand (`dg task render`), not at init.
     assert (tmp_path / "tasks.json").exists()
@@ -243,11 +250,21 @@ def test_task_add_refuses_a_decision_id(run_cli):
     assert "T07" in res.output
 
 
-def test_task_add_refuses_a_duplicate_and_an_unknown_area(run_cli):
+def test_task_add_refuses_a_duplicate_and_an_area_that_looks_like_a_typo(run_cli):
+    """An area nobody has used is fine — areas accumulate. One that *resembles*
+    an area in use is refused, because two spellings of one corner of a project
+    is what that guard is for, and `--new-area` says the resemblance is a
+    coincidence."""
     assert run_cli("task", "add", "--id", "T01", "-t", "x",
                    "--area", "Alpha").exit_code == 1
+
+    res = run_cli("task", "add", "--id", "T20", "-t", "x", "--area", "alpha")
+    assert res.exit_code == 1 and "Alpha" in res.output
+
     assert run_cli("task", "add", "--id", "T20", "-t", "x",
-                   "--area", "Nope").exit_code == 1
+                   "--area", "alpha", "--new-area").exit_code == 0
+    assert run_cli("task", "add", "--id", "T21", "-t", "x",
+                   "--area", "Provenance").exit_code == 0
 
 
 def test_done_records_an_outcome(run_cli, task_store):
@@ -1755,7 +1772,7 @@ def test_a_task_title_can_be_corrected_through_the_tool(run_cli, task_store):
 @pytest.mark.parametrize("args,says", [
     (("task", "amend", "T02"), "nothing to change"),
     (("task", "amend", "T02", "--title", " "), "needs a title"),
-    (("task", "amend", "T02", "--area", "Nope"), "unknown area"),
+    (("task", "amend", "T02", "--area", "alpha"), "close to areas already"),
     (("task", "amend", "T99", "--title", "x"), "unknown task"),
 ])
 def test_the_task_correction_is_refused_where_it_would_not_hold(run_cli, args,

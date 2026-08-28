@@ -1012,9 +1012,40 @@ function idOptions(rows, idKey, titleKey){
     esc(r[titleKey])}</option>`).join("");
 }
 
+
+/* An area control that can name an area nobody has used yet.
+   Areas accumulate — the store's `areas` list is a registry, not a whitelist —
+   so a <select> over the known ones would make this browser the one door where
+   a new corner of a project cannot be filed. A datalist keeps the known ones one
+   keystroke away and still lets a new name be typed.
+
+   The checkbox is `--new-area`, and it is the same rule the CLI has: a typed
+   name that RESEMBLES one already in use is refused, naming what it resembles,
+   because two spellings of one area is what that guard is for. Ticking this says
+   the resemblance is a coincidence. It is unticked by default and stays that way
+   for the ordinary case, which is picking an area that already exists. */
+function areaField(known, current){
+  const id = "areaOptions";
+  const opts = known.map(a=>`<option value="${esc(a)}"></option>`).join("");
+  return `<label>Area</label>
+    <input id="nArea" list="${id}" value="${esc(current||known[0]||"")}"
+           placeholder="one in use, or a new one">
+    <datalist id="${id}">${opts}</datalist>
+    <label style="font-weight:normal;display:flex;gap:6px;align-items:center">
+      <input type="checkbox" id="nNewArea">
+      <span class="muted">it is a new area, even if it resembles one in
+      use</span></label>`;
+}
+
+/* Every area either store knows. The two share their vocabulary, so an area
+   used only for work is one a question may be filed under — offering only this
+   store's would send somebody to invent a synonym for one that exists. */
+function knownAreas(){
+  return [...new Set([...(G?G.areas:[]), ...(T?T.areas:[])])];
+}
+
 function newDecisionForm(){
   const opts = idOptions(G.vertices, "id", "title");
-  const areas = G.areas.map(a=>`<option value="${esc(a)}">${esc(a)}</option>`).join("");
   /* Every status the store has, plus the one that needs a target. BLOCKED is
      offered as its own control rather than as free text: `BLOCKED:D04` asserts
      a dependency, and a person typing the id into a status string is one typo
@@ -1026,7 +1057,7 @@ function newDecisionForm(){
     ${idFault(G)}
     <label>Title — the question this decision answers, in one line</label>
     <input id="nTitle" placeholder="e.g. Which index for the served vectors?">
-    <label>Area</label><select id="nArea">${areas}</select>
+    ${areaField(knownAreas())}
     <label>Status</label>
     <select id="nStatus">
       <option value="OPEN">OPEN — nobody has answered it yet</option>
@@ -1059,7 +1090,8 @@ async function stageNewDecision(){
   const status = $("#nStatus").value==="BLOCKED"
     ? "BLOCKED:"+$("#nBlocker").value : $("#nStatus").value;
   await postNew("/api/add", {
-    id, title, area:$("#nArea").value, status,
+    id, title, area:$("#nArea").value.trim(), new_area:$("#nNewArea").checked,
+    status,
     after:[...$("#nAfter").selectedOptions].map(o=>o.value),
     note:$("#nNote").value.trim()||null,
   }, id);
@@ -1067,7 +1099,6 @@ async function stageNewDecision(){
 
 function newTaskForm(){
   const tasks = idOptions(T.tasks, "id", "title");
-  const areas = T.areas.map(a=>`<option value="${esc(a)}">${esc(a)}</option>`).join("");
   /* The frontier first, then everything else: `because` almost always names a
      question that is still open, and a select whose first entries are the
      settled ones buries it. A blank first option is what "no link" looks like,
@@ -1079,7 +1110,7 @@ function newTaskForm(){
     ${idFault(T)}
     <label>Title — what doing this means</label>
     <input id="nTitle" placeholder="e.g. Build the HNSW index and sweep efSearch">
-    <label>Area</label><select id="nArea">${areas}</select>
+    ${areaField(knownAreas())}
     <label>After — work that must be resolved first (ctrl-click)</label>
     <select id="nAfter" multiple>${tasks}</select>
     <label>Discovered during — work whose doing turned this up (ctrl-click)</label>
@@ -1107,7 +1138,8 @@ async function stageNewTask(){
   const id=$("#nId").value.trim(), title=$("#nTitle").value.trim();
   if(!id || !title){ say("An id and a title are required.","bad"); return; }
   await postNew("/api/add-task", {
-    id, title, area:$("#nArea").value,
+    id, title, area:$("#nArea").value.trim(),
+    new_area:$("#nNewArea").checked,
     after:[...$("#nAfter").selectedOptions].map(o=>o.value),
     discovered_during:[...$("#nDuring").selectedOptions].map(o=>o.value),
     /* A set, joined the way the CLI's `--because D01,D05` arrives. The server
@@ -1269,7 +1301,7 @@ function taskPanel(){
      work is what turns the question up. */
   h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">`
     + structureBtn("tasks", tsel)
-    + amendForm(T.areas, x);
+    + amendForm(knownAreas(), x);
   h+=`<div class="note" id="note"></div>`;
   $("#side").innerHTML=h;
   $("#side").querySelectorAll("a[data-dg]").forEach(a=>a.onclick=ev=>{
@@ -1342,13 +1374,22 @@ let RELATING=null;   /* {store, id, verb} while a structure form is open */
    cost is that a note cannot be emptied from here — `dg amend D07 --note ""`
    can, and clearing prose is rare enough not to earn a second control. */
 function amendForm(areas, rec){
+  /* A datalist rather than a select, for the reason `areaField` gives — areas
+     accumulate, so a correction may name one nobody has used yet. Blank still
+     means unchanged, which is why the field is empty rather than prefilled
+     with the record's current area. */
   const opts=areas.map(a=>
-    `<option value="${esc(a)}">${esc(a)}</option>`).join("");
+    `<option value="${esc(a)}"></option>`).join("");
   return `<details><summary class="muted">Reword this record</summary>
     <label>Title — blank leaves it as it is</label>
     <input id="amTitle" placeholder="${esc(rec.title)}">
-    <label>Area</label>
-    <select id="amArea"><option value="">— unchanged (${esc(rec.area)}) —</option>${opts}</select>
+    <label>Area — blank leaves it as it is</label>
+    <input id="amArea" list="amAreaOptions" placeholder="${esc(rec.area)}">
+    <datalist id="amAreaOptions">${opts}</datalist>
+    <label style="font-weight:normal;display:flex;gap:6px;align-items:center">
+      <input type="checkbox" id="amNewArea">
+      <span class="muted">it is a new area, even if it resembles one in
+      use</span></label>
     <label>Note — replaces the one above</label>
     <textarea id="amNote" placeholder="blank leaves it as it is"></textarea>
     <p style="margin:10px 0"><button class="ghost" id="doAmend">Stage the correction</button></p>
@@ -1365,11 +1406,15 @@ function amendForm(areas, rec){
    the same reading `dg amend` makes: the caller has usually lost track. */
 function amendOp(key, id){
   const op={op:"set_fields", [key]:id};
-  const title=$("#amTitle").value.trim(), area=$("#amArea").value,
+  const title=$("#amTitle").value.trim(), area=$("#amArea").value.trim(),
         note=$("#amNote").value.trim();
   if(title) op.title=title;
   if(area) op.area=area;
   if(note) op.note=note;
+  /* Only where an area is actually being written. `new_area` is read at the
+     staging door and never stored, so sending it on an op that names no area
+     would be a permission nothing is asking about. */
+  if(area && $("#amNewArea") && $("#amNewArea").checked) op.new_area=true;
   return op;
 }
 
@@ -1965,7 +2010,7 @@ function panel(){
      is decided, because a decided edge's targets are part of its answer — both
      rules are `pending.compose_dep`/`compose_undep`, not this panel. */
   h+=structureBtn("decisions", sel);
-  h+=amendForm(G.areas, v);
+  h+=amendForm(knownAreas(), v);
   $("#side").innerHTML=h;
   /* dg: links inside stored prose select that decision, the same jump C-c C-o
      makes in emacs. */

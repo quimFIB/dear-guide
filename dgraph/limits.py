@@ -50,16 +50,21 @@ fan-out does starts by reading something outside its own directory.
 
 `$DG_BUDGET` is how long an agent may run before it hands its work back --
 seconds, or a suffixed span (`30m`, `2h`), or `infinite` for no limit, which is
-the default. It is recorded on the lease at `dg agent claim` so that a
-supervisor reading `dg agent list` sees the same number the agent was given.
+the default. It is recorded on the lease at `dg-agent claim` so that a
+supervisor reading `dg-agent list` sees the same number the agent was given.
 
-**What a budget buys is the hand-back, not the stopping.** A task left `DOING`
-by an agent that died reads exactly like one being worked on -- the failure the
-lease file exists to make visible -- and `dg task park --why` is the verb that
-already fixes it. So expiry parks what the agent holds, with the reason naming
-the budget. Whether the agent's process also stops is the launcher's business,
-the way every other flag is; `timeout 1800 <however you spawn an agent>` is the
-whole of it under any host.
+**What a budget buys is the hand-back.** A task left `DOING` by an agent that
+died reads exactly like one being worked on -- the failure the lease file exists
+to make visible -- and `dg task park --why` is the verb that already fixes it.
+So expiry parks what the agent holds, with the reason naming the budget.
+
+Whether the agent's *process* stops is the launcher's business, the way every
+other flag is, and `dg-agent run --budget` is that launcher: it is the child's
+parent, so it stops the child at the budget and parks what the child was
+holding, immediately. `dg` is still not in that process tree and this module
+still enforces nothing -- what changed is that the launcher now has a binary of
+its own to do it in, rather than a `timeout 1800` somebody wrote beside a
+`--budget` that had to agree with it.
 
 ## The synopsis
 
@@ -132,48 +137,17 @@ import os
 import tempfile
 from pathlib import Path
 
-#: `$DG_WRITE`, and what its values mean. See the module docstring.
-WRITE_POLICIES = ("open", "launch")
-WRITE_ENV = "DG_WRITE"
-
-#: `$DG_BUDGET`. The value is a span; `infinite` and unset both mean no limit.
-BUDGET_ENV = "DG_BUDGET"
-
-#: `$DG_SILENT_AFTER`: how long an agent may go without touching `dg` before
-#: `dg agent list` says so. **Not a limit** -- nothing acts on it, and that is
-#: the whole design. An elapsed budget is a fact about the clock; silence is a
-#: suspicion, because an agent in a forty-minute build looks exactly like one
-#: that died in the first minute of it. The two must never share a verb.
-#:
-#: The default is deliberately far above any plausible think-time, and it is
-#: raised rather than lowered for a fan-out doing long compiles.
-SILENT_ENV = "DG_SILENT_AFTER"
-SILENT_DEFAULT = 900
-
-#: What `infinite` may be spelled as. `0` is deliberately NOT among them: a
-#: budget of zero seconds is a plausible typo for "no budget" and the two
-#: readings are opposites, so it is refused rather than guessed at.
-INFINITE = ("infinite", "inf", "none", "unlimited", "forever")
-
-#: Suffixes a span may carry, in seconds. Bare digits are seconds.
-_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-
-#: `$DG_TERSE`: how much prose an agent may put in one field. See the module
-#: docstring for why the rule is really about duplication rather than length.
-TERSE_ENV = "DG_TERSE"
-
-#: What `on` means, and what `dg check` warns above regardless of the
-#: environment -- the check is read by supervisors, who never have this set.
-#:
-#: 400 characters is roughly three sentences. Chosen so that an answer written
-#: the way the skill asks for one never trips it and a wall of text always
-#: does: a bound tight enough to argue with is a bound that gets switched off.
-TERSE_DEFAULT = 400
-
-#: What `off` may be spelled as. Unlike `$DG_BUDGET`, `0` IS accepted here and
-#: means off: a limit of zero characters would refuse every record that says
-#: anything, so it has no coherent second reading to be confused with.
-TERSE_OFF = ("off", "no", "none", "0", "unlimited", "infinite")
+# The parsers, and the names they are spelled with, live in `dgraph/env.py` --
+# one table for the whole family, so that the thing which composes an
+# environment and the thing which obeys it cannot come to disagree about what
+# `launch` means. They are imported back under the names they have always had:
+# this module is where the *judgement* is, and every call site of
+# `limits.write_policy` still reads correctly.
+from dgraph.env import (BUDGET_ENV, INFINITE, SILENT_DEFAULT,  # noqa: F401
+                        SILENT_ENV, TERSE_DEFAULT, TERSE_ENV, TERSE_OFF,
+                        WRITE_ENV, WRITE_POLICIES, BadSpan, approx_span,
+                        budget, show_span, silent_after, span, terse_limit,
+                        write_policy)
 
 #: The op keys this judges, on either store. Both stores' prose in one tuple,
 #: which is safe where `cross.py`'s barrier is not: these are string keys on a
@@ -194,115 +168,6 @@ _TERSE_FIX = {
     "why": "name the file in the reason",
     "note": "name the file in the note",
 }
-
-
-def write_policy(value: str | None = None) -> str:
-    """What `$DG_WRITE` says, defaulting to today's behaviour.
-
-    An unrecognised value is `open` rather than an error, for the reason
-    `cross.policy` gives: this is read on the path of every judged write, and a
-    typo in a launcher's environment must not make the tool unusable for the
-    supervisor too. The CLI reports the typo where it is set instead.
-    """
-    val = (value if value is not None
-           else os.environ.get(WRITE_ENV) or "").strip().lower()
-    return val if val in WRITE_POLICIES else WRITE_POLICIES[0]
-
-
-class BadSpan(ValueError):
-    """A budget that could not be read. Raised rather than defaulted.
-
-    Unlike `$DG_WRITE`, a misread budget is not a wider rule -- it is a
-    *different number*, and both directions are wrong in a way nobody would
-    notice until an agent was parked hours early or never. The launcher is
-    told at claim time, which is the one moment it can still be fixed.
-    """
-
-
-def span(text: str | None) -> int | None:
-    """A budget as seconds. `None` is no limit; raises `BadSpan` on nonsense.
-
-    Accepts a bare count of seconds, a single suffixed span (`30m`, `2h`), or
-    one of `INFINITE`. Deliberately not a duration mini-language: `1h30m` is
-    not accepted, because parsing it is the beginning of a parser and `5400`
-    is unambiguous.
-    """
-    raw = (text or "").strip().lower()
-    if not raw or raw in INFINITE:
-        return None
-    unit = _UNITS.get(raw[-1], 1)
-    digits = raw[:-1] if raw[-1] in _UNITS else raw
-    if not digits.isdigit():
-        raise BadSpan(
-            f"{text!r} is not a budget. Give seconds (`1800`), a span "
-            f"(`30m`, `2h`), or `infinite`")
-    total = int(digits) * unit
-    if total <= 0:
-        raise BadSpan(
-            f"{text!r} is a budget of nothing. Say `infinite` if that is what "
-            f"is meant -- zero and unlimited are opposites, so this is not "
-            f"guessed at")
-    return total
-
-
-def show_span(seconds: int | None) -> str:
-    """A budget, for a person reading `dg agent list`. Never lossy."""
-    if seconds is None:
-        return "infinite"
-    for suffix, size in (("d", 86400), ("h", 3600), ("m", 60)):
-        if seconds >= size and seconds % size == 0:
-            return f"{seconds // size}{suffix}"
-    return f"{seconds}s"
-
-
-def approx_span(seconds: int) -> str:
-    """A duration for a person to glance at. Lossy, deliberately.
-
-    `show_span` round-trips through `span` and so cannot round: it renders 2401
-    seconds as `2401s`, which is correct and unreadable, and an elapsed time
-    nobody will ever re-parse is the case that wants the other trade. Used for
-    the columns that measure *how long ago*; the budget itself keeps
-    `show_span`, because that number was typed by a person and should come back
-    the way they wrote it.
-    """
-    seconds = int(seconds)
-    if seconds < 60:
-        return f"{seconds}s"
-    if seconds < 3600:
-        return f"{seconds // 60}m"
-    if seconds < 86400:
-        hours, rest = divmod(seconds, 3600)
-        return f"{hours}h" if rest < 60 else f"{hours}h{rest // 60}m"
-    return f"{seconds // 86400}d"
-
-
-def budget(value: str | None = None) -> int | None:
-    """`$DG_BUDGET` as seconds, or `None` for no limit.
-
-    A bad value here is *not* raised: by the time an agent is running, refusing
-    every `dg` call over a malformed environment variable would take the graph
-    away from the one caller still able to record what happened. `dg agent
-    claim` validates it at the moment it is set, which is where the error
-    belongs.
-    """
-    try:
-        return span(value if value is not None else os.environ.get(BUDGET_ENV))
-    except BadSpan:
-        return None
-
-
-def silent_after(value: str | None = None) -> int:
-    """`$DG_SILENT_AFTER` as seconds, defaulting to `SILENT_DEFAULT`.
-
-    A bad value is the default rather than an error, unlike `--budget`: nothing
-    acts on this number, so misreading it costs a column that says the wrong
-    thing rather than work parked at the wrong moment.
-    """
-    try:
-        return span(value if value is not None
-                    else os.environ.get(SILENT_ENV)) or SILENT_DEFAULT
-    except BadSpan:
-        return SILENT_DEFAULT
 
 
 def _real(path) -> str:
@@ -365,24 +230,6 @@ def refuse_write(path, owner: str | None, root: Path | None,
 
 
 # ---- the synopsis --------------------------------------------------------
-
-
-def terse_limit(value: str | None = None) -> int | None:
-    """`$DG_TERSE` as a character count, or `None` for no limit.
-
-    Unreadable is `None` rather than an error, for the reason `write_policy`
-    gives: this is consulted on the path of every stage, and a typo in a
-    launcher's environment must not make the tool unusable for the supervisor
-    sharing the tray. Failing open costs a rule that was never a security
-    boundary; failing closed would cost the graph.
-    """
-    raw = (value if value is not None
-           else os.environ.get(TERSE_ENV) or "").strip().lower()
-    if not raw or raw in TERSE_OFF:
-        return None
-    if raw in ("on", "yes", "true"):
-        return TERSE_DEFAULT
-    return int(raw) if raw.isdigit() else None
 
 
 def overlong(record, limit: int | None = None) -> list[tuple[str, int]]:

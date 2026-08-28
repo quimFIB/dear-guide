@@ -545,7 +545,7 @@ be done before what. Separate store, separate view (`tasks.md`), separate ids
 alone is enough — you can track work in a project that records no decisions.
 
 ```sh
-dg task init --areas "Search,Serving,Index"
+dg task init
 dg task add --id T01 --title "Provision the serving box and load the flat array" \
             --area Serving --because D01
 dg task add --id T02 --title "Pin the scan threads to the performance cores" \

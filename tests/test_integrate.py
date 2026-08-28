@@ -21,6 +21,7 @@ contribution composed elsewhere and arriving whole.
 
 import copy
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -222,16 +223,32 @@ def test_the_two_sides_are_counted_apart(g, tg):
 # ---- what cannot be said is said -----------------------------------------
 
 
-def test_an_area_the_ops_cannot_carry_is_reported_not_invented(g):
-    """No op writes an area list, so a contribution that added one arrives with
-    every record in it failing `area_known`. One line naming the cause beats a
-    wall of identical refusals — and inventing the area would make this module
-    a merge driver with rules of its own."""
+def test_an_arriving_area_is_carried_by_the_record_that_uses_it(g):
+    """This used to be `unexpressible` — a finding with no fix.
+
+    No op wrote the `areas` list, so a contribution introducing an area arrived
+    with every record in it refused, and the most this module could do was name
+    the cause. Areas register themselves now, from the `add_vertex` that files
+    the first record under one, so a fresh area is carried by an ordinary op and
+    needs no report of its own.
+
+    Two halves, and both matter. An area **nobody uses** produces nothing at
+    all: there is no record to carry it, and inventing an op to write a label
+    would make this module a merge driver with rules of its own. An area a
+    record *does* use arrives as that record."""
     theirs = copy.deepcopy(g)
     theirs.areas = [*theirs.areas, "Gamma"]
     d = integrate.decisions(g, theirs)
     assert d.ops == []
-    assert any("Gamma" in line for line in d.unexpressible)
+    assert not any("Gamma" in line for line in d.unexpressible), (
+        "an area list that grew is no longer a finding")
+
+    theirs.vertices["D09"] = replace(theirs.vertices["D05"], id="D09",
+                                     area="Gamma")
+    d = integrate.decisions(g, theirs)
+    adds = [o for o in d.ops if o["op"] == "add_vertex"]
+    assert [o["area"] for o in adds] == ["Gamma"]
+    assert not d.unexpressible
 
 
 # ---- the commands, over two real branches --------------------------------
@@ -269,8 +286,8 @@ def two_writers(tmp_path, monkeypatch):
     def run(*args):
         return runner.invoke(app, ["--project", str(root), *args])
 
-    assert run("init", "--areas", "Search").exit_code == 0
-    assert run("task", "init", "--areas", "Search").exit_code == 0
+    assert run("init").exit_code == 0
+    assert run("task", "init").exit_code == 0
     run("add", "--id", "D01", "--title", "Which index?", "--area", "Search")
     run("task", "add", "--id", "T01", "--title", "Bench it", "--area", "Search")
     run("apply")

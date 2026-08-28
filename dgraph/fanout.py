@@ -6,6 +6,15 @@ graph, and the two artefacts it writes:
 
     <out>/scout.md     the filled prompt, with no ⟨…⟩ left in it
     <out>/launch.sh    one line per agent, with the environment already right
+    <out>/env.json     the environment itself, readable back
+
+The third one is what makes the first two safe. They are generated from one
+`Plan` and then diverge the moment somebody edits either — which the README
+expects people to do — and a `scout.md` asserting `$DG_DECIDE=evidence` to an
+agent running under `open` is worse than one that said nothing, because the
+agent has no way to check. Writing the plan down means `dg-agent env --check
+--plan` can assert they still agree, and `dg-agent run --plan` can compose the
+environment from the same file the prompt was rendered from.
 
 **Nothing here is interactive, and that is the point.** A wizard has to work in
 three places: a person at a terminal, an agent inside Claude Code, and an agent
@@ -33,12 +42,29 @@ import shlex
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from dgraph import agents, limits, project
+import json
 
-#: Where `dg agent setup` writes, relative to the project root. Not
+from dgraph import agents, areas as _env_areas, env as _env, limits, project
+
+#: Where `dg-agent setup` writes, relative to the project root. Not
 #: `.dgraph-*`: those are scratch the `.gitignore` hides, and a filled prompt is
 #: the opposite — the thing you want to read back, diff, and reuse next time.
 OUT_DIR = "fanout"
+
+#: The environment a run is launched under, written beside the prompt rather
+#: than under `.dgraph-*` for the reason `OUT_DIR` gives about the filled
+#: prompt: those are scratch the `.gitignore` hides, and this is the opposite —
+#: the thing you want to read back, diff, and reuse next time. The archived
+#: `.dgraph-fanout-env.sh` of an earlier run is what its absence produced.
+ENV_NAME = "env.json"
+
+#: Which `Plan` fields are the *environment*, and the variable each becomes.
+#: Everything else in a plan — the focus ids, the host, how many agents, what
+#: they may read — shapes the prompt or the launcher rather than the remit, and
+#: a plan file that carried them would be a second copy of `scout.md`.
+ENV_FIELDS = {"decide": "DG_DECIDE", "write": "DG_WRITE",
+              "area": "DG_AREA", "terse": "DG_TERSE",
+              "budget": "DG_BUDGET"}
 
 #: The hosts a launch line can be generated for. `mixed` is not among them
 #: because a fan-out across two hosts is two launch files, and pretending
@@ -101,6 +127,13 @@ class Plan:
     #: agents each writing their reasoning into an answer is what makes a graph
     #: unreadable in the browser, and the person deciding is the one who pays.
     terse: str = "on"
+    #: `$DG_AREA`. `open` by default even here, where the other three are
+    #: tighter than the tool's own defaults, because an area is the one thing a
+    #: scout is *expected* to discover: a fan-out over an unexplored corner of a
+    #: project finds corners nobody had named, and `strict` sends every one of
+    #: them back to a person before the work that found it can be filed. The
+    #: similarity guard is what makes `open` safe, and it is on either way.
+    area: str = "open"
     #: The three answers no graph can supply.
     brief: str = ""
     reads: list[tuple[str, str]] = field(default_factory=list)
@@ -110,6 +143,77 @@ class Plan:
 
     def resolved_out(self, proj: project.Project) -> Path:
         return proj.root / self.out
+
+
+def env_plan(plan: Plan) -> dict:
+    """The `Plan`'s environment, as the object `env.json` holds.
+
+    Only the remit. A plan file that also carried the focus ids, the host and
+    the brief would be a second copy of `scout.md`, free to disagree with it —
+    which is the failure this file is being written to close, arrived at from
+    the other direction.
+
+    The budget is seconds, not `30m`: it is the one field that is a *number*,
+    and writing it as a span would mean the file round-tripped through a parser
+    that can refuse. `plan_env` renders it back for the environment.
+    """
+    return {"decide": plan.decide, "write": plan.write, "area": plan.area,
+            "terse": plan.terse, "budget": plan.budget}
+
+
+def read_env_plan(path) -> dict:
+    """`env.json`, shape-checked. Raises `ValueError` naming what is wrong.
+
+    Checked rather than trusted, because this file's whole purpose is to be
+    read back by something that then spawns agents under it: a plan with
+    `"decide": "nevr"` in it would compose the widest policy for every child of
+    the run, which is precisely the failure the file exists to catch. So a
+    value that is not one of the choices is refused **here**, at the launcher,
+    where it can still be fixed.
+    """
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: expected an object, got {type(raw).__name__}")
+    unknown = sorted(set(raw) - set(ENV_FIELDS))
+    if unknown:
+        raise ValueError(f"{path}: unknown key(s) {', '.join(unknown)} — this "
+                         f"file holds the environment and nothing else "
+                         f"({', '.join(ENV_FIELDS)})")
+    for key, allowed in (("decide", _env.POLICIES), ("write", _env.WRITE_POLICIES),
+                         ("area", _env.AREA_POLICIES)):
+        if key in raw and raw[key] not in allowed:
+            raise ValueError(f"{path}: {key} is {raw[key]!r}, not one of "
+                             f"{', '.join(allowed)}")
+    if "terse" in raw:
+        word = str(raw["terse"]).strip().lower()
+        if word not in _env.TERSE_OFF and _env.terse_limit(word) is None:
+            raise ValueError(f"{path}: terse is {raw['terse']!r}, not `on`, "
+                             f"`off`, or a character count")
+    if raw.get("budget") is not None and not isinstance(raw["budget"], int):
+        raise ValueError(f"{path}: budget is {raw['budget']!r} — seconds, or "
+                         f"null for no limit")
+    return raw
+
+
+def plan_env(spec: dict) -> dict[str, str]:
+    """`env.json` as the assignments a child runs under.
+
+    `null` budget is *absent* rather than `infinite`: unset is what the tool
+    documents as no limit, and writing the word would make an unset variable
+    and a deliberate `infinite` render differently in `dg-agent env` while
+    meaning the same thing.
+    """
+    out = {}
+    for key, name in ENV_FIELDS.items():
+        if key not in spec:
+            continue
+        value = spec[key]
+        if key == "budget":
+            if value is None:
+                continue
+            value = _env.show_span(value)
+        out[name] = str(value)
+    return out
 
 
 def readiness(proj: project.Project | None = None) -> list[Check]:
@@ -129,7 +233,7 @@ def readiness(proj: project.Project | None = None) -> list[Check]:
     except Exception:
         free = 0
     out.append(Check(free > 0, f"{free} agent names free",
-                     "dg agent prune, or dg apply first"))
+                     "dg-agent prune, or dg apply first"))
     try:
         from dgraph.tasks import TaskGraph
         from dgraph import cross
@@ -248,11 +352,31 @@ def _strip_comments(text: str) -> str:
 
 
 def _areas(proj: project.Project) -> str:
+    """The areas in use, with how much is filed under each, across both stores.
+
+    The union rather than one store's list, because that is what the guard an
+    agent will meet reads: an area known only to `tasks.json` is an area a
+    decision may be filed under, and a prompt that named only the decision
+    store's would send a scout to invent a synonym for one that exists.
+
+    Counts, because "in use" is the question a scout actually has. An area
+    holding one record and an area holding thirty read identically as a bare
+    name, and the second is where a proposal belongs.
+    """
     try:
         from dgraph.model import Graph
-        g = Graph.load(proj.store)
-        found = sorted({v.area for v in g.vertices.values() if v.area})
-        return ", ".join(f"`{a}`" for a in found) if found else "none yet"
+        from dgraph.tasks import TaskGraph
+        g = Graph.load(proj.store) if proj.has_decisions else None
+        tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+        d = _env_areas.counts(g.areas, g.vertices.values()) if g else {}
+        t = _env_areas.counts(tg.areas, tg.tasks.values()) if tg else {}
+        rows = []
+        for a in list(d) + [a for a in t if a not in d]:
+            held = [f"{d[a]} decision(s)" for _ in (1,) if d.get(a)]
+            held += [f"{t[a]} task(s)" for _ in (1,) if t.get(a)]
+            rows.append(f"`{a}`" + (f" ({', '.join(held)})" if held else
+                                    " (registered, nothing in it yet)"))
+        return ", ".join(rows) if rows else "none yet"
     except Exception:
         return "none yet"
 
@@ -296,23 +420,42 @@ def render_scout(plan: Plan, proj: project.Project | None = None) -> str:
 
 
 def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
-    """One line per agent, with the environment already right."""
+    """One line per agent, run under an environment nothing here spells twice.
+
+    **No `DG_` assignment and no `timeout` survive in this file**, and both
+    absences are the point.
+
+    The assignments went because a bare `DG_DECIDE=evidence` in a shell line is
+    a value nothing validates: mistype it and `cross.policy` answers `open` —
+    the widest policy — silently, in the direction of more permission.
+    `dg-agent run` validates before it spawns, and `dg-agent env --check
+    --plan` catches it before the loop even starts.
+
+    The `timeout` went because it and `--budget` were two independent numbers
+    saying one thing. They agree in generated output and stop agreeing the
+    moment somebody edits this file, which the README expects. Now the budget
+    *is* the timeout, and the process that enforces it is the child's parent,
+    so it can also hand the work back.
+    """
     proj = proj or project.find()
     prompt = f"{plan.out}/scout.md"
     spawn = HOSTS[plan.host].format(prompt=shlex.quote(prompt))
-    claim = "dg agent claim"
-    if plan.budget is not None:
-        claim += f" --budget {limits.show_span(plan.budget)}"
+    env_file = shlex.quote(f"{plan.out}/{ENV_NAME}")
     lines = [
         "#!/usr/bin/env bash",
-        "# Generated by `dg agent setup`. Re-run it to regenerate.",
+        "# Generated by `dg-agent setup`. Re-run it to regenerate.",
         "#",
-        "# Read `agentic/RUNNING.md` before changing this: the assignment is",
-        "# per command and must never be exported — an exported $DG_AGENT makes",
-        "# the launcher an agent, and its own policy then refuses it.",
+        f"# The remit is in {plan.out}/{ENV_NAME}, which is also what",
+        "# fanout/scout.md was rendered from — so the prompt's claims about",
+        "# what each agent may do and what this actually sets cannot drift.",
+        "# Change a policy there, not here.",
         "set -euo pipefail",
         "",
-        f'cd "$(dirname "$0")/.."',
+        'cd "$(dirname "$0")/.."',
+        "",
+        "# Before any agent starts: every value in the plan is one this `dg`",
+        "# understands, and nothing exported in this shell contradicts it.",
+        f"dg-agent env --check --plan {env_file}",
         "",
     ]
     if plan.capture:
@@ -328,33 +471,35 @@ def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
             ]
         else:
             lines += [
-                "# The capture: every `dg` call of the run, with both trays as",
-                "# they stood after it. Optional, not part of the procedure.",
+                "# The capture: every `dg` and `dg-agent` call of the run, with",
+                "# both trays as they stood after it. Optional, not part of the",
+                "# procedure.",
                 "#",
-                "# An absolute path on purpose: the wrapper lives in the",
+                "# An absolute path on purpose: the wrappers live in the",
                 "# dear-guide checkout, not in this project, so $PWD would find",
                 "# nothing and record nothing while looking like it worked.",
                 f'export PATH={shlex.quote(str(bin_dir))}:"$PATH"',
                 f'command -v dg | grep -q {shlex.quote(str(bin_dir))} || '
                 '{ echo "capture wrapper not first on PATH" >&2; exit 1; }',
+                # Its own assertion, because after the split most of what a
+                # capture of a *fan-out* is for — the claims, the setup, the
+                # launch, the parks — goes through the other name.
+                f'command -v dg-agent | grep -q {shlex.quote(str(bin_dir))} || '
+                '{ echo "dg-agent capture wrapper not first on PATH" >&2; exit 1; }',
                 "",
             ]
-    lines += ["for i in $(seq 1 %d); do" % plan.agents]
-    env = [f"DG_AGENT=$({claim})", f"DG_DECIDE={plan.decide}",
-           f"DG_WRITE={plan.write}", f"DG_TERSE={plan.terse}"]
-    if plan.budget is not None:
-        env.append(f"DG_BUDGET={limits.show_span(plan.budget)}")
-    lines += [f"  {' '.join(env)} \\"]
-    if plan.budget is not None:
-        lines += [f"    timeout {plan.budget} {spawn} &"]
-    else:
-        lines += [f"    {spawn} &"]
     lines += [
+        "for i in $(seq 1 %d); do" % plan.agents,
+        f"  dg-agent run --plan {env_file} \\",
+        f"    -- {spawn} &",
         "done",
         "",
-        "dg agent list      # who holds what, time left, and who has gone quiet",
+        "dg-agent list      # who holds what, time left, and who has gone quiet",
         "wait",
-        "dg agent expire    # hand back what any out-of-time agent still holds",
+        "# `dg-agent run` already parked what a child of *this* script dropped.",
+        "# This is the backstop for what it cannot see: the script itself being",
+        "# killed, the machine going down, the terminal closing.",
+        "dg-agent expire",
         "dg pending         # the roster: who proposed what",
         "",
     ]
@@ -367,7 +512,13 @@ def write(plan: Plan, proj: project.Project | None = None) -> list[Path]:
     out = plan.resolved_out(proj)
     out.mkdir(parents=True, exist_ok=True)
     scout, launch = out / "scout.md", out / "launch.sh"
+    spec = out / ENV_NAME
     project.write_atomic(scout, render_scout(plan, proj))
     project.write_atomic(launch, render_launch(plan, proj))
+    # Last, and with a trailing newline, because this one is read by a machine
+    # and diffed by a person: it is the file both of the others were generated
+    # from, and the only one anything checks them against.
+    project.write_atomic(spec, json.dumps(env_plan(plan), indent=2,
+                                          ensure_ascii=False) + "\n")
     launch.chmod(0o755)
-    return [scout, launch]
+    return [scout, launch, spec]

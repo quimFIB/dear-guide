@@ -3,14 +3,17 @@
 Several agents proposing into one graph, and a person deciding.
 
 The graph already supports it: the tray is shared, every staged op records who
-staged it, `dg agent claim` hands out names that cannot collide, and `--agent`
+staged it, `dg-agent claim` hands out names that cannot collide, and `--agent`
 reads and applies one writer's proposal at a time. What was left to improvise
 was the procedure around those, which is what this is.
 
 ```
-agentic/README.md  the procedure — sections 1 to 6 below
-agentic/bin/dg     OPTIONAL: a capture, for when you want the run itself
-                   afterwards. Nothing in the procedure needs it.
+agentic/README.md    the procedure — sections 1 to 6 below
+agentic/bin/dg       OPTIONAL: a capture, for when you want the run itself
+agentic/bin/dg-agent afterwards. Two wrappers because there are two binaries,
+                     and most of what a capture of a fan-out is for — the
+                     claims, the setup, the parks — goes through the second.
+                     Nothing in the procedure needs either.
 ```
 
 The capture exists because one run needed to become a demo. It is genuinely
@@ -73,25 +76,72 @@ the launcher sets so an honest mistake is caught.
 
 ---
 
-## The other three limits: where an agent may write, for how long, and how much
+## The other four limits: where an agent may write, for how long, how much, and under what name
 
-`$DG_DECIDE` limits what an agent may *record*. Three more variables limit what
-it may do to the machine, to the clock and to the reader, and all four are read
-the same way — declared by the launcher, never consulted for a supervisor.
+`$DG_DECIDE` limits what an agent may *record*. Four more variables limit what
+it may do to the machine, to the clock, to the reader and to the vocabulary,
+and all five are read the same way — declared by the launcher, never consulted
+for a supervisor.
 
 | variable | values | what it does |
 |---|---|---|
 | `$DG_WRITE` | `open` *(default)* · `launch` | where the agent may write without asking |
 | `$DG_BUDGET` | `infinite` *(default)* · `1800` · `30m` · `2h` | how long before its work is handed back |
 | `$DG_TERSE` | `off` *(default)* · `on` · `400` | how long a field may be before the development belongs in a file |
+| `$DG_AREA` | `open` *(default)* · `strict` | whether it may file under an area nobody has used yet |
+| — | `dg-agent env` | **what is actually in force**, and what was mistyped |
 
 ```sh
-DG_AGENT=$(dg agent claim --budget 30m) \
-DG_DECIDE=evidence \
-DG_WRITE=launch \
-DG_TERSE=on \
-  timeout 1800 claude -p "$(cat agentic/prompts/scout.md)"
+dg-agent run --decide evidence --write launch --terse on --budget 30m \
+  -- claude -p "$(cat fanout/scout.md)"
 ```
+
+`dg-agent run` composes that environment and hands it to a child. It is not a
+convenience over the assignments it replaced: it **validates every value before
+it spawns anything**, where the variables themselves fail open, and it is the
+child's parent, which is what makes the budget real.
+
+### `dg-agent env`, and why three of these fail open
+
+`$DG_DECIDE`, `$DG_WRITE`, `$DG_TERSE` and `$DG_AREA` all answer *the widest
+setting* to a value they cannot read. `DG_DECIDE=nevr` is `open`, and every
+scout may then close any question it likes:
+
+> **A typo does not weaken a rule by a notch. It removes it, silently, in the
+> direction of more permission.**
+
+Failing open is nonetheless right, and the reason is the tray. These are read
+on the path of every stage, every close and every judged write — including the
+supervisor's, who shares that tray — so a launcher's typo must not take the
+graph away from the person reviewing the run. What makes it defensible is that
+something *reports* it:
+
+```
+$ dg-agent env
+  variable    set to  effective  read as
+  DG_AGENT    —       —          supervisor — no refusal applies
+  DG_DECIDE   nevr    ✗ open     may close any question
+  DG_BUDGET   30m     30m        19m left on this lease
+
+✗ $DG_DECIDE=nevr is not one of open, evidence, never — running as `open`,
+  the widest. Set it where the agent is launched.
+```
+
+Three things `env | grep DG_` cannot do: **name a fallback as a fallback**,
+which is the whole defect; show the **budget against the lease** rather than
+against the variable, since the lease is what the hand-back reads; and resolve
+`$DG_PROJECT` to the graph it actually **found**, which is how a stale
+environment file ran a whole fan-out against no store while looking correct.
+
+`dg-agent env --check` exits non-zero if anything set was not understood, and
+`fanout/launch.sh` runs it before the first agent starts. Only *set and not
+understood* is a finding — unset is the documented default for every one of
+them.
+
+`$DG_BUDGET` is the exception that raises rather than widening, and the
+asymmetry is argued rather than accidental: a misread budget is not a wider
+rule, it is a different number, and both directions are wrong in a way nobody
+notices until an agent is parked hours early or never.
 
 ### Why this is not enforced here, and where it is
 
@@ -139,18 +189,36 @@ the system temporary directory. The project rather than the agent's current
 directory, because a `cd` is not a change of remit and a scope anchored to the
 working directory would widen every time an agent walked somewhere else.
 
-### The budget buys the hand-back, not the stopping
+### The budget stops the child, and hands its work back
 
-`dg` is not in the agent's process tree and never was. Stopping the process is
-the launcher's half and looks like `timeout 1800 …` under any host.
+**This changed with the split, and the change is worth being precise about.**
+`dg` is not in the agent's process tree and never was — under `dg`, stopping was
+the launcher's half and looked like `timeout 1800 …`, two numbers saying one
+thing in a generated line people are expected to edit.
 
-What the budget buys is the thing a fan-out cannot otherwise see. A task left
+`dg-agent run` **is** the child's parent. So the budget is the timeout, there is
+only one number, and a child stopped at it — or one that dies holding work — has
+whatever it holds parked immediately, under its own name, when the information
+is freshest. A child that exits clean has nothing parked: a park filed over a
+finished session records a stop that never happened. The name is not released
+either, because an agent that staged a proposal is holding something a person
+has to read.
+
+**What that does not cover, said plainly.** It covers the child timing out and
+the child crashing. It does **not** cover `dg-agent run` itself being killed — a
+`kill -9` on the process group, the machine going down, the terminal closing.
+`dg-agent expire` is therefore still exactly what it was, and is still the step
+the procedure tells you to run at the end. The window is narrower; nothing
+closes it, and a fan-out that claimed otherwise would be claiming the supervisor
+is no longer needed.
+
+What the hand-back buys is the thing a fan-out cannot otherwise see. A task left
 `DOING` by an agent that died reads exactly like one being worked on — and
 `dg task park --why` is the verb that already fixes it:
 
 ```sh
-dg agent list          # who is over, and what they are still holding
-dg agent expire        # stage a park for each, naming the budget
+dg-agent list          # who is over, and what they are still holding
+dg-agent expire        # stage a park for each, naming the budget
 dg apply --agent brisk-beacon
 ```
 
@@ -169,7 +237,7 @@ An agent that spent its budget holding *nothing* is reported too. "Died before i
 started" is invisible in every other reading of a run, because no task is `DOING`
 for a roster of parked work to show.
 
-Run `dg agent expire` even when an agent died on its own; the budget is what
+Run `dg-agent expire` even when an agent died on its own; the budget is what
 makes the queue honest afterwards, and this is a real case rather than a
 hypothetical — a rate limit killed three scouts mid-wave in the run that
 `.dgraph-capture/` was built from, and every one of their tasks had to be parked
@@ -393,27 +461,36 @@ name no longer even identifies. Who holds work is a fact about a run.
 
 **The whole contract with the host is environment variables.** Whatever spawns
 an agent has to put `DG_AGENT` in its environment — and, if you want rules
-rather than habits, `DG_DECIDE`, `DG_WRITE` and `DG_BUDGET` beside it. Nothing
-else about the host matters, because everything the agent does *to the graph* it
-does through the `dg` CLI, and the one thing it does outside the CLI — writing
-files — reaches the same policy through `dg gate`, which both adapters already
-relay. That is what keeps this workflow independent of which model or which
-scaffold is running it.
+rather than habits, `DG_DECIDE`, `DG_WRITE`, `DG_AREA` and `DG_BUDGET` beside
+it. Nothing else about the host matters, because everything the agent does *to
+the graph* it does through the `dg` CLI, and the one thing it does outside the
+CLI — writing files — reaches the same policy through `dg gate`, which both
+adapters already relay. That is what keeps this workflow independent of which
+model or which scaffold is running it.
 
-Each agent gets its name from the tool, never one you invent:
+**That sentence is why there are two binaries.** `dg-agent` writes this
+environment; `dg` reads it. Two binaries either side of a documented contract
+say it better than one binary that was both, and the split is what gave the
+contract a place to be *reported* — see `dg-agent env` above.
+
+Each agent gets its name from the tool, never one you invent, and `dg-agent
+run` is what puts it in that one child's environment:
 
 ```sh
 for role in …; do
-  DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch \
-    timeout 1800 <however you spawn an agent> &
+  dg-agent run --decide evidence --write launch --budget 30m \
+    -- <however you spawn an agent> &
 done
-dg agent list        # who holds what, and what each has staged
+dg-agent list        # who holds what, and what each has staged
 ```
 
 ```sh
-DG_AGENT=$(dg agent claim) claude -p "$(cat agentic/prompts/scout.md)"      # Claude Code
-DG_AGENT=$(dg agent claim) opencode run "$(cat agentic/prompts/scout.md)"   # opencode
+dg-agent run -- claude -p "$(cat fanout/scout.md)"      # Claude Code
+dg-agent run -- opencode run "$(cat fanout/scout.md)"   # opencode
 ```
+
+The spawn line stops being host-shaped: `dg-agent run --` wraps either
+identically, and everything before the `--` is the same under both.
 
 `agentic/prompts/scout.md` is a **template, not a prompt** — everything below
 with each project-specific part left as a `⟨TOKEN⟩`. What an agent should be
@@ -421,7 +498,7 @@ told depends on what the fan-out is for, so the blanks are the work; running it
 unfilled gets you an agent that has been told nothing. `orchestrator.md` beside
 it is the same for an agent that spawns and watches rather than works.
 
-**`dg agent setup` fills them.** Most tokens come straight from the graph —
+**`dg-agent setup` fills them.** Most tokens come straight from the graph —
 the project, the areas, the policies in force and what each means, the write
 roots, the budget, and each focus id's full chain pasted from
 `dg context --full`. Three do not: what the fan-out is for, what the agents may
@@ -448,10 +525,10 @@ not. A host with no way to set them per agent can still be used — run each age
 in its own shell and export them there — and a mixed fan-out is fine, since two
 agents under different scaffolds are just two names in one tray.
 
-`dg agent claim` never hands out a name that is held or that has ops in either
+`dg-agent claim` never hands out a name that is held or that has ops in either
 tray, so two agents cannot end up sharing one — including across hosts, since
 the tray is the only thing either of them touches. A claim does not expire;
-`dg agent release` and `dg agent prune` give names back deliberately.
+`dg-agent release` and `dg-agent prune` give names back deliberately.
 
 **And `dg` itself is host-neutral by construction.** The slash commands ship as
 one set of files for both — `/dg:fanout` under Claude Code, `/dg-fanout` under
@@ -552,10 +629,10 @@ an answer, and is exactly what a fan-out is for.
 ## 6. Close
 
 ```sh
-dg agent expire       # hand back what any out-of-time agent still holds
+dg-agent expire       # hand back what any out-of-time agent still holds
 dg apply --agent …    # ...and take the parks
 dg task done T01 --outcome "…"
-dg agent prune        # release the names, now that nothing is staged
+dg-agent prune        # release the names, now that nothing is staged
 dg check
 ```
 
@@ -570,7 +647,7 @@ released 1: agile-bearing
 kept agile-azimuth — still holds T01
 ```
 
-`dg agent release` refuses for the same reason, and `--force` overrides either
+`dg-agent release` refuses for the same reason, and `--force` overrides either
 when the stranding is what you want — a run whose tasks you are about to drop.
 
 **So `expire` first is a convenience, not a rescue.** Expiring turns a kept-back
@@ -587,8 +664,9 @@ afterwards: to show somebody how the workflow behaves, to audit what a set of
 agents actually proposed, or to build a demo out of a real session instead of a
 scripted one. It was written for that last case.
 
-Everything that touches the graph goes through `dg`, so a wrapper first on
-`$PATH` catches every interaction — **including the ones that leave no trace**,
+Everything that touches the graph goes through `dg`, and everything that
+launches an agent through `dg-agent`, so **two** wrappers first on `$PATH` catch
+every interaction — **including the ones that leave no trace**,
 which is the point. `dg drop`, `dg clear --agent` and an applied tray all erase
 what was there: the graph keeps what landed and deliberately not what was
 proposed.
@@ -596,6 +674,7 @@ proposed.
 ```sh
 export PATH="/path/to/dear-guide/agentic/bin:$PATH"
 command -v dg          # must print .../agentic/bin/dg
+command -v dg-agent    # ...and this one too, or the launch goes unrecorded
 ```
 
 The record lands in `.dgraph-capture/dg.jsonl`, which the `.gitignore` `dg init`
@@ -604,7 +683,7 @@ writes already covers under `.dgraph-*`.
 **Smoke-test it before the run, not during** — both of these fail silently:
 
 ```sh
-NAME=$(dg agent claim); echo "[$NAME]"          # exactly one name, nothing else
+NAME=$(dg-agent claim); echo "[$NAME]"          # exactly one name, nothing else
 DG_AGENT=$NAME dg add --id D99 --title x --area General
 dg drop 0                                        # ...and throw it away again
 python3 -c "
@@ -615,8 +694,8 @@ for l in open('.dgraph-capture/dg.jsonl'):
           'empty' if not e['tray'] else f\"{len(json.loads(e['tray']))} op(s)\")"
 ```
 
-The first property is that **stdout stays clean**: `dg agent claim` prints a
-bare name precisely so `DG_AGENT=$(dg agent claim)` works, and a wrapper that
+The first property is that **stdout stays clean**: `dg-agent claim` prints a
+bare name precisely so `DG_AGENT=$(dg-agent claim)` works, and a wrapper that
 prepended a banner would break every launch.
 
 The second is the one the capture exists for. The `add` line shows

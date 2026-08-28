@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from datetime import date as _date
 
-from dgraph import cross, editor, project, ranges
+from dgraph import areas, cross, editor, pending, project, ranges
 from dgraph.editor import EditorAbort, EditorError
 from dgraph.model import Graph
 #: The prose a task's `format` covers. Imported rather than restated, and read
@@ -166,7 +166,8 @@ def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
                         seed.get("id") or nxt)
         + editor._field("Title", "One line: the work to be done.",
                         seed.get("title", ""))
-        + editor._field("Area", f"One of: {', '.join(tg.areas)}",
+        + editor._field("Area",
+                        "One in use, or a new one — areas accumulate.",
                         seed.get("area", ""))
         + editor._field("After", "Optional. Comma-separated tasks that must be\n"
                                  "resolved before this can start.",
@@ -184,8 +185,10 @@ def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
                         seed.get("evidence_for", ""))
         + editor._field("Note", "Optional prose: what this involves, or what "
                                 "is unclear about it.", seed.get("note", ""))
-        + "\n* Context\n** Areas\n"
-        + "".join(f"   - {a}\n" for a in tg.areas)
+        + "\n* Context\n** Areas in use\n"
+        + ("".join(f"   - {a}  ({n})\n" for a, n in
+                   areas.counts(tg.areas, tg.tasks.values()).items())
+           or "   (none yet — the first record starts the vocabulary)\n")
         + "** Outstanding work\n"
         + ("".join(f"   - {t} {tg.tasks[t].status} — {tg.tasks[t].title}"
                    f"{'' if t not in ready else '   (startable)'}\n"
@@ -249,7 +252,8 @@ ALLOWED = {
 
 def parse(text: str, *, tg: TaskGraph, g: Graph | None,
           expect_kind: str | None = None,
-          expect_task: str | None = None) -> list[dict]:
+          expect_task: str | None = None,
+          new_area: bool = False) -> list[dict]:
     """Buffer -> task ops ready for `task_pending`. Raises rather than guessing.
 
     The same contract as `editor.parse`, kept deliberately close to it: only
@@ -281,7 +285,7 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
         raise EditorAbort("template came back untouched — nothing staged")
 
     if kind == "add_task":
-        return _parse_add(tg, g, f)
+        return _parse_add(tg, g, f, new_area=new_area)
     if kind == "set_status":
         return _parse_done(tg, meta, f)
     raise EditorError(f"cannot compose a {kind!r} task op")
@@ -323,7 +327,8 @@ def _targets(tg: TaskGraph, tid: str, raw: str, field: str) -> list[str]:
     return out
 
 
-def _parse_add(tg: TaskGraph, g: Graph | None, f: dict) -> list[dict]:
+def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
+               new_area: bool = False) -> list[dict]:
     tid = _need(f, "id")
     if not ID_RE.fullmatch(tid):
         raise EditorError(f"malformed id {tid!r} — expected something like T07\n"
@@ -331,8 +336,13 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict) -> list[dict]:
     if tid in tg.tasks:
         raise EditorError(f"{tid} already exists")
     area = _need(f, "area")
-    if area not in tg.areas:
-        raise EditorError(f"unknown area {area!r} — one of: {', '.join(tg.areas)}")
+    # `editor._parse_add`'s twin — see there.
+    why = pending.refuse_area(
+        area, own=areas.counts(tg.areas, tg.tasks.values()),
+        other=areas.stored_counts(project.find().store),
+        owner=pending.owner(), new_area=new_area)
+    if why is not None:
+        raise EditorError(f"Area: {why}")
     op = {"op": "add_task", "id": tid, "title": _need(f, "title"), "area": area}
     if f.get("note", "").strip():
         op["note"] = f["note"].strip()
@@ -374,10 +384,11 @@ def _parse_done(tg: TaskGraph, meta: dict, f: dict) -> list[dict]:
 
 
 def compose_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None,
-                launcher=None) -> list[dict]:
+                new_area: bool = False, launcher=None) -> list[dict]:
     return editor.run(
         render_add(tg, g, seed),
-        lambda after: parse(after, tg=tg, g=g, expect_kind="add_task"),
+        lambda after: parse(after, tg=tg, g=g, expect_kind="add_task",
+                            new_area=new_area),
         launcher=launcher)
 
 

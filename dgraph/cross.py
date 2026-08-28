@@ -21,10 +21,9 @@ supposed to be readable stays readable.
 
 from __future__ import annotations
 
-import os
-
 from collections.abc import Callable
 
+from dgraph import env
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
 from dgraph.violation import Violation, cycle_from
@@ -91,20 +90,14 @@ def pending_evidence(tg: TaskGraph, did: str) -> list[str]:
 #: security boundary and it is not trying to be one -- it is a rule the launcher
 #: sets so that the honest failure is caught, in the same way `dg apply` refuses
 #: a tray it did not stage.
-POLICIES = ("open", "evidence", "never")
-POLICY_ENV = "DG_DECIDE"
-
-
-def policy() -> str:
-    """What `$DG_DECIDE` says, defaulting to today's behaviour.
-
-    An unrecognised value is `open` rather than an error: this is read on the
-    path of every `decide`, and a typo in a launcher's environment should not
-    make the tool unusable for the supervisor too. The CLI reports the typo
-    where it is set instead.
-    """
-    val = (os.environ.get(POLICY_ENV) or "").strip().lower()
-    return val if val in POLICIES else POLICIES[0]
+#: The name and the words live in `dgraph/env.py` with the rest of the family,
+#: and are imported back under the names they have always had. This module is
+#: where the *judgement* is; what moved is the parsing, so that the binary
+#: which composes an environment and the one which obeys it cannot come to
+#: disagree about what `evidence` means.
+POLICIES = env.POLICIES
+POLICY_ENV = env.POLICY_ENV
+policy = env.policy
 
 
 def refuse_close(tg: TaskGraph | None, did: str, owner: str | None,

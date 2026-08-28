@@ -334,10 +334,14 @@ def test_command_allows_every_tool_it_actually_runs(path):
            for m in re.findall(r"!`([^`]+)`", text)}
     allowed = fm.get("allowed-tools", "")
     for cmd in ran:
-        # `dg serve --detach` is allowed by `Bash(dg serve:*)`.
-        head = " ".join(cmd.split()[:2])
-        assert f"Bash({head}:*)" in allowed or f"Bash({cmd}:*)" in allowed, \
-            (path.name, cmd, allowed)
+        # `dg serve --detach` is allowed by `Bash(dg serve:*)`, and
+        # `dg-agent list` by `Bash(dg-agent:*)` — the launcher is its own
+        # binary, so what a prefix has to cover is the tool rather than a
+        # subcommand of `dg`.
+        words = cmd.split()
+        heads = [" ".join(words[:2]), words[0]] if words else []
+        assert (any(f"Bash({h}:*)" in allowed for h in heads)
+                or f"Bash({cmd}:*)" in allowed), (path.name, cmd, allowed)
 
 
 @pytest.mark.parametrize("path", COMMANDS, ids=lambda p: p.stem)

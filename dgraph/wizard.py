@@ -30,7 +30,7 @@ from dataclasses import replace
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from dgraph import cross, fanout, limits
+from dgraph import cross, env, fanout, limits
 
 con = Console()
 
@@ -119,9 +119,17 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
     write = Prompt.ask("", choices=list(limits.WRITE_POLICIES),
                        default=plan.write)
 
+    con.print("\n[bold]May an agent file under a new area?[/]  [dim]$DG_AREA[/]")
+    con.print("[dim]open: any area — a name resembling one in use is refused, "
+              "and `--new-area` overrides · strict: only areas already in use, "
+              "and a new one goes back to a person. `open` is usually right: a "
+              "scout finding a corner nobody had named is a finding.[/]")
+    area = Prompt.ask("", choices=list(env.AREA_POLICIES), default=plan.area)
+
     con.print("\n[bold]How long before its work is handed back?[/]")
-    con.print("[dim]Nothing kills the agent — `timeout` in the launcher does "
-              "that. This is what `dg agent expire` measures against.[/]")
+    con.print("[dim]`dg-agent run` stops the child at this and parks what it "
+              "was holding; `dg-agent expire` is the backstop for what that "
+              "cannot see.[/]")
     while True:
         raw = Prompt.ask("", default=limits.show_span(plan.budget))
         try:
@@ -151,12 +159,12 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
     out = replace(plan, brief=brief,
                   focus=[s.strip() for s in focus.split(",") if s.strip()],
                   reads=reads, findings=findings or plan.findings, agents=n,
-                  host=host, decide=decide, write=write, budget=budget,
-                  terse=terse, capture=capture)
+                  host=host, decide=decide, write=write, area=area,
+                  budget=budget, terse=terse, capture=capture)
 
     con.print(f"\n[bold]{out.agents} agent(s) on {out.host}[/] · "
               f"$DG_DECIDE={out.decide} · $DG_WRITE={out.write} · "
-              f"$DG_TERSE={out.terse} · "
+              f"$DG_AREA={out.area} · $DG_TERSE={out.terse} · "
               f"budget {limits.show_span(out.budget)}"
               + (" · captured" if out.capture else ""))
     con.print(f"[dim]focus {', '.join(out.focus) or '(none)'} · "
@@ -175,7 +183,7 @@ def collect(plan: fanout.Plan, proj, *, interactive: bool,
     if not interactive:
         raise NoTerminal(
             "no terminal to ask on. Give the answers as flags — "
-            "`dg agent setup --json` prints the defaults and the three it "
+            "`dg-agent setup --json` prints the defaults and the three it "
             "still has to ask for")
     if prefer_tui:
         try:

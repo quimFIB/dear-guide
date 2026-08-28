@@ -81,18 +81,21 @@ not make one up.
 **If you are the one launching them**, take a name per agent and hand it down:
 
 ```sh
-DG_AGENT=$(dg agent claim) claude -p "…"      # one per agent
-dg agent list                                 # who holds what, and what is staged
+dg-agent run -- claude -p "…"      # one per agent: claims a name, sets it
+dg-agent list                      # who holds what, and what is staged
 ```
 
-`dg agent claim` prints a free name and nothing else, so it composes into a
-variable. It never hands out a name that is held or that has ops in either
+`dg-agent run` claims a name, composes the environment and puts both in that
+*child's* environment only — never exported, because an exported `$DG_AGENT`
+makes the launcher an agent and its own policy then refuses it. `dg-agent claim`
+is the same name on its own: it prints a free one and nothing else, so it
+composes into a variable where you need to spawn something yourself. It never hands out a name that is held or that has ops in either
 tray, so two agents cannot end up sharing one. Claiming it yourself is no use:
 your shell state does not survive between tool calls, so the name has to come
 from whatever spawns you.
 
-Nothing is ever reused behind your back — a claim does not expire. `dg agent
-release <name>` gives one back, `dg agent prune` releases every name with
+Nothing is ever reused behind your back — a claim does not expire. `dg-agent
+release <name>` gives one back, `dg-agent prune` releases every name with
 nothing staged under it, and both are things a person does deliberately. If the
 pool ever runs out, `claim` **refuses** and says what to empty; it will not
 invent a name.
@@ -123,6 +126,13 @@ dg apply   --agent b      # ...take it, and leave everybody else's staged
 dg clear   --agent c      # ...turn one down, without touching the others
 ```
 
+**`dg-agent env` says what you are actually running under**, and is worth one
+call at the start. The paragraphs below describe policies; that command reports
+them — including any that was *mistyped*, which matters more than it sounds:
+`$DG_DECIDE`, `$DG_WRITE`, `$DG_TERSE` and `$DG_AREA` all fail **open**, so a
+typo in the launcher does not weaken a rule by a notch, it removes it. If your
+prompt and `dg-agent env` disagree, `dg-agent env` is right.
+
 **How much you may settle on your own** is `$DG_DECIDE`, and it is worth
 reading before you close anything in a shared clone. Unset it means what it has
 always meant — you may close what you like. `evidence` means you may close only
@@ -141,10 +151,21 @@ person. Reading is never restricted. If you are stopped, that is the policy and
 not a broken tool: put the file somewhere in scope, or say what you need and
 why, rather than trying another route to the same path.
 
-**How long you may run** may be set as a budget. `dg agent list` shows what is
-left of it. Nothing kills you when it runs out — but if you stop for any reason
-with work still `DOING`, that work looks exactly like work in progress and
-nobody picks it up. **Park before you stop**, whatever the reason:
+**Which area you may file under** is `$DG_AREA`. Areas accumulate — nothing has
+to be declared first — so `--area corpus` works whether or not anybody has used
+`corpus` before. A name that *resembles* one already in use is refused, with
+what it resembles named, because two spellings of one corner of a project is
+what that guard is for; `--new-area` says you meant it. Under `$DG_AREA=strict`
+a genuinely new area is refused outright and goes back to a person, and
+`--new-area` does not override that — it is the launcher's rule, not yours.
+
+**How long you may run** may be set as a budget. `dg-agent list` shows what is
+left of it. If you were launched by `dg-agent run` it *will* stop you at the
+budget and park what you hold; if you were launched some other way nothing
+does. Either way, if you stop for any reason with work still `DOING`, that work
+looks exactly like work in progress and nobody picks it up — and an automatic
+park cannot say what state the work was in. **Park before you stop**, whatever
+the reason:
 
 ```sh
 dg task park T04 --why "budget nearly spent; probe ran, findings written,
@@ -153,12 +174,12 @@ dg apply --mine
 ```
 
 A supervisor can clean up after an agent that never got the chance —
-`dg agent expire` parks what an out-of-time agent holds — but it cannot say what
+`dg-agent expire` parks what an out-of-time agent holds — but it cannot say what
 state the work was in. Only you can, and that sentence is the difference between
 work the next agent can resume and work somebody has to redo.
 
 **If you are about to go quiet for a long time, say so first.** Every `dg` call
-you make is a heartbeat, and so is every file you write, so `dg agent list`
+you make is a heartbeat, and so is every file you write, so `dg-agent list`
 shows a supervisor how long ago you were last seen. An agent that spends forty
 minutes on one build looks exactly like one that died — there is no way to tell
 from outside, which is why nothing acts on it automatically. Touching the graph

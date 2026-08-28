@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dgraph import areas as _areas
 from dgraph import orgmd, project
 from dgraph.model import Edge, Graph, rival_note
 
@@ -58,8 +59,8 @@ def _index(g: Graph) -> str:
         "| ID | Decision | Status | Resolves to |",
         "|---|---|---|---|",
     ]
-    order = {a: i for i, a in enumerate(g.areas)}
-    for v in sorted(g.vertices.values(), key=lambda v: (order.get(v.area, 99), v.id)):
+    order = _areas.order(g.areas)
+    for v in sorted(g.vertices.values(), key=lambda v: (order(v.area), v.id)):
         rows.append(f"| {v.id} | {_cell(v.title)} | {v.status} | {_resolves_cell(g, v.id)} |")
     frontier = ", ".join(g.frontier())
     rows.append("")
@@ -150,7 +151,12 @@ def _superseded(g: Graph) -> str:
 
 def render(g: Graph) -> str:
     parts = [PREAMBLE, "---\n", _index(g), "---\n"]
-    for area in g.areas:
+    # The registry, not the declared list. Iterating `g.areas` alone dropped a
+    # record whose area the list does not mention out of the document entirely
+    # — silently, with nothing above the index to say a section was missing.
+    # `validate` used to make that unreachable; areas accumulate now, so it is
+    # reachable and this is where it is closed.
+    for area in _areas.sections(g.areas, g.vertices.values()):
         ids = sorted(v.id for v in g.vertices.values() if v.area == area)
         parts.append(f"## {area}\n")
         parts.extend(_section(g, vid) for vid in ids)

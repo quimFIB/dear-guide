@@ -12,7 +12,7 @@ commit that would leave the graph contradicting itself is refused.
 pip install -e /path/to/dear-guide
 ```
 
-(`'/path/to/dear-guide[tui]'` adds a full-screen `dg agent setup`; optional,
+(`'/path/to/dear-guide[tui]'` adds a full-screen `dg-agent setup`; optional,
 and the command asks the same questions without it.)
 
 Then symlinks, since opencode has no plugin marketplace:

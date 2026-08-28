@@ -16,10 +16,13 @@ and the graph cannot tell them apart.
 
 ```sh
 cd /path/to/your-project
-dg init      --areas "Search,Serving,Index"    # decisions.json
-dg task init --areas "Search,Serving,Index"    # tasks.json — optional, but the
-                                               # loop below needs it
+dg init          # decisions.json
+dg task init     # tasks.json — optional, but the loop below needs it
 ```
+
+Neither declares a vocabulary. Areas accumulate, so the first record filed
+under one registers it — which is also why the two stores can no longer be
+started with lists that disagree.
 
 Either store works without the other. `dg init` also writes the tool's scratch
 files into `.gitignore`.
@@ -41,18 +44,26 @@ the link that lets an agent close a question *because it measured the answer*.
 
 ---
 
-## 0.5 · The short way: `dg agent setup`
+## 0.5 · The short way: `dg-agent setup`
 
 Everything in §1 and §2 by hand, or one command that writes both artefacts:
 
 ```sh
-dg agent setup                    # a TUI, if you are at a terminal
+dg-agent setup                    # a TUI, if you are at a terminal
 ```
 
-It checks what is ready, asks what it cannot work out, and writes
-`fanout/scout.md` (the prompt, no ⟨…⟩ left in it) and `fanout/launch.sh` (one
-line per agent, environment already right). Read the prompt, then run the
-launcher.
+It checks what is ready, asks what it cannot work out, and writes three files:
+`fanout/scout.md` (the prompt, no ⟨…⟩ left in it), `fanout/launch.sh` (one line
+per agent) and `fanout/env.json` (the remit both of those were generated from).
+Read the prompt, then run the launcher.
+
+**The third file is what keeps the first two honest.** The prompt asserts each
+policy to the agent in the second person — "You are running under
+`$DG_DECIDE=evidence`" — and the launcher sets it separately; edit either
+afterwards, which this file expects you to do, and the prompt goes on asserting
+a policy nobody is enforcing to an agent with no way to check. `launch.sh` runs
+`dg-agent env --check --plan fanout/env.json` before the first agent starts, so
+the two are asserted to still agree.
 
 **Most of the prompt fills itself.** The project, the areas in use, which
 policies are in force and what each one *means* in practice, the write roots,
@@ -72,14 +83,14 @@ that deliberately.
 Every answer is also a flag, and this form needs no terminal at all:
 
 ```sh
-dg agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
-  --budget 30m --brief "settle the Search frontier" \
+dg-agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
+  --budget 30m --area-policy open --brief "settle the Search frontier" \
   --read "bench/README.md:how the sweep is run" --findings "findings/<id>.md"
 ```
 
 **That flag form is how this works from inside Claude Code or opencode.** An
 agent can drive neither a full-screen app nor a prompt, so it reads
-`dg agent setup --json` — readiness, the defaults, and the three things it must
+`dg-agent setup --json` — readiness, the defaults, and the three things it must
 still ask — puts those questions to the person, and calls back with flags. With
 no terminal the command says so and names the flags rather than prompting into
 EOF, which is what click's bare `Aborted.` would otherwise amount to.
@@ -88,7 +99,7 @@ All three collectors produce the **same bytes**, which a test asserts by
 driving each of them with the same answers. A wizard whose doors disagreed
 would set a run up one way and describe it another.
 
-`--dry-run` prints both files and writes nothing.
+`--dry-run` prints the files and writes nothing.
 
 The rest of this file is what the wizard automates, and is worth reading once
 before trusting it.
@@ -102,25 +113,33 @@ shell state does not survive between an agent's tool calls, so a name it
 claimed in one call is gone by the next.
 
 ```sh
-DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch DG_TERSE=on \
-  timeout 1800 claude -p "$(cat agentic/prompts/scout.md)" &
+dg-agent run --decide evidence --write launch --terse on --budget 30m \
+  -- claude -p "$(cat fanout/scout.md)" &
 
-DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch DG_TERSE=on \
-  timeout 1800 opencode run "$(cat agentic/prompts/scout.md)" &
+dg-agent run --decide evidence --write launch --terse on --budget 30m \
+  -- opencode run "$(cat fanout/scout.md)" &
 
-dg agent list          # who holds what, what each has staged, time left
+dg-agent list          # who holds what, what each has staged, time left
 ```
 
 Mixing hosts is fine — two agents under different scaffolds are two names in one
-tray. The whole contract with the host is these variables:
+tray, and everything before the `--` is identical under both. **You** claim the
+name, or rather `dg-agent run` claims it for you and puts it in that one child's
+environment; the agent never claims its own, since shell state does not survive
+between an agent's tool calls.
+
+The whole contract with the host is these variables. `dg-agent run` composes
+them, `dg` reads them, and `dg-agent env` says what is actually in force:
 
 | | |
 |---|---|
-| `DG_AGENT` | the writer's name, from `dg agent claim`. Never invent one: `claim` refuses a name that is held or that has ops in a tray, so two agents cannot conflate their work. |
+| `DG_AGENT` | the writer's name, from `dg-agent claim` — or from `dg-agent run`, which claims one and sets it for the child. Never invent one: `claim` refuses a name that is held or that has ops in a tray, so two agents cannot conflate their work. **Never export it**: an exported name makes the launcher an agent, and its own policy then refuses it. |
 | `DG_DECIDE` | `evidence` — may close a question only where a **finished** `--evidence-for` task backs it · `never` — may not close at all · unset — may close anything. |
 | `DG_WRITE` | `launch` — may write in the project and `/tmp`; anywhere else stops and asks the person · unset/`open` — anywhere, which is what the tool has always done. Reads are never judged. |
-| `DG_BUDGET` | how long before its work is handed back — `1800`, `30m`, `2h`, or `infinite`. `dg agent claim --budget` records it on the lease, which is what `dg agent list` and `dg agent expire` read; the variable is how the *agent* learns its own budget. |
+| `DG_AREA` | `strict` — may file only under an area already in use, and a new one goes back to a person · unset/`open` — any area, with a near-miss of one in use refused by the similarity guard and `--new-area` as the override. |
+| `DG_BUDGET` | how long before its work is handed back — `1800`, `30m`, `2h`, or `infinite`. `dg-agent run --budget` records it on the lease *and* stops the child at it, so there is one number rather than a `--budget` and a `timeout` that agree until somebody edits the file. |
 | `DG_TERSE` | how long a field may be — `on` (400 characters), a count, or unset/`off` for no limit. The store holds the synopsis somebody reads while deciding; the development goes in a file the record cites. Refused at stage time, before the tray is touched. |
+| `dg-agent env` | not a variable: the **report**. `$DG_DECIDE`, `$DG_WRITE`, `$DG_TERSE` and `$DG_AREA` all fail *open* — a typo does not weaken a rule by a notch, it removes it — so this is what names a fallback as a fallback. `--check` exits non-zero on anything set and not understood. |
 
 Set `DG_DECIDE` **here and not in the prompt.** A variable is a refusal; a
 sentence in a prompt is a request, and the moment a finished task leaves a
@@ -166,18 +185,20 @@ claude -p "$(cat agentic/prompts/orchestrator.md)"
 Under Claude Code you can also open a session and type `/dg:fanout` — the same
 briefing, with the current roster, frontier and tray already read in.
 
-**What makes an orchestrator work, and it is one rule:** it claims a name and
-puts it in the *child's* environment only.
+**What makes an orchestrator work, and it is one rule:** the name goes in the
+*child's* environment only.
 
 ```sh
-DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch DG_TERSE=on \
-  timeout 1800 claude -p "$(cat ...)" &
+dg-agent run --plan fanout/env.json -- claude -p "$(cat fanout/scout.md)" &
 ```
 
-This is a per-command assignment. It never exports into the orchestrator's own
-shell, so the orchestrator stays a supervisor and can still apply, clear and
-decide. An orchestrator that runs `export DG_AGENT=…` has made itself an agent
-and will be refused by its own policy.
+`dg-agent run` claims a name and puts it in that child's environment and
+nowhere else, so the orchestrator stays a supervisor and can still apply, clear
+and decide. That used to be a comment in the generated launcher telling whoever
+read it not to export the variable; it is a behaviour now, and a behaviour beats
+a comment somebody has to obey. An orchestrator that runs `export DG_AGENT=…`
+has still made itself an agent and will still be refused by its own policy —
+`dg-agent env` is where it will see why.
 
 **What an orchestrator must not do:** decide. It can spawn, watch, report,
 apply and clear — but the last call on an answer is the one thing the fan-out
@@ -188,18 +209,18 @@ exists to leave with a person. Say so in its prompt; do not rely on it.
 ## 3 · Watching, from your own shell
 
 ```sh
-dg agent list     # names held, what each holds and has staged, time left
+dg-agent list     # names held, what each holds and has staged, time left
 dg pending        # the roster: who proposed what, across both trays
 dg task           # the frontier, what is held, what is ready
 ```
 
-`dg agent list` is where a stalled run becomes visible, two different ways. A
+`dg-agent list` is where a stalled run becomes visible, two different ways. A
 budget reading `SPENT` beside a held task is an agent that ran out of time. A
 `Seen` reading `silent 40m` is one that stopped *early* — a quota limit, a crash
 — which a budget cannot catch until it elapses.
 
 The two are not the same kind of fact and are not treated the same. An elapsed
-budget is the clock, and `dg agent expire` acts on it. Silence is a guess: an
+budget is the clock, and `dg-agent expire` acts on it. Silence is a guess: an
 agent in a long build looks exactly like a dead one, so it has no command at
 all. Read it, then decide. `$DG_SILENT_AFTER` widens the window — default 15
 minutes — and only agents *holding work* are ever reported.
@@ -211,10 +232,18 @@ killed, rate-limited or hung does not, and leaves a task `DOING` that nobody
 will pick up because it looks taken.
 
 ```sh
-dg agent list          # who is over budget, and what they still hold
-dg agent expire        # stage a park for each, naming the budget
+dg-agent list          # who is over budget, and what they still hold
+dg-agent expire        # stage a park for each, naming the budget
 dg apply --agent brisk-beacon
 ```
+
+**`dg-agent run` does most of this for you now, and not all of it.** It is the
+child's parent, so a child stopped at its budget or one that dies holding work
+has that work parked immediately, under its own name, while the information is
+freshest. What it cannot see is itself being killed — a `kill -9` on the
+process group, the machine going down, the terminal closing — so `dg-agent
+expire` is still the backstop and still belongs at the end of a run. The window
+is narrower; it is not closed.
 
 The park lands under the *agent's own name*, so it sits beside whatever that
 agent had already proposed and one `dg apply --agent` takes the batch. Parked
@@ -250,7 +279,7 @@ Then **you** decide, with the proposals as input:
 ```sh
 dg decide D01 --answer "HNSW, M=32." --source "bench/sweep.md" \
               --falsifier "recall below 0.9 at ef=128"
-dg agent prune                    # give back every name with nothing staged
+dg-agent prune                    # give back every name with nothing staged
 ```
 
 ---
@@ -266,6 +295,7 @@ Turn it on **before** the run:
 ```sh
 export PATH="/path/to/dear-guide/agentic/bin:$PATH"
 command -v dg                     # must print .../agentic/bin/dg
+command -v dg-agent               # ...and .../agentic/bin/dg-agent
 git check-ignore .dgraph-capture  # should print the rule that covers it
 ```
 
@@ -280,6 +310,12 @@ useless entries:
   the recorded review in the terminal, or accept the gap and say so.
 - **Anything with `--edit` is not recorded either.** Same exemption, less
   obvious: `dg decide --edit` and the compose buffer write nothing to the log.
+- **`dg-agent run` and `dg-agent setup` are not recorded.** `run` is the parent
+  of an agent whose stdout is its own and which may run for half an hour, and
+  `setup` without flags is a full-screen form; buffering either through a pipe
+  breaks it. What the child does is captured in full — it is the `dg` calls that
+  matter — and the launch line itself is on disk in `fanout/env.json` and
+  `fanout/launch.sh`.
 
 Check it before you rely on it — and check **`cwd`**, not the tray:
 

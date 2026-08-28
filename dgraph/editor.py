@@ -30,7 +30,7 @@ import textwrap
 from datetime import date as _date
 from pathlib import Path
 
-from dgraph import project, ranges
+from dgraph import areas, pending, project, ranges
 from dgraph.model import Graph, status_fault
 
 ELISP = Path(__file__).resolve().parent / "elisp" / "dgraph.el"
@@ -304,7 +304,8 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
         + _field("Id", f"Like D07. Next unused: {nxt}", seed.get("id") or nxt)
         + _field("Title", "One line: the question this decision answers.",
                  seed.get("title", ""))
-        + _field("Area", f"One of: {', '.join(g.areas)}", seed.get("area", ""))
+        + _field("Area", "One in use, or a new one — areas accumulate.",
+                 seed.get("area", ""))
         + _field("Status", f"One of: {', '.join(STATUSES)}. Default OPEN.\n"
                            "BLOCKED needs a target, e.g. BLOCKED:D04.",
                  seed.get("status", "OPEN"))
@@ -312,8 +313,10 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
                  ", ".join(seed.get("after", [])) if seed.get("after") else "")
         + _field("Note", "Optional prose for a decision with no answer yet.",
                  seed.get("note", ""))
-        + "\n* Context\n** Areas\n"
-        + "".join(f"   - {a}\n" for a in g.areas)
+        + "\n* Context\n** Areas in use\n"
+        + ("".join(f"   - {a}  ({n})\n" for a, n in
+                   areas.counts(g.areas, g.vertices.values()).items())
+           or "   (none yet — the first record starts the vocabulary)\n")
         + "** Frontier (still open or blocked)\n"
         + "".join(f"   - {_node_line(g, f)} {g.vertices[f].status}\n"
                   for f in g.frontier())
@@ -455,6 +458,7 @@ def parse(
     expect_kind: str | None = None,
     expect_vertex: str | None = None,
     expect_index: int | None = None,
+    new_area: bool = False,
 ) -> list[dict]:
     """Buffer -> op dicts ready for `pending.stage`. Raises rather than guessing."""
     if not text.strip():
@@ -491,7 +495,7 @@ def parse(
     if kind == "reopen":
         return _parse_reopen(meta, f)
     if kind == "add_vertex":
-        return _parse_add(g, f)
+        return _parse_add(g, f, new_area=new_area)
     raise EditorError(f"cannot compose a {kind!r} op")
 
 
@@ -546,15 +550,25 @@ def _parse_reopen(meta: dict, f: dict) -> list[dict]:
     return [op]
 
 
-def _parse_add(g: Graph, f: dict) -> list[dict]:
+def _parse_add(g: Graph, f: dict, *, new_area: bool = False) -> list[dict]:
     vid = _need(f, "id")
     if not re.fullmatch(r"D\d+", vid):
         raise EditorError(f"malformed id {vid!r} — expected something like D07")
     if vid in g.vertices:
         raise EditorError(f"{vid} already exists")
     area = _need(f, "area")
-    if area not in g.areas:
-        raise EditorError(f"unknown area {area!r} — one of: {', '.join(g.areas)}")
+    # The similarity guard rather than membership, because areas accumulate:
+    # a new one is legitimate and a near-miss of an existing one almost never
+    # is. Checked here as well as by the `vet_all` the caller runs, for the
+    # reason the id and the status are — this message names the field the user
+    # typed, `** Area`, where a refusal from the staging layer names an op they
+    # never wrote.
+    why = pending.refuse_area(
+        area, own=areas.counts(g.areas, g.vertices.values()),
+        other=areas.stored_counts(project.find().tasks),
+        owner=pending.owner(), new_area=new_area)
+    if why is not None:
+        raise EditorError(f"Area: {why}")
     status = f.get("status", "").strip() or "OPEN"
     # Checked here as well as by the `vet_all` the caller runs, because this
     # message names the field the user typed — `** Status` — where a refusal
@@ -730,6 +744,7 @@ def compose(
     seed: dict | None = None,
     index: int | None = None,
     op: dict | None = None,
+    new_area: bool = False,
     launcher=None,
 ) -> list[dict]:
     """Render a buffer, hand it to the editor, and parse what comes back."""
@@ -741,7 +756,8 @@ def compose(
         text = RENDERERS[kind](g, vertex, seed)
     return run(text, lambda after: parse(after, g=g, expect_kind=kind,
                                          expect_vertex=vertex,
-                                         expect_index=index),
+                                         expect_index=index,
+                                         new_area=new_area),
                launcher=launcher)
 
 

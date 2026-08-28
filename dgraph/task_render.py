@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dgraph import areas as _areas
 from dgraph import orgmd, project
 from dgraph.tasks import TaskGraph, done_label, stop_label
 
@@ -64,8 +65,8 @@ def _index(tg: TaskGraph) -> str:
         "| ID | Task | Status | Waiting on | Because |",
         "|---|---|---|---|---|",
     ]
-    order = {a: i for i, a in enumerate(tg.areas)}
-    for t in sorted(tg.tasks.values(), key=lambda t: (order.get(t.area, 99), t.id)):
+    order = _areas.order(tg.areas)
+    for t in sorted(tg.tasks.values(), key=lambda t: (order(t.area), t.id)):
         waiting = ", ".join(tg.waiting_on(t.id)) or NONE
         rows.append(f"| {t.id} | {orgmd.cell(t.title)} | {t.status} | {waiting} "
                     f"| {', '.join(t.because) or NONE} |")
@@ -153,7 +154,8 @@ def _section(tg: TaskGraph, tid: str) -> str:
 
 def render(tg: TaskGraph) -> str:
     parts = [PREAMBLE, "---\n", _index(tg), "---\n"]
-    for area in tg.areas:
+    # `render._index`'s twin — see there for the record that rendered nowhere.
+    for area in _areas.sections(tg.areas, tg.tasks.values()):
         ids = sorted(t.id for t in tg.tasks.values() if t.area == area)
         if not ids:
             continue

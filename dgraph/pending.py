@@ -11,13 +11,15 @@ import contextlib
 import copy
 import json
 import os
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import replace as _dc_replace
 from datetime import date as _date
 from pathlib import Path
 
-from dgraph import limits, project, ranges
+from dgraph import areas as _areas
+from dgraph import env, limits, project, ranges
 from dgraph.model import (SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex,
                           status_fault)
 from dgraph.violation import Violation
@@ -43,6 +45,116 @@ FIELDS = ("title", "area", "note", "format")
 #: cleanly, report success and write nothing of the sort, which is a worse
 #: failure than the refusal it is trying to get past.
 FIELD_KEYS = ("op", "vertex", "task", "ref", "saw", "by")
+
+# ---- areas ---------------------------------------------------------------
+#
+# `dgraph/areas.py` is what an area *is* -- the registry, how two spellings are
+# compared, and the order records render in. What is here is the one thing that
+# needs a *writer*: whether this caller may file under an area nobody has used
+# yet, which is a question about `pending.owner()` and about the launcher's
+# `$DG_AREA`, and therefore belongs at the staging door with the other two.
+#
+# An area is a **label on a record**, not a schema, and `FIELDS` above is where
+# that was already decided: `dg amend D05 --area corpus` supersedes nothing and
+# archives nothing, because "a title and an area are not claims". A label wants
+# a *registry*, not a whitelist -- so `areas` accumulates in first-use order,
+# written by the op that first uses one, and membership is checked nowhere.
+#
+# WHAT WENT WRONG WITH THE WHITELIST. No op wrote `areas`: it was the one field
+# of either store that only `init` and `import` set, which `integrate.py` had
+# to file as `unexpressible` -- reported, never fixable. A scout that found a
+# new corner of a project could not file anything under it, and the failure
+# arrived as a wall of identical refusals rather than as one nameable cause.
+# Worse, the two stores' lists were independent while `dg areas` and
+# `/api/areas` both said in as many words that "the stores share their areas",
+# so three commands were enough to reach a store pair whose lists disagreed:
+#
+#     dg init --areas corpus,harness      # decisions.json gets three
+#     dg task init                        # tasks.json defaulted to General
+#     dg task add --area corpus           # unknown area. one of: General
+#
+# WHAT REPLACES IT. Membership was catching typos, and dropping it without a
+# replacement would let a multi-writer fan-out fragment `corpus` into `Corpus`
+# and `corpus-design` with nothing to notice. So a **genuinely new** area is
+# checked for similarity against the ones already in use; an area that already
+# exists is silent, which is both the common case and the one that matters --
+# an `amend` *toward* an existing area is the fix for a typo, and a guard that
+# refused it because it resembles the typo would be backwards.
+#
+# READ THE UNION, WRITE YOUR OWN STORE. The guard reads both stores' areas,
+# because sharing the areas is the point; but every op appends only to the
+# store it touches. A composite op spanning both trays would let one batch land
+# and the other fail -- leaving the two lists divergent *because of* the
+# feature meant to unify them -- and `dg apply`'s independence of the two
+# batches predates this problem and is load-bearing.
+
+
+#: The primitives, under the names the staging modules ask for them by. One
+#: definition in `dgraph/areas.py`; this is the door, not a second copy.
+area_counts = _areas.counts
+stored_area_counts = _areas.stored_counts
+normal_area = _areas.normal
+similar_areas = _areas.similar
+
+
+def refuse_area(area: str, *, own: dict[str, int], other: dict[str, int],
+                owner: str | None, new_area: bool = False,
+                chosen: str | None = None) -> str | None:
+    """Why this area may not be filed under yet -- or `None` if it may.
+
+    `own` is the registry of the store being written and `other` its twin's;
+    the union of the two is what "already in use" means, so an area known only
+    to `tasks.json` suppresses the guard on a decision. Divergence between the
+    two files stops mattering the moment nothing validates membership.
+
+    `owner` is `pending.owner()`, and `None` is the supervisor, exactly as in
+    `cross.refuse_close` and `limits.refuse_write`: `$DG_AREA` is a rule a
+    launcher sets for the agents it spawns, and a person at a terminal is never
+    refused by it. The similarity guard, by contrast, applies to **everybody** --
+    it is catching a typo, and a supervisor makes those too.
+
+    Stage-time, not apply-time, for the reason `vet_fields` gives: a tray may be
+    shared, so an op that cannot apply wedges it for every other writer until
+    somebody drops it. That is also why `new_area` does not persist into the
+    op -- `apply` never rechecks, and a flag written into the tray would be a
+    permission travelling with a record.
+    """
+    if not (area or "").strip():
+        return None
+    known = {**own, **other}
+    if area in known:
+        return None
+    if owner is not None and env.area_policy(chosen) == "strict":
+        # Not overridable by `--new-area`, deliberately. The flag answers "is
+        # this new area intentional?", which is the author's question;
+        # `$DG_AREA` answers "may an agent invent areas at all?", which is the
+        # launcher's, and a rule the thing it constrains can switch off is not
+        # a rule. The refusal names its own fix the way the `evidence` one
+        # does: the area is a proposal, and `dg pending` is where it is read.
+        return (f"${env.AREA_ENV}=strict: {owner} may file only under an area "
+                f"already in use, and {area!r} is new. The area you want is a "
+                f"proposal for a person — say so in a note on a record filed "
+                f"under one of "
+                f"{', '.join(sorted(known)) or '(none yet — a person has to start the vocabulary)'}"
+                f", and `dg pending --agent {owner}` is where they will read "
+                f"it")
+    if new_area:
+        return None
+    close = _areas.similar(area, known)
+    if not close:
+        return None
+    rows = []
+    for a in close:
+        counts = [f"{own[a]} in this store"] if own.get(a) else []
+        if other.get(a):
+            counts.append(f"{other[a]} in the other")
+        rows.append(f"    {a}" + (f"  ({', '.join(counts)})" if counts else
+                                  "  (registered, nothing filed under it)"))
+    return ("area {!r} is new, and close to areas already in use:\n{}\n"
+            "If it is genuinely a different area, restage with --new-area. "
+            "Areas accumulate: nothing has to be declared first."
+            .format(area, "\n".join(rows)))
+
 
 #: How a removal reconnects what the vertex sat between.
 #:
@@ -151,7 +263,12 @@ REF_LEN = 4
 #: flag, and **unset means nobody** — which is what keeps a single-writer
 #: project on exactly the path it was always on. Same construction as
 #: `.dgraph-range.json`: absent, and nothing here fires.
-AGENT_ENV = "DG_AGENT"
+#:
+#: Spelled in `dgraph/env.py` with the rest of the family and imported back
+#: under the name every call site here already uses, so that the binary which
+#: composes an agent's environment and the one which obeys it read the same
+#: table. What stays here is what the identity *means*.
+AGENT_ENV = env.AGENT_ENV
 
 #: An explicit identity for this thread, overriding the environment. Thread-
 #: local because `dg serve` is a `ThreadingHTTPServer` and one request must not
@@ -244,7 +361,11 @@ def mine(ops: list[dict], me=_INHERIT) -> tuple[list[dict], list[dict]]:
 #: *and* the unsigned ones while `dg apply --agent unowned` wrote only the
 #: unsigned ones. A reader reviewed two and accepted one, with nothing saying
 #: so — which is the failure the roster exists to prevent, one layer down.
-UNOWNED = "unowned"
+#:
+#: In `env.py` too, because `dg-agent env` has to report `$DG_AGENT=unowned` as
+#: the bad *configuration* it is, and a second copy of the word is a second
+#: thing free to drift.
+UNOWNED = env.UNOWNED
 
 
 def named(op: dict) -> str:
@@ -648,7 +769,7 @@ def preview(g: Graph, path: Path | None = None, *, skip: int | None = None) -> G
     return out
 
 
-def vet(g: Graph, op: dict) -> None:
+def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
     """Raise ApplyError if `op` could not be staged against `g`.
 
     The stage-time guard for callers that receive ops as data — the web API,
@@ -692,7 +813,9 @@ def vet(g: Graph, op: dict) -> None:
     if op.get("op") == "set_fields":
         # `_apply_one` above proved it resolves, and by the same two keys.
         v = g.vertices[op.get("vertex") or op.get("from")]
-        vet_fields(op, areas=g.areas, record="decision",
+        vet_fields(op, own=area_counts(g.areas, g.vertices.values()),
+                   other=stored_area_counts(project.find().tasks),
+                   record="decision", new_area=new_area,
                    current={k: getattr(v, k) for k in FIELDS})
     if op.get("op") == "set_status" and "derived_from" not in op:
         if status != "DECIDED":
@@ -704,14 +827,32 @@ def vet(g: Graph, op: dict) -> None:
         compose_confirm(g, vid=op.get("vertex"))
 
 
+def _register(store, area: str | None) -> None:
+    """Note an area on the store the op is writing. Append-only, like the model.
+
+    **Not a new op kind.** `OPS` is unchanged, because registering an area is a
+    side effect of filing a record under one rather than an act of its own --
+    and an `add_area` op would be an act somebody could stage without ever
+    filing anything, which is the declared-vocabulary problem this replaced.
+
+    Only the store being written. The union is what every *reader* consults,
+    but a composite op spanning both trays could land in one and fail in the
+    other, leaving the two lists divergent because of the feature meant to
+    unify them -- and `dg apply`'s independence of the two batches predates
+    this and is load-bearing.
+    """
+    if area and area not in store.areas:
+        store.areas.append(area)
+
+
 def _and_(names: list[str]) -> str:
     """`a`, `a and b`, `a, b and c` — for a refusal naming several fields."""
     return (names[0] if len(names) == 1
             else " and ".join([", ".join(names[:-1]), names[-1]]))
 
 
-def vet_fields(op: dict, *, areas: list[str], current: dict,
-               record: str) -> None:
+def vet_fields(op: dict, *, own: dict, other: dict, current: dict,
+               record: str, new_area: bool = False) -> None:
     """The stage-time floor for a `set_fields` op, shared by both stores.
 
     Here rather than in each store's `vet` for the reason `already` and
@@ -730,6 +871,9 @@ def vet_fields(op: dict, *, areas: list[str], current: dict,
     `current` is what the record holds now, so that an op writing the values
     already there is refused rather than staged. The caller is often an agent
     that has lost track, which is the same reading the no-op status guard makes.
+
+    `own` and `other` are the two stores' area registries -- see `refuse_area`,
+    which is the one place either store's areas are judged.
     """
     # Before "nothing to change", so that an op naming only a field this one
     # cannot write is told *that* rather than told it named nothing — the
@@ -750,8 +894,11 @@ def vet_fields(op: dict, *, areas: list[str], current: dict,
         raise ApplyError(
             f"a {record} needs a title — it is what every other record, and "
             f"every reader, refers to it by")
-    if "area" in op and op["area"] not in areas:
-        raise ApplyError("unknown area. one of: " + ", ".join(areas))
+    if "area" in op:
+        why = refuse_area(op["area"], own=own, other=other, owner=owner(),
+                          new_area=new_area)
+        if why is not None:
+            raise ApplyError(why)
     if all(op[k] == current.get(k) for k in named):
         one = len(named) == 1
         raise ApplyError(
@@ -759,7 +906,8 @@ def vet_fields(op: dict, *, areas: list[str], current: dict,
             f"{'that ' + named[0] if one else 'those values'}")
 
 
-def vet_all(g: Graph, ops: list[dict]) -> None:
+def vet_all(g: Graph, ops: list[dict], *,
+            new_area: bool = False) -> None:
     """Raise if these ops could not be staged **as a group**.
 
     The plural of `vet`, and the twin of `task_pending.vet_all`. Each op is
@@ -775,7 +923,7 @@ def vet_all(g: Graph, ops: list[dict]) -> None:
     """
     probe = copy.deepcopy(g)
     for op in ops:
-        vet(probe, op)
+        vet(probe, op, new_area=new_area)
         _apply_one(probe, op)
 
 
@@ -985,6 +1133,7 @@ def already(vid: str, same: bool, what: str) -> ApplyError:
 
 
 def compose_add(g: Graph, *, vid: str, title: str, area: str,
+                new_area: bool = False,
                 status: str = "OPEN", after: list[str] | None = None,
                 note: str | None = None,
                 stored: Graph | None = None) -> list[dict]:
@@ -1037,14 +1186,17 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
         raise ApplyError(f"{vid} already exists"
                          + (" in the staging area — `dg pending` to review"
                             if staged else ""))
-    if area not in g.areas:
-        raise ApplyError("unknown area. one of: " + ", ".join(g.areas))
+    why = refuse_area(area, own=area_counts(g.areas, g.vertices.values()),
+                      other=stored_area_counts(project.find().tasks),
+                      owner=owner(), new_area=new_area)
+    if why is not None:
+        raise ApplyError(why)
     # Checked here *as well as* in `vet`, and both are needed. This function is
     # the flag path and `/api/add`; `vet` is the raw-op path and the editor.
-    # The area rule above can be checked in one place because `area_known`
-    # refuses the batch at apply if it slips through — a grant has no invariant
-    # behind it, so a route that skips the check is a route that writes an id
-    # inside another writer's range.
+    # Both now check the area too: there is no longer an invariant behind it to
+    # catch what slips through, because a store whose records use an area its
+    # list does not mention is legal — the list is a registry, and every reader
+    # takes the union of what is declared and what is used.
     bad = ranges.fault("D", vid)
     if bad:
         raise ApplyError(bad)
@@ -1307,6 +1459,7 @@ def _apply_one(g: Graph, op: dict) -> None:
     if kind == "add_vertex":
         if op["id"] in g.vertices:
             raise already(op["id"], _same_vertex(g, op), "vertex")
+        _register(g, op.get("area"))
         g.vertices[op["id"]] = Vertex(
             id=op["id"], title=op["title"], area=op["area"],
             status=op.get("status", "OPEN"), note=op.get("note"),
@@ -1437,6 +1590,7 @@ def _apply_one(g: Graph, op: dict) -> None:
         # archival list to render, diff and explain, and collect none of the
         # benefit. What would reopen it: citations becoming resolvable.
         v = g.vertices[vid]
+        _register(g, op.get("area"))
         out = _dc_replace(v, **{k: op[k] for k in FIELDS if k in op})
         if not out.note:
             # The tag describes the note; without one it describes nothing.

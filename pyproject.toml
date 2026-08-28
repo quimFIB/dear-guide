@@ -25,6 +25,14 @@ tui = ["textual>=0.50"]
 [project.scripts]
 dg = "dgraph.cli:main"
 
+# One package, two entry points -- not two distributions. `dg-agent expire`
+# stages parks into the task tray, so it needs `task_pending` and the tray
+# lock; the `$DG_*` parsers in `dgraph/env.py` are shared by construction, and
+# two copies of `write_policy` is the one bug the split is about arrived at
+# from the other direction; and two packages that must agree on the meaning of
+# `DG_DECIDE=evidence` is a coupling nobody can see in a lockfile.
+dg-agent = "dgraph.agent_cli:main"
+
 # `dgraph.testing` is a pytest plugin as well as a module to import from: the
 # entry point is what lets it register `--decision-graph`, since a plugin hook
 # in a file that is merely imported by a test module is never called.

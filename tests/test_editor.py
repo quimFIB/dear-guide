@@ -5,6 +5,7 @@ machine with no emacs. One test drives the real `launch` through `$DG_EDIT_CMD`
 to cover the subprocess path itself.
 """
 
+import copy
 import os
 import shutil
 import subprocess
@@ -90,7 +91,11 @@ def test_reopen_template_leads_with_the_propagation_set(g, store):
 def test_add_template_offers_the_next_free_id_and_the_areas(g, store):
     t = editor.render_add(g)
     assert "** Id" in t and "D07" in t          # D01..D06 exist
-    assert "One of: Alpha, Beta" in t
+    # The areas in use, with counts, and not "one of" — areas accumulate, so
+    # the buffer offers a vocabulary rather than a whitelist and a new name is
+    # a legitimate thing to type into it.
+    assert "Alpha" in t and "Beta" in t
+    assert "areas accumulate" in t.lower()
 
 
 # ---- the round trip ------------------------------------------------------
@@ -434,10 +439,39 @@ def test_retargeting_is_refused(g, store, fake_emacs):
         editor.compose(g, "close", vertex="D05")
 
 
-def test_add_rejects_an_unknown_area(g, store, fake_emacs):
-    fake_emacs(lambda t: fill(t, title="X", area="Nonexistent"))
-    with pytest.raises(EditorError, match="unknown area"):
+def test_add_takes_a_genuinely_new_area_and_registers_it(g, store, fake_emacs):
+    """Areas accumulate, so a name nobody has used is not a refusal.
+
+    It used to be one — `unknown area … one of: Alpha, Beta` — and that was the
+    whitelist, which no op could add to. What replaces it is a guard about
+    *resemblance*, below; a name resembling nothing in use passes and the op
+    that files the record registers the area."""
+    fake_emacs(lambda t: fill(t, title="X", area="Provenance"))
+    ops = editor.compose(g, "add_vertex")
+
+    assert ops[0]["area"] == "Provenance"
+    probe = copy.deepcopy(g)
+    pending._apply_one(probe, ops[0])
+    assert probe.areas[-1] == "Provenance", "the op did not register the area"
+
+
+def test_add_refuses_an_area_that_resembles_one_in_use(g, store, fake_emacs):
+    """The typo check the whitelist was really doing, kept.
+
+    Named in the buffer's own vocabulary — `Area:` — because a refusal from the
+    staging layer names an op the person never wrote. The same reason the id
+    and the status are checked here too.
+    """
+    fake_emacs(lambda t: fill(t, title="X", area="alpha"))
+    with pytest.raises(EditorError, match="Area:.*close to areas already in use"):
         editor.compose(g, "add_vertex")
+
+
+def test_new_area_says_the_resemblance_is_a_coincidence(g, store, fake_emacs):
+    fake_emacs(lambda t: fill(t, title="X", area="alpha"))
+    ops = editor.compose(g, "add_vertex", new_area=True)
+
+    assert ops[0]["area"] == "alpha"
 
 
 def test_add_rejects_an_existing_id(g, store, fake_emacs):

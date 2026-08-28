@@ -20,6 +20,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dgraph import areas as _areas
 from dgraph import project
 from dgraph.violation import Violation  # re-exported: callers import it from here
 from dgraph.violation import cycle_from
@@ -212,9 +213,15 @@ class Graph:
                     d[k] = v
             return d
 
-        order = {a: i for i, a in enumerate(self.areas)}
+        # `areas` is a registry rather than a whitelist, so a record may
+        # legitimately be filed under an area the list does not mention — a
+        # store written before the list stopped being enforced, a hand-edited
+        # one, an imported one. Unlisted areas therefore sort *after* every
+        # declared one and among themselves by name, so they group rather than
+        # interleaving at whatever `99` happened to collide with.
+        order = _areas.order(self.areas)
         verts = sorted(
-            self.vertices.values(), key=lambda v: (order.get(v.area, 99), v.id)
+            self.vertices.values(), key=lambda v: (order(v.area), v.id)
         )
         edges = sorted(self.edges, key=lambda e: (e.src, not e.active, e.date or ""))
         return {
@@ -456,8 +463,6 @@ class Graph:
         for vid, vert in self.vertices.items():
             if not vid.startswith("D") or not vid[1:].isdigit():
                 add("ids_wellformed", f"malformed id {vid!r}")
-            if vert.area not in self.areas:
-                add("ids_wellformed", f"{vid}: unknown area {vert.area!r}")
             fault = status_fault(vert.status, ids, of=vid)
             if fault:
                 add("status_legal", f"{vid}: {fault}")

@@ -9,7 +9,7 @@ hands one out instead, so the only names in circulation are ones the tool chose.
 the variable is still how a name reaches an agent — what changes is that nobody
 has to make a value up:
 
-    DG_AGENT=$(dg agent claim) claude -p "..."
+    DG_AGENT=$(dg-agent claim) claude -p "..."
 
 That makes this a command for *launchers*, and the distinction matters for a
 coding agent in particular: shell state does not survive between its tool calls,
@@ -44,7 +44,7 @@ empty, so free everything", and every such boundary has the same window: an
 agent claims a name, stages nothing yet, the trays go empty, the sweep drops its
 lease, and the next claim hands the same name to somebody else. Closing that
 window costs more machinery than the names are worth, so freeing one is an
-explicit act — `dg agent release`, or `dg agent prune` for everything with no
+explicit act — `dg-agent release`, or `dg-agent prune` for everything with no
 ops left in either tray.
 
 Running out is therefore possible, and is an **error**: `claim` refuses and says
@@ -172,7 +172,7 @@ class Exhausted(RuntimeError):
 
     The alternatives are both silent conflation: hand back a name somebody is
     using, or invent one outside the lists — and a numbered fallback is the
-    worse of the two, because it looks deliberate. `dg agent claim` turns this
+    worse of the two, because it looks deliberate. `dg-agent claim` turns this
     into a refusal that says which names are free-able and how.
     """
 
@@ -187,8 +187,8 @@ def claim(root: Path | None = None, *, today: str | None = None,
 
     `budget` is seconds the agent may run before its work is handed back, or
     `None` for no limit. It is recorded here rather than left in the launcher's
-    environment so that a supervisor reading `dg agent list` sees the same
-    number the agent was given, and so `dg agent expire` has something to
+    environment so that a supervisor reading `dg-agent list` sees the same
+    number the agent was given, and so `dg-agent expire` has something to
     measure against. See `limits`.
 
     Under the lease file's own lock: two launchers starting agents at the same
@@ -446,7 +446,7 @@ def silent(root: Path | None = None, now: str | None = None,
     reporting it would put a column of noise in front of every supervisor for
     the sake of a fact with no consequence.
 
-    Nothing acts on this. It is read by `dg agent list` and by a person, who
+    Nothing acts on this. It is read by `dg-agent list` and by a person, who
     can tell a forty-minute build from a corpse in ways this cannot -- see
     `limits.SILENT_ENV`.
     """

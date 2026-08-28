@@ -98,6 +98,31 @@ the point:
   now free: dropping says yes and releases it, parking says no and holds it.
 - **An unconnected task is ordinary.** An unconnected decision is a smell.
 
+### Areas — the vocabulary, in both stores
+
+An area is a **label on a record**, not a schema, and the two stores share the
+vocabulary rather than each holding their own: the same corner of a project,
+seen as what is undecided and as what is outstanding. So `areas` is an
+**accumulating registry in first-use order**. The op that first files a record
+under a name registers it, in the store that op writes, and every reader takes
+the union — nothing has to be declared first, and neither `init` takes an
+`--areas` flag any more.
+
+It used to be a whitelist, and the whitelist could not be added to: no op wrote
+the list, so `dg init --areas corpus` followed by `dg task init` left the two
+stores disagreeing and the third command refusing an area the first had
+declared. Declaring a vocabulary at `init` is declaring it when the project
+knows least; in a graph elaborated backwards from a sink, the areas are a
+finding.
+
+What the whitelist was really catching was typos, and that is bought back at
+the door instead: a **genuinely new** area is compared against the ones in use,
+and a near match is refused naming what it resembles, with `--new-area` as the
+override. An area that already exists is silent — an `amend` *toward* an
+existing area is the fix for a typo, and refusing it would be backwards.
+`dg areas rename` refiles a whole area across both stores when one gets in
+anyway, and `dg areas prune` drops registered names holding nothing.
+
 ### The one seam
 
 A task may name **the decisions** it exists **`because`** of — a task can rest
@@ -127,9 +152,10 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `demo/` | a runnable graph holding one of every record this keeps, and a walkthrough over it |
 | `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md); plus [the design behind `dg find`](docs/query-framework.md) |
 | `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
-| `agentic/` | [running a fan-out against the graph](agentic/README.md) — [`RUNNING.md`](agentic/RUNNING.md) is the procedure end to end, `prompts/` the templates it launches — several agents proposing into one tray and a person deciding. Optionally `agentic/bin/dg`, a capture for when the run itself has to survive |
+| `agentic/` | [running a fan-out against the graph](agentic/README.md) — [`RUNNING.md`](agentic/RUNNING.md) is the procedure end to end, `prompts/` the templates it launches — several agents proposing into one tray and a person deciding. Optionally `agentic/bin/dg` and `agentic/bin/dg-agent`, a capture for when the run itself has to survive |
 | `skills/dear-guide/` | the recording discipline, as a skill both agent hosts load |
 | `commands/` | the slash commands, one set of files for both hosts — `/dg:brief` under Claude Code, `/dg-brief` under opencode |
+| `fanout/` | what `dg-agent setup` writes: `scout.md`, `launch.sh`, and `env.json` — the remit both were generated from, and what `dg-agent env --check --plan` asserts they still agree with. Not scratch: a filled prompt is the thing you read back and reuse |
 | `hooks/`, `.claude-plugin/` | the Claude Code plugin |
 | `opencode/` | the same mechanisms for opencode |
 
@@ -149,11 +175,11 @@ in full, so nothing is missing without the log.
 cd /path/to/dear-guide
 pip install -e .
 
-pip install -e '.[tui]'      # optional: a full-screen `dg agent setup`
+pip install -e '.[tui]'      # optional: a full-screen `dg-agent setup`
 ```
 
 `typer` and `rich` are the whole of the requirement. The `tui` extra adds
-`textual` and nothing depends on it: `dg agent setup` asks its questions one at
+`textual` and nothing depends on it: `dg-agent setup` asks its questions one at
 a time without it, and takes them as flags with no terminal at all.
 
 `dg` then works in any project directory holding **either** store —
@@ -169,7 +195,7 @@ reversal. Then the quick starts: the
 ## Use
 
 ```sh
-dg init --areas "Search,Serving,Index"   # start a graph
+dg init                                  # start a graph — areas accumulate, none is declared
 dg import prepared.json                  # or adopt one prepared elsewhere
 dg                                       # the frontier: what is still open
 dg show --full                           # ...as a table, with nothing clipped
@@ -182,6 +208,8 @@ dg context T14                           # the same for a piece of work
 dg path D01 D09                          # the chain of evidence between two
 dg tree                                  # the DAG
 dg areas                                 # counts by area, in both stores
+dg areas rename Corpus corpus            # refile everything in one area under another
+dg areas prune                           # drop registered areas holding nothing
 dg find embedding                        # every decision and task that says so
 dg find 'under:D04 is:unsettled'         # ...still open in what D04 opened
 dg find 'is:decidable' --ids             # ...ids alone, for a pipe
@@ -193,12 +221,15 @@ dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
 dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds
 dg repair                                # a store a merge broke: stage the missing propagation
-dg agent setup                           # a fan-out's prompt and launcher — asks, or takes flags, or --json
-dg agent claim                           # a free name for one writer, printed bare
-dg agent claim --budget 30m              # ...and how long it may run before its work is handed back
-dg agent list                            # who holds a name, what they hold, what is staged, time left
-dg agent expire                          # stage a park for whatever an out-of-time agent still holds
-dg agent prune                           # release idle names — keeps back any still holding DOING work
+dg-agent setup                           # a fan-out's prompt, launcher and remit — asks, or takes flags, or --json
+dg-agent run -- claude -p "…"            # claim a name, compose the environment, run one agent under it
+dg-agent env                             # what every $DG_* actually says — and which one was mistyped
+dg-agent env --check                     # ...exit non-zero if anything set was not understood
+dg-agent claim                           # a free name for one writer, printed bare
+dg-agent claim --budget 30m              # ...and how long it may run before its work is handed back
+dg-agent list                            # who holds a name, what they hold, what is staged, time left
+dg-agent expire                          # stage a park for whatever an out-of-time agent still holds
+dg-agent prune                           # release idle names — keeps back any still holding DOING work
 dg gate --write PATH                     # may this agent write here? — what the host adapters ask
 dg pending                               # review; `--full` for the table
 dg pending --agent b                     # ...one writer's proposal alone
@@ -302,7 +333,7 @@ mistaken for a decision. Start it with or without a decision graph beside it;
 ordinary one:
 
 ```sh
-dg task init --areas "Search,Serving,Index"
+dg task init
 dg task add --id T02 --title "Build the HNSW index" --after T01 --because D01
 dg task                                  # outstanding work, and what is startable
 dg task --full                           # ...as a table, with nothing clipped
@@ -531,8 +562,8 @@ resting on an unsettled premise · nothing `BLOCKED` on something already settle
 · acyclic. Two warnings: an orphan, and a vertex left `PROVISIONAL` once its
 premises are settled again.
 
-**The work.** The same well-formedness — ids, statuses, areas, no dangling
-reference, acyclic — plus: an edge says which kind it is · a `DONE` task has a
+**The work.** The same well-formedness — ids, statuses, no dangling reference,
+acyclic — plus: an edge says which kind it is · a `DONE` task has a
 completion with a date and an outcome, and did not finish before its own
 prerequisite · a `PARKED`
 or `DROPPED` task records why · a reading records its date, note and the
@@ -598,17 +629,31 @@ a caller with no `$DG_AGENT`. Like `$DG_AGENT` it is cooperative rather than a
 boundary — an agent that unset it would be the supervisor — which is a rule the
 launcher sets so an honest mistake is caught, not a lock.
 
-Three further limits sit beside it, all off by default. `$DG_WRITE=launch` keeps
+Four further limits sit beside it, all off by default. `$DG_WRITE=launch` keeps
 an agent's *writes* inside the project and `/tmp` and puts anything else to the
 person; reads are never judged. It cannot be checked inside `dg` the way
 `$DG_DECIDE` is, because a write never goes through this CLI — so it is checked
 by `dg gate`, the same host-neutral judge the commit gate uses, which means one
-rule written once is enforced under every host that relays a verdict. And
-`dg agent claim --budget 30m` records how long an agent may run: not to stop it,
-since `dg` is not in its process tree, but so that `dg agent expire` can hand
-back what an agent that died was holding. A task left `DOING` by something that
-stopped is indistinguishable from work in progress, and that is the failure the
-budget exists to make visible.
+rule written once is enforced under every host that relays a verdict.
+`$DG_AREA=strict` stops an agent filing under an area nobody has used yet, and
+sends the new area back to a person as a proposal. And `--budget 30m` records
+how long an agent may run *and*, under `dg-agent run`, stops it there: that
+command is the child's parent, so it parks whatever the child was holding under
+the child's own name. `dg-agent expire` remains the backstop for what it cannot
+see — itself being killed. A task left `DOING` by something that stopped is
+indistinguishable from work in progress, and that is the failure the budget
+exists to make visible.
+
+**And `dg-agent env` is where you find out which of them is actually in force.**
+All four fail *open*: a mistyped `$DG_DECIDE=nevr` is read as `open`, the widest
+policy, and looks identical to a policy somebody chose — a typo does not weaken
+a rule by a notch, it removes it. Failing open is right, because these are read
+on the path of every judged write including the supervisor's, and a launcher's
+typo must not take the graph away from the person reviewing the run. What makes
+it defensible is that something reports it, and `dg-agent env --check` is that
+report — it names a fallback as a fallback, shows the budget against the lease
+rather than the variable, and resolves `$DG_PROJECT` to the graph it actually
+found.
 
 `$DG_TERSE` is the third, and it is about the person rather than the machine:
 **the store holds the synopsis, and the development goes in a file.** A fan-out
@@ -658,7 +703,7 @@ actually about to be lost.
 
 ```sh
 pip install -e /path/to/dear-guide         # the CLI
-pip install -e '/path/to/dear-guide[tui]'  # ...and a full-screen `dg agent setup`
+pip install -e '/path/to/dear-guide[tui]'  # ...and a full-screen `dg-agent setup`
 
 # Claude Code
 /plugin marketplace add /path/to/dear-guide
@@ -733,7 +778,7 @@ that the skill's command table only names commands that exist.
 
   What has stopped happening is the silent half of that. **Set `$DG_AGENT` and
   each staged op records who staged it** — and the name itself now comes from
-  `dg agent claim` rather than from whoever was launching, because every value
+  `dg-agent claim` rather than from whoever was launching, because every value
   that variable went wrong on was one somebody invented. A claim is checked
   against the leases *and* both trays, so two agents cannot share a name; it
   never expires; and if the 7004 ever run out, `claim` refuses and says what to

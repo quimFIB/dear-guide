@@ -32,7 +32,7 @@ dg --version        # so an adapter can tell when the two halves have drifted
 ```
 
 Two dependencies, `typer` and `rich`. `'/path/to/dear-guide[tui]'` adds
-`textual` for a full-screen `dg agent setup`; nothing else uses it, and the
+`textual` for a full-screen `dg-agent setup`; nothing else uses it, and the
 command works without it.
 
 ### 2a. Claude Code
@@ -206,24 +206,33 @@ back empty, so a script can tell the two apart.
 It prints the three facts a supervisor needs and cannot derive — who holds a
 name, what work each of them is holding, and what is sitting unapplied in either
 tray — and then states the procedure the agents have to be launched under:
-`DG_AGENT=$(dg agent claim)` per agent so two cannot conflate their work,
-`$DG_DECIDE` to say how much an agent may settle on its own, `$DG_WRITE` to say
-where it may write without asking, `--budget` to say how long it may run,
-`$DG_TERSE` to say how long a record's fields may be, and
+`dg-agent run --` per agent, which claims a name so two cannot conflate their
+work and sets it for that child alone, `$DG_DECIDE` to say how much an agent may
+settle on its own, `$DG_WRITE` to say where it may write without asking,
+`--budget` to say how long it may run, `$DG_TERSE` to say how long a record's
+fields may be, `$DG_AREA` to say whether it may invent an area, and
 the loop the agents run unattended once they are up (`dg task` says what is
 ready, `dg task start` claims it and refuses work somebody else has, `dg task
 done` or `dg task park --why` hands it back). The full procedure is
 `agentic/README.md`; the command is the part that has to be in front of you at
 launch time.
 
-Two of those five are not enforced by the CLI, and the difference is worth
-knowing before you rely on either. `$DG_DECIDE` and `$DG_TERSE` are checked
-inside `dg`, because every decision and every staged op goes through it.
+Not all of these are enforced the same way, and the difference is worth knowing
+before you rely on any of them. `$DG_DECIDE`, `$DG_TERSE` and `$DG_AREA` are
+checked inside `dg`, because every decision and every staged op goes through it.
 `$DG_WRITE` cannot be — a write never touches `dg` — so it is checked by
 `dg gate --write`, which both host adapters already call, and it answers `ask`
 rather than refusing: an out-of-scope write goes to the person, not to a wall.
-The budget is not enforced at all; `dg` is not in the agent's process tree.
-`timeout` stops the process, and `dg agent expire` is what hands back the work
+The budget is enforced by `dg-agent run`, which is the child's parent: it stops
+the child at the budget and parks what that child was holding. Launch some other
+way and nothing stops anything — `dg` is not in the agent's process tree and
+never was.
+
+**And run `dg-agent env` before you trust any of them.** Four fail *open*: a
+mistyped `$DG_DECIDE=nevr` is read as `open`, the widest policy, and looks
+exactly like a policy somebody chose. `dg-agent env` names a fallback as a
+fallback and `--check` exits non-zero over one.
+`timeout` stops the process, and `dg-agent expire` is what hands back the work
 of one that stopped without saying so.
 
 `$DG_TERSE` is the one that is about the reader rather than the machine: **the

@@ -20,6 +20,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from dgraph import agents, applying
+from dgraph import areas as _areas
 from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
@@ -55,11 +56,6 @@ READ = "Reading the graph"
 HONEST = "Keeping it honest"
 RECORD = "Recording decisions"
 STAGE = "The staging area — nothing is written until `apply`"
-#: Its own panel rather than a corner of `STAGE`: nothing here stages anything.
-#: These name the *writers* a shared tray has, which is a question that only
-#: exists once more than one of them is running — and reads as noise filed under
-#: a heading about ops waiting to be applied.
-WRITERS = "Who is writing — names for a shared tray"
 STORE = "Starting a graph, and moving one"
 WORK = "Tracking the work — its own graph, and its own help screen"
 WEB = "In a browser"
@@ -78,7 +74,6 @@ LAYOUT = (
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
               "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
-    (WRITERS, ("agent",)),
     (STORE, ("init", "range", "import", "import-md", "export", "integrate",
              "incoming")),
     (WORK, ("task",)),
@@ -141,7 +136,7 @@ def _roles(*pairs: tuple[str, str]) -> dict[str, str]:
 #: other rather than read side by side by somebody who remembers to.
 ROLES = _roles(
     (READ, "read"), (HONEST, "honest"), (RECORD, "record"), (STAGE, "stage"),
-    (STORE, "store"), (WORK, "work"), (WEB, "web"), (WRITERS, "writers"),
+    (STORE, "store"), (WORK, "work"), (WEB, "web"),
     (T_READ, "read"), (T_HONEST, "honest"), (T_RECORD, "record"),
     (T_STAGE, "stage"), (T_STORE, "store"),
 )
@@ -332,10 +327,10 @@ def _eff(g: Graph, skip: int | None = None) -> Graph:
         raise typer.Exit(1) from None
 
 
-def _vet_all(g: Graph, ops: list[dict]) -> None:
+def _vet_all(g: Graph, ops: list[dict], *, new_area: bool = False) -> None:
     """`pending.vet_all`, with a refusal turned into a clean CLI exit."""
     try:
-        pending.vet_all(g, ops)
+        pending.vet_all(g, ops, new_area=new_area)
     except pending.ApplyError as exc:
         con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
@@ -1046,8 +1041,17 @@ def context(
 app.command(name="why", rich_help_panel=READ)(context)
 
 
-@app.command(rich_help_panel=READ)
-def areas() -> None:
+areas_app = typer.Typer(
+    add_completion=False,
+    invoke_without_command=True,
+    help="The vocabulary this project files its records under, in both "
+         "stores. Areas accumulate: nothing has to be declared first.",
+)
+app.add_typer(areas_app, name="areas", rich_help_panel=READ)
+
+
+@areas_app.callback(invoke_without_command=True)
+def areas(ctx: typer.Context) -> None:
     """Counts by area and status, in whichever stores this project has.
 
     Two tables rather than one, because the two stores share their areas and
@@ -1056,12 +1060,22 @@ def areas() -> None:
     as if they were the same thing. Sharing the *areas* is the point — the same
     corner of a project, seen as what is undecided and as what is outstanding.
 
+    **Every area either store knows**, in both tables, which is what "share
+    their areas" has always claimed and did not used to mean: the two `areas`
+    lists were independent fields written only by `init`, and three commands
+    were enough to reach a pair that disagreed. Each table now lists the union,
+    so an area used only for work still has a row on the decision side — a zero
+    there is a real answer, and it is where a question about that corner would
+    go if anybody opened one.
+
     A project with only one store gets only its table, and pays nothing for the
     other. A store that exists and cannot be read is the case those two do not
     cover: this command's whole answer is the counts, so a missing table is a
     missing answer, said in the vocabulary of counts and exited on. Printing
     the other table and stopping at zero would hand a script half a total.
     """
+    if ctx.invoked_subcommand is not None:
+        return
     proj = project.find()
     g, unreadable = _decisions_state()
     tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
@@ -1069,13 +1083,17 @@ def areas() -> None:
         con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
                   f"[dim]run `dg init` there, or pass --project PATH[/]")
         raise typer.Exit(2)
+    every = _area_union(g, tg)
     if g is not None:
-        _area_counts("Decisions", g.areas, list(g.vertices.values()),
+        _area_counts("Decisions", every, list(g.vertices.values()),
                      lambda v: v.base_status, _style)
     if tg is not None:
-        _area_counts("Tasks", tg.areas, list(tg.tasks.values()),
+        _area_counts("Tasks", every, list(tg.tasks.values()),
                      lambda t: t.status,
                      lambda s: TASK_STYLE.get(s, "white"))
+    if not every:
+        con.print("[dim]no areas yet — the first record filed under one "
+                  "starts the vocabulary[/]")
     if unreadable is not None:
         # Last, so it is the line the reader ends on, and nonzero, so a caller
         # that only sees the exit code does not read a partial count as a total.
@@ -1085,8 +1103,25 @@ def areas() -> None:
         raise typer.Exit(1)
 
 
+def _area_union(g, tg) -> list[str]:
+    """Every area either store declares or uses, in reading order.
+
+    The decision store's registry first and the task store's additions after,
+    which is a choice and not an accident: the two lists are independent files
+    and neither is authoritative, so the order has to come from somewhere
+    stable. Questions come before the work that follows from them everywhere
+    else in this tool, and one order that always reads the same is worth more
+    than a merged one nobody can predict.
+    """
+    out = list(_areas.registry(g.areas, g.vertices.values())) if g else []
+    for a in (_areas.registry(tg.areas, tg.tasks.values()) if tg else []):
+        if a not in out:
+            out.append(a)
+    return out
+
+
 def _area_counts(title: str, areas, items: list, status_of, style) -> None:
-    """One store's areas against its own statuses.
+    """One store's records against its own statuses, over the shared areas.
 
     Written once and called twice rather than duplicated per store: the two
     tables are the same question asked of different records, and the way they
@@ -1103,6 +1138,122 @@ def _area_counts(title: str, areas, items: list, status_of, style) -> None:
         t.add_row(_x(a), *[str(sum(1 for i in rows if status_of(i) == st))
                            for st in statuses], str(len(rows)))
     con.print(t)
+
+
+@areas_app.command("rename")
+def areas_rename(
+    old: str = typer.Argument(..., help="the area to move records out of"),
+    new: str = typer.Argument(..., help="what to file them under instead"),
+) -> None:
+    """Refile every record in one area under another, across both stores.
+
+    **The verb that makes dropping the whitelist defensible.** Membership used
+    to be what stopped `Corpus` and `corpus` becoming two areas; the similarity
+    guard catches most of that at the door, and this is what makes the rest
+    cheap to undo. One record was always one `dg amend` — `set_fields` has
+    written `area` since it existed — and what was missing is the bulk case.
+
+    One `set_fields` per affected record, staged like everything else: nothing
+    is written until `dg apply`, and the two stores' batches stay independent,
+    so a task batch that cannot apply can never stop a decision batch that can.
+    That independence predates this command and is why it does not try to be
+    one atomic act across both.
+
+    `new` may be an area already in use — that is the merge case, and it is the
+    ordinary one — or a new name.
+
+    **The old name is left in the registry, holding nothing.** Pruning it would
+    silently move render order, since a reused area would come back at the end
+    rather than in place, and a zero row in `dg areas` says more than a row
+    that vanished. `dg areas prune` is the deliberate act.
+    """
+    proj = project.find()
+    g, unreadable = _decisions_state()
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    if unreadable is not None:
+        con.print(f"[red]{project.STORE_NAME} could not be read[/]\n"
+                  f"[dim]{_x(unreadable)}[/]")
+        raise typer.Exit(1)
+    if old == new:
+        con.print(f"[red]✗ {_x(old)} is already what it would be renamed to[/]")
+        raise typer.Exit(2)
+
+    d_ops = [{"op": "set_fields", "vertex": v.id, "area": new}
+             for v in sorted((g.vertices if g else {}).values(),
+                             key=lambda v: v.id) if v.area == old]
+    t_ops = [{"op": "set_fields", "task": t.id, "area": new}
+             for t in sorted((tg.tasks if tg else {}).values(),
+                             key=lambda t: t.id) if t.area == old]
+    if not d_ops and not t_ops:
+        con.print(f"[dim]nothing filed under {_x(old)} — `dg areas` lists what "
+                  f"is[/]")
+        return
+
+    # `--new-area` on both, because the person typed the target: a rename *is*
+    # the answer to "did you mean this area", and asking it again of somebody
+    # who just said so would make the one verb that fixes fragmentation the
+    # hardest one to run.
+    if d_ops:
+        eff = _eff(g)
+        _vet_all(eff, d_ops, new_area=True)
+        _stage_all(d_ops, against=eff)
+    if t_ops:
+        _tstage_all(t_ops, new_area=True)
+    con.print(f"[green]staged[/] {len(d_ops) + len(t_ops)} op(s): "
+              f"{_x(old)} → {_x(new)}")
+    for op in d_ops + t_ops:
+        con.print(f"  [dim]set_fields {op.get('vertex') or op['task']} "
+                  f"area={_x(new)}[/]")
+    con.print("[dim]`dg pending` to review, `dg apply` to take them — the two "
+              "stores apply as independent batches[/]")
+
+
+@areas_app.command("prune")
+def areas_prune() -> None:
+    """Drop registered areas that hold nothing, in whichever stores have them.
+
+    Deliberate, and never run on your behalf — the same reading `dg-agent
+    prune` has, which releases only names holding nothing and tells you what it
+    declined. An area that was once used is part of how the project was filed,
+    and a zero row in `dg areas` is more informative than a row that vanished:
+    it says somebody thought that corner was a thing.
+
+    Writes the stores directly, and is the one command here that does. There is
+    no op for it and there should not be: `areas` is not a record, nothing in
+    either tray addresses it, and an op kind whose whole effect is to *forget*
+    a label would be a staged act with nothing to review. What makes that safe
+    is that it is not a claim — no record moves, no answer changes, and the
+    next record filed under a pruned name registers it again.
+    """
+    proj = project.find()
+    g, unreadable = _decisions_state()
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    if unreadable is not None:
+        con.print(f"[red]{project.STORE_NAME} could not be read[/]\n"
+                  f"[dim]{_x(unreadable)}[/]")
+        raise typer.Exit(1)
+    freed: list[str] = []
+    if g is not None:
+        used = {v.area for v in g.vertices.values()}
+        gone = [a for a in g.areas if a not in used]
+        if gone:
+            g.areas = [a for a in g.areas if a in used]
+            g.save(proj.store)
+            freed += [f"{a} (decisions)" for a in gone]
+    if tg is not None:
+        used = {t.area for t in tg.tasks.values()}
+        gone = [a for a in tg.areas if a not in used]
+        if gone:
+            tg.areas = [a for a in tg.areas if a in used]
+            tg.save(proj.tasks)
+            freed += [f"{a} (tasks)" for a in gone]
+    if not freed:
+        con.print("[dim]nothing to prune — every registered area holds a "
+                  "record[/]")
+        return
+    con.print(f"[green]released[/] {len(freed)}: {_x(', '.join(freed))}\n"
+              f"[dim]`dg render` and `dg task render` to regenerate the "
+              f"views[/]")
 
 
 @app.command(rich_help_panel=READ)
@@ -1670,6 +1821,10 @@ def add(
     vid: str = typer.Option(None, "--id"),
     title: str = typer.Option(None, "--title", "-t"),
     area: str = typer.Option(None, "--area"),
+    new_area: bool = typer.Option(
+        False, "--new-area",
+        help="file under an area nobody has used yet, even where it resembles "
+             "one that is in use"),
     after: str = typer.Option(None, "--after", help="parent that opens this"),
     status: str = typer.Option("OPEN", "--status"),
     note: str = typer.Option(None, "--note", "-n",
@@ -1689,12 +1844,12 @@ def add(
             ("note", note),
             ("after", [x.strip() for x in after.split(",") if x.strip()] if after else None),
         ) if v}
-        ops = _compose(eff, "add_vertex", seed=seed)
+        ops = _compose(eff, "add_vertex", seed=seed, new_area=new_area)
         # The editor was the one staging route with no stage-time guard: the
         # flag path below runs `pending.compose_add` and the web app runs
         # `pending.vet`, and this ran neither, so a buffer could stage an op
         # that could never apply — in a tray every other writer shares. F30.
-        _vet_all(eff, ops)
+        _vet_all(eff, ops, new_area=new_area)
         _stage_all(ops, against=eff)
         con.print(f"[green]staged[/] {len(ops)} op(s) — add {ops[0]['id']}")
         _warn_stuck()
@@ -1718,8 +1873,8 @@ def add(
     parents = [x.strip() for x in after.split(",") if x.strip()] if after else []
     try:
         ops = pending.compose_add(eff, vid=vid, title=title, area=area,
-                                  status=status, after=parents, note=note,
-                                  stored=g)
+                                  new_area=new_area, status=status,
+                                  after=parents, note=note, stored=g)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -1752,6 +1907,10 @@ def amend(
     vid: str,
     title: str = typer.Option(None, "--title", "-t"),
     area: str = typer.Option(None, "--area"),
+    new_area: bool = typer.Option(
+        False, "--new-area",
+        help="file under an area nobody has used yet, even where it resembles "
+             "one that is in use"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what is undecided, and why"),
 ) -> None:
@@ -1782,7 +1941,7 @@ def amend(
         # `pending.vet` holds every rule — a blank title, an unknown area, an
         # op that changes nothing — because the browser can post this op as
         # data and a rule only the CLI ran would not be a rule.
-        pending.vet(eff, op)
+        pending.vet(eff, op, new_area=new_area)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -2771,539 +2930,6 @@ def render_cmd() -> None:
     con.print(f"[green]✓[/] wrote {project.find().view}")
 
 
-# ---- agents --------------------------------------------------------------
-#
-# Naming moved in here because every value `$DG_AGENT` has gone wrong on was one
-# a launcher invented. `dg` still cannot set its caller's environment, so the
-# variable stays the way a name *reaches* an agent — what these commands remove
-# is the need to make one up. See `dgraph/agents.py` for why a claim never
-# expires and why running out is an error rather than a fallback.
-
-agent_app = typer.Typer(
-    add_completion=False,
-    help="Names for the writers sharing one tray. `dg agent claim` hands out "
-         "a free one; nothing ever reuses a name behind your back.",
-)
-app.add_typer(agent_app, name="agent", rich_help_panel=WRITERS)
-
-
-@agent_app.command("claim")
-def agent_claim(
-    budget: str = typer.Option(
-        None, "--budget", "-b",
-        help="how long this agent may run: `1800`, `30m`, `2h`, or `infinite`"),
-) -> None:
-    """Take a free name and hold it. Prints the name, and nothing else.
-
-    **Bare stdout on purpose**, because the only sensible caller is a
-    substitution:
-
-        DG_AGENT=$(dg agent claim) claude -p "..."
-
-    A launcher's job, not an agent's: shell state does not survive between a
-    coding agent's tool calls, so one that claimed a name for itself could not
-    hold on to it.
-
-    `--budget` records how long the agent may run. Nothing here stops it at
-    that point — `dg` is not in the agent's process tree, and `timeout 1800
-    <however you spawn one>` is the launcher's half. What the budget buys is
-    the *hand-back*: `dg agent expire` parks whatever an out-of-time agent is
-    holding, so work stops looking like it is being done by something that
-    stopped. See `dg agent expire` and `agentic/README.md`.
-    """
-    try:
-        seconds = limits.span(budget)
-    except limits.BadSpan as exc:
-        # Raised, where a bad `$DG_WRITE` is merely ignored. A misread budget
-        # is not a wider rule, it is a different number, and this is the one
-        # moment the launcher can still fix it.
-        con.print(f"[red]✗ {_x(exc)}[/]")
-        raise typer.Exit(1)
-    try:
-        name = agents.claim(budget=seconds)
-    except agents.Exhausted as exc:
-        # An error, never a fallback. Handing back a name somebody holds — or
-        # inventing a numbered one outside the lists — is the silent conflation
-        # the whole ownership stamp exists to prevent, and the numbered one is
-        # worse for looking deliberate.
-        con.print(f"[red]✗ no name to claim — {_x(exc)}[/]")
-        if exc.releasable:
-            # `releasable` counts leases with nothing staged, which is what
-            # `prune` used to free. It now keeps back the ones still holding
-            # DOING work, so the count is an upper bound and saying "frees
-            # those now" would promise names that stay held. The subtraction
-            # happens here because `Exhausted` is raised in a module that
-            # cannot read the task store.
-            free = exc.releasable - len(_still_working())
-            if free > 0:
-                con.print(f"[dim]{free} have nothing staged under them: "
-                          f"`dg agent prune` frees those now[/]")
-            else:
-                con.print("[dim]every idle name is still holding work — "
-                          "`dg agent expire`, or park what is DOING, then "
-                          "`dg agent prune`[/]")
-        else:
-            con.print("[dim]every name has ops in a tray — `dg apply` or "
-                      "`dg clear` first, then `dg agent prune`[/]")
-        raise typer.Exit(1)
-    # `print`, not `con.print`: rich wraps at the terminal width and would put a
-    # newline inside a long name, and this string is going into a variable.
-    print(name)
-
-
-@agent_app.command("list")
-def agent_list() -> None:
-    """Every name held, when it was claimed, and what it still has staged."""
-    leases = agents.load()
-    staged = agents.in_trays(project.find())
-    if not leases and not staged:
-        con.print("[dim]no names claimed[/]")
-        return
-    t = Table(header_style="bold", title="Names held")
-    for c in ("Name", "Since", "Staged", "Holding", "Budget", "Seen"):
-        t.add_column(c)
-    quiet_names = {r["agent"] for r in agents.silent()}
-    # Names with ops but no lease are listed too, and marked. That is what a
-    # hand-set `$DG_AGENT` looks like, and a roster of leases alone would say
-    # the tray was unowned while somebody's drafts sat in it.
-    for name in sorted(set(leases) | set(staged)):
-        rec = leases.get(name, {})
-        since = rec.get("since", "[dim]not claimed here[/]")
-        left = agents.remaining(rec)
-        if rec.get("budget") is None:
-            spend = "[dim]—[/]"
-        elif left is not None and left < 0:
-            # The one cell worth a colour: an agent past its budget and still
-            # holding work is the state `dg agent expire` exists for, and it is
-            # invisible in every other reading of a run.
-            spend = f"[red]SPENT +{limits.approx_span(-left)}[/]"
-        else:
-            spend = (f"{limits.show_span(rec['budget'])}"
-                     f" ({limits.approx_span(left)} left)")
-        quiet = agents.quiet_for(rec)
-        if quiet is None:
-            seen = "[dim]—[/]"
-        elif name in quiet_names:
-            # Yellow, never red: this is the one column that can be wrong. An
-            # agent in a long build is silent in exactly the same way a dead
-            # one is, and the colour should not claim otherwise.
-            seen = f"[yellow]silent {limits.approx_span(quiet)}[/]"
-        else:
-            seen = limits.approx_span(quiet)
-        t.add_row(_x(name), since, str(staged.get(name, 0)),
-                  ", ".join(rec.get("holding") or ()) or "[dim]—[/]", spend,
-                  seen)
-    con.print(t)
-    if any(agents.over_budget()):
-        con.print("[dim]`dg agent expire` hands back what the spent ones "
-                  "hold[/]")
-    if quiet_names:
-        # No command is offered, deliberately. An elapsed budget is a fact and
-        # `expire` acts on it; silence is a suspicion, and the only safe next
-        # step is a person deciding whether that agent is thinking or gone.
-        con.print(f"[dim]silent = no `dg` call and no file write for "
-                  f"{limits.approx_span(limits.silent_after())}, while holding "
-                  f"work. A long build looks the same as a dead agent — check "
-                  f"before parking anything. ${limits.SILENT_ENV} sets the "
-                  f"window[/]")
-    con.print(f"[dim]{len(agents.sequence()) - len(set(leases) | set(staged))} "
-              f"of {len(agents.sequence())} names free[/]")
-
-
-@agent_app.command("release")
-def agent_release(
-    name: str = typer.Argument(..., help="the name to stop holding"),
-    force: bool = typer.Option(
-        False, "--force",
-        help="release even while it holds DOING work, stranding those tasks"),
-) -> None:
-    """Stop holding one name, so it can be claimed again.
-
-    Says nothing about the tray: releasing a name whose ops are still staged is
-    legitimate — the launcher is done, the review is not — and `dg agent claim`
-    still will not hand it out while those ops are there.
-
-    It does say something about held **work**, and refuses. The same stranding
-    `dg agent prune` avoids arrives through this door one name at a time; see
-    that command for what it costs. `--force` overrides.
-    """
-    if not force:
-        held = _still_working().get(name)
-        if held:
-            con.print(f"[red]✗ {_x(name)} still holds {', '.join(held)}[/]\n"
-                      f"[dim]releasing it now strands that work — DOING, with "
-                      f"no holder recorded and `dg task start` refusing it. "
-                      f"`dg agent expire`, or `dg task park <id> --why …`, "
-                      f"then release. `--force` releases anyway[/]")
-            raise typer.Exit(1)
-    if not agents.release(name):
-        con.print(f"[red]nothing released — {_x(name)} is not held[/]\n"
-                  f"[dim]`dg agent list` shows what is[/]")
-        raise typer.Exit(1)
-    con.print(f"[green]released[/] {_x(name)}")
-
-
-@agent_app.command("prune")
-def agent_prune(
-    force: bool = typer.Option(
-        False, "--force",
-        help="release names still holding DOING work, stranding those tasks"),
-) -> None:
-    """Release every name with no ops left in either tray.
-
-    Deliberate, and never run on your behalf. A name with nothing staged can
-    still belong to an agent that has not staged *yet*, so this is safe when a
-    person knows the round is over and unsafe as a rule a timer applies.
-
-    **A name still holding DOING work is kept back**, because "nothing staged"
-    and "finished" are not the same thing and the gap between them is the first
-    minute of every agent's life. Dropping such a lease strands the task: it
-    stays `DOING`, its holder stops being recorded anywhere, and `dg task start`
-    refuses it as taken — so no other agent can pick it up and only a
-    hand-written park recovers it. Nothing detects that afterwards either,
-    because a task `DOING` with no holder is exactly what an ordinary solo
-    `dg task start` leaves behind.
-
-    `--force` releases them anyway. It is here because a rule that cannot be
-    overridden is a rule people route around, and because the stranding is
-    sometimes what you want — a run whose tasks you are about to drop.
-    """
-    # Passed as a callable, not as a set: `agents.prune` evaluates it inside
-    # the lease lock, so an agent claiming work between the judgement and the
-    # delete it authorises cannot be stranded by it. See that function; audit
-    # `M-F6`. `holders` below is what it actually saw, for the message.
-    holders: dict[str, list[str]] = {}
-
-    def keep():
-        holders.update({} if force else _still_working())
-        return holders
-
-    gone = agents.prune(keep=keep)
-    kept = sorted(holders)
-    if not gone and not kept:
-        con.print("[dim]nothing to prune — every name held has ops staged[/]")
-        return
-    if gone:
-        con.print(f"[green]released[/] {len(gone)}: {_x(', '.join(sorted(gone)))}")
-    for line in _stranding(kept, holders):
-        con.print(line)
-    if kept:
-        con.print("[dim]`dg agent expire` parks what an out-of-time agent "
-                  "holds, or `dg task park <id> --why …` by hand — then prune "
-                  "again. `--force` releases them and strands the work[/]")
-
-
-@agent_app.command("setup")
-def agent_setup(
-    focus: str = typer.Option(None, "--focus",
-                              help="comma-separated ids the fan-out is for; "
-                                   "their chains are pasted into the prompt"),
-    n: int = typer.Option(None, "--agents", "-n", help="how many to launch"),
-    host: str = typer.Option(None, "--host", help="claude | opencode"),
-    decide: str = typer.Option(None, "--decide", help="open | evidence | never"),
-    write_scope: str = typer.Option(None, "--write", help="open | launch"),
-    budget: str = typer.Option(None, "--budget",
-                               help="`30m`, `1800`, or `infinite`"),
-    terse: str = typer.Option(None, "--terse",
-                              help="`on`, a character count, or `off` — how "
-                                   "long a field may be before the "
-                                   "development belongs in a file"),
-    brief: str = typer.Option(None, "--brief",
-                              help="one paragraph: what a good session produces"),
-    read: list[str] = typer.Option(None, "--read", metavar="PATH:WHAT",
-                                   help="a file the agents may read, and what "
-                                        "it is; repeatable"),
-    findings: str = typer.Option(None, "--findings",
-                                 help="where an agent puts what it produces"),
-    capture: bool = typer.Option(False, "--capture",
-                                 help="record every `dg` call of the run"),
-    out: str = typer.Option(None, "--out", help=f"output dir (default {fanout.OUT_DIR}/)"),
-    plain: bool = typer.Option(False, "--plain",
-                               help="ask a question at a time, never the "
-                                    "full-screen form"),
-    dry_run: bool = typer.Option(False, "--dry-run",
-                                 help="print both artefacts, write nothing"),
-    as_json: bool = typer.Option(False, "--json",
-                                 help="readiness and defaults, machine form"),
-) -> None:
-    """Set up a fan-out: check what is ready, then write the prompt and launcher.
-
-    Three ways in, one result. **With no arguments and a terminal** it asks:
-    a single-screen form where `textual` is installed, a question at a time
-    otherwise — the second needs nothing the tool does not already have, so
-    interactive setup always works and `--plain` picks it deliberately.
-    **With flags** it is entirely non-interactive, which is how an agent inside
-    Claude Code or opencode uses it, since neither can drive a full-screen app.
-    **With `--json`** it reports readiness and the defaults it would use, so an
-    agent can put the three questions the graph cannot answer to the person and
-    then call back with flags.
-
-    Everything else the template asks for is filled from the graph: the
-    project, the chain behind each focus id pasted verbatim from
-    `dg context --full`, which policies are in force and what each means, the
-    write roots, the budget. Only three answers are yours — what the fan-out is
-    for, what the agents may read, and where findings go.
-
-    Writes `fanout/scout.md` and `fanout/launch.sh`. Neither is scratch: a
-    filled prompt is the thing you want to read back and reuse, so it is not
-    hidden under `.dgraph-*`.
-    """
-    proj = project.find()
-    checks = fanout.readiness(proj)
-    plan = fanout.defaults(proj)
-
-    if as_json:
-        print(json.dumps({
-            "ready": all(c.ok for c in checks),
-            "checks": [{"ok": c.ok, "label": c.label, "fix": c.fix}
-                       for c in checks],
-            "defaults": {"focus": plan.focus, "agents": plan.agents,
-                         "host": plan.host, "decide": plan.decide,
-                         "write": plan.write, "budget": plan.budget,
-                         "terse": plan.terse,
-                         "findings": plan.findings, "out": plan.out},
-            "asks": ["--brief", "--read PATH:WHAT", "--findings"],
-        }, ensure_ascii=False))
-        return
-
-    given = {"focus": focus, "agents": n, "host": host, "decide": decide,
-             "write": write_scope, "budget": budget, "terse": terse,
-             "brief": brief, "read": read, "findings": findings, "out": out}
-    interactive = not any(v not in (None, (), []) for v in given.values())
-
-    for c in checks:
-        con.print(f"[{'green' if c.ok else 'yellow'}]"
-                  f"{'✓' if c.ok else '!'}[/] {_x(c.label)}"
-                  + (f"  [dim]{c.fix}[/]" if not c.ok and c.fix else ""))
-    if not all(c.ok for c in checks[:2]):
-        con.print("[red]✗ this project has no graph to fan out against[/]")
-        raise typer.Exit(2)
-
-    if interactive:
-        plan = _setup_interactively(plan, proj, plain)
-        if plan is None:
-            con.print("[dim]cancelled — nothing written[/]")
-            raise typer.Exit(1)
-    else:
-        try:
-            plan = _setup_from_flags(plan, given)
-        except ValueError as exc:
-            con.print(f"[red]✗ {_x(exc)}[/]")
-            raise typer.Exit(2) from None
-        plan = replace(plan, capture=capture)
-
-    if dry_run:
-        con.print("[dim]— fanout/scout.md —[/]")
-        print(fanout.render_scout(plan, proj))
-        con.print("[dim]— fanout/launch.sh —[/]")
-        print(fanout.render_launch(plan, proj))
-        con.print("[dim]--dry-run: nothing written[/]")
-        return
-    written = fanout.write(plan, proj)
-    for p in written:
-        con.print(f"[green]wrote[/] {p.relative_to(proj.root)}")
-    con.print(f"[dim]read {written[0].relative_to(proj.root)} before launching "
-              f"— the three answers only you can give are near the top. Then "
-              f"`./{written[1].relative_to(proj.root)}`[/]")
-
-
-def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
-    """CLI flags to a `Plan`, refusing a value that is not one of the choices.
-
-    Refused rather than defaulted: a launcher that typed `--decide evidenced`
-    means to constrain its agents, and quietly running them unconstrained is
-    the failure the flag exists to prevent. `$DG_WRITE` defaults a bad value
-    because it is read on every judged write; this is read once, out loud.
-    """
-    def one_of(name, value, allowed):
-        if value is None:
-            return getattr(plan, name if name != "write" else "write")
-        if value not in allowed:
-            raise ValueError(f"--{name} must be one of "
-                             f"{', '.join(sorted(allowed))}, not {value!r}")
-        return value
-
-    reads = []
-    for item in (given["read"] or ()):
-        path, _, what = item.partition(":")
-        if not path:
-            raise ValueError(f"--read wants PATH:WHAT, got {item!r}")
-        reads.append((path, what.strip() or "(not described)"))
-
-    budget = plan.budget
-    if given["budget"] is not None:
-        budget = limits.span(given["budget"])
-
-    # Refused rather than defaulted, like `--decide`, and unlike the
-    # environment variable this ends up in. `limits.terse_limit` fails open
-    # because it is read on the path of every stage; a typo *here* is read
-    # once, out loud, by somebody who meant to constrain their agents.
-    terse = plan.terse
-    if given["terse"] is not None:
-        terse = given["terse"].strip().lower()
-        if terse not in limits.TERSE_OFF and limits.terse_limit(terse) is None:
-            raise ValueError(
-                f"--terse wants `on`, `off`, or a character count, not "
-                f"{given['terse']!r}")
-
-    return replace(
-        plan,
-        focus=[s.strip() for s in given["focus"].split(",") if s.strip()]
-              if given["focus"] else plan.focus,
-        agents=given["agents"] or plan.agents,
-        host=one_of("host", given["host"], set(fanout.HOSTS)),
-        decide=one_of("decide", given["decide"], set(cross.POLICIES)),
-        write=one_of("write", given["write"], set(limits.WRITE_POLICIES)),
-        budget=budget,
-        terse=terse,
-        brief=given["brief"] or plan.brief,
-        reads=reads or plan.reads,
-        findings=given["findings"] or plan.findings,
-        out=given["out"] or plan.out,
-    )
-
-
-#: What a missing `textual` says. A constant so a test can render it: `[tui]`
-#: is rich markup unless escaped, and the first version of this message came
-#: out as `pip install 'dear-guide'` — an install hint that silently dropped
-#: the extra it was telling you to install.
-TUI_HINT = ("[dim]a single-screen form is available with `pip install "
-            + escape("'dear-guide[tui]'") + "`[/]")
-
-
-def _has_tui() -> bool:
-    try:
-        import textual  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-def _setup_interactively(plan: fanout.Plan, proj,
-                         plain: bool) -> fanout.Plan | None:
-    """Ask, however this terminal allows. `wizard.collect` decides between the
-    full-screen form and the question-at-a-time one.
-
-    A missing `textual` costs nothing here: the plain collector asks the same
-    questions and writes the same files, so the extra is mentioned once, as an
-    upgrade, and never as a refusal. It used to be a refusal, which made
-    interactive setup unavailable to anyone who had not installed an optional
-    dependency — for a command whose whole job is being the easy way in.
-    """
-    from dgraph import wizard
-    try:
-        got = wizard.collect(plan, proj, interactive=_interactive(),
-                             prefer_tui=not plain)
-    except wizard.NoTerminal as exc:
-        con.print(f"[yellow]![/] {_x(exc)}")
-        raise typer.Exit(2) from None
-    if not plain and not _has_tui():
-        con.print(TUI_HINT)
-    return got
-
-
-def _still_working() -> dict[str, list[str]]:
-    """`{agent: [tids]}` for leases holding work that is genuinely still DOING.
-
-    The guard behind `prune` and `release`, and the reason it is here rather
-    than in `agents.py`: answering it means reading the task store, which that
-    module deliberately knows nothing about.
-
-    Soft on purpose. A project with no task store cannot strand a task, and
-    `dg agent prune` has always worked without one — so a missing store is an
-    empty answer rather than the exit `_tg` would raise. The lease's `holding`
-    list is filtered against real statuses because `drop_hold` clears it only
-    when work leaves DOING through this CLI; a task parked by somebody else
-    leaves an entry behind, and keeping a name alive over a stale one would
-    make `prune` useless exactly when a run is over.
-    """
-    proj = project.find()
-    if not proj.has_tasks:
-        return {}
-    try:
-        tg = _teff(TaskGraph.load(proj.tasks))
-    except (OSError, ValueError, typer.Exit):
-        # A store that will not load, or a tray that no longer applies. Both
-        # are real problems with their own messages elsewhere; neither is a
-        # reason for this guard to refuse, and treating them as "nothing is
-        # held" only restores the behaviour prune had before the guard.
-        return {}
-    out: dict[str, list[str]] = {}
-    for name, rec in agents.load().items():
-        live = [t for t in (rec.get("holding") or ())
-                if t in tg.tasks and tg.tasks[t].status == "DOING"]
-        if live:
-            out[name] = live
-    return out
-
-
-def _stranding(names: list[str], holders: dict[str, list[str]]) -> list[str]:
-    """The lines explaining what was kept back, and how to release it anyway."""
-    return [f"[yellow]kept[/] {_x(n)} — still holds "
-            f"{', '.join(holders[n])}" for n in names]
-
-
-@agent_app.command("expire")
-def agent_expire() -> None:
-    """Hand back what an out-of-budget agent is holding.
-
-    A task left `DOING` by an agent that stopped reads exactly like one being
-    worked on. That is the failure the lease file exists to make visible, and
-    `dg task park --why` is the verb that already fixes it — so an expired
-    budget parks, naming the budget as what stopped the work. Parked work is
-    still outstanding, so nothing downstream is released: the next agent can
-    pick it up, which is the whole point.
-
-    **This does not stop a process.** `dg` is not in the agent's process tree
-    and never was; `timeout 1800 <however you spawn one>` is the launcher's
-    half. This is the half that makes the queue honest afterwards, and it is
-    worth running even when the agent died on its own.
-
-    Staged, like everything else — each park goes into the tray under the
-    *agent's own name*, so `dg pending --agent <name>` shows it beside whatever
-    that agent had already proposed and `dg apply --agent <name>` takes the
-    batch. There is no `--apply` here on purpose: `dg apply` is the only door
-    that writes, and a second one would be a second place the tray's ownership
-    rules have to be right.
-    """
-    spent = agents.over_budget()
-    if not spent:
-        con.print("[dim]nothing expired — every budget has time on it[/]")
-        return
-    tg = _teff(_tg())
-    staged = 0
-    for rec in spent:
-        name, over = rec["agent"], limits.approx_span(rec["over"])
-        held = [t for t in rec["holding"]
-                if t in tg.tasks and tg.tasks[t].status == "DOING"]
-        idle = [t for t in rec["holding"] if t not in held]
-        if not held:
-            # Said, not skipped silently. An agent that spent its budget
-            # holding nothing is the "died before it started" case, and it is
-            # the one a roster of parked tasks would never show.
-            con.print(f"[yellow]{_x(name)}[/] is {over} over budget and holds "
-                      f"nothing" + (f" (already left {', '.join(idle)})"
-                                    if idle else ""))
-            continue
-        why = (f"budget spent: {name} was given "
-               f"{limits.show_span(rec['budget'])} and is {over} past it")
-        # One write per agent, not one per task. A hand-back is a group: a tray
-        # read between two of these would show half of it, and `_tstage_all`
-        # exists for exactly that. It cannot be one write across *all* agents,
-        # because `as_owner` stamps a whole call and each batch carries its own
-        # agent's name.
-        with pending.as_owner(name):
-            _tstage_all([{"op": "set_status", "task": tid, "status": "PARKED",
-                          "why": why, "date": _date.today().isoformat()}
-                         for tid in held])
-        staged += len(held)
-        con.print(f"[green]staged[/] park of {', '.join(held)} "
-                  f"[dim]as {_x(name)}, {over} over budget[/]")
-    if staged:
-        con.print(f"[dim]{staged} park(s) staged — `dg pending` to read them, "
-                  f"`dg apply` to take them[/]")
-
-
 # ---- tasks ---------------------------------------------------------------
 #
 # A separate store, a separate staging file and a separate view, so that work
@@ -3374,7 +3000,7 @@ def _tstage(op: dict) -> None:
     _tstage_all([op])
 
 
-def _tstage_all(ops: list[dict]) -> None:
+def _tstage_all(ops: list[dict], *, new_area: bool = False) -> None:
     """Vet a group against the effective task graph, then stage it as one write.
 
     `pending.stage_all`'s argument, applied to the store that did not have it.
@@ -3397,7 +3023,7 @@ def _tstage_all(ops: list[dict]) -> None:
     if not ops:
         return
     try:
-        task_pending.vet_all(_teff(_tg()), ops)
+        task_pending.vet_all(_teff(_tg()), ops, new_area=new_area)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -3441,6 +3067,10 @@ def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
                   "`dg task node <id>` for one piece of work in full[/]")
     go = (task_editor.compose_add if kind == "add_task"
           else task_editor.compose_done)
+    # `compose_done` has no area to judge, so the flag is meaningless to it and
+    # passing it would be a keyword it does not take.
+    if kind != "add_task":
+        kw.pop("new_area", None)
     try:
         # The *effective* decision graph, as the composers resolve it: the two
         # doors onto `Because` must accept the same ids, and the buffer's
@@ -3498,18 +3128,19 @@ def _twarn_stuck() -> None:
 
 
 @task_app.command("init", rich_help_panel=T_STORE)
-def task_init(
-    areas: str = typer.Option(
-        "General", "--areas",
-        help="comma-separated area names, used to group the rendered view",
-    ),
-) -> None:
-    """Start an empty task graph in this directory."""
+def task_init() -> None:
+    """Start an empty task graph in this directory.
+
+    No `--areas`, for the reason `dg init` gives: this half of the pair
+    defaulting to `General` while the other half had been given a real list is
+    exactly how two stores that are documented to share their areas came to
+    disagree in three commands.
+    """
     proj = project.find()
     if proj.has_tasks:
         con.print(f"[red]{proj.tasks} already exists[/]")
         raise typer.Exit(1)
-    tg = TaskGraph(areas=[a.strip() for a in areas.split(",") if a.strip()])
+    tg = TaskGraph()
     tg.save(proj.tasks)
     con.print(f"[green]✓[/] created {proj.tasks}; run `dg task render` for "
               f"{proj.task_view.name}")
@@ -3545,6 +3176,10 @@ def task_add(
     tid: str = typer.Option(None, "--id"),
     title: str = typer.Option(None, "--title", "-t"),
     area: str = typer.Option(None, "--area"),
+    new_area: bool = typer.Option(
+        False, "--new-area",
+        help="file under an area nobody has used yet, even where it resembles "
+             "one that is in use"),
     after: str = typer.Option(None, "--after",
                               help="comma-separated tasks that must come first"),
     discovered_during: str = typer.Option(
@@ -3569,12 +3204,12 @@ def task_add(
             ("after", _csv(after)),
             ("discovered_during", _csv(discovered_during)),
         ) if v}
-        ops = _tcompose("add_task", tg, seed=seed)
+        ops = _tcompose("add_task", tg, seed=seed, new_area=new_area)
         # Vetted before staging, exactly as `dg add --edit` is: the buffer is
         # the one route with no flag-path guard in front of it, and a tray
         # every other writer shares is the wrong place to discover that an op
         # can never apply. F30.
-        _tstage_all(ops)
+        _tstage_all(ops, new_area=new_area)
         con.print(f"[green]staged[/] {len(ops)} op(s) — add {ops[0]['id']}")
         _twarn_stuck()
         return
@@ -3597,7 +3232,7 @@ def task_add(
     try:
         ops = task_pending.compose_add(
             tg, _decisions_eff_or_none(), tid=tid, title=title, area=area,
-            after=parents, discovered_during=prompted,
+            new_area=new_area, after=parents, discovered_during=prompted,
             because=_csv(because), evidence_for=evidence_for, note=note,
             stored=_tg())
     except pending.ApplyError as exc:
@@ -3752,6 +3387,10 @@ def task_amend(
     tid: str,
     title: str = typer.Option(None, "--title", "-t"),
     area: str = typer.Option(None, "--area"),
+    new_area: bool = typer.Option(
+        False, "--new-area",
+        help="file under an area nobody has used yet, even where it resembles "
+             "one that is in use"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what this work involves"),
 ) -> None:
@@ -4593,18 +4232,25 @@ def task_render_cmd() -> None:
 
 
 @app.command(rich_help_panel=STORE)
-def init(
-    areas: str = typer.Option(
-        "General", "--areas",
-        help="comma-separated area names, used to group the rendered view",
-    ),
-) -> None:
-    """Start an empty decision graph in this directory."""
+def init() -> None:
+    """Start an empty decision graph in this directory.
+
+    **No `--areas`.** It used to declare the vocabulary, at the one moment a
+    project knows least about itself — `init` is before the search, and in a
+    graph elaborated backwards from a sink the areas are a *finding*. Worse,
+    the flag was the direct cause of the divergence it looked like it was
+    preventing: `dg init --areas corpus,harness` followed by `dg task init`
+    left the two stores with different lists, and the third command refused an
+    area the first had declared.
+
+    Areas accumulate instead. The op that first files a record under one
+    registers it, in the store it writes, and every reader takes the union.
+    """
     proj = project.find()
     if proj.has_decisions:
         con.print(f"[red]{proj.store} already exists[/]")
         raise typer.Exit(1)
-    g = Graph(areas=[a.strip() for a in areas.split(",") if a.strip()])
+    g = Graph()
     g.save(proj.store)
     con.print(f"[green]✓[/] created {proj.store}; run `dg render` for "
               f"{proj.view.name}")

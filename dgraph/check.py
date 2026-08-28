@@ -37,7 +37,6 @@ CHECKS: tuple[str, ...] = (
     "verbose_field",
     # the task store; absent in most projects, checked only when present
     "task_ids_wellformed",
-    "task_area_known",
     "task_status_legal",
     "task_no_dangling_refs",
     "task_edge_kind",
@@ -97,7 +96,6 @@ ORIGIN: dict[str, str] = {
     "acyclic": DECISION,
     "stale_view": DECISION,
     "task_ids_wellformed": TASK,
-    "task_area_known": TASK,
     "task_status_legal": TASK,
     "task_no_dangling_refs": TASK,
     "task_edge_kind": TASK,
