@@ -16,6 +16,11 @@ dependencies = ["typer>=0.9", "rich>=13"]
 # pytest is part of what it offers, not just how it is developed.
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+# `dg agent setup` without arguments. The wizard's non-interactive form -- the
+# one an agent inside Claude Code or opencode uses -- needs none of this, and
+# neither does anything else here, so a two-dependency install stays a
+# two-dependency install.
+tui = ["textual>=0.50"]
 
 [project.scripts]
 dg = "dgraph.cli:main"
@@ -37,4 +42,4 @@ pythonpath = ["."]
 packages = ["dgraph"]
 
 [tool.setuptools.package-data]
-dgraph = ["static/*.html", "elisp/*.el"]
+dgraph = ["static/*.html", "elisp/*.el", "prompts/*.md"]

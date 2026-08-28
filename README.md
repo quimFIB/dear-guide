@@ -187,6 +187,7 @@ dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
 dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds
 dg repair                                # a store a merge broke: stage the missing propagation
+dg agent setup                           # a fan-out's prompt and launcher — TUI, flags, or --json
 dg agent claim                           # a free name for one writer, printed bare
 dg agent claim --budget 30m              # ...and how long it may run before its work is handed back
 dg agent list                            # who holds a name, what they hold, what is staged, time left

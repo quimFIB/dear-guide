@@ -182,6 +182,10 @@ def test_every_staging_command_is_covered():
         # order.
         ("agent", "claim"), ("agent", "list"), ("agent", "release"),
         ("agent", "prune"),
+        # Writes `fanout/scout.md` and `fanout/launch.sh` — files a person
+        # reads and edits, not ops anybody applies. Nothing it produces goes
+        # near a tray.
+        ("agent", "setup"),
     }
     #: Commands that DO write a tray but cannot be expressed as a `CASES` entry,
     #: with the test that covers them instead. Separate from `NO_TRAY` because

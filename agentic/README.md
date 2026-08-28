@@ -337,12 +337,24 @@ DG_AGENT=$(dg agent claim) claude -p "$(cat agentic/prompts/scout.md)"      # Cl
 DG_AGENT=$(dg agent claim) opencode run "$(cat agentic/prompts/scout.md)"   # opencode
 ```
 
-`agentic/prompts/scout.md` is a **template, not a prompt** — the four things
-below with every project-specific part left as `⟨…⟩`. What an agent should be
+`agentic/prompts/scout.md` is a **template, not a prompt** — everything below
+with each project-specific part left as a `⟨TOKEN⟩`. What an agent should be
 told depends on what the fan-out is for, so the blanks are the work; running it
 unfilled gets you an agent that has been told nothing. `orchestrator.md` beside
 it is the same for an agent that spawns and watches rather than works.
-`RUNNING.md` is the whole procedure end to end.
+
+**`dg agent setup` fills them.** Most tokens come straight from the graph —
+the project, the areas, the policies in force and what each means, the write
+roots, the budget, and each focus id's full chain pasted from
+`dg context --full`. Three do not: what the fan-out is for, what the agents may
+read, where findings go. A TUI if you are at a terminal
+(`pip install 'dear-guide[tui]'`), flags otherwise, and the flag form is what an
+agent inside Claude Code or opencode uses since neither can drive a full-screen
+app. `RUNNING.md` §0.5 has it; `RUNNING.md` end to end is the procedure it
+automates.
+
+Both files live in `dgraph/prompts/` and are reached here by symlink, so an
+installed `dg` carries them and there is exactly one copy to keep true.
 
 `DG_DECIDE` is the other half of the launch, and the table at the top of this
 file is what the values mean. Set it here rather than trusting the prompt: an

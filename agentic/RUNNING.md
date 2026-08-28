@@ -41,6 +41,50 @@ the link that lets an agent close a question *because it measured the answer*.
 
 ---
 
+## 0.5 · The short way: `dg agent setup`
+
+Everything in §1 and §2 by hand, or one command that writes both artefacts:
+
+```sh
+dg agent setup                    # a TUI, if you are at a terminal
+```
+
+It checks what is ready, asks what it cannot work out, and writes
+`fanout/scout.md` (the prompt, no ⟨…⟩ left in it) and `fanout/launch.sh` (one
+line per agent, environment already right). Read the prompt, then run the
+launcher.
+
+**Most of the prompt fills itself.** The project, the areas in use, which
+policies are in force and what each one *means* in practice, the write roots,
+the budget — and the full chain behind each focus id, pasted verbatim from
+`dg context --full`, which is the single thing a fresh context cannot
+reconstruct. Three answers are yours: what the fan-out is for, what the agents
+may read, and where findings go.
+
+**The TUI is optional and so is its dependency.** `pip install 'dear-guide[tui]'`
+adds `textual`; without it the command still works, because every answer is also
+a flag:
+
+```sh
+dg agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
+  --budget 30m --brief "settle the Search frontier" \
+  --read "bench/README.md:how the sweep is run" --findings "findings/<id>.md"
+```
+
+**That flag form is how this works from inside Claude Code or opencode.** An
+agent cannot drive a full-screen app, so it reads `dg agent setup --json` —
+readiness, the defaults, and the three things it must still ask — puts those
+questions to the person, and calls back with flags. Both paths run the same
+code and produce the same bytes, which a test asserts; a wizard whose two doors
+disagreed would set up a run one way and describe it the other.
+
+`--dry-run` prints both files and writes nothing.
+
+The rest of this file is what the wizard automates, and is worth reading once
+before trusting it.
+
+---
+
 ## 1 · Launching agents manually
 
 One line per agent. **You** claim the name; the agent never claims its own —

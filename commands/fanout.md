@@ -8,6 +8,10 @@ a name right now:
 
 !`dg agent list`
 
+...whether this project is ready for one, and what `dg agent setup` would use:
+
+!`dg agent setup --json`
+
 ...what each of them is holding, and what is ready for whoever asks next:
 
 !`dg task`
@@ -68,6 +72,25 @@ behind what it decided, which is what the graph is for. If this run needs to
 become a demo, or somebody has to audit what was proposed rather than what was
 taken, `agentic/bin/dg` first on `$PATH` records every call and both trays —
 turn it on before the run, not during.
+
+**`dg agent setup` writes the prompt and the launcher.** Most of what a scout
+prompt needs is already in the graph — the project, the areas, the full chain
+behind each focus id (pasted verbatim, which is the part a fresh context cannot
+reconstruct), which policies are in force and what each means, the write roots,
+the budget. Three answers are not: what the fan-out is *for*, what the agents
+may read, and where findings go.
+
+From a session, ask the person those three, then call it with flags — the TUI
+form needs a real terminal and cannot be driven from here:
+
+```sh
+dg agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
+  --budget 30m --brief "…" --read "path:what it is" --findings "findings/<id>.md"
+```
+
+`--dry-run` prints both files without writing them. It produces `fanout/scout.md`
+and `fanout/launch.sh`; read the prompt before launching, since the three answers
+above are the ones worth checking.
 
 Review one proposal at a time: `dg pending --agent <name>` to read it, `dg serve`
 to see it as a graph with staging applied, `dg apply --agent <name>` to take it,

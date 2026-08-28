@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import sys
+from dataclasses import replace
 from datetime import date as _date
 
 import typer
@@ -22,7 +23,7 @@ from dgraph import agents, applying
 from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
-from dgraph import cross, editor, limits, pending, project, ranges, render, task_editor
+from dgraph import cross, editor, fanout, limits, pending, project, ranges, render, task_editor
 from dgraph import integrate as integrate_mod
 from dgraph import task_pending, task_render
 from dgraph import query as _query
@@ -2957,6 +2958,170 @@ def agent_prune(
         con.print("[dim]`dg agent expire` parks what an out-of-time agent "
                   "holds, or `dg task park <id> --why …` by hand — then prune "
                   "again. `--force` releases them and strands the work[/]")
+
+
+@agent_app.command("setup")
+def agent_setup(
+    focus: str = typer.Option(None, "--focus",
+                              help="comma-separated ids the fan-out is for; "
+                                   "their chains are pasted into the prompt"),
+    n: int = typer.Option(None, "--agents", "-n", help="how many to launch"),
+    host: str = typer.Option(None, "--host", help="claude | opencode"),
+    decide: str = typer.Option(None, "--decide", help="open | evidence | never"),
+    write_scope: str = typer.Option(None, "--write", help="open | launch"),
+    budget: str = typer.Option(None, "--budget",
+                               help="`30m`, `1800`, or `infinite`"),
+    brief: str = typer.Option(None, "--brief",
+                              help="one paragraph: what a good session produces"),
+    read: list[str] = typer.Option(None, "--read", metavar="PATH:WHAT",
+                                   help="a file the agents may read, and what "
+                                        "it is; repeatable"),
+    findings: str = typer.Option(None, "--findings",
+                                 help="where an agent puts what it produces"),
+    capture: bool = typer.Option(False, "--capture",
+                                 help="record every `dg` call of the run"),
+    out: str = typer.Option(None, "--out", help=f"output dir (default {fanout.OUT_DIR}/)"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="print both artefacts, write nothing"),
+    as_json: bool = typer.Option(False, "--json",
+                                 help="readiness and defaults, machine form"),
+) -> None:
+    """Set up a fan-out: check what is ready, then write the prompt and launcher.
+
+    Three ways in, one result. **With no arguments and a real terminal** it
+    opens a TUI (`pip install dear-guide[tui]`). **With flags** it is entirely
+    non-interactive, which is how an agent inside Claude Code or opencode uses
+    it — those cannot drive a full-screen app, and a wizard only a human can
+    run is not a wizard for this tool. **With `--json`** it reports readiness
+    and the defaults it would use, so an agent can ask the person the three
+    questions the graph cannot answer and then call back with flags.
+
+    Everything else the template asks for is filled from the graph: the
+    project, the chain behind each focus id pasted verbatim from
+    `dg context --full`, which policies are in force and what each means, the
+    write roots, the budget. Only three answers are yours — what the fan-out is
+    for, what the agents may read, and where findings go.
+
+    Writes `fanout/scout.md` and `fanout/launch.sh`. Neither is scratch: a
+    filled prompt is the thing you want to read back and reuse, so it is not
+    hidden under `.dgraph-*`.
+    """
+    proj = project.find()
+    checks = fanout.readiness(proj)
+    plan = fanout.defaults(proj)
+
+    if as_json:
+        print(json.dumps({
+            "ready": all(c.ok for c in checks),
+            "checks": [{"ok": c.ok, "label": c.label, "fix": c.fix}
+                       for c in checks],
+            "defaults": {"focus": plan.focus, "agents": plan.agents,
+                         "host": plan.host, "decide": plan.decide,
+                         "write": plan.write, "budget": plan.budget,
+                         "findings": plan.findings, "out": plan.out},
+            "asks": ["--brief", "--read PATH:WHAT", "--findings"],
+        }, ensure_ascii=False))
+        return
+
+    given = {"focus": focus, "agents": n, "host": host, "decide": decide,
+             "write": write_scope, "budget": budget, "brief": brief,
+             "read": read, "findings": findings, "out": out}
+    interactive = not any(v not in (None, (), []) for v in given.values())
+
+    for c in checks:
+        con.print(f"[{'green' if c.ok else 'yellow'}]"
+                  f"{'✓' if c.ok else '!'}[/] {_x(c.label)}"
+                  + (f"  [dim]{c.fix}[/]" if not c.ok and c.fix else ""))
+    if not all(c.ok for c in checks[:2]):
+        con.print("[red]✗ this project has no graph to fan out against[/]")
+        raise typer.Exit(2)
+
+    if interactive:
+        plan = _setup_interactively(plan, proj)
+        if plan is None:
+            con.print("[dim]cancelled — nothing written[/]")
+            raise typer.Exit(1)
+    else:
+        try:
+            plan = _setup_from_flags(plan, given)
+        except ValueError as exc:
+            con.print(f"[red]✗ {_x(exc)}[/]")
+            raise typer.Exit(2) from None
+        plan = replace(plan, capture=capture)
+
+    if dry_run:
+        con.print("[dim]— fanout/scout.md —[/]")
+        print(fanout.render_scout(plan, proj))
+        con.print("[dim]— fanout/launch.sh —[/]")
+        print(fanout.render_launch(plan, proj))
+        con.print("[dim]--dry-run: nothing written[/]")
+        return
+    written = fanout.write(plan, proj)
+    for p in written:
+        con.print(f"[green]wrote[/] {p.relative_to(proj.root)}")
+    con.print(f"[dim]read {written[0].relative_to(proj.root)} before launching "
+              f"— the three answers only you can give are near the top. Then "
+              f"`./{written[1].relative_to(proj.root)}`[/]")
+
+
+def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
+    """CLI flags to a `Plan`, refusing a value that is not one of the choices.
+
+    Refused rather than defaulted: a launcher that typed `--decide evidenced`
+    means to constrain its agents, and quietly running them unconstrained is
+    the failure the flag exists to prevent. `$DG_WRITE` defaults a bad value
+    because it is read on every judged write; this is read once, out loud.
+    """
+    def one_of(name, value, allowed):
+        if value is None:
+            return getattr(plan, name if name != "write" else "write")
+        if value not in allowed:
+            raise ValueError(f"--{name} must be one of "
+                             f"{', '.join(sorted(allowed))}, not {value!r}")
+        return value
+
+    reads = []
+    for item in (given["read"] or ()):
+        path, _, what = item.partition(":")
+        if not path:
+            raise ValueError(f"--read wants PATH:WHAT, got {item!r}")
+        reads.append((path, what.strip() or "(not described)"))
+
+    budget = plan.budget
+    if given["budget"] is not None:
+        budget = limits.span(given["budget"])
+
+    return replace(
+        plan,
+        focus=[s.strip() for s in given["focus"].split(",") if s.strip()]
+              if given["focus"] else plan.focus,
+        agents=given["agents"] or plan.agents,
+        host=one_of("host", given["host"], set(fanout.HOSTS)),
+        decide=one_of("decide", given["decide"], set(cross.POLICIES)),
+        write=one_of("write", given["write"], set(limits.WRITE_POLICIES)),
+        budget=budget,
+        brief=given["brief"] or plan.brief,
+        reads=reads or plan.reads,
+        findings=given["findings"] or plan.findings,
+        out=given["out"] or plan.out,
+    )
+
+
+def _setup_interactively(plan: fanout.Plan, proj) -> fanout.Plan | None:
+    """The TUI, imported here so the import cost falls on the one path.
+
+    A missing `textual` is not an error: the whole command works without it,
+    and the message says the two ways forward rather than only the install.
+    """
+    try:
+        from dgraph import wizard
+    except ImportError:
+        con.print("[yellow]![/] the interactive wizard needs `textual`\n"
+                  "[dim]`pip install 'dear-guide[tui]'` — or give the answers "
+                  "as flags, which needs nothing: `dg agent setup --json` "
+                  "prints the defaults and what it still has to ask[/]")
+        raise typer.Exit(2) from None
+    return wizard.run(plan, proj)
 
 
 def _still_working() -> dict[str, list[str]]:
