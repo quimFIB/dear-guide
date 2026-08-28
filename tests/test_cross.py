@@ -204,6 +204,28 @@ def test_unharvested_evidence_warns(both):
     assert "dg decide D05" in str(hits[0])
 
 
+def test_lenses_survive_an_unharvested_task(both):
+    """`dg find` on a project that actually has unharvested work.
+
+    `unharvested()` returns dicts keyed `id`, as its two other callers and its
+    sibling `dropped_evidence` both read them. `lenses` alone reached for
+    `task`, so building the task lens raised KeyError — but only once the list
+    was non-empty, which is why every test here passed and the crash waited for
+    a real project. The assertion that matters is that the predicate answers,
+    not merely that nothing raised.
+    """
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T01"].evidence_for = "D05"        # T01 is DONE, D05 is OPEN
+    tg.save(both / "tasks.json")
+    g = Graph.load(both / "decisions.json")
+    assert cross.unharvested(tg, g)             # the precondition, made explicit
+
+    lenses = cross.lenses(g, tg)
+    task_lens = next(l for l in lenses if l.kind == "tasks")
+    assert task_lens.predicates["unharvested"]("T01")
+    assert not task_lens.predicates["unharvested"]("T02")
+
+
 def test_dropped_evidence_warns(both):
     """The sharper sibling of `unharvested`, and a silence neither store can
     break alone. `pending_evidence` filters on `unfinished`, which DROPPED is

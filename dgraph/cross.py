@@ -264,7 +264,7 @@ def lenses(g: Graph | None, tg: TaskGraph | None, *,
         if g is not None:
             preds["ready"] = lambda tid: ready(tg, g, tid)
             preds["gated"] = lambda tid: gated_by(tg, g, tid) is not None
-            loose = {d["task"] for d in unharvested(tg, g)}
+            loose = {d["id"] for d in unharvested(tg, g)}
             preds["unharvested"] = lambda tid: tid in loose
         else:
             absent = dict.fromkeys(
