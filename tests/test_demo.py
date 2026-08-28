@@ -124,19 +124,27 @@ def test_demo_exercises_both_directions_of_the_seam(demo):
     assert [t for t in tg.tasks.values() if t.evidence_for]
 
 
-def test_demo_findings_are_the_three_the_walkthrough_names(demo):
-    """Exactly three findings stand, and the walkthrough gives each one an exit.
+def test_demo_findings_are_the_four_the_walkthrough_names(demo):
+    """Exactly four findings stand, and the walkthrough gives each one an exit.
 
-    Pinned by name and by count. A fourth appearing — from a new rule, or from
+    Pinned by name and by count. A fifth appearing — from a new rule, or from
     an edit to the store — makes the soundness chip say something the
-    walkthrough does not explain, which is the failure this catches. All three
+    walkthrough does not explain, which is the failure this catches. All four
     are warnings by construction: an error would stop `demo.sh`.
+
+    `verbose_field` was the fourth, and it arrived exactly the way this test is
+    written to catch: a new rule fired on a store nobody had reread. It was
+    kept rather than tidied away, because D02's answer cites `bench/ann-sweep.md`
+    and then pastes that file's table into the store — which is the duplication
+    the rule is about rather than a false positive, and the demo's only long
+    field is also the only thing that shows the panel's fold doing its job.
     """
     found = check.run(project.find())
     assert {v.check for v in found} == {
         "parked_holding_work",           # T10 is parked and T04 waits on it
         "evidence_after_deciding",       # T09 measured D02 after D02 was settled
         "link_premise_under_review",     # T08 rests on D07, which D03 reopened
+        "verbose_field",                 # D02's answer pastes the sweep it cites
     }
     assert all(v.severity == "warning" for v in found), [v.message for v in found]
 

@@ -302,3 +302,91 @@ def test_prune_without_keep_is_exactly_what_it_was(store):
     agents.hold(holder, "T01", store)
     assert sorted(agents.prune(store)) == sorted([holder, idle])
     assert agents.load(store) == {}
+
+
+# ---- the synopsis --------------------------------------------------------
+#
+# Same shape as the write scope above, and pinned the same way: what matters is
+# that it does NOT fire on a supervisor, on an unset environment, or on prose
+# anybody would call ordinary. A rule that argued with well-written answers
+# would be switched off inside a day, and switched off it protects nothing.
+
+
+LONG = "x " * 300          # 599 characters, and unmistakably a wall of text
+FINE = "HNSW, M=32. The sweep is in bench/ann-sweep.md."
+
+
+def test_a_supervisor_is_never_told_to_be_brief():
+    """`None` owner is a person, at this door as at every other one."""
+    assert limits.refuse_verbose({"vertex": "D01", "answer": LONG}, None,
+                                 chosen="on") is None
+
+
+def test_off_is_the_default_and_judges_nothing(monkeypatch):
+    """Unset must be today's behaviour, for the reason `$DG_WRITE` is."""
+    monkeypatch.delenv(limits.TERSE_ENV, raising=False)
+    assert limits.terse_limit() is None
+    assert limits.refuse_verbose({"vertex": "D01", "answer": LONG},
+                                 "brisk-beacon") is None
+
+
+def test_an_ordinary_answer_is_never_refused():
+    """The test that matters. An answer that states the conclusion and cites
+    the file is what the rule is asking for, and must cost nothing."""
+    assert limits.refuse_verbose(
+        {"vertex": "D01", "answer": FINE, "falsifier": "recall drops below .95",
+         "source": "bench/ann-sweep.md"}, "brisk-beacon", chosen="on") is None
+
+
+def test_a_wall_of_text_is_refused_and_the_reason_names_the_way_out():
+    why = limits.refuse_verbose({"vertex": "D01", "answer": LONG},
+                                "brisk-beacon", chosen="on")
+    assert why and "D01" in why and "answer" in why
+    # A refusal nobody can act on is worse than none: it has to name the field,
+    # the door this record already has for a file, and the reading that makes
+    # the prose unnecessary in the first place.
+    assert "--source" in why and "dg context D01" in why
+
+
+def test_the_fix_named_is_the_one_this_record_actually_has():
+    """An outcome cannot be cited in `--source`; a task has no such flag."""
+    why = limits.refuse_verbose({"task": "T04", "outcome": LONG},
+                                "brisk-beacon", chosen="on")
+    assert why and "T04" in why and "--outcome" in why and "--source" not in why
+
+
+def test_a_title_is_never_judged():
+    """It is what every reader refers to the record by, so "put it in a file"
+    is advice nobody can take. A long title wants rewriting, which is a
+    judgement rather than a rule — see the module docstring."""
+    assert limits.refuse_verbose({"vertex": "D01", "title": LONG},
+                                 "brisk-beacon", chosen="on") is None
+
+
+def test_a_source_is_never_judged():
+    """It is the citation the refusal asks for. Judging it would refuse the fix."""
+    assert limits.refuse_verbose({"vertex": "D01", "source": LONG},
+                                 "brisk-beacon", chosen="on") is None
+
+
+def test_only_the_first_over_long_field_is_named():
+    """Three long fields are one long record. Listing all three invites
+    trimming them one at a time until the count passes, which is the opposite
+    of what the rule asks for."""
+    why = limits.refuse_verbose(
+        {"vertex": "D01", "answer": LONG, "falsifier": LONG, "note": LONG},
+        "brisk-beacon", chosen="on")
+    assert why.count("characters") == 1
+
+
+@pytest.mark.parametrize("value,limit", [
+    ("on", limits.TERSE_DEFAULT), ("250", 250), ("off", None), ("", None),
+    (None, None), ("0", None), ("nonsense", None),
+])
+def test_the_values(value, limit):
+    """`0` means off here, unlike `--budget`, because a limit of zero
+    characters would refuse every record that says anything — there is no
+    second reading for it to be confused with. Nonsense fails open, like
+    `$DG_WRITE`: a typo in a launcher's environment must not take the graph
+    away from the supervisor sharing the tray."""
+    assert limits.terse_limit(value) == limit

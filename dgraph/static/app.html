@@ -74,6 +74,17 @@
   .answer p{margin:0 0 7px}
   .answer p:last-child{margin-bottom:0}
   .answer code{background:#1c2330;border-radius:3px;padding:0 4px;font-size:11.5px}
+  /* The fold. `--fade` is the colour the body is read against, so the gradient
+     has to be redeclared wherever the fold sits on a different card. */
+  .fold{--fade:#0d1117}
+  .fold .fold-body{max-height:7.6em;overflow:hidden;position:relative}
+  .fold.open .fold-body{max-height:none}
+  .fold .fold-body::after{content:"";position:absolute;left:0;right:0;bottom:0;
+    height:2.4em;background:linear-gradient(transparent,var(--fade))}
+  .fold.open .fold-body::after{display:none}
+  .fold-tog{margin-top:6px;background:none;border:0;padding:0;cursor:pointer;
+    font:inherit;font-size:11px;color:var(--accent)}
+  .fold-tog:hover{text-decoration:underline}
   /* An edge, drawn as a card. A decision's payload hangs off one edge, and a
      reversal is a second edge carrying a payload of its own; rendering both as
      one column of prose is what made "which edge does this sentence belong to?"
@@ -133,6 +144,8 @@
   .chip.bad{color:var(--bad);border-color:var(--bad)}
   .chip.warn{color:var(--warn);border-color:var(--warn)}
   .finding{border-left:2px solid var(--bad);padding-left:9px;margin:9px 0}
+  /* A chain entry has no card behind it, so its fold fades to the panel. */
+  .finding .fold{--fade:var(--panel)}
   .finding.warning{border-left-color:var(--warn)}
   .finding b{font-size:11px;letter-spacing:.3px}
 </style>
@@ -754,6 +767,47 @@ function md(s, fmt){
 }
 /* --- end prose rendering --- */
 
+/* ---- the fold -------------------------------------------------------------
+
+   How much prose the panel shows before folding the rest away. The number is
+   `limits.TERSE_DEFAULT`, and the two are the same judgement about how much a
+   person can take in while deciding — one applied to writing, one to reading.
+   `tests/test_server.py` asserts they stay equal, since a constant duplicated
+   across two languages is the drift this repo keeps finding.
+
+   It is NOT `$DG_TERSE`. That is a launcher's rule for its own agents; this
+   page is read by a supervisor, who has no such setting, and it has to fold a
+   graph written before the rule existed and records a person wrote by hand.
+   `dgraph/limits.py` has the argument, and what a custom count costs.
+
+   This wraps `md` rather than living inside it, and deliberately: `md` is one
+   half of a corpus shared with `dgraph/orgmd.py`, pinned by
+   `tests/test_orgmd.py` against the Python half, and a renderer that sometimes
+   returns a wrapper around its output is no longer the same function that
+   corpus is about.
+
+   A fold rather than a clip: nothing is unreachable and the record is still
+   the record. What the panel stops doing is making you scroll past somebody's
+   reasoning to reach the next question — and it is the half of this that
+   reaches a graph written before the rule existed, and the records a
+   supervisor wrote by hand, which no launcher policy touches. */
+const FOLD_AT=400; let FOLD_N=0;
+function mdFold(s, fmt){
+  const html=md(s, fmt), src=(s||"").trim();
+  if(src.length<=FOLD_AT) return html;
+  const id="fold"+(FOLD_N++), label="show all · "+src.length+" chars";
+  return `<div class="fold" id="${id}"><div class="fold-body">${html}</div>`+
+    `<button class="fold-tog" data-fold="${id}" data-label="${label}">`+
+    `${label}</button></div>`;
+}
+/* Delegated, and on the document: every panel is rebuilt by `innerHTML`, so a
+   handler bound to a button dies with the next render. */
+addEventListener("click",e=>{
+  const b=e.target.closest(".fold-tog"); if(!b) return;
+  const el=document.getElementById(b.dataset.fold); if(!el) return;
+  b.textContent = el.classList.toggle("open") ? "show less" : b.dataset.label;
+});
+
 /* ---- pan & zoom ---- */
 let view=[0,0,1600,1000];
 function fit(){ const e=extent(); view=[-30,-30,e.w+60,e.h+60]; }
@@ -1145,7 +1199,7 @@ function taskPanel(){
     h+=`<div>evidence for</div><div>${dgLink(c.evidence_for)}</div>`;
   if(x.done) h+=`<div>done</div><div>${esc(x.done)}</div>`;
   h+=`</div>`;
-  if(x.note) h+=`<div class="answer muted">${md(x.note, x.format)}</div>`;
+  if(x.note) h+=`<div class="answer muted">${mdFold(x.note, x.format)}</div>`;
   /* Every completion, and no status guard — the same reading as the stops
      below. Work finished, restarted and finished again has two results, and
      only the last of them can be the live one, and only while the status still
@@ -1157,7 +1211,7 @@ function taskPanel(){
     const tag = live
       ? ` <span class="pill" style="background:${TASK_COLOR[x.status]};color:#04121f">${
           esc(d.done_label)}</span>` : "";
-    h+=`<div class="answer"><b>outcome</b> <span class="muted">${esc(c.date)}</span>${tag} — ${md(c.outcome, x.format)}</div>`;
+    h+=`<div class="answer"><b>outcome</b> <span class="muted">${esc(c.date)}</span>${tag} — ${mdFold(c.outcome, x.format)}</div>`;
   });
   /* Only where the status supports it — see `task_render._section`. A store
      cannot hold a `why` under work in progress any more, but a view is drawn
@@ -1175,7 +1229,7 @@ function taskPanel(){
     const tag = live
       ? ` <span class="pill" style="background:${TASK_COLOR[x.status]};color:#04121f">${
           esc(d.stop_label.toLowerCase())}</span>` : "";
-    h+=`<div class="answer muted"><b>stopped</b> <span class="muted">${esc(k.date)}</span>${tag} — ${md(k.why, x.format)}</div>`;
+    h+=`<div class="answer muted"><b>stopped</b> <span class="muted">${esc(k.date)}</span>${tag} — ${mdFold(k.why, x.format)}</div>`;
   });
 
   /* Say why it is not startable before offering the buttons: the gate is the
@@ -1634,7 +1688,7 @@ function edgeCard(e, children){
       <div>falsifier</div><div>${esc(e.falsifier||"—")}</div>
       <div>source</div><div>${esc(e.source||"—")}</div>
     </div>
-    <div class="answer">${md(e.answer, e.format)}</div></section>`;
+    <div class="answer">${mdFold(e.answer, e.format)}</div></section>`;
 }
 
 /* A superseded edge, shown as the edge it is. Collapsed to the headline — what
@@ -1657,7 +1711,7 @@ function declinedCard(x){
   if(x.source) b+=`<div>source</div><div>${esc(x.source)}</div>`;
   if(x.falsifier) b+=`<div>falsifier</div><div>${esc(x.falsifier)}</div>`;
   if(x.to&&x.to.length) b+=`<div>would open</div><div>${idList(x.to)}</div>`;
-  b+=`</div><div class="answer">${md(x.answer||"", x.format)}</div>`;
+  b+=`</div><div class="answer">${mdFold(x.answer||"", x.format)}</div>`;
   return `<details class="edge-card super"><summary><span class="edge-head">offered and not adopted<span class="when muted">${
     esc(x.date||"")}</span></span></summary>${b}</details>`;
 }
@@ -1673,7 +1727,7 @@ function supersededCard(x){
   if(x.falsifier) b+=`<div>falsifier</div><div>${esc(x.falsifier)}</div>`;
   if(x.source) b+=`<div>source</div><div>${esc(x.source)}</div>`;
   b+=`</div>`;
-  if(archived) b+=`<div class="answer">${md(archived, x.format)}</div>`;
+  if(archived) b+=`<div class="answer">${mdFold(archived, x.format)}</div>`;
   return `<details class="edge-card super"><summary>${head}</summary>${b}</details>`;
 }
 
@@ -1743,7 +1797,7 @@ async function showChain(vid){
       <b>${dgLink(p.id)}</b> ${esc(p.title)}
       <div class="muted">${esc(p.status)}${
         p.also_opened.length?` · also opened ${esc(p.also_opened.join(", "))}`:""}</div>
-      ${p.answer?`<div>${md(p.answer)}</div>`:""}
+      ${p.answer?`<div>${mdFold(p.answer)}</div>`:""}
       ${p.falsifier?`<div class="muted">falsifier — ${esc(p.falsifier)}</div>`:""}
       ${p.depth < r.chain.length-1
         ? `<a href="#" class="muted" data-path="${esc(p.id)}|${esc(vid)}">the chain from here…</a>`
@@ -1830,7 +1884,7 @@ function panel(){
   if(d.rival_answers)
     h+=`<p class="wait" style="border-color:var(--bad)">${esc(d.rival_answers)}</p>`;
   if(decided) h+=edgeCard(e, d.children);
-  else if(v.note) h+=`<div class="answer muted">${md(v.note, v.format)}</div>`;
+  else if(v.note) h+=`<div class="answer muted">${mdFold(v.note, v.format)}</div>`;
   const j = (JOIN && JOIN.by_decision[sel]) || null;
   if(j && (j.rests_on.length || j.evidence.length)){
     const pend=new Set(j.pending_evidence);

@@ -16,7 +16,7 @@ EOF, and click turns that into a bare `Aborted.` — true, and useless to an
 agent, which needed to be told that flags exist. So an absent terminal is
 answered rather than attempted, which is the same rule `cli._ask` follows.
 
-The plain collector is not a degraded mode. It asks the same eleven questions
+The plain collector is not a degraded mode. It asks the same twelve questions
 in the same order and produces the same bytes, which a test asserts across all
 three paths; what the TUI adds is seeing them together, because `never` with a
 45-minute budget is a different run from `evidence` with fifteen and a
@@ -130,6 +130,16 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
         except limits.BadSpan as exc:
             con.print(f"[yellow]  {exc}[/]")
 
+    con.print("\n[bold]How long may a field be?[/]  [dim]$DG_TERSE[/]")
+    con.print("[dim]The store holds the synopsis a person reads while "
+              "deciding; the development goes in a file the record cites. "
+              "`on`, a character count, or `off`.[/]")
+    while True:
+        terse = Prompt.ask("", default=plan.terse).strip().lower()
+        if terse in limits.TERSE_OFF or limits.terse_limit(terse) is not None:
+            break
+        con.print("[yellow]  `on`, `off`, or a character count[/]")
+
     capture = Confirm.ask("\nRecord the run (.dgraph-capture/)?",
                           default=plan.capture)
 
@@ -142,10 +152,11 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
                   focus=[s.strip() for s in focus.split(",") if s.strip()],
                   reads=reads, findings=findings or plan.findings, agents=n,
                   host=host, decide=decide, write=write, budget=budget,
-                  capture=capture)
+                  terse=terse, capture=capture)
 
     con.print(f"\n[bold]{out.agents} agent(s) on {out.host}[/] · "
               f"$DG_DECIDE={out.decide} · $DG_WRITE={out.write} · "
+              f"$DG_TERSE={out.terse} · "
               f"budget {limits.show_span(out.budget)}"
               + (" · captured" if out.capture else ""))
     con.print(f"[dim]focus {', '.join(out.focus) or '(none)'} · "

@@ -40,14 +40,18 @@ agents cannot share one and conflate their work. Whatever spawns an agent only
 has to put these in its environment, which is why a fan-out can mix Claude Code,
 opencode and anything else that can run `dg`.
 
-**Two further limits, both optional and both off by default.** `$DG_WRITE=launch`
+**Three further limits, all optional and all off by default.** `$DG_WRITE=launch`
 confines an agent's *writes* to the project and `/tmp`; anywhere else stops and
 asks the person, and reads are never judged. It is not enforced by the CLI —
 a write does not go through `dg` — but by the same `dg gate` both host adapters
 already relay, as `dg gate --write PATH`, so one rule covers every host.
 `dg agent claim --budget 30m` records how long an agent may run; pair it with
 `timeout` in the launcher, since `dg` is not in the agent's process tree and
-cannot stop anything itself.
+cannot stop anything itself. And `$DG_TERSE=on` refuses a field longer than 400
+characters at stage time: the store holds the synopsis somebody reads while
+deciding, and the development goes in a file the record cites — `--source` on a
+decision, the `--outcome` on a task. Most of what makes a field long is the
+chain, and the chain is edges `dg context` already computes.
 
 **Nobody has to hand out the work either.** `dg task` ends with a computed
 `ready` line, `dg task start` refuses a task somebody already claimed, and
@@ -86,7 +90,8 @@ command says so rather than prompting into EOF:
 
 ```sh
 dg agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
-  --budget 30m --brief "…" --read "path:what it is" --findings "findings/<id>.md"
+  --budget 30m --terse on \
+  --brief "…" --read "path:what it is" --findings "findings/<id>.md"
 ```
 
 `--dry-run` prints both files without writing them. It produces `fanout/scout.md`

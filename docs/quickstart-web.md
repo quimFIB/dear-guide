@@ -229,6 +229,16 @@ Click a vertex. The panel shows everything known about it — status, premises,
 what it opens, the answer with its falsifier and source, and any superseded
 answers with what overturned them.
 
+Any single field longer than about 400 characters is **folded** behind
+*show all · N chars*, and clicking it opens and closes the field. That is a
+reading aid, not a limit: nothing is unreachable and nothing is edited. It
+exists because a panel is where somebody chooses between proposals, and one
+record carrying its development pushes the falsifier, the evidence and the
+buttons off the screen. The convention it goes with is that the store holds the
+synopsis and the development goes in a file the record cites — `dg check` says
+so about a record that outgrew it, and under a fan-out `$DG_TERSE` can make it
+a refusal. `agentic/README.md` has the reasoning.
+
 Below that is the form:
 
 - **Answer** — what was decided, and on what evidence.

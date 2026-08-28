@@ -1713,3 +1713,66 @@ def test_a_declined_answer_reaches_the_browser_as_its_own_kind(srv, store, g):
     src = (server.STATIC / "app.html").read_text(encoding="utf-8")
     assert src.count("function declinedCard(") == 1
     assert "d.declined" in src
+
+
+# ---- `$DG_TERSE`, at the one door ----------------------------------------
+#
+# The rule is judged in `pending.stage_all` rather than in either store's
+# `vet`, so what has to be pinned is that it really is one door: a launcher's
+# rule that the browser, or the task store, did not consult is not a rule.
+
+
+TERSE_LONG = "x " * 300
+
+
+def test_the_cli_refuses_a_verbose_decision_and_stages_nothing(store, monkeypatch):
+    monkeypatch.setenv("DG_AGENT", "brisk-beacon")
+    monkeypatch.setenv("DG_TERSE", "on")
+    r = runner.invoke(app, ["--project", str(store), "decide", "D05",
+                            "--answer", TERSE_LONG, "--source", "bench/x.md",
+                            "--falsifier", "it moves"])
+    assert r.exit_code == 1
+    assert "nothing staged" in r.output
+    # The property the stage-time guards were actually for: the tray is shared,
+    # so a refusal that left half a batch in it would wedge every other writer.
+    assert pending.load() == []
+
+
+def test_the_same_rule_reaches_the_task_store(both, monkeypatch):
+    """One door, both trays. `dg task done` never passes through
+    `pending.vet`, so a guard written into that would have missed it."""
+    monkeypatch.setenv("DG_AGENT", "brisk-beacon")
+    monkeypatch.setenv("DG_TERSE", "on")
+    cli(both, "task", "start", "T02")
+    before = pending.load(task_pending.path())
+    r = runner.invoke(app, ["--project", str(both), "task", "done", "T02",
+                            "--outcome", TERSE_LONG])
+    assert r.exit_code == 1 and "nothing staged" in r.output
+    # Unchanged, not empty: the claim staged above is still there, which is the
+    # point — a refusal must not take anything else out of a shared tray.
+    assert pending.load(task_pending.path()) == before
+
+
+def test_the_same_rule_reaches_the_browser(store, monkeypatch):
+    """The API is the other way an agent reaches the graph. A policy the CLI
+    held alone would be the way around itself — the argument `server.stage`
+    already makes about `$DG_DECIDE`."""
+    monkeypatch.setenv("DG_AGENT", "brisk-beacon")
+    monkeypatch.setenv("DG_TERSE", "on")
+    with pytest.raises(pending.ApplyError):
+        server.stage(Graph.load(), {"op": "close", "vertex": "D05",
+                                    "answer": TERSE_LONG, "source": "x.md",
+                                    "falsifier": "it moves", "to": [],
+                                    "date": "2026-08-28"})
+    assert pending.load() == []
+
+
+def test_a_supervisor_at_the_same_door_is_not_refused(store, monkeypatch):
+    """The value that makes this a launcher's rule rather than a house style."""
+    monkeypatch.delenv("DG_AGENT", raising=False)
+    monkeypatch.setenv("DG_TERSE", "on")
+    r = runner.invoke(app, ["--project", str(store), "decide", "D05",
+                            "--answer", TERSE_LONG, "--source", "bench/x.md",
+                            "--falsifier", "it moves"])
+    assert r.exit_code == 0, r.output
+    assert pending.load()

@@ -17,7 +17,7 @@ from dataclasses import replace as _dc_replace
 from datetime import date as _date
 from pathlib import Path
 
-from dgraph import project, ranges
+from dgraph import limits, project, ranges
 from dgraph.model import (SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex,
                           status_fault)
 from dgraph.violation import Violation
@@ -446,6 +446,21 @@ def stage_all(ops: list[dict], path: Path | None = None, *,
     """
     if not ops:
         return load(path)
+    # `$DG_TERSE`, and here rather than in either store's `vet` for the reason
+    # the watermark below is here: this is the one staging function, for both
+    # trays and every door, and a launcher's rule that a second door did not
+    # consult is not a rule. It is also the *only* guard in this tool that
+    # cannot run before composition — it judges the prose, which does not exist
+    # until it has been written. The tray is still left untouched, which is
+    # what the stage-time guards were actually protecting.
+    #
+    # A supervisor is never refused, and an unset `$DG_TERSE` is every project
+    # that has never heard of this, so the ordinary path adds one dict lookup.
+    me = owner()
+    for op in ops:
+        why = limits.refuse_verbose(op, me)
+        if why is not None:
+            raise ApplyError(why)
     if against is not None:
         ops = [stamp(against, op) for op in ops]
     with held(path):

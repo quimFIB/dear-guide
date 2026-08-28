@@ -73,21 +73,23 @@ the launcher sets so an honest mistake is caught.
 
 ---
 
-## The other two limits: where an agent may write, and for how long
+## The other three limits: where an agent may write, for how long, and how much
 
-`$DG_DECIDE` limits what an agent may *record*. Two more variables limit what it
-may do to the machine and to the clock, and all three are read the same way —
-declared by the launcher, never consulted for a supervisor.
+`$DG_DECIDE` limits what an agent may *record*. Three more variables limit what
+it may do to the machine, to the clock and to the reader, and all four are read
+the same way — declared by the launcher, never consulted for a supervisor.
 
 | variable | values | what it does |
 |---|---|---|
 | `$DG_WRITE` | `open` *(default)* · `launch` | where the agent may write without asking |
 | `$DG_BUDGET` | `infinite` *(default)* · `1800` · `30m` · `2h` | how long before its work is handed back |
+| `$DG_TERSE` | `off` *(default)* · `on` · `400` | how long a field may be before the development belongs in a file |
 
 ```sh
 DG_AGENT=$(dg agent claim --budget 30m) \
 DG_DECIDE=evidence \
 DG_WRITE=launch \
+DG_TERSE=on \
   timeout 1800 claude -p "$(cat agentic/prompts/scout.md)"
 ```
 
@@ -204,6 +206,70 @@ Three things keep it honest:
 The remaining blind spot is worth telling agents about rather than engineering
 around: an agent that knows it is about to go quiet for an hour can say so, and
 `dg apply --mine` before a long sweep is a heartbeat like any other.
+
+### The synopsis, and why the graph is the thing doing the synthesising
+
+The complaint that produced `$DG_TERSE` was not about agents being wrong. It was
+that a fan-out fills the graph with *prose*, and the person who then has to
+decide something is reading a wall of it in a panel where they came to compare
+three proposals.
+
+**The store holds the synopsis. The development goes in a file.** A record's
+fields — answer, falsifier, note, outcome, the reason work stopped — are read
+while deciding, so they are one or two sentences. Everything longer goes in a
+file the record already has a way to name: `--source` on a decision, the
+`--outcome` on a task. There is deliberately **no new field** for it; a second
+way to name a file is a second thing that can disagree with the first.
+
+And the sharper half: most of what an agent writes into a long field should not
+be anywhere, because *the graph already holds it as structure*. The premises a
+decision rests on, the questions it opens, the work resting on it, the evidence
+brought against it — every one of those is an edge, and `dg context <id>`
+computes the chain from them on demand, for anybody, six months later. An answer
+that also narrates its premises is a second copy of the graph in the one place
+nothing can check it against the first. The fix is an edge, not a paragraph:
+
+```sh
+dg dep D07 --after D03                 # this rests on that
+dg task link T04 --evidence-for D09    # this work bears on that question
+```
+
+| `$DG_TERSE` | what an agent may write |
+|---|---|
+| `off` *(default)* | anything — what the tool has always done |
+| `on` | 400 characters a field, refused at stage time |
+| `<n>` | `n` characters a field |
+
+Judged at `pending.stage_all` — the one door both trays and every command pass
+through — so it reaches `dg decide`, `dg task done`, `dg task park` and the
+browser's API alike. It is the **only** stage-time guard in this tool that
+cannot refuse before composition, because it judges the prose and there is none
+until it is written; the tray is still left untouched, which is what those
+guards were actually protecting. A supervisor is never refused.
+
+Two things it deliberately does not judge. A **title** — it is what every reader
+refers to the record by, so "put it in a file" is advice nobody can take, and a
+long title wants rewriting rather than a rule. And a **`--source`**, which is
+the citation the refusal asks for.
+
+**The other half is the browser, and it needs no policy.** `dg serve` folds any
+field past 400 characters behind *show all*. That reaches what `$DG_TERSE`
+cannot: a graph written before the rule existed, an imported one, and every
+record a person wrote by hand. `dg check` reports `verbose_field` above the same
+400 — a warning, never blocking, because a long answer is a legal record and a
+graph must not become uncommittable over prose style.
+
+**Those two read 400 and never `$DG_TERSE`, deliberately.** The variable is a
+launcher's rule for its own agents; the check and the fold are read by a
+supervisor, who never has it set, and a warning that went quiet exactly where
+nobody had configured anything would be silent in every project it is for.
+
+The consequence is worth knowing before you set a custom count: at `on` and at
+`off` all three numbers agree, and at `DG_TERSE=800` they do not. An agent may
+then stage a 700-character answer that `dg check` warns about the moment it
+lands, in a panel that folds it at 400. Nothing breaks — the warning is not
+blocking and the fold is not a limit — but the three are saying different
+things, so prefer `on` unless you have a reason.
 
 ---
 
@@ -393,7 +459,7 @@ opencode — and the skill that teaches the recording discipline is loaded by
 both. An agent under a third scaffold, or none, still has the CLI, which is
 where all of this actually happens.
 
-Each prompt should carry four things:
+Each prompt should carry six things:
 
 1. **The chain, in full.** `dg context <id> --full`, pasted in. A fresh context
    knows the task and nothing about why it exists, and without the chain it
@@ -404,14 +470,18 @@ Each prompt should carry four things:
    to do this once stops when it is done and leaves the rest of the queue sitting
    there.
 3. **The rule** from the top of this file — add questions and work, decide
-   nothing — **and which `$DG_DECIDE`, `$DG_WRITE` and `$DG_BUDGET` it is
-   running under**, so a refusal at stage time or a prompt about a write reads
-   as the policy it is rather than as a broken tool.
+   nothing — **and which `$DG_DECIDE`, `$DG_WRITE`, `$DG_BUDGET` and
+   `$DG_TERSE` it is running under**, so a refusal at stage time or a prompt
+   about a write reads as the policy it is rather than as a broken tool.
 4. **What it may read, and where it may write.** Point at the files; it will not
    find them. Under `DG_WRITE=launch` say so — an agent that knows the scope
    puts its findings in the project instead of discovering the rule by being
    stopped.
-5. **Its budget, and that expiry parks rather than discards.** An agent told it
+5. **That the store holds the synopsis and the file holds the development**,
+   and that most of what it would have written is already an edge. An agent
+   told only "be brief" writes the same paragraph with the vowels removed; one
+   told `dg context` computes the chain writes the edge instead.
+6. **Its budget, and that expiry parks rather than discards.** An agent told it
    has thirty minutes can decide what to finish; one told nothing runs until
    something kills it. Say `dg task park --why` is how to hand work back early,
    because an agent that stops without parking leaves work that looks alive.

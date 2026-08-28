@@ -83,6 +83,34 @@ Everything you stage is a **proposal**. A person reads it with
 `dg pending --agent $DG_AGENT` and either takes it or turns it down. Stage
 freely; nothing you stage is written until somebody applies it.
 
+## What goes in a record, and what goes in a file
+
+**The store holds the synopsis. The development goes in a file.**
+
+A record's fields — the answer, the falsifier, the note, the outcome, the
+reason work stopped — are what a person reads in a panel while deciding. One or
+two sentences each. Everything longer goes in a file, and the record names it:
+
+```sh
+dg decide  … --answer "…" --source path/to/what-you-found.md     # a decision
+dg task done <id> --outcome "…, in path/to/what-you-found.md"    # work
+```
+
+**And most of what you would have written does not belong in either.** The
+premises this rests on, the questions it opens, the work resting on it and the
+evidence brought against it are all **edges** — `dg context <id>` computes the
+chain from them on demand, for anybody, at any point in the future. Prose that
+re-narrates any of that is a second copy of what the graph already holds, in
+the one place nothing can check it against the first. Add the edge instead:
+
+```sh
+dg dep <id> --after <premise>          # this rests on that
+dg task link <id> --evidence-for D<n>  # this work bears on that question
+```
+
+<!-- ⟨TERSE⟩ is the policy value; ⟨TERSE_PROSE⟩ is what it means in practice. -->
+You are running under **`$DG_TERSE=⟨TERSE⟩`**. ⟨TERSE_PROSE⟩
+
 ## What you may read
 
 <!-- ⟨READS⟩: the files and directories, one per line as `- path — what it is`.

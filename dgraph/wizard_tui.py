@@ -125,6 +125,13 @@ class Wizard(App):
                          classes="hint")
             yield Input(limits.show_span(self.plan.budget), id="budget")
 
+            yield Label("How long may a field be?  $DG_TERSE", classes="q")
+            yield Static("The store holds the synopsis a person reads while "
+                         "deciding; the development goes in a file the record "
+                         "cites. `on`, a character count, or `off`.",
+                         classes="hint")
+            yield Input(self.plan.terse, id="terse")
+
             yield Checkbox("Record the run (.dgraph-capture/)", self.plan.capture,
                            id="capture")
         with Horizontal(id="actions"):
@@ -141,7 +148,8 @@ class Wizard(App):
     def _plan(self) -> fanout.Plan:
         """Every widget, read once, into a `Plan`. No validation beyond what
         cannot be expressed in the widget: the radio sets can only hold real
-        values, and the budget is the one free-text field that can be wrong."""
+        values, and the budget and the field limit are the two free-text
+        fields that can be wrong."""
         from dataclasses import replace
 
         reads = []
@@ -158,6 +166,12 @@ class Wizard(App):
             n = max(1, int(self.query_one("#agents", Input).value or 1))
         except ValueError:
             n = self.plan.agents
+        # The second free-text field that can be wrong, and answered the same
+        # way as the budget: keep what the plan already had rather than
+        # silently widening the rule the person came here to set.
+        terse = (self.query_one("#terse", Input).value or "").strip().lower()
+        if terse not in limits.TERSE_OFF and limits.terse_limit(terse) is None:
+            terse = self.plan.terse
         return replace(
             self.plan,
             brief=self.query_one("#brief", TextArea).text.strip(),
@@ -172,6 +186,7 @@ class Wizard(App):
             decide=self._chosen("decide", self.plan.decide),
             write=self._chosen("write", self.plan.write),
             budget=budget,
+            terse=terse,
             capture=self.query_one("#capture", Checkbox).value,
         )
 

@@ -997,3 +997,23 @@ def test_unlinking_names_which_premises_go(srv, dual):
     assert code == 200, body
     op = [o for o in body["staged"] if o.get("op") == "set_link"][0]
     assert op["because"] == ["D04"]
+
+
+def test_the_panel_folds_at_the_same_length_the_rule_refuses_at():
+    """One number, two languages. `limits.TERSE_DEFAULT` is what `dg check`
+    warns above and what `$DG_TERSE=on` refuses above; `FOLD_AT` in the page is
+    where the panel stops showing prose. They are the same judgement about how
+    much somebody takes in while deciding — one applied to writing, one to
+    reading — and a constant duplicated across Python and JS drifts silently,
+    which is the failure the shared org corpus already exists to prevent.
+    """
+    import pathlib
+    import re
+
+    from dgraph import limits
+
+    src = (pathlib.Path(server.__file__).parent
+           / "static" / "app.html").read_text(encoding="utf-8")
+    found = re.search(r"const FOLD_AT=(\d+)", src)
+    assert found, "FOLD_AT is gone — the panel no longer folds"
+    assert int(found.group(1)) == limits.TERSE_DEFAULT

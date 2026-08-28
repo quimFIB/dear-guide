@@ -22,7 +22,7 @@ over — say so and stop rather than inventing work.
 
 ```sh
 DG_AGENT=$(dg agent claim --budget ⟨30m⟩) DG_DECIDE=⟨evidence|never⟩ \
-  DG_WRITE=⟨launch⟩ timeout ⟨1800⟩ \
+  DG_WRITE=⟨launch⟩ DG_TERSE=⟨on⟩ timeout ⟨1800⟩ \
   ⟨claude -p|opencode run⟩ "$(cat agentic/prompts/scout.md)" &
 ```
 
@@ -33,6 +33,11 @@ you — you would lose the ability to apply and to report.
 
 `dg agent claim` gives a name that cannot collide. Never invent one, and never
 reuse a name from an earlier run.
+
+`DG_TERSE=on` refuses a record field longer than 400 characters, so an agent
+puts the development in a file and cites it rather than in the store. Set it if
+anybody is going to *read* this fan-out — you are about to hand somebody a tray
+of proposals to choose between, and they read them in a panel.
 
 Give each agent its own prompt file, or the same one with a different
 ⟨WHAT YOU ARE HERE TO DO⟩ section. Two agents with identical prompts do

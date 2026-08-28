@@ -8,6 +8,7 @@ no second opinion about what "valid" means.
 
 from __future__ import annotations
 
+from dgraph import limits
 from dgraph import project as _project
 from dgraph import render
 from dgraph.model import Graph, Violation
@@ -32,6 +33,8 @@ CHECKS: tuple[str, ...] = (
     "no_orphans",
     "acyclic",
     "stale_view",
+    # both stores; stamped where it is emitted, like `store_loads`
+    "verbose_field",
     # the task store; absent in most projects, checked only when present
     "task_ids_wellformed",
     "task_area_known",
@@ -74,6 +77,11 @@ CHECKS: tuple[str, ...] = (
 #: it is always stamped at the point of emission.
 ORIGIN: dict[str, str] = {
     "store_loads": "",
+    # Emitted by `_decisions` and `_tasks` alike, so it has no fixed entry
+    # either: a long answer and a long outcome are the same finding about two
+    # stores, and splitting the name in two would make the rule twice as easy
+    # to let rot in one of them.
+    "verbose_field": "",
     "ids_wellformed": DECISION,
     "status_legal": DECISION,
     "no_dangling_refs": DECISION,
@@ -163,6 +171,43 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
     return problems
 
 
+def _verbose(rows: list[tuple[str, dict]], origin: str) -> list[Violation]:
+    """`verbose_field` for one store's records, as `(id, prose fields)` pairs.
+
+    **A warning, and the severity is the whole argument**, for the reason
+    `stale_view` gives at length below: this is not a store invariant. It lives
+    here and never in either `validate`, so no write path consults it and
+    `apply_all` is untouched — a long answer is a legal, representable record,
+    and a graph written before this rule existed must not become uncommittable.
+
+    Judged at `limits.TERSE_DEFAULT` rather than at whatever `$DG_TERSE` says,
+    because the two doors have different readers. The refusal is aimed at an
+    agent whose launcher set a number; the warning is read by a supervisor, who
+    never has one set — and a check that went quiet exactly when nobody had
+    configured it would be silent in every project that has not heard of this,
+    which is every project the finding is actually for.
+
+    Only the first over-long field per record, matching `limits.refuse_verbose`:
+    one long record is one finding, and a listing per field would rank a single
+    verbose decision above every other problem in the graph.
+    """
+    out = []
+    for rid, fields in rows:
+        found = limits.overlong(fields)
+        if not found:
+            continue
+        name, size = found[0]
+        out.append(Violation(
+            "verbose_field",
+            f"{rid}'s {name} is {size} characters — the store holds the "
+            f"synopsis a person reads while deciding. Put the development in a "
+            f"file and cite it; the chain is already edges, and "
+            f"`dg context {rid}` says it.",
+            "warning", origin,
+        ))
+    return out
+
+
 def _link(proj: _project.Project) -> list[Violation]:
     """The cross-graph invariants, when the project has both stores.
 
@@ -230,6 +275,17 @@ def _tasks(proj: _project.Project) -> list[Violation]:
         from dgraph import cross
         problems += tag(cross.validate(tg, Graph()), LINK)
 
+    # The note, and the live end of each archive. `completions` and `stops`
+    # are append-only history; only the last of each is a record somebody is
+    # still reading, and the earlier ones are as unactionable as a superseded
+    # answer.
+    problems += _verbose(
+        [(t.id, {"note": t.note,
+                 "outcome": t.completions[-1].outcome if t.completions else None,
+                 "why": t.stops[-1].why if t.stops else None})
+         for t in tg.tasks.values()],
+        TASK)
+
     # A warning, for the reason `_decisions` gives at length below.
     if not proj.task_view.exists():
         problems.append(Violation(
@@ -277,6 +333,16 @@ def _decisions(proj: _project.Project) -> list[Violation]:
             f"({exc!r}) — the graph cannot be judged valid",
             origin=DECISION,
         )]
+
+    # A vertex's note, and each ACTIVE edge's prose. Superseded edges are
+    # skipped: they are the record of what was believed and are never edited,
+    # so a warning about one names something nobody may act on.
+    problems += _verbose(
+        [(v.id, {"note": v.note}) for v in g.vertices.values()]
+        + [(e.src, {"answer": e.answer, "falsifier": e.falsifier,
+                    "summary": e.summary, "why": e.why})
+           for e in g.edges if e.active],
+        DECISION)
 
     # **A warning, not an error**, and the severity is the whole argument.
     #

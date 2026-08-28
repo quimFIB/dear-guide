@@ -45,12 +45,13 @@ cat <<TXT
     T07  dropped, after being parked;  T10 parked;  T09 evidence that arrived
          after the answer it was meant to inform
 
-  A soundness chip sits in the header, because three findings stand. Each has
+  A soundness chip sits in the header, because four findings stand. Each has
   its exits in the panel, and the same ones in the terminal:
 
     D02 was settled on 02-14; T09 measured it on 03-02  →  read it, re-affirm
     T08 exists because of D07, which is under review    →  settle D03, confirm D07
     T10 is parked and T04 still waits on it             →  pick it up, or drop it
+    D02's answer pastes the sweep it cites              →  cite it, do not copy it
 
   From a terminal, against the same store:
 

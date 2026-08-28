@@ -128,6 +128,44 @@ def test_an_op_that_never_reached_the_graph_is_still_in_the_log(project):
     assert not log[-1]["tray"], "the tray after the drop should be empty"
 
 
+def test_a_refused_call_is_recorded_as_a_reason_and_not_as_a_crash(project):
+    """`agentic/README.md`: *the refusals are the content*. A run where every
+    proposal was accepted demonstrates nothing about a tool whose subject is
+    what happens when work is proposed and sometimes turned down.
+
+    Which makes the shape of a refusal part of what the capture records. A
+    stage-time rule raised from `pending.stage_all` — the one door, where
+    `$DG_TERSE` is judged — reaches the log as whatever the CLI printed, so a
+    refusal that escaped as a traceback would be recorded as one: an entry
+    saying the tool broke, where the run's most interesting moment should be.
+    `cli._stage_all` is what keeps it a sentence, and nothing else asserts that.
+
+    Pinned with the tray beside it, because a refusal that also emptied a
+    shared tray would take another writer's proposals with it.
+    """
+    root, run = project
+    env = {"DG_AGENT": "brisk-beacon", "DG_TERSE": "on"}
+    run("add", "--id", "D01", "--title", "A question", "--area", "General",
+        env=env)
+    run("apply", env=env)
+    run("add", "--id", "D02", "--title", "Another", "--area", "General",
+        env=env)
+
+    r = run("decide", "D01", "--answer", "x " * 300, "--source", "discussion",
+            "--falsifier", "it moves", "--opens", "D02", env=env)
+    assert r.returncode == 1
+    said = r.stdout + r.stderr
+    assert "Traceback" not in said, said
+    assert "DG_TERSE" in said and "--source" in said
+
+    last = entries(root)[-1]
+    assert last["argv"][:2] == ["decide", "D01"] and last["exit"] == 1
+    assert "DG_TERSE" in (last["stdout"] or "") + (last["stderr"] or "")
+    # The proposal staged before it is untouched: nothing was taken out of a
+    # tray that may be shared with other writers.
+    assert len(json.loads(last["tray"])) == 1
+
+
 def test_every_entry_says_who_and_what(project):
     root, run = project
     name = run("agent", "claim").stdout.strip()

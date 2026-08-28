@@ -254,7 +254,9 @@ def _root(
     # a **bad configuration**, and the two want different refusals: raising at
     # the op leaves twelve `pending.stage_all` call sites to wrap and a
     # traceback wherever one was missed, and it would let a reading succeed
-    # under an identity that every subsequent stage refuses. So the whole
+    # under an identity that every subsequent stage refuses. (`_stage_all` is
+    # that wrapper, added later for `$DG_TERSE` — it makes the refusal legible,
+    # and does not make a bad identity any less a bad *session*.) So the whole
     # session is refused here, once, the way an unloadable store is — and
     # `_with_refs` keeps its own raise for the library's other callers, the
     # server among them, which turn it into a 400 of their own.
@@ -334,6 +336,28 @@ def _vet_all(g: Graph, ops: list[dict]) -> None:
     """`pending.vet_all`, with a refusal turned into a clean CLI exit."""
     try:
         pending.vet_all(g, ops)
+    except pending.ApplyError as exc:
+        con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
+
+
+def _stage_all(ops, path=None, *, against=None) -> None:
+    """`pending.stage_all`, with a refusal turned into a clean CLI exit.
+
+    `_vet_all`'s twin, and here for the same reason. Staging is where
+    `$DG_TERSE` is judged — the one door both trays and every caller pass
+    through, `limits.refuse_verbose` — so a refusal can now come out of the
+    write itself rather than out of a guard the command ran first. A traceback
+    is the wrong shape for a launcher's rule the caller can act on, and
+    `_root`'s argument about a bad `$DG_AGENT` applies: the caller needs to
+    hear what to do, not a stack.
+
+    Every `pending.stage_all` in this module goes through here, which is what
+    makes that true of `dg decide` and `dg reopen` as well as of the commands
+    that already vetted.
+    """
+    try:
+        pending.stage_all(ops, path, against=against)
     except pending.ApplyError as exc:
         con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
@@ -1283,7 +1307,7 @@ def _stage_close(g: Graph, op: dict) -> None:
     ops = pending.expand(g, op)
     # `against`: each op records what its premises looked like now, so an
     # apply after somebody else has moved one can say which. See `pending.stamp`.
-    pending.stage_all(ops, against=g)
+    _stage_all(ops, against=g)
     released = [o["vertex"] for o in ops if o["op"] == "set_status"]
     if released:
         con.print(f"[cyan]{len(released)}[/] vertex(es) were "
@@ -1443,7 +1467,7 @@ def repair() -> None:
                   f"      [dim]DECIDED → PROVISIONAL, resting on "
                   f"{op['derived_from']} "
                   f"({eff.vertices[op['derived_from']].status})[/]")
-    pending.stage_all(ops, against=eff)
+    _stage_all(ops, against=eff)
     con.print(f"[green]staged[/] {len(ops)} op(s) — review with `dg pending`, "
               f"then `dg apply`")
     _warn_stuck()
@@ -1567,7 +1591,7 @@ def confirm(
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    pending.stage_all(ops, against=eff)
+    _stage_all(ops, against=eff)
     released = [o["vertex"] for o in ops[1:]]
     if released:
         con.print(f"[cyan]{len(released)}[/] vertex(es) were BLOCKED:{vid} and "
@@ -1636,7 +1660,7 @@ def reopen(
             raise typer.Exit(2)
         if not typer.confirm("Stage this?", default=True):
             raise typer.Exit()
-    pending.stage_all(ops, against=eff)
+    _stage_all(ops, against=eff)
     con.print(f"[green]staged[/] {len(ops)} op(s)")
     _warn_stuck()
 
@@ -1671,7 +1695,7 @@ def add(
         # `pending.vet`, and this ran neither, so a buffer could stage an op
         # that could never apply — in a tray every other writer shares. F30.
         _vet_all(eff, ops)
-        pending.stage_all(ops, against=eff)
+        _stage_all(ops, against=eff)
         con.print(f"[green]staged[/] {len(ops)} op(s) — add {ops[0]['id']}")
         _warn_stuck()
         return
@@ -1702,7 +1726,7 @@ def add(
     # One write, and the site that most needed it: a vertex staged without its
     # edges is only a `no_orphans` warning, so unlike every other group here a
     # half-staged one could be applied and pass.
-    pending.stage_all(ops, against=eff)
+    _stage_all(ops, against=eff)
     con.print(f"[green]staged[/] add {vid}")
     _warn_stuck()
 
@@ -1762,7 +1786,7 @@ def amend(
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    pending.stage_all([op], against=eff)
+    _stage_all([op], against=eff)
     con.print(f"[green]staged[/] {vid}")
     for line in lines:
         con.print(f"  [dim]{line}[/]")
@@ -1858,7 +1882,7 @@ def dep(
         raise typer.Exit(1) from None
     if already:
         con.print(f"[dim]already rests on {', '.join(already)}[/]")
-    pending.stage_all(ops, against=eff)
+    _stage_all(ops, against=eff)
     # Nothing staged is not the same as staged, and saying otherwise sends the
     # reader to `dg pending` looking for an op that is not there.
     if not fresh:
@@ -1893,7 +1917,7 @@ def undep(
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
     released = blocker is not None
-    pending.stage_all(ops, against=eff)
+    _stage_all(ops, against=eff)
 
     con.print(f"[green]staged[/] {vid} no longer rests on "
               f"{', '.join(parents)}")
@@ -1997,7 +2021,7 @@ def rm(
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
     _sanction(f"remove {vid} ({mode})", lines, yes)
-    pending.stage(op, against=eff)
+    _stage_all([op], against=eff)
     con.print(f"[green]staged[/] remove {vid}")
     _warn_stuck()
 
@@ -2980,6 +3004,10 @@ def agent_setup(
     write_scope: str = typer.Option(None, "--write", help="open | launch"),
     budget: str = typer.Option(None, "--budget",
                                help="`30m`, `1800`, or `infinite`"),
+    terse: str = typer.Option(None, "--terse",
+                              help="`on`, a character count, or `off` — how "
+                                   "long a field may be before the "
+                                   "development belongs in a file"),
     brief: str = typer.Option(None, "--brief",
                               help="one paragraph: what a good session produces"),
     read: list[str] = typer.Option(None, "--read", metavar="PATH:WHAT",
@@ -3032,14 +3060,15 @@ def agent_setup(
             "defaults": {"focus": plan.focus, "agents": plan.agents,
                          "host": plan.host, "decide": plan.decide,
                          "write": plan.write, "budget": plan.budget,
+                         "terse": plan.terse,
                          "findings": plan.findings, "out": plan.out},
             "asks": ["--brief", "--read PATH:WHAT", "--findings"],
         }, ensure_ascii=False))
         return
 
     given = {"focus": focus, "agents": n, "host": host, "decide": decide,
-             "write": write_scope, "budget": budget, "brief": brief,
-             "read": read, "findings": findings, "out": out}
+             "write": write_scope, "budget": budget, "terse": terse,
+             "brief": brief, "read": read, "findings": findings, "out": out}
     interactive = not any(v not in (None, (), []) for v in given.values())
 
     for c in checks:
@@ -3105,6 +3134,18 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
     if given["budget"] is not None:
         budget = limits.span(given["budget"])
 
+    # Refused rather than defaulted, like `--decide`, and unlike the
+    # environment variable this ends up in. `limits.terse_limit` fails open
+    # because it is read on the path of every stage; a typo *here* is read
+    # once, out loud, by somebody who meant to constrain their agents.
+    terse = plan.terse
+    if given["terse"] is not None:
+        terse = given["terse"].strip().lower()
+        if terse not in limits.TERSE_OFF and limits.terse_limit(terse) is None:
+            raise ValueError(
+                f"--terse wants `on`, `off`, or a character count, not "
+                f"{given['terse']!r}")
+
     return replace(
         plan,
         focus=[s.strip() for s in given["focus"].split(",") if s.strip()]
@@ -3114,6 +3155,7 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
         decide=one_of("decide", given["decide"], set(cross.POLICIES)),
         write=one_of("write", given["write"], set(limits.WRITE_POLICIES)),
         budget=budget,
+        terse=terse,
         brief=given["brief"] or plan.brief,
         reads=reads or plan.reads,
         findings=given["findings"] or plan.findings,
@@ -3359,7 +3401,7 @@ def _tstage_all(ops: list[dict]) -> None:
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    pending.stage_all(ops, task_pending.path())
+    _stage_all(ops, task_pending.path())
 
 
 def _next_hint(offer) -> str:
@@ -5025,7 +5067,7 @@ def _incoming(proj, take, keep, split, as_id, title, area, adopt, discard):
     def stage(d_ops, t_ops):
         if d_ops:
             _vet_all(_eff(_g()), d_ops)
-            pending.stage_all(d_ops)
+            _stage_all(d_ops)
         if t_ops:
             _tstage_all(t_ops)
 

@@ -231,3 +231,55 @@ def test_the_option_chooses_the_project(tmp_path, monkeypatch):
 
     proj = testing.decision_project.__wrapped__(_Config())
     assert proj.root == tmp_path.resolve()
+
+
+# ---- verbose_field -------------------------------------------------------
+
+
+VERBOSE = "x " * 300          # 599 characters
+
+
+def test_a_long_answer_is_reported_as_a_warning(store, g):
+    """Never blocking, for the reason `stale_view` gives: this is not a store
+    invariant. A graph written before the rule existed must stay committable —
+    a long answer is legal, representable and somebody's actual record."""
+    write(g)
+    g.active_edge("D01").answer = VERBOSE
+    g.save()
+    hits = [v for v in run() if v.check == "verbose_field"]
+    assert len(hits) == 1
+    assert hits[0].severity == "warning" and not hits[0].blocking
+    assert "D01" in hits[0].message and "answer" in hits[0].message
+    # The finding has to say what makes the prose unnecessary, or it reads as
+    # a complaint about length and gets ignored as one.
+    assert "dg context D01" in hits[0].message
+
+
+def test_a_superseded_answer_is_not_reported(store, g):
+    """The record of what was believed, never edited. A warning about one names
+    something nobody may act on — the store keeps it forever on purpose."""
+    write(g)
+    [e for e in g.edges if not e.active][0].answer = VERBOSE
+    g.save()
+    assert not [v for v in run() if v.check == "verbose_field"]
+
+
+def test_the_environment_does_not_reach_the_check(store, g, monkeypatch):
+    """`$DG_TERSE` is a launcher's rule for its agents; this warning is read by
+    a supervisor, who never has one set. A check that went quiet exactly when
+    nobody had configured it would be silent in every project it is for."""
+    write(g)
+    monkeypatch.delenv("DG_TERSE", raising=False)
+    g.active_edge("D01").answer = VERBOSE
+    g.save()
+    assert [v for v in run() if v.check == "verbose_field"]
+
+
+def test_one_finding_per_record_however_many_fields_are_long(store, g):
+    """One long record is one finding. A listing per field would rank a single
+    verbose decision above every other problem in the graph."""
+    write(g)
+    e = g.active_edge("D01")
+    e.answer = e.falsifier = VERBOSE
+    g.save()
+    assert len([v for v in run() if v.check == "verbose_field"]) == 1

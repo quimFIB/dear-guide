@@ -102,10 +102,10 @@ shell state does not survive between an agent's tool calls, so a name it
 claimed in one call is gone by the next.
 
 ```sh
-DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch \
+DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch DG_TERSE=on \
   timeout 1800 claude -p "$(cat agentic/prompts/scout.md)" &
 
-DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch \
+DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch DG_TERSE=on \
   timeout 1800 opencode run "$(cat agentic/prompts/scout.md)" &
 
 dg agent list          # who holds what, what each has staged, time left
@@ -120,6 +120,7 @@ tray. The whole contract with the host is these variables:
 | `DG_DECIDE` | `evidence` — may close a question only where a **finished** `--evidence-for` task backs it · `never` — may not close at all · unset — may close anything. |
 | `DG_WRITE` | `launch` — may write in the project and `/tmp`; anywhere else stops and asks the person · unset/`open` — anywhere, which is what the tool has always done. Reads are never judged. |
 | `DG_BUDGET` | how long before its work is handed back — `1800`, `30m`, `2h`, or `infinite`. `dg agent claim --budget` records it on the lease, which is what `dg agent list` and `dg agent expire` read; the variable is how the *agent* learns its own budget. |
+| `DG_TERSE` | how long a field may be — `on` (400 characters), a count, or unset/`off` for no limit. The store holds the synopsis somebody reads while deciding; the development goes in a file the record cites. Refused at stage time, before the tray is touched. |
 
 Set `DG_DECIDE` **here and not in the prompt.** A variable is a refusal; a
 sentence in a prompt is a request, and the moment a finished task leaves a
@@ -129,6 +130,13 @@ question owed an answer is exactly when the temptation to write one arrives.
 rather than through the CLI: a write does not go through `dg`, so the two host
 adapters ask the gate about it — `dg gate --write PATH`, one policy, every
 host. `agentic/README.md` has the reasoning.
+
+`DG_TERSE` is the one to set if the graph is going to be *read* — in the
+browser, by the person choosing between proposals. It is off by default because
+it is a house style rather than an invariant, and `dg serve` folds a long field
+behind *show all* whether or not anybody set it. `agentic/README.md` has the
+reasoning, and the part that matters is not the count: most of what fills a long
+answer is the chain, and the chain is edges `dg context` already computes.
 
 **`timeout` is the launcher's half of the budget, and it is not optional.**
 `dg` is not in the agent's process tree and cannot stop one. What the recorded
@@ -162,7 +170,7 @@ briefing, with the current roster, frontier and tray already read in.
 puts it in the *child's* environment only.
 
 ```sh
-DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch \
+DG_AGENT=$(dg agent claim --budget 30m) DG_DECIDE=evidence DG_WRITE=launch DG_TERSE=on \
   timeout 1800 claude -p "$(cat ...)" &
 ```
 

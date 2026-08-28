@@ -292,6 +292,33 @@ terminal decision. Nothing is written until `dg apply`, which validates a copy
 first and refuses to write a graph that would be invalid. Apply your own work —
 leaving it staged means it exists only in a gitignored file.
 
+### The store holds the synopsis; the file holds the development
+
+Every field here is one or two sentences — what somebody reads in a panel while
+deciding, not the account of how you got there. The development goes in a file
+and the record names it: `--source` on a decision, the `--outcome` on a task.
+Note the example above does exactly that: it states the parameters and cites
+`bench/ann-sweep.md` rather than pasting the sweep.
+
+**And most of what would make a field long belongs nowhere, because the graph
+already holds it as structure.** The premises this rests on, the questions it
+opens, the work resting on it, the evidence brought against it — every one is an
+edge, and `dg context <id>` computes the chain from them on demand, for anybody,
+years later. Prose that re-narrates any of it is a second copy of the graph in
+the one place nothing can check it against the first, which is the drift this
+tool exists to catch. Write the edge instead:
+
+```sh
+dg dep D40 --after D37                  # D40 rests on D37
+dg task link T09 --evidence-for D37     # T09's outcome bears on D37
+```
+
+`dg check` warns about a record that outgrew this, and `dg serve` folds a long
+field behind *show all* so a graph that has not been tidied is still readable.
+Under a fan-out the launcher can make it a rule:
+`$DG_TERSE=on` refuses an over-long field at stage time, before the tray is
+touched. See `agentic/README.md`.
+
 ## Reversing one
 
 ```sh
@@ -524,3 +551,5 @@ together. `dg check` reports this as a warning and still exits 0.
 - Record a plan step or a file list anywhere, or a task in `decisions.json` —
   work goes in the task store, with a `T` id.
 - Close a decision without a falsifier and a source.
+- Put the development of a point in a store field. The store holds the synopsis;
+  a file holds the rest, and the record cites it.

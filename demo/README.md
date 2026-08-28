@@ -6,7 +6,7 @@ parked, work abandoned, and evidence that arrived after the answer it was meant
 to inform.
 
 It is small enough to read in a minute and arranged so that nothing in it is
-decoration: every vertex, every edge and all three standing findings are there
+decoration: every vertex, every edge and all four standing findings are there
 because some capability has nowhere else to show itself.
 
 ## Run it
@@ -99,11 +99,11 @@ dg decide D04 --answer "efSearch=128." --source bench/efsearch-sweep.md \
 Deciding ahead of the evidence you asked for is allowed and reported. It is
 what puts a decision into the state D02 is already in, below.
 
-## The three findings, and how each one ends
+## The four findings, and how each one ends
 
 A **soundness chip** sits in the header. It appears only when `dg check` has
 something to say, so its appearing is the whole signal; clicking it lists the
-findings verbatim, remedies included. Three stand in this store, and each one
+findings verbatim, remedies included. Four stand in this store, and each one
 exists to show a different exit.
 
 ### 1. Evidence that arrived after the answer — D02
@@ -184,6 +184,43 @@ prerequisite that would have *produced* something does not release its
 dependants, it undermines them. So the question is asked at the moment somebody
 can answer it. **Drop it** in the browser asks the same question, from the same
 function, before it stages anything.
+
+### 4. A record carrying its own development — D02
+
+D02's answer states the conclusion, cites `bench/ann-sweep.md`, and then pastes
+the sweep table out of that file into the store. `dg check` says so:
+
+> ! [verbose_field] D02's answer is 522 characters — the store holds the
+> synopsis a person reads while deciding.
+
+**The finding is not about the length**, which is why it is worth having. Every
+premise D02 rests on, every question it opens and every task resting on it is
+an *edge*, and `dg context D02` computes the chain from those on demand. Prose
+that re-narrates any of that is a second copy of what the structure already
+holds, in the one place nothing can check it against the first. The table is
+the same duplication in miniature: the answer says *in full here* and then
+declines to leave it there.
+
+The exit is the citation the record already has — keep the conclusion and the
+consequence for D04, and let `--source` carry the sweep:
+
+```sh
+dg reopen D02 --yes --why "the sweep belongs in bench/ann-sweep.md, not in the store"
+dg decide D02 --answer "*HNSW*, M=32, efConstruction=200 — 0.962 recall@10 at 61G." \
+              --source "bench/ann-sweep.md" \
+              --falsifier "recall@10 falls below 0.95, or resident size passes 72G"
+```
+
+The demo keeps it unresolved on purpose: it is the one record here that shows
+what a long field does to the panel, and the panel now **folds** anything past
+a few lines behind *show all* — so a graph that has not been tidied is still
+readable, which is the half of this that no launcher policy can reach.
+
+`$DG_TERSE` is the other half, and it is for agents rather than for you. Under
+`$DG_TERSE=on` a fan-out scout composing this answer is refused at stage time,
+before the tray is touched, and told to put the sweep in the file it was
+already citing. It is unset by default, here included. `agentic/README.md` has
+the table.
 
 ## Reversals: the record this model exists to keep
 
@@ -287,7 +324,7 @@ one a prerequisite list cannot tell you.
   `dg task render`), and `dg pending` / `dg task pending` in a terminal show the
   same two trays the footer does. If one batch will not apply, the other still
   does — you are told which.
-- **Resolve all three findings** and the chip disappears. That is the only way
+- **Resolve all four findings** and the chip disappears. That is the only way
   it goes away; there is no field anywhere whose job is to silence a check.
 
 ## Notes

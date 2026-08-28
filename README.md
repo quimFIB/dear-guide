@@ -598,7 +598,7 @@ a caller with no `$DG_AGENT`. Like `$DG_AGENT` it is cooperative rather than a
 boundary — an agent that unset it would be the supervisor — which is a rule the
 launcher sets so an honest mistake is caught, not a lock.
 
-Two further limits sit beside it, both off by default. `$DG_WRITE=launch` keeps
+Three further limits sit beside it, all off by default. `$DG_WRITE=launch` keeps
 an agent's *writes* inside the project and `/tmp` and puts anything else to the
 person; reads are never judged. It cannot be checked inside `dg` the way
 `$DG_DECIDE` is, because a write never goes through this CLI — so it is checked
@@ -609,6 +609,29 @@ since `dg` is not in its process tree, but so that `dg agent expire` can hand
 back what an agent that died was holding. A task left `DOING` by something that
 stopped is indistinguishable from work in progress, and that is the failure the
 budget exists to make visible.
+
+`$DG_TERSE` is the third, and it is about the person rather than the machine:
+**the store holds the synopsis, and the development goes in a file.** A fan-out
+fills a graph with prose, and whoever then has to choose between three proposals
+is reading a wall of it in a panel. So a field longer than the limit is refused
+at staging — the one door both trays pass through, so `dg decide`, `dg task
+done` and the browser's API alike — and the refusal names the door that record
+already has for a file: `--source` on a decision, the `--outcome` on a task.
+There is deliberately no new field for it; a second way to name a file is a
+second thing that can disagree with the first.
+
+The sharper half is not about length at all. The premises a decision rests on,
+the questions it opens, the work resting on it and the evidence against it are
+all *edges*, and `dg context` computes the chain from them on demand. Prose
+re-narrating any of that is a second copy of the graph in the one place nothing
+can check it against the first — so the fix is usually `dg dep` or `dg task
+link`, not a shorter paragraph. `dg serve` folds a field past 400 characters
+behind *show all* and `dg check` warns above the same 400, which is how the rule
+reaches a graph written before it existed and the records a person wrote by hand
+— neither of which any launcher policy can touch. Both read that constant rather
+than `$DG_TERSE`, because both are read by a supervisor, who never has the
+variable set; `on` and `off` leave all three numbers agreeing, and a custom
+count does not.
 
 Neither store learns who did anything. Holdings live in `.dgraph-agents.json`,
 gitignored beside the names themselves, because `tasks.json` is kept forever and

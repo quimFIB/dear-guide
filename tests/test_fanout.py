@@ -186,6 +186,7 @@ ANSWERS = [
     "findings/<id>.md",               # findings
     "3", "claude",                    # agents, host
     "never", "launch", "45m",         # decide, write, budget
+    "on",                             # terse
     "n",                              # capture
     "y",                              # write the files
 ]
@@ -265,6 +266,7 @@ def test_all_three_collectors_produce_identical_files(proj, monkeypatch):
             app_.query_one("#findings", Input).value = "findings/<id>.md"
             app_.query_one("#reads", TextArea).text = "spec.md: the criteria"
             app_.query_one("#budget", Input).value = "45m"
+            app_.query_one("#terse", Input).value = "on"
             app_.query_one("#agents", Input).value = "3"
             for rb in app_.query_one("#decide", RadioSet).query("RadioButton"):
                 rb.value = str(rb.label) == "never"
@@ -277,7 +279,8 @@ def test_all_three_collectors_produce_identical_files(proj, monkeypatch):
 
     res = run(proj, "agent", "setup", "--focus", "T01", "--agents", "3",
               "--brief", "settle the search area", "--budget", "45m",
-              "--decide", "never", "--read", "spec.md:the criteria",
+              "--decide", "never", "--terse", "on",
+              "--read", "spec.md:the criteria",
               "--findings", "findings/<id>.md")
     assert res.exit_code == 0, res.output
     from_flags = (proj.root / fanout.OUT_DIR / "scout.md").read_text()
@@ -312,3 +315,38 @@ def test_the_missing_textual_hint_keeps_the_extra_it_names():
     out = io.StringIO()
     Console(file=out, width=200).print(cli.TUI_HINT)
     assert "dear-guide[tui]" in out.getvalue()
+
+
+# ---- $DG_TERSE -----------------------------------------------------------
+
+from dataclasses import replace          # noqa: E402  (section-local, as above)
+
+
+def test_the_launcher_sets_the_field_limit(proj):
+    """The whole contract with the host is environment variables, and a policy
+    the launcher does not set is a policy nothing enforces."""
+    plan = replace(fanout.defaults(proj), terse="250")
+    assert "DG_TERSE=250" in fanout.render_launch(plan, proj)
+
+
+def test_the_prompt_says_which_limit_is_in_force(proj):
+    """An agent told the rule but not the policy reads a stage-time refusal as
+    a broken tool — the argument `$DG_DECIDE` already makes in this template."""
+    scout = fanout.render_scout(replace(fanout.defaults(proj), terse="250"), proj)
+    assert "$DG_TERSE=250" in scout and "250 characters" in scout
+    assert "⟨" not in scout
+
+
+def test_off_is_stated_as_a_request_rather_than_hidden(proj):
+    """A fan-out with no limit still gets the convention, because the rule is
+    about duplicating the graph rather than about the count."""
+    scout = fanout.render_scout(replace(fanout.defaults(proj), terse="off"), proj)
+    assert "$DG_TERSE=off" in scout and "request rather than a refusal" in scout
+
+
+def test_a_bad_field_limit_is_refused_rather_than_defaulted(proj):
+    """`--decide evidenced` reasoning: a launcher that typed this meant to
+    constrain its agents, and running them unconstrained is the failure the
+    flag exists to prevent."""
+    res = run(proj, "agent", "setup", "--terse", "loose", "--brief", "x")
+    assert res.exit_code == 2 and "--terse" in res.output

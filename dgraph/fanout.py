@@ -21,7 +21,7 @@ person: what the fan-out is *for*, what the agents may read, and where findings
 go. The rest are already in the graph or in the plan — the project's name, the
 chain behind the work (`dg context <id> --full`, pasted verbatim), the areas,
 the next free ids, which `$DG_DECIDE` is in force and what it means, the write
-scope and its roots, the budget.
+scope and its roots, the budget, and how long a field may be.
 
 That ratio is the argument for the wizard existing. A template with twenty
 blanks gets filled badly or not at all; one with three gets filled.
@@ -95,6 +95,12 @@ class Plan:
     decide: str = "evidence"
     write: str = "launch"
     budget: int | None = 1800
+    #: `$DG_TERSE`. On by default here while the tool's own default is off, for
+    #: the same reason `decide` and `write` are tighter than theirs: a fan-out
+    #: is where the failure this guards against actually happens. A dozen
+    #: agents each writing their reasoning into an answer is what makes a graph
+    #: unreadable in the browser, and the person deciding is the one who pays.
+    terse: str = "on"
     #: The three answers no graph can supply.
     brief: str = ""
     reads: list[tuple[str, str]] = field(default_factory=list)
@@ -192,6 +198,17 @@ def _decide_prose(policy: str) -> str:
     }[policy]
 
 
+def _terse_prose(value: str) -> str:
+    cap = limits.terse_limit(value)
+    if cap is None:
+        return ("No limit is set, so this is a request rather than a refusal. "
+                "Hold to it anyway — the person reviewing your proposals is "
+                "reading them in a panel.")
+    return (f"A field longer than **{cap} characters** is refused at stage "
+            f"time, before the tray is touched. That is the policy and not a "
+            f"broken tool: write the development to a file and cite it.")
+
+
 def _write_prose(policy: str, root: Path) -> str:
     if policy == "open":
         return ("Your writes are not scoped. Stay inside the project anyway "
@@ -265,6 +282,8 @@ def render_scout(plan: Plan, proj: project.Project | None = None) -> str:
         "AREAS": _areas(proj),
         "DECIDE": plan.decide,
         "DECIDE_PROSE": _decide_prose(plan.decide),
+        "TERSE": plan.terse,
+        "TERSE_PROSE": _terse_prose(plan.terse),
         "READS": reads,
         "WRITE": plan.write,
         "WRITE_PROSE": _write_prose(plan.write, proj.root),
@@ -322,7 +341,7 @@ def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
             ]
     lines += ["for i in $(seq 1 %d); do" % plan.agents]
     env = [f"DG_AGENT=$({claim})", f"DG_DECIDE={plan.decide}",
-           f"DG_WRITE={plan.write}"]
+           f"DG_WRITE={plan.write}", f"DG_TERSE={plan.terse}"]
     if plan.budget is not None:
         env.append(f"DG_BUDGET={limits.show_span(plan.budget)}")
     lines += [f"  {' '.join(env)} \\"]
