@@ -141,9 +141,9 @@ dg apply --agent brisk-beacon
 ```
 
 ```
-┃ Name          ┃ Since      ┃ Staged ┃ Holding ┃ Budget           ┃
-│ agile-azimuth │ 2026-08-28 │ 0      │ T07     │ SPENT +12m       │
-│ brisk-beacon  │ 2026-08-28 │ 4      │ T11     │ 30m (18m left)   │
+┃ Name          ┃ Staged ┃ Holding ┃ Budget         ┃ Seen       ┃
+│ agile-azimuth │ 0      │ T07     │ SPENT +12m     │ silent 44m │
+│ brisk-beacon  │ 4      │ T11     │ 30m (18m left) │ 20s        │
 ```
 
 Each park is staged **under the agent's own name**, so it lands beside whatever
@@ -160,6 +160,38 @@ makes the queue honest afterwards, and this is a real case rather than a
 hypothetical — a rate limit killed three scouts mid-wave in the run that
 `.dgraph-capture/` was built from, and every one of their tasks had to be parked
 by hand.
+
+### `Seen`, and why nothing acts on it
+
+A budget catches an agent that ran *out of time*. It does nothing for one killed
+at minute five of thirty — a quota limit, a crash — which stays invisible for
+the next twenty-five minutes while its row reads perfectly healthy. So every
+`dg` call by an agent stamps a heartbeat, and `Seen` is how long ago that was.
+
+The signal is better than "how often does an agent run `dg`" suggests, because
+`dg` is not the only door: both host adapters call `dg gate` on the agent's own
+tool calls, so **every file write is a heartbeat too**. For a scout that reads,
+thinks, writes findings and records them, coverage is good.
+
+**Nothing acts on it, and that is the design.** An elapsed budget is a fact
+about a clock. Silence is a suspicion — an agent in a forty-minute build is
+silent in exactly the way a dead one is, and no amount of tuning fixes that,
+because the blind spot is precisely long non-`dg`, non-write work. So silence
+gets a column and never a verb: `expire` fires on elapsed budgets only, and a
+person decides what a quiet agent means.
+
+Three things keep it honest:
+
+- the window is deliberately generous — 15 minutes, and `$DG_SILENT_AFTER`
+  raises it for a fan-out doing long compiles;
+- it is reported **only for an agent holding work**, since one that is silent
+  and holding nothing has cost nobody anything;
+- and if you do act, `expire` still only *stages*, so a park on a live agent is
+  reviewed before it lands and `dg clear --agent` throws it away.
+
+The remaining blind spot is worth telling agents about rather than engineering
+around: an agent that knows it is about to go quiet for an hour can say so, and
+`dg apply --mine` before a long sweep is a heartbeat like any other.
 
 ---
 
@@ -432,17 +464,24 @@ dg agent prune        # release the names, now that nothing is staged
 dg check
 ```
 
-**`expire` before `prune`, and the order is the whole of it.** `prune` releases
-every name with nothing staged, and that includes an agent that died holding a
-task. Once the lease is gone the task is **stranded**: it stays `DOING`, its
-holder is no longer recorded anywhere, and `dg task start` refuses it — *`T01`
-is already `DOING`* — so no other agent can take it. Only a hand-written
-`dg task park` gets it back, by somebody who noticed. Expiring first turns the
-same situation into a park that names the budget.
+**`prune` will not strand work, and says what it kept back.** A name with
+nothing staged reads as idle even when its agent is mid-task — that is the first
+minute of every agent's life — so releasing it used to strand the task: still
+`DOING`, holder no longer recorded, and `dg task start` refusing it as taken.
+`prune` now keeps those names and names them:
 
-A run with no budgets set has nothing to expire, which is exactly when this bites
-and the reason `--budget` is worth setting even when you do not intend to enforce
-one. Either way, check `dg task` for anything still `DOING` before you prune.
+```
+released 1: agile-bearing
+kept agile-azimuth — still holds T01
+```
+
+`dg agent release` refuses for the same reason, and `--force` overrides either
+when the stranding is what you want — a run whose tasks you are about to drop.
+
+**So `expire` first is a convenience, not a rescue.** Expiring turns a kept-back
+name into a park that says *why*, which is what the next agent needs; without it
+you park by hand, or prune again once the work is settled. A run with no budgets
+has nothing to expire and still cannot be stranded.
 
 ---
 

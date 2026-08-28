@@ -191,6 +191,7 @@ dg agent claim                           # a free name for one writer, printed b
 dg agent claim --budget 30m              # ...and how long it may run before its work is handed back
 dg agent list                            # who holds a name, what they hold, what is staged, time left
 dg agent expire                          # stage a park for whatever an out-of-time agent still holds
+dg agent prune                           # release idle names — keeps back any still holding DOING work
 dg gate --write PATH                     # may this agent write here? — what the host adapters ask
 dg pending                               # review; `--full` for the table
 dg pending --agent b                     # ...one writer's proposal alone

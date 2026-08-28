@@ -74,6 +74,17 @@ WRITE_ENV = "DG_WRITE"
 #: `$DG_BUDGET`. The value is a span; `infinite` and unset both mean no limit.
 BUDGET_ENV = "DG_BUDGET"
 
+#: `$DG_SILENT_AFTER`: how long an agent may go without touching `dg` before
+#: `dg agent list` says so. **Not a limit** -- nothing acts on it, and that is
+#: the whole design. An elapsed budget is a fact about the clock; silence is a
+#: suspicion, because an agent in a forty-minute build looks exactly like one
+#: that died in the first minute of it. The two must never share a verb.
+#:
+#: The default is deliberately far above any plausible think-time, and it is
+#: raised rather than lowered for a fan-out doing long compiles.
+SILENT_ENV = "DG_SILENT_AFTER"
+SILENT_DEFAULT = 900
+
 #: What `infinite` may be spelled as. `0` is deliberately NOT among them: a
 #: budget of zero seconds is a plausible typo for "no budget" and the two
 #: readings are opposites, so it is refused rather than guessed at.
@@ -142,6 +153,27 @@ def show_span(seconds: int | None) -> str:
     return f"{seconds}s"
 
 
+def approx_span(seconds: int) -> str:
+    """A duration for a person to glance at. Lossy, deliberately.
+
+    `show_span` round-trips through `span` and so cannot round: it renders 2401
+    seconds as `2401s`, which is correct and unreadable, and an elapsed time
+    nobody will ever re-parse is the case that wants the other trade. Used for
+    the columns that measure *how long ago*; the budget itself keeps
+    `show_span`, because that number was typed by a person and should come back
+    the way they wrote it.
+    """
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        hours, rest = divmod(seconds, 3600)
+        return f"{hours}h" if rest < 60 else f"{hours}h{rest // 60}m"
+    return f"{seconds // 86400}d"
+
+
 def budget(value: str | None = None) -> int | None:
     """`$DG_BUDGET` as seconds, or `None` for no limit.
 
@@ -155,6 +187,20 @@ def budget(value: str | None = None) -> int | None:
         return span(value if value is not None else os.environ.get(BUDGET_ENV))
     except BadSpan:
         return None
+
+
+def silent_after(value: str | None = None) -> int:
+    """`$DG_SILENT_AFTER` as seconds, defaulting to `SILENT_DEFAULT`.
+
+    A bad value is the default rather than an error, unlike `--budget`: nothing
+    acts on this number, so misreading it costs a column that says the wrong
+    thing rather than work parked at the wrong moment.
+    """
+    try:
+        return span(value if value is not None
+                    else os.environ.get(SILENT_ENV)) or SILENT_DEFAULT
+    except BadSpan:
+        return SILENT_DEFAULT
 
 
 def _real(path) -> str:

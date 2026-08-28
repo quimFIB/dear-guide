@@ -56,11 +56,12 @@ tray leaves the queue reading `startable` and shows no `held by`; and
 that died is indistinguishable from one being worked on.
 
 **Hand back before you release.** `dg agent list` shows who is over budget and
-still holding work; `dg agent expire` stages a park for each, under that agent's
-own name. Do this *before* `dg agent prune` — prune releases any name with
-nothing staged, including one that died holding a task, and once the lease is
-gone the task is stranded: still `DOING`, holder unrecorded, and `dg task start`
-refuses it as already taken. Only a hand-written park recovers it.
+still holding work, and who has gone quiet while holding it; `dg agent expire`
+stages a park for each out-of-time agent, under that agent's own name. Do this
+before `dg agent prune` — not because prune is dangerous (it keeps back any name
+still holding `DOING` work, and `release` refuses one) but because a park that
+names *why* is what the next agent needs, and prune only tells you it declined
+to release the name.
 
 **Recording the run is OPTIONAL and usually not wanted.** A fan-out leaves
 behind what it decided, which is what the graph is for. If this run needs to

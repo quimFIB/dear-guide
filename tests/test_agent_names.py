@@ -320,3 +320,87 @@ def test_every_agent_name_in_the_prose_is_one_the_tool_can_hand_out():
                     bad.append(f"{page.relative_to(root)}:{i} {tok}")
     assert not bad, ("names the allocator cannot produce:\n  "
                      + "\n  ".join(bad))
+
+
+# ---- the stranding guard, at the door ------------------------------------
+
+
+def _holding(run, proj, tid="T01"):
+    """Claim a name and have it hold `tid`, staging nothing else."""
+    name = agents.claim(proj.root)
+    runner.invoke(app, ["--project", str(proj.root), "task", "start", tid],
+                  env={"DG_AGENT": name})
+    runner.invoke(app, ["--project", str(proj.root), "apply", "--agent", name])
+    return name
+
+
+def test_prune_keeps_back_a_name_still_holding_work(run, proj, monkeypatch):
+    """The trap this guard exists for, and it is the FIRST MINUTE of an agent's
+    life: it has claimed a task and not staged anything yet, which reads as
+    idle. Releasing it strands the task — DOING, holder unrecorded, and
+    `dg task start` refusing it as taken.
+    """
+    monkeypatch.setenv("DG_AGENT", "")
+    holder = _holding(run, proj)
+    idle = agents.claim(proj.root)
+
+    out = run("agent", "prune").output
+    assert idle in out and "released" in out
+    assert holder in out and "kept" in out
+    assert holder in agents.load(proj.root)
+    # ...and the task still knows who has it.
+    assert agents.holdings(proj.root) == {"T01": holder}
+
+
+def test_prune_force_strands_it_deliberately(run, proj, monkeypatch):
+    """A rule that cannot be overridden is one people route around, and the
+    stranding is sometimes wanted — a run whose tasks are about to be dropped.
+    """
+    monkeypatch.setenv("DG_AGENT", "")
+    holder = _holding(run, proj)
+    assert holder in run("agent", "prune", "--force").output
+    assert holder not in agents.load(proj.root)
+
+
+def test_release_refuses_a_name_still_holding_work(run, proj, monkeypatch):
+    """The same stranding arrives one name at a time through this door."""
+    monkeypatch.setenv("DG_AGENT", "")
+    holder = _holding(run, proj)
+
+    refused = run("agent", "release", holder)
+    assert refused.exit_code == 1 and "still holds T01" in refused.output
+    assert holder in agents.load(proj.root)
+
+    assert run("agent", "release", holder, "--force").exit_code == 0
+    assert holder not in agents.load(proj.root)
+
+
+def test_the_guard_reads_real_status_not_a_stale_lease(run, proj, monkeypatch):
+    """`drop_hold` clears `holding` only when work leaves DOING through this
+    CLI, so a task parked another way leaves an entry behind. Keeping a name
+    alive over a stale one would make `prune` useless exactly when a run ends.
+    """
+    monkeypatch.setenv("DG_AGENT", "")
+    holder = _holding(run, proj)
+    assert run("task", "park", "T01", "--why", "stopped").exit_code == 0
+    assert run("apply").exit_code == 0
+    leases = agents.load(proj.root)
+    leases[holder]["holding"] = ["T01"]          # the stale entry
+    agents.save(leases, proj.root)
+
+    assert holder in run("agent", "prune").output
+    assert holder not in agents.load(proj.root)
+
+
+def test_the_guard_is_silent_in_a_project_with_no_task_store(tmp_path,
+                                                             monkeypatch):
+    """`dg agent prune` has always worked without one, and a project with no
+    tasks cannot strand anything."""
+    (tmp_path / "decisions.json").write_text(json.dumps(FIXTURE, indent=2),
+                                             encoding="utf-8")
+    monkeypatch.setattr(project, "_override", tmp_path)
+    monkeypatch.delenv("DG_AGENT", raising=False)
+    name = agents.claim(tmp_path)
+    out = runner.invoke(app, ["--project", str(tmp_path), "agent", "prune"])
+    assert out.exit_code == 0 and name in out.output
+    assert agents.load(tmp_path) == {}

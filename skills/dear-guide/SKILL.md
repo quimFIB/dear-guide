@@ -157,6 +157,14 @@ A supervisor can clean up after an agent that never got the chance —
 state the work was in. Only you can, and that sentence is the difference between
 work the next agent can resume and work somebody has to redo.
 
+**If you are about to go quiet for a long time, say so first.** Every `dg` call
+you make is a heartbeat, and so is every file you write, so `dg agent list`
+shows a supervisor how long ago you were last seen. An agent that spends forty
+minutes on one build looks exactly like one that died — there is no way to tell
+from outside, which is why nothing acts on it automatically. Touching the graph
+before a long silent stretch (`dg apply --mine`, or a note on the task) costs
+nothing and keeps you off that list.
+
 **You can pick your own work, too.** `dg task` ends with a `ready` line —
 everything startable right now — and `dg task start` refuses a task somebody
 already claimed, so taking work off the frontier is safe without asking. The

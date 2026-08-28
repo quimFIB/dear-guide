@@ -264,6 +264,13 @@ def _root(
                   f"[dim]set ${pending.AGENT_ENV} to something else, or unset "
                   f"it to work as the supervisor[/]")
         raise typer.Exit(2)
+    # The heartbeat. Here because it is the one place every command passes
+    # through, and after the refusal above so that a session being turned away
+    # does not stamp itself alive. `touch` swallows everything and writes at
+    # most once every `agents.TOUCH_EVERY` seconds — a liveness signal that
+    # could fail a command, or add a locked write to every invocation, would
+    # cost more than the fact is worth. A supervisor is not tracked.
+    agents.touch(pending.owner())
 
 STATUS_STYLE = {
     "DECIDED": "green",
@@ -2796,8 +2803,20 @@ def agent_claim(
         # worse for looking deliberate.
         con.print(f"[red]✗ no name to claim — {_x(exc)}[/]")
         if exc.releasable:
-            con.print(f"[dim]{exc.releasable} have nothing staged under them: "
-                      f"`dg agent prune` frees those now[/]")
+            # `releasable` counts leases with nothing staged, which is what
+            # `prune` used to free. It now keeps back the ones still holding
+            # DOING work, so the count is an upper bound and saying "frees
+            # those now" would promise names that stay held. The subtraction
+            # happens here because `Exhausted` is raised in a module that
+            # cannot read the task store.
+            free = exc.releasable - len(_still_working())
+            if free > 0:
+                con.print(f"[dim]{free} have nothing staged under them: "
+                          f"`dg agent prune` frees those now[/]")
+            else:
+                con.print("[dim]every idle name is still holding work — "
+                          "`dg agent expire`, or park what is DOING, then "
+                          "`dg agent prune`[/]")
         else:
             con.print("[dim]every name has ops in a tray — `dg apply` or "
                       "`dg clear` first, then `dg agent prune`[/]")
@@ -2816,8 +2835,9 @@ def agent_list() -> None:
         con.print("[dim]no names claimed[/]")
         return
     t = Table(header_style="bold", title="Names held")
-    for c in ("Name", "Since", "Staged", "Holding", "Budget"):
+    for c in ("Name", "Since", "Staged", "Holding", "Budget", "Seen"):
         t.add_column(c)
+    quiet_names = {r["agent"] for r in agents.silent()}
     # Names with ops but no lease are listed too, and marked. That is what a
     # hand-set `$DG_AGENT` looks like, and a roster of leases alone would say
     # the tray was unowned while somebody's drafts sat in it.
@@ -2831,16 +2851,36 @@ def agent_list() -> None:
             # The one cell worth a colour: an agent past its budget and still
             # holding work is the state `dg agent expire` exists for, and it is
             # invisible in every other reading of a run.
-            spend = f"[red]SPENT +{limits.show_span(-left)}[/]"
+            spend = f"[red]SPENT +{limits.approx_span(-left)}[/]"
         else:
             spend = (f"{limits.show_span(rec['budget'])}"
-                     f" ({limits.show_span(left)} left)")
+                     f" ({limits.approx_span(left)} left)")
+        quiet = agents.quiet_for(rec)
+        if quiet is None:
+            seen = "[dim]—[/]"
+        elif name in quiet_names:
+            # Yellow, never red: this is the one column that can be wrong. An
+            # agent in a long build is silent in exactly the same way a dead
+            # one is, and the colour should not claim otherwise.
+            seen = f"[yellow]silent {limits.approx_span(quiet)}[/]"
+        else:
+            seen = limits.approx_span(quiet)
         t.add_row(_x(name), since, str(staged.get(name, 0)),
-                  ", ".join(rec.get("holding") or ()) or "[dim]—[/]", spend)
+                  ", ".join(rec.get("holding") or ()) or "[dim]—[/]", spend,
+                  seen)
     con.print(t)
     if any(agents.over_budget()):
         con.print("[dim]`dg agent expire` hands back what the spent ones "
                   "hold[/]")
+    if quiet_names:
+        # No command is offered, deliberately. An elapsed budget is a fact and
+        # `expire` acts on it; silence is a suspicion, and the only safe next
+        # step is a person deciding whether that agent is thinking or gone.
+        con.print(f"[dim]silent = no `dg` call and no file write for "
+                  f"{limits.approx_span(limits.silent_after())}, while holding "
+                  f"work. A long build looks the same as a dead agent — check "
+                  f"before parking anything. ${limits.SILENT_ENV} sets the "
+                  f"window[/]")
     con.print(f"[dim]{len(agents.sequence()) - len(set(leases) | set(staged))} "
               f"of {len(agents.sequence())} names free[/]")
 
@@ -2848,13 +2888,29 @@ def agent_list() -> None:
 @agent_app.command("release")
 def agent_release(
     name: str = typer.Argument(..., help="the name to stop holding"),
+    force: bool = typer.Option(
+        False, "--force",
+        help="release even while it holds DOING work, stranding those tasks"),
 ) -> None:
     """Stop holding one name, so it can be claimed again.
 
     Says nothing about the tray: releasing a name whose ops are still staged is
     legitimate — the launcher is done, the review is not — and `dg agent claim`
     still will not hand it out while those ops are there.
+
+    It does say something about held **work**, and refuses. The same stranding
+    `dg agent prune` avoids arrives through this door one name at a time; see
+    that command for what it costs. `--force` overrides.
     """
+    if not force:
+        held = _still_working().get(name)
+        if held:
+            con.print(f"[red]✗ {_x(name)} still holds {', '.join(held)}[/]\n"
+                      f"[dim]releasing it now strands that work — DOING, with "
+                      f"no holder recorded and `dg task start` refusing it. "
+                      f"`dg agent expire`, or `dg task park <id> --why …`, "
+                      f"then release. `--force` releases anyway[/]")
+            raise typer.Exit(1)
     if not agents.release(name):
         con.print(f"[red]nothing released — {_x(name)} is not held[/]\n"
                   f"[dim]`dg agent list` shows what is[/]")
@@ -2863,18 +2919,85 @@ def agent_release(
 
 
 @agent_app.command("prune")
-def agent_prune() -> None:
+def agent_prune(
+    force: bool = typer.Option(
+        False, "--force",
+        help="release names still holding DOING work, stranding those tasks"),
+) -> None:
     """Release every name with no ops left in either tray.
 
     Deliberate, and never run on your behalf. A name with nothing staged can
     still belong to an agent that has not staged *yet*, so this is safe when a
     person knows the round is over and unsafe as a rule a timer applies.
+
+    **A name still holding DOING work is kept back**, because "nothing staged"
+    and "finished" are not the same thing and the gap between them is the first
+    minute of every agent's life. Dropping such a lease strands the task: it
+    stays `DOING`, its holder stops being recorded anywhere, and `dg task start`
+    refuses it as taken — so no other agent can pick it up and only a
+    hand-written park recovers it. Nothing detects that afterwards either,
+    because a task `DOING` with no holder is exactly what an ordinary solo
+    `dg task start` leaves behind.
+
+    `--force` releases them anyway. It is here because a rule that cannot be
+    overridden is a rule people route around, and because the stranding is
+    sometimes what you want — a run whose tasks you are about to drop.
     """
-    gone = agents.prune()
-    if not gone:
+    holders = {} if force else _still_working()
+    gone = agents.prune(keep=holders)
+    kept = sorted(holders)
+    if not gone and not kept:
         con.print("[dim]nothing to prune — every name held has ops staged[/]")
         return
-    con.print(f"[green]released[/] {len(gone)}: {_x(', '.join(sorted(gone)))}")
+    if gone:
+        con.print(f"[green]released[/] {len(gone)}: {_x(', '.join(sorted(gone)))}")
+    for line in _stranding(kept, holders):
+        con.print(line)
+    if kept:
+        con.print("[dim]`dg agent expire` parks what an out-of-time agent "
+                  "holds, or `dg task park <id> --why …` by hand — then prune "
+                  "again. `--force` releases them and strands the work[/]")
+
+
+def _still_working() -> dict[str, list[str]]:
+    """`{agent: [tids]}` for leases holding work that is genuinely still DOING.
+
+    The guard behind `prune` and `release`, and the reason it is here rather
+    than in `agents.py`: answering it means reading the task store, which that
+    module deliberately knows nothing about.
+
+    Soft on purpose. A project with no task store cannot strand a task, and
+    `dg agent prune` has always worked without one — so a missing store is an
+    empty answer rather than the exit `_tg` would raise. The lease's `holding`
+    list is filtered against real statuses because `drop_hold` clears it only
+    when work leaves DOING through this CLI; a task parked by somebody else
+    leaves an entry behind, and keeping a name alive over a stale one would
+    make `prune` useless exactly when a run is over.
+    """
+    proj = project.find()
+    if not proj.has_tasks:
+        return {}
+    try:
+        tg = _teff(TaskGraph.load(proj.tasks))
+    except (OSError, ValueError, typer.Exit):
+        # A store that will not load, or a tray that no longer applies. Both
+        # are real problems with their own messages elsewhere; neither is a
+        # reason for this guard to refuse, and treating them as "nothing is
+        # held" only restores the behaviour prune had before the guard.
+        return {}
+    out: dict[str, list[str]] = {}
+    for name, rec in agents.load().items():
+        live = [t for t in (rec.get("holding") or ())
+                if t in tg.tasks and tg.tasks[t].status == "DOING"]
+        if live:
+            out[name] = live
+    return out
+
+
+def _stranding(names: list[str], holders: dict[str, list[str]]) -> list[str]:
+    """The lines explaining what was kept back, and how to release it anyway."""
+    return [f"[yellow]kept[/] {_x(n)} — still holds "
+            f"{', '.join(holders[n])}" for n in names]
 
 
 @agent_app.command("expire")
@@ -2907,7 +3030,7 @@ def agent_expire() -> None:
     tg = _teff(_tg())
     staged = 0
     for rec in spent:
-        name, over = rec["agent"], limits.show_span(rec["over"])
+        name, over = rec["agent"], limits.approx_span(rec["over"])
         held = [t for t in rec["holding"]
                 if t in tg.tasks and tg.tasks[t].status == "DOING"]
         idle = [t for t in rec["holding"] if t not in held]

@@ -196,3 +196,107 @@ def test_over_budget_reports_an_agent_holding_nothing(store):
     agents.save(leases, store)
     [rec] = agents.over_budget(store)
     assert rec["agent"] == name and rec["holding"] == []
+
+
+# ---- liveness: reported, never acted on ----------------------------------
+
+
+def test_a_heartbeat_is_stamped_and_debounced(store, monkeypatch):
+    """Every `dg` call goes through `touch`, so it must not write every time."""
+    name = agents.claim(store)
+    agents.touch(name, store, now="2026-08-28T12:00:00")
+    first = agents.load(store)[name]["last_seen"]
+    # Inside the window: no new stamp, and no write.
+    agents.touch(name, store, now="2026-08-28T12:00:10")
+    assert agents.load(store)[name]["last_seen"] == first
+    # Past it: stamped.
+    agents.touch(name, store, now="2026-08-28T12:05:00")
+    assert agents.load(store)[name]["last_seen"] == "2026-08-28T12:05:00"
+
+
+def test_a_heartbeat_never_raises(store):
+    """It runs before every command. One that could fail a command would be a
+    liveness signal that costs liveness."""
+    agents.touch(None, store)                      # a supervisor
+    agents.touch("never-claimed", store)           # no lease to stamp
+    agents.touch("x", store / "nowhere")           # no project
+    assert agents.load(store) == {}
+
+
+def test_silence_is_only_reported_while_holding_work(store):
+    """An agent silent and holding nothing has cost nobody anything, and a
+    column of that is noise in front of every supervisor."""
+    idle = agents.claim(store)
+    leases = agents.load(store)
+    leases[idle]["last_seen"] = "2000-01-01T00:00:00"
+    agents.save(leases, store)
+    assert agents.silent(store) == []
+
+    agents.hold(idle, "T01", store)
+    [rec] = agents.silent(store)
+    assert rec["agent"] == idle and rec["holding"] == ["T01"]
+
+
+def test_an_unstamped_lease_is_not_silent(store):
+    """Never seen is not the same as not seen lately: a lease from before this
+    existed, or an agent that has not run a command yet."""
+    name = agents.claim(store)
+    agents.hold(name, "T01", store)
+    assert agents.quiet_for(agents.load(store)[name]) is None
+    assert agents.silent(store) == []
+
+
+def test_silence_does_not_make_an_agent_over_budget(store):
+    """The line the whole design rests on. A forty-minute build is silent in
+    exactly the way a corpse is, so silence must never reach the verb that
+    parks work — only an elapsed budget does, and that is a fact about a clock.
+    """
+    name = agents.claim(store, budget=7200, now="2026-08-28T12:00:00")
+    leases = agents.load(store)
+    leases[name]["last_seen"] = "2026-08-28T12:01:00"
+    leases[name]["holding"] = ["T01"]
+    agents.save(leases, store)
+
+    at = "2026-08-28T12:41:00"                       # 40m silent, 1h20m of budget left
+    assert agents.silent(store, now=at)              # reported...
+    assert agents.over_budget(store, now=at) == []   # ...and nothing acts on it
+
+
+def test_the_silence_window_is_configurable(monkeypatch):
+    assert limits.silent_after() == limits.SILENT_DEFAULT
+    monkeypatch.setenv(limits.SILENT_ENV, "40m")
+    assert limits.silent_after() == 2400
+    monkeypatch.setenv(limits.SILENT_ENV, "nonsense")
+    assert limits.silent_after() == limits.SILENT_DEFAULT
+
+
+@pytest.mark.parametrize("seconds,shown", [
+    (9, "9s"), (59, "59s"), (60, "1m"), (2401, "40m"), (3600, "1h"),
+    (5400, "1h30m"), (86400, "1d"), (210067925, "2431d"),
+])
+def test_approx_span_reads_like_a_person_wrote_it(seconds, shown):
+    """`show_span` cannot round — it round-trips through `span` — so it renders
+    2401 seconds as `2401s`, which is correct and unreadable."""
+    assert limits.approx_span(seconds) == shown
+
+
+# ---- the stranding guard -------------------------------------------------
+
+
+def test_prune_keeps_a_lease_the_caller_named(store):
+    """`keep` is how the CLI stops `prune` stranding a task. The set is the
+    caller's to compute: knowing a held task is still DOING means reading the
+    task store, and this module does not know what a task is."""
+    holder, idle = agents.claim(store), agents.claim(store)
+    agents.hold(holder, "T01", store)
+    assert agents.prune(store, keep=[holder]) == [idle]
+    assert list(agents.load(store)) == [holder]
+
+
+def test_prune_without_keep_is_exactly_what_it_was(store):
+    """The default has to stay today's behaviour, or every existing caller
+    changes meaning."""
+    holder, idle = agents.claim(store), agents.claim(store)
+    agents.hold(holder, "T01", store)
+    assert sorted(agents.prune(store)) == sorted([holder, idle])
+    assert agents.load(store) == {}

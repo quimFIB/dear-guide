@@ -55,6 +55,7 @@ numbered one, would be the silent conflation this module exists to prevent.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 from dgraph import pending, project
@@ -292,19 +293,33 @@ def release(name: str, root: Path | None = None) -> bool:
         return True
 
 
-def prune(root: Path | None = None) -> list[str]:
+def prune(root: Path | None = None, keep: Iterable[str] = ()) -> list[str]:
     """Drop every lease with no ops left in either tray, and name what went.
 
     The deliberate act that automatic reaping was not allowed to be. Safe by
     construction rather than by timing: a name with nothing staged under it can
     still be *in use* by an agent that has not staged yet, so this is offered to
     a person who knows the round is over, and never run on their behalf.
+
+    `keep` is names to leave alone whatever else is true of them. It exists
+    because "nothing staged" is not the same as "finished": an agent that
+    claimed a task and has not staged yet is idle by this measure and very much
+    in use, and dropping its lease STRANDS the task -- still `DOING`, its holder
+    no longer recorded anywhere, and `dg task start` refusing it as taken. Only
+    a hand-written park recovers it, by somebody who noticed.
+
+    The set is the caller's to compute, not this module's, and deliberately so:
+    knowing whether a held task is still `DOING` means reading the task store,
+    and `agents.py` does not know what a task is. `cli.agent_prune` has the
+    graph loaded already and passes the answer in. Defaulting to empty keeps
+    every existing caller on the old behaviour.
     """
+    keep = set(keep)
     proj = project.find() if root is None else project.Project(root)
     with project.held(path(proj.root)):
         leases = load(proj.root)
         staged = in_trays(proj)
-        gone = [n for n in leases if n not in staged]
+        gone = [n for n in leases if n not in staged and n not in keep]
         for n in gone:
             del leases[n]
         save(leases, proj.root)
@@ -344,6 +359,90 @@ def remaining(rec: dict, now: str | None = None) -> int | None:
         return None
     at = datetime.fromisoformat(now) if now else datetime.now()
     return int(rec["budget"]) - int((at - began).total_seconds())
+
+
+#: How stale a `last_seen` must be before `touch` writes a new one. Every `dg`
+#: call goes through `touch`, so an unconditional write would be a locked
+#: read-modify-write per invocation to record something nothing reads at that
+#: resolution. Coarser than this and the silence column starts rounding up.
+TOUCH_EVERY = 30
+
+
+def touch(name: str | None, root: Path | None = None, *,
+          now: str | None = None, every: int = TOUCH_EVERY) -> None:
+    """Record that `name` was alive just now. A person is not tracked.
+
+    Called from the CLI's root callback, so **every** `dg` invocation by an
+    agent is a heartbeat -- and, because both host adapters run `dg gate` on
+    the agent's own tool calls, so is every file write it makes. That second
+    path is what makes the signal worth having: an agent calls `dg` a handful
+    of times an hour and writes files constantly.
+
+    Never raises. A heartbeat that could break a command would be a liveness
+    signal that costs liveness, and this runs before every single one.
+
+    Only stamps a lease that already exists. A hand-set `$DG_AGENT` that never
+    claimed gets no lease here -- `hold` is what creates one for it, and until
+    then there is nothing to be silent about.
+    """
+    if not name:
+        return
+    try:
+        leases = load(root)
+        rec = leases.get(name)
+        if rec is None:
+            return
+        stamp = now or _now()
+        # Read unlocked and return early: the common case is a fresh stamp and
+        # no write at all, and taking the lease lock to discover that would put
+        # a lock acquisition on the front of every `dg` command.
+        if quiet_for(rec, stamp) is not None and quiet_for(rec, stamp) < every:
+            return
+        with project.held(path(root)):
+            leases = load(root)
+            if name not in leases:
+                return
+            leases[name]["last_seen"] = stamp
+            save(leases, root)
+    except Exception:
+        return
+
+
+def quiet_for(rec: dict, now: str | None = None) -> int | None:
+    """Seconds since this lease was last seen alive; `None` if never stamped."""
+    if not rec.get("last_seen"):
+        return None
+    from datetime import datetime
+    try:
+        seen = datetime.fromisoformat(rec["last_seen"])
+    except (TypeError, ValueError):
+        return None
+    at = datetime.fromisoformat(now) if now else datetime.now()
+    return max(0, int((at - seen).total_seconds()))
+
+
+def silent(root: Path | None = None, now: str | None = None,
+           after: int | None = None) -> list[dict]:
+    """Agents holding work that have not been seen for a while.
+
+    **Only those holding work**, which is the whole of what keeps this quiet.
+    An agent that has gone silent holding nothing has cost nobody anything, and
+    reporting it would put a column of noise in front of every supervisor for
+    the sake of a fact with no consequence.
+
+    Nothing acts on this. It is read by `dg agent list` and by a person, who
+    can tell a forty-minute build from a corpse in ways this cannot -- see
+    `limits.SILENT_ENV`.
+    """
+    from dgraph import limits
+    after = limits.silent_after() if after is None else after
+    out = []
+    for name, rec in sorted(load(root).items()):
+        held = list(rec.get("holding") or ())
+        quiet = quiet_for(rec, now)
+        if held and quiet is not None and quiet >= after:
+            out.append({"agent": name, "quiet": quiet, "holding": held})
+    return out
 
 
 def over_budget(root: Path | None = None, now: str | None = None) -> list[dict]:

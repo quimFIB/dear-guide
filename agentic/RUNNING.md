@@ -131,9 +131,16 @@ dg pending        # the roster: who proposed what, across both trays
 dg task           # the frontier, what is held, what is ready
 ```
 
-`dg agent list` is where a stalled run becomes visible. A name whose budget
-reads `SPENT` and that still holds a task is an agent that stopped without
-saying so — the state that otherwise looks exactly like work in progress.
+`dg agent list` is where a stalled run becomes visible, two different ways. A
+budget reading `SPENT` beside a held task is an agent that ran out of time. A
+`Seen` reading `silent 40m` is one that stopped *early* — a quota limit, a crash
+— which a budget cannot catch until it elapses.
+
+The two are not the same kind of fact and are not treated the same. An elapsed
+budget is the clock, and `dg agent expire` acts on it. Silence is a guess: an
+agent in a long build looks exactly like a dead one, so it has no command at
+all. Read it, then decide. `$DG_SILENT_AFTER` widens the window — default 15
+minutes — and only agents *holding work* are ever reported.
 
 ## 4 · When an agent stops without saying so
 
@@ -155,6 +162,10 @@ picks it up, which is the difference between parking and dropping.
 Run it even when you saw the agent die: the point is not the diagnosis, it is
 that the queue stops lying. An agent that spent its budget holding *nothing* is
 reported too, which is the only way "died before it started" is visible at all.
+
+`prune` and `release` will not strand the work in the meantime: both keep back
+a name still holding a `DOING` task and say so, and `--force` overrides when
+that is what you want.
 
 Without a budget there is nothing to measure against, so `expire` finds nothing
 — this is what `--budget` is for. Parking by hand still works:
