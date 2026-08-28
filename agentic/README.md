@@ -123,6 +123,11 @@ half-parser that failed open would be worse than a gap somebody knows about.
 reasoning about is blindfolded rather than constrained, and every interesting
 thing a fan-out does starts by reading something outside its own directory.
 
+That is a statement about *this tool*, and the host may still have its own
+opinion: opencode refuses a read outside the project on its own account, before
+the plugin is consulted. If a scout reports it cannot read something you told it
+to read, that is where to look first.
+
 **An out-of-scope write is `ask`, never `deny`.** The rule is consent, not
 prohibition: the person approves it where they are standing. `dg gate --write`
 has no verdict that refuses outright.

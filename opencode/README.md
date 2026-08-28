@@ -77,7 +77,7 @@ directory. The two mechanisms do not depend on them.
 has to be in opencode's own environment, not in front of the command being run —
 the plugin's environment is the host's.
 
-## Four limits worth knowing
+## Five limits worth knowing
 
 - **The gate does not see subagent tool calls.** `tool.execute.before` is not
   invoked for tools run by agents spawned through the `task` tool
@@ -100,6 +100,21 @@ the plugin's environment is the host's.
   rather than assumed, and `tests/test_opencode.py` pins the pair: a rename in
   a future opencode would otherwise stop the scope applying while looking
   exactly like it still did.
+
+  The rest of the scope was **run end to end against opencode 1.18.25**, not
+  only typechecked. An out-of-scope `write` is refused with the gate's reason
+  reaching the model, which asked the person rather than retrying — which is
+  what `ask` degrading to a throw is supposed to buy. An in-scope `write`
+  passes with nothing said.
+
+- **opencode has its own opinion about reads, and it is not this one.** The
+  scope never judges a read, but opencode's own permission layer refuses a
+  `read` outside the project — `permission requested: external_directory
+  (/etc/*); auto-rejecting` — before the plugin is consulted. So "reading is
+  never restricted" is a statement about *this tool*, and an agent under
+  opencode may still be stopped from reading somewhere by the host. Claude Code
+  has its own equivalent. Worth knowing when a scout is told to read something
+  outside its project and reports that it cannot.
 
 - **Injecting the brief is the one part not guaranteed by the API.** opencode has
   no session-start hook; the plugin edits the first user message instead. If a
