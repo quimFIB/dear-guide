@@ -1,0 +1,53 @@
+########## validate at 5000 and 10000, one rep each
+validate n=5000: 121.37 s, 0 findings
+validate n=10000: 988.94 s, 0 findings
+########## where validate spends it (n=2500)
+         798020 function calls in 16.409 seconds
+
+   Ordered by: internal time
+   List reduced from 28 to 12 due to restriction <12>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+    55334   15.892    0.000   15.936    0.000 /home/feynman/workspace/random/tools/dear-guide/dgraph/model.py:322(depends)
+     5000    0.187    0.000    0.187    0.000 /home/feynman/workspace/random/tools/dear-guide/dgraph/model.py:250(active_edge)
+       25    0.110    0.004   15.424    0.617 /home/feynman/workspace/random/tools/dear-guide/dgraph/model.py:356(ancestors)
+    55361    0.044    0.000    0.099    0.000 {built-in method builtins.sorted}
+   294898    0.042    0.000    0.042    0.000 {method 'pop' of 'list' objects}
+    76258    0.023    0.000    0.037    0.000 /home/feynman/workspace/random/tools/dear-guide/dgraph/model.py:94(base_status)
+        1    0.020    0.020   16.409   16.409 /home/feynman/workspace/random/tools/dear-guide/dgraph/model.py:457(validate)
+    66133    0.017    0.000    0.048    0.000 /home/feynman/workspace/random/tools/dear-guide/dgraph/model.py:102(settled)
+       50    0.016    0.000    0.055    0.001 /home/feynman/workspace/random/tools/dear-guide/dgraph/model.py:379(<genexpr>)
+    76283    0.014    0.000    0.014    0.000 {method 'split' of 'str' objects}
+    52909    0.013    0.000    0.013    0.000 {method 'extend' of 'list' objects}
+    55334    0.011    0.000    0.011    0.000 {method 'add' of 'set' objects}
+
+
+
+########## what an edge index would be worth (n=2500)
+store: /tmp/claude-1000/-home-feynman-workspace-random--scratch-weekly-rest-corpus-benchmark/5ddefed5-0d20-4dbf-8e8f-4aa3e6fe1e9d/scratchpad/dgbench/stores/n2500d6  (2,500 vertices, 2,767 edge records)
+index build: 4.1 ms (once, at load)
+
+op                         scan (ms)   indexed (ms)   speedup
+descendants.root                91.6            2.2     41.9x
+ancestors.sink                 599.2            3.6    164.7x
+depths.sink                  1,438.9            9.7    148.5x
+roots                          711.0            3.3    213.4x
+unpropagated                   682.7            7.0     96.9x
+validate                    15,966.1          117.9    135.4x
+find.prose_rare              2,911.1           47.5     61.4x
+find.waits_mid                 718.8           11.7     61.4x
+find.is_orphaned               720.5           10.9     65.9x
+########## the same at n=10000, validate excluded
+store: /tmp/claude-1000/-home-feynman-workspace-random--scratch-weekly-rest-corpus-benchmark/5ddefed5-0d20-4dbf-8e8f-4aa3e6fe1e9d/scratchpad/dgbench/stores/n10000d6  (10,000 vertices, 11,132 edge records)
+index build: 23.3 ms (once, at load)
+
+op                         scan (ms)   indexed (ms)   speedup
+descendants.root             1,468.6           10.2    143.4x
+ancestors.sink               9,410.4           15.7    601.2x
+depths.sink                 22,447.4           39.5    568.3x
+roots                       11,685.6           17.1    682.0x
+unpropagated                11,213.9           33.7    332.6x
+validate                    excluded
+find.prose_rare             49,726.8          263.1    189.0x
+find.waits_mid              12,035.2          113.0    106.6x
+find.is_orphaned            12,080.9          110.1    109.7x

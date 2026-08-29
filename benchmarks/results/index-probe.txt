@@ -1,0 +1,28 @@
+########## what an edge index would be worth (n=2500)
+store: /tmp/claude-1000/-home-feynman-workspace-random--scratch-weekly-rest-corpus-benchmark/5ddefed5-0d20-4dbf-8e8f-4aa3e6fe1e9d/scratchpad/dgbench/stores/n2500d6  (2,500 vertices, 2,767 edge records)
+index build: 4.1 ms (once, at load)
+
+op                         scan (ms)   indexed (ms)   speedup
+descendants.root                91.6            2.2     41.9x
+ancestors.sink                 599.2            3.6    164.7x
+depths.sink                  1,438.9            9.7    148.5x
+roots                          711.0            3.3    213.4x
+unpropagated                   682.7            7.0     96.9x
+validate                    15,966.1          117.9    135.4x
+find.prose_rare              2,911.1           47.5     61.4x
+find.waits_mid                 718.8           11.7     61.4x
+find.is_orphaned               720.5           10.9     65.9x
+########## the same at n=10000, validate excluded
+store: /tmp/claude-1000/-home-feynman-workspace-random--scratch-weekly-rest-corpus-benchmark/5ddefed5-0d20-4dbf-8e8f-4aa3e6fe1e9d/scratchpad/dgbench/stores/n10000d6  (10,000 vertices, 11,132 edge records)
+index build: 23.3 ms (once, at load)
+
+op                         scan (ms)   indexed (ms)   speedup
+descendants.root             1,468.6           10.2    143.4x
+ancestors.sink               9,410.4           15.7    601.2x
+depths.sink                 22,447.4           39.5    568.3x
+roots                       11,685.6           17.1    682.0x
+unpropagated                11,213.9           33.7    332.6x
+validate                    excluded
+find.prose_rare             49,726.8          263.1    189.0x
+find.waits_mid              12,035.2          113.0    106.6x
+find.is_orphaned            12,080.9          110.1    109.7x
