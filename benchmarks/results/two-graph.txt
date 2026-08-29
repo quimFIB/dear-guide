@@ -1,0 +1,87 @@
+Both stores big, both dense: how the two graphs behave together
+===============================================================
+
+Measured 2026-08-29. Every earlier run in this study used the generator's
+original shape: **tasks pinned at half the decision count, and no
+`evidence_for` link ever written.** So the task store was always the smaller
+one, and `cross.evidence`, `pending_evidence` and `late_evidence` answered on
+an empty relation in every measurement taken before this.
+
+`gen_store.py` gained `--tasks-ratio`, `--task-degree` and `--evidence-frac`.
+All three default to the old behaviour and the old stores regenerate
+byte-identically (checked by md5), so nothing earlier is invalidated.
+
+    python3 benchmarks/gen_store.py /tmp/dg-bench/dns5k --vertices 5000 \
+        --degree 16 --tasks-ratio 1.0 --task-degree 16 --evidence-frac 0.33
+
+
+--- What it costs ---------------------------------------------------------
+
+  store    dec    task   d.arcs   t.arcs    ev  | dg check  dg brief  dg task
+  bal2k  2,000   2,000   11,706   12,160   667  |   1.49 s    1.52 s   0.82 s
+  dns2k  2,000   2,000   61,106   61,560   667  |   1.71 s    2.33 s   1.89 s
+  dns5k  5,000   5,000   76,789   77,900 1,667  |   7.68 s    9.96 s   6.43 s
+
+Library level, same stores:
+
+  store   Graph.validate  TaskGraph.validate  joined_payload  graph_payload
+  bal2k        139 ms            52 ms            351 ms         148 ms
+  dns2k        201 ms           102 ms            365 ms         228 ms
+  dns5k        900 ms           361 ms          2,242 ms         953 ms
+
+Two readings:
+
+- **Density is nearly free even with both stores dense.** bal2k -> dns2k is
+  5x the arcs on *both* sides for 1.15x the `dg check`.
+- **Size still governs.** dns2k -> dns5k is 2.5x the vertices for 4.5x the
+  time, so alpha is about 1.6 in the two-graph case -- the same quadratic-ish
+  shape the single-graph measurements show.
+
+Doubling the task store from half to equal roughly doubles `dg check`
+(760 ms -> 1.49 s at 2,000 decisions, degree 6), which is what it should do:
+the two stores are validated independently and the cross checks are linear in
+the link count.
+
+
+--- The bug this configuration found --------------------------------------
+
+`server.joined_payload` -- the browser's joined view, the one reading that
+needs both stores -- called `cross.late_evidence(tg, g, vid)` once per vertex.
+That helper computes `evidence_after_deciding` for the **entire** graph and
+returns one row of it, so the page paid for the whole cross-graph walk once
+per decision: 364 ms per vertex, about **twelve minutes** at 2,000 decisions.
+
+    joined_payload   2,000 / 2,000    ~12 min -> 351 ms
+                     5,000 / 5,000            -> 2.2 s
+
+It is the third instance in this study of one shape -- a function that
+computes the whole answer, a caller that keeps one row, and a loop around the
+caller. The other two were `Graph.depth` over `depths`, and
+`provisional_because` per PROVISIONAL vertex.
+
+It could only show up here: `late_evidence` reads the evidence relation, and
+before `--evidence-frac` existed that relation was empty in every generated
+store, so the function returned immediately and cost nothing.
+
+
+--- A caveat that matters more than the numbers ---------------------------
+
+**`dg check`'s cost is partly proportional to how much is wrong.**
+
+The first attempt at these stores pointed `evidence_for` at arbitrary
+decisions. That closes cross-graph cycles -- `evidence_for` is the only edge
+kind running task -> decision, so pairing it with a `because` edge reaching
+the same place makes one -- and produced 7,644 `link_acyclic` findings at
+degree 6 and 44,383 at degree 32.
+
+`dg check` then took **over 200 seconds** on a 2,000-vertex store. Profiling
+put ~8 s in the checking and the rest in *formatting 44,000 findings*. The
+store was invalid, not slow.
+
+So every number above is for a store that passes. A store that is badly broken
+is far more expensive to report on than one that is fine, and that is
+reasonable behaviour -- but it means "how fast is `dg check`?" has no single
+answer without saying how clean the store is. The stores here hold 336
+warnings at 2,000 and 837 at 5,000, all `unharvested`: finished evidence
+against a still-open decision, which is exactly what `--evidence-frac`
+manufactures and is a legitimate finding rather than a shape to design out.

@@ -142,7 +142,8 @@ def build_decisions(n: int, degree: int, *, seed: int = 7,
 
 
 def build_tasks(n: int, degree: int, decision_ids: list[str], decided: set[str],
-                *, seed: int = 11, evidence_frac: float = 0.0) -> dict:
+                *, seed: int = 11, evidence_frac: float = 0.0,
+                open_ids: list[str] | None = None) -> dict:
     rng = random.Random(seed)
     width = max(1, n // LAYERS)
     ids = [f"T{i:05d}" for i in range(1, n + 1)]
@@ -185,8 +186,23 @@ def build_tasks(n: int, degree: int, decision_ids: list[str], decided: set[str],
         # `--evidence-frac` off by default, and the branch consumes no
         # randomness when it is, so every store generated before this existed
         # regenerates byte-identically.
-        if evidence_frac and decision_ids and i % max(1, int(1 / evidence_frac)) == 0:
-            t["evidence_for"] = decision_ids[(i * 29) % len(decision_ids)]
+        #
+        # It points at an **OPEN** decision, never a decided one, and that is
+        # a correctness requirement rather than a stylistic choice.
+        # `evidence_for` is the one edge kind running task -> decision, so it
+        # is what makes a cross-graph cycle possible at all: pair it with a
+        # `because` edge (decision -> task) reaching the same place and
+        # `link_acyclic` fires. Pointing it at an OPEN vertex is safe because
+        # those are sinks in the last layer -- nothing is reachable from them,
+        # so no path can come back round. Naively targeting any decision
+        # produced 7,644 cycle findings at degree 6 and 44,383 at degree 32.
+        #
+        # It is also the honest semantics: evidence bears on a question that is
+        # still open. A finished task pointing at a settled decision is the
+        # `evidence_after_deciding` warning, which is a real finding and not a
+        # shape a generator should mass-produce.
+        if evidence_frac and open_ids and i % max(1, int(1 / evidence_frac)) == 0:
+            t["evidence_for"] = open_ids[(i * 29) % len(open_ids)]
         tasks.append(t)
 
         pool = [x for ll in (l + 1, l + 2) for x in by_layer.get(ll, [])]
@@ -205,9 +221,11 @@ def write(outdir: Path, n: int, degree: int, *, tasks_ratio: float = 0.5,
     outdir.mkdir(parents=True, exist_ok=True)
     d = build_decisions(n, degree)
     decided = {v["id"] for v in d["vertices"] if v["status"] == "DECIDED"}
+    open_ids = sorted(v["id"] for v in d["vertices"] if v["status"] == "OPEN")
     tn = max(1, int(n * tasks_ratio))
     t = build_tasks(tn, task_degree if task_degree is not None else degree,
-                    sorted(decided), decided, evidence_frac=evidence_frac)
+                    sorted(decided), decided, evidence_frac=evidence_frac,
+                    open_ids=open_ids)
     (outdir / "decisions.json").write_text(
         json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (outdir / "tasks.json").write_text(
