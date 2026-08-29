@@ -633,7 +633,26 @@ class TaskGraph:
 
     # ---- queries ---------------------------------------------------------
 
-    def _out(self, tid: str, kind: str) -> list[str]:
+    def _adjacency(self) -> tuple[dict, dict]:
+        """`(src, kind) -> heads` and `(head, kind) -> srcs`, in one pass.
+
+        The same two relations `_out` and `_in` compute, for every task at
+        once. Built inside the call that wants it and dropped with it — never
+        cached on the graph, for the reason `Graph._reverse` gives: a caller
+        holding one across a staged op is holding a stale answer, and no write
+        path should have to remember a structure it cannot see.
+        """
+        out: dict[tuple[str, str], set[str]] = {}
+        into: dict[tuple[str, str], set[str]] = {}
+        for e in self.edges:
+            for h in e.to:
+                if h in self.tasks:
+                    out.setdefault((e.src, e.kind), set()).add(h)
+                if e.src in self.tasks:
+                    into.setdefault((h, e.kind), set()).add(e.src)
+        return out, into
+
+    def _out(self, tid: str, kind: str, _adj=None) -> list[str]:
         """The heads of every `kind` edge leaving `tid`.
 
         Unions every matching edge rather than demanding one, because a task
@@ -644,27 +663,31 @@ class TaskGraph:
         grouping is by `(src, kind)` and not by `src` — the kinds are separate
         relations, and unioning across them is what would lose the distinction.
         """
+        if _adj is not None:
+            return sorted(_adj[0].get((tid, kind), ()))
         return sorted({t for e in self.edges
                        if e.src == tid and e.kind == kind
                        for t in e.to if t in self.tasks})
 
-    def _in(self, tid: str, kind: str) -> list[str]:
+    def _in(self, tid: str, kind: str, _adj=None) -> list[str]:
         """The tails of every `kind` edge arriving at `tid`.
 
         Skips a source naming no task, exactly as `Graph.depends` does: a
         traversal helper that trusts ids crashes the validator that was about to
         report the dangling reference.
         """
+        if _adj is not None:
+            return sorted(_adj[1].get((tid, kind), ()))
         return sorted({e.src for e in self.edges
                        if e.kind == kind and tid in e.to and e.src in self.tasks})
 
-    def unblocks(self, tid: str) -> list[str]:
+    def unblocks(self, tid: str, _adj=None) -> list[str]:
         """The tasks this one is a prerequisite for."""
-        return self._out(tid, "precedes")
+        return self._out(tid, "precedes", _adj)
 
-    def prerequisites(self, tid: str) -> list[str]:
+    def prerequisites(self, tid: str, _adj=None) -> list[str]:
         """Derived, never stored: what must be resolved before this can start."""
-        return self._in(tid, "precedes")
+        return self._in(tid, "precedes", _adj)
 
     def prompted(self, tid: str) -> list[str]:
         """The work that doing this one turned up. Provenance, not dependency.
@@ -679,9 +702,9 @@ class TaskGraph:
         """
         return self._out(tid, "prompted")
 
-    def discovered_during(self, tid: str) -> list[str]:
+    def discovered_during(self, tid: str, _adj=None) -> list[str]:
         """The work whose doing turned this one up. The reverse of `prompted`."""
-        return self._in(tid, "prompted")
+        return self._in(tid, "prompted", _adj)
 
     # ---- what abandoning work leaves behind ------------------------------
     #
@@ -691,7 +714,7 @@ class TaskGraph:
     # abandoned task forever — but it makes the release silent, and these two
     # are what `validate` asks in order to break the silence.
 
-    def dropped_prerequisites(self, tid: str) -> list[str]:
+    def dropped_prerequisites(self, tid: str, _adj=None) -> list[str]:
         """The prerequisites of `tid` that were abandoned rather than finished.
 
         A released dependant is not always a startable one: a prerequisite that
@@ -700,30 +723,31 @@ class TaskGraph:
         edge was usually only becomes clear when you try to proceed without it
         — so it reports the fact and leaves the judgement where the knowledge is.
         """
-        return [p for p in self.prerequisites(tid)
+        return [p for p in self.prerequisites(tid, _adj)
                 if self.tasks[p].status == "DROPPED"]
 
-    def abandoned_origins(self, tid: str) -> list[str]:
+    def abandoned_origins(self, tid: str, _adj=None) -> list[str]:
         """The origins of `tid`, but only when *every* one was abandoned.
 
         Partial abandonment is not a silence worth breaking: one surviving
         origin still explains why the work exists. Empty for work with no
         origin recorded, which is the ordinary case for anything planned.
         """
-        origins = self.discovered_during(tid)
+        origins = self.discovered_during(tid, _adj)
         return origins if origins and all(
             self.tasks[o].status == "DROPPED" for o in origins) else []
 
-    def waiting_on(self, tid: str) -> list[str]:
+    def waiting_on(self, tid: str, _adj=None) -> list[str]:
         """The prerequisites that are not resolved yet."""
-        return [p for p in self.prerequisites(tid) if not self.tasks[p].resolved]
+        return [p for p in self.prerequisites(tid, _adj)
+                if not self.tasks[p].resolved]
 
-    def ready(self, tid: str) -> bool:
+    def ready(self, tid: str, _adj=None) -> bool:
         """Startable now: not yet begun, and nothing outstanding before it."""
-        return self.tasks[tid].status == "TODO" and not self.waiting_on(tid)
+        return self.tasks[tid].status == "TODO" and not self.waiting_on(tid, _adj)
 
-    def blocked(self, tid: str) -> bool:
-        return self.tasks[tid].unfinished and bool(self.waiting_on(tid))
+    def blocked(self, tid: str, _adj=None) -> bool:
+        return self.tasks[tid].unfinished and bool(self.waiting_on(tid, _adj))
 
     def blocked_ids(self) -> list[str]:
         """Everything blocked, so that no surface counts it its own way.
@@ -734,7 +758,9 @@ class TaskGraph:
         DOING and PARKED task blocked; the fix is not better arithmetic there
         but one definition here that every surface reads.
         """
-        return sorted(t.id for t in self.tasks.values() if self.blocked(t.id))
+        adj = self._adjacency()
+        return sorted(t.id for t in self.tasks.values()
+                      if self.blocked(t.id, adj))
 
     def frontier(self) -> list[str]:
         """Everything still outstanding, ready or not."""
@@ -755,6 +781,10 @@ class TaskGraph:
             v.append(Violation(c, m, severity))
 
         ids = set(self.tasks)
+        # One grouping of the edges for the whole pass. Every rule below asks
+        # about prerequisites or successors of each task in turn, and each of
+        # those was a fresh scan of the edge list.
+        adj = self._adjacency()
 
         for tid, t in self.tasks.items():
             if not ID_RE.fullmatch(tid):
@@ -852,7 +882,7 @@ class TaskGraph:
                 add("task_done_complete",
                     f"{tid}: DONE without an outcome. Record what it produced "
                     f"— a path, a PR, a note.")
-            for p in self.prerequisites(tid):
+            for p in self.prerequisites(tid, adj):
                 if self.tasks[p].unfinished:
                     add("task_done_before_prerequisite",
                         f"{tid} is DONE but {p} ({self.tasks[p].status}) has to "
@@ -877,7 +907,8 @@ class TaskGraph:
         for tid, t in self.tasks.items():
             if not t.parked:
                 continue
-            held = [w for w in self.unblocks(tid) if self.tasks[w].unfinished]
+            held = [w for w in self.unblocks(tid, adj)
+                    if self.tasks[w].unfinished]
             if held:
                 since = f" since {t.stops[-1].date}" if t.stops else ""
                 add("parked_holding_work",
@@ -909,7 +940,7 @@ class TaskGraph:
         for tid, t in sorted(self.tasks.items()):
             if t.status not in ("TODO", "PARKED"):
                 continue
-            gone = self.dropped_prerequisites(tid)
+            gone = self.dropped_prerequisites(tid, adj)
             if gone:
                 # Two wordings, because "became startable" is false about work
                 # that is not being done: `ready` requires TODO, so a parked
@@ -956,7 +987,7 @@ class TaskGraph:
                 if colour.get(tid):
                     continue
                 colour[tid] = 1
-                stack = [(tid, iter(self._out(tid, kind)))]
+                stack = [(tid, iter(self._out(tid, kind, adj)))]
                 trail = [tid]
                 while stack:
                     node, nxt = stack[-1]
@@ -969,7 +1000,7 @@ class TaskGraph:
                         if colour.get(c) == 2:
                             continue
                         colour[c] = 1
-                        stack.append((c, iter(self._out(c, kind))))
+                        stack.append((c, iter(self._out(c, kind, adj))))
                         trail.append(c)
                         break
                     else:

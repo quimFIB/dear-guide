@@ -1804,3 +1804,56 @@ def test_a_task_note_may_be_emptied_and_the_dialect_is_left_alone(tg):
     task_pending._apply_one(tg, {"op": "set_fields", "task": "T02",
                                  "note": None})
     assert tg.tasks["T02"].note is None and tg.tasks["T02"].format == "org"
+
+
+# ---- the grouped adjacency ------------------------------------------------
+#
+# `_out` and `_in` scanned the whole edge list per call, and every whole-graph
+# rule asks them once per task. `_adjacency` groups the edges once and the
+# callers pass it down. As in the decision graph, it is built inside the call
+# and dropped with it, so there is nothing to invalidate — these tests pin that
+# the two paths answer identically, not that either is fast.
+
+
+def test_the_grouped_adjacency_answers_as_the_scan_does(tg):
+    adj = tg._adjacency()
+    for tid in tg.tasks:
+        for kind in ("precedes", "prompted"):
+            assert tg._out(tid, kind, adj) == tg._out(tid, kind), (tid, kind)
+            assert tg._in(tid, kind, adj) == tg._in(tid, kind), (tid, kind)
+
+
+def test_the_wrappers_agree_with_and_without_the_index(tg):
+    adj = tg._adjacency()
+    for tid in tg.tasks:
+        assert tg.prerequisites(tid, adj) == tg.prerequisites(tid)
+        assert tg.unblocks(tid, adj) == tg.unblocks(tid)
+        assert tg.waiting_on(tid, adj) == tg.waiting_on(tid)
+        assert tg.discovered_during(tid, adj) == tg.discovered_during(tid)
+        assert tg.blocked(tid, adj) == tg.blocked(tid)
+        assert tg.ready(tid, adj) == tg.ready(tid)
+
+
+def test_the_index_keeps_the_two_kinds_apart(tg):
+    """The grouping is by `(src, kind)`, never by `src`. Unioning across kinds
+    is exactly what would lose the distinction `prompted` exists to make — a
+    chore noticed during T01 is not a prerequisite of anything."""
+    from dgraph.tasks import TaskEdge
+    tg.edges.append(TaskEdge(src="T01", to=["T04"], kind="prompted"))
+    adj = tg._adjacency()
+    assert "T04" in tg._out("T01", "prompted", adj)
+    assert "T04" not in tg._out("T01", "precedes", adj)
+    assert tg._out("T01", "precedes", adj) == tg._out("T01", "precedes")
+
+
+def test_a_dangling_task_edge_is_skipped_by_both_paths(tg):
+    """`_in` skips a source naming no task and `_out` a head naming none, so
+    the validator that is about to report the dangling reference does not crash
+    on it first. The index has to skip the same ones."""
+    from dgraph.tasks import TaskEdge
+    tg.edges.append(TaskEdge(src="T99", to=["T01"], kind="precedes"))
+    tg.edges.append(TaskEdge(src="T01", to=["T99"], kind="precedes"))
+    adj = tg._adjacency()
+    assert tg._in("T01", "precedes", adj) == tg._in("T01", "precedes")
+    assert "T99" not in tg._in("T01", "precedes", adj)
+    assert "T99" not in tg._out("T01", "precedes", adj)
