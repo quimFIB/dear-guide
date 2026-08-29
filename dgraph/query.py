@@ -684,6 +684,10 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
     # about five times *slower* than the uncached version it replaced, and
     # `status:` pay for a history it never reads. Cache per lookup, fetch on
     # demand.
+    # One grouping of the edge records for the whole lens, so each of the
+    # three lookups below is a dict hit rather than a scan. Built here and
+    # dropped with the lens, exactly as the caches are.
+    by_src = g.by_src()
     _active: dict[str, object] = {}
     _rivals: dict[str, list] = {}
     _hist: dict[str, list] = {}
@@ -692,19 +696,19 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
     def active_of(vid: str):
         got = _active.get(vid, _MISS)
         if got is _MISS:
-            got = _active[vid] = g.active_edge(vid)
+            got = _active[vid] = g.active_edge(vid, by_src)
         return got
 
     def rivals_of(vid: str) -> list:
         got = _rivals.get(vid)
         if got is None:
-            got = _rivals[vid] = g.rival_answers(vid)
+            got = _rivals[vid] = g.rival_answers(vid, by_src)
         return got
 
     def hist_of(vid: str) -> list:
         got = _hist.get(vid)
         if got is None:
-            got = _hist[vid] = g.history(vid)
+            got = _hist[vid] = g.history(vid, by_src)
         return got
 
     def values(vid: str, name: str) -> list[str]:

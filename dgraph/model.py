@@ -247,7 +247,30 @@ class Graph:
 
     # ---- queries ---------------------------------------------------------
 
-    def active_edge(self, vid: str) -> Edge | None:
+    def by_src(self) -> dict[str, list[Edge]]:
+        """`src -> its edge records, in store order`, in one pass.
+
+        The five readers below each scan the whole edge list to answer about
+        one vertex, and every surface that shows a store asks all of them for
+        every vertex — `dg find`, and the web view's payload. Grouping first
+        turns each of those from a scan into a dict lookup.
+
+        Store order is preserved because `active_edge` is *first*-wins where a
+        store holds rival answers, and a grouping that reordered the records
+        would silently pick a different answer.
+
+        Public, unlike `_reverse`, because callers outside this module do the
+        per-vertex looping — but built inside a call and dropped with it just
+        the same. Nothing here caches it, and no write path has to clear it:
+        one pass over 11,000 records costs under a millisecond, which is less
+        than a single one of the scans it replaces.
+        """
+        out: dict[str, list[Edge]] = {}
+        for e in self.edges:
+            out.setdefault(e.src, []).append(e)
+        return out
+
+    def active_edge(self, vid: str, _by=None) -> Edge | None:
         """The current answer, or None. **First wins where there are two.**
 
         Which is the right behaviour for a traversal — `children` needs an
@@ -255,12 +278,12 @@ class Graph:
         reader, which is what `F-F4` is. Anything that *shows* an answer to a
         person asks `rival_answers` first.
         """
-        for e in self.edges:
-            if e.src == vid and e.active:
+        for e in (self.edges if _by is None else _by.get(vid, ())):
+            if (_by is not None or e.src == vid) and e.active:
                 return e
         return None
 
-    def rival_answers(self, vid: str) -> list[Edge]:
+    def rival_answers(self, vid: str, _by=None) -> list[Edge]:
         """The active edges beyond the first, where a store holds more than one.
 
         Empty in every store this tool can produce: `one_active_edge` refuses
@@ -275,9 +298,11 @@ class Graph:
         so that four of them cannot phrase it four ways — the rule
         `stop_label` and `done_label` already follow.
         """
+        if _by is not None:
+            return [e for e in _by.get(vid, ()) if e.active][1:]
         return [e for e in self.edges if e.src == vid and e.active][1:]
 
-    def history(self, vid: str) -> list[Edge]:
+    def history(self, vid: str, _by=None) -> list[Edge]:
         """Superseded decisions for a vertex, oldest first.
 
         **Not every inactive edge.** An answer that arrived at the integration
@@ -289,8 +314,9 @@ class Graph:
         since that derivation counts archived edges to recover the acts.
         """
         return sorted(
-            (e for e in self.edges
-             if e.src == vid and not e.active and e.from_source is None),
+            (e for e in (self.edges if _by is None else _by.get(vid, ()))
+             if (_by is not None or e.src == vid)
+             and not e.active and e.from_source is None),
             key=lambda e: e.date or "",
         )
 
@@ -307,7 +333,7 @@ class Graph:
             key=lambda e: e.date or "",
         )
 
-    def children(self, vid: str) -> list[str]:
+    def children(self, vid: str, _by=None) -> list[str]:
         """The vertices this decision opens.
 
         A target naming no vertex is skipped, for the reason `depends` gives
@@ -316,7 +342,7 @@ class Graph:
         reports it, and every write path unions against `Edge.to` rather than
         against this, so a dangling target is never dropped from the store.
         """
-        e = self.active_edge(vid)
+        e = self.active_edge(vid, _by)
         return [t for t in e.to if t in self.vertices] if e else []
 
     def _reverse(self) -> dict[str, set[str]]:

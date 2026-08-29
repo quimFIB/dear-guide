@@ -110,6 +110,7 @@ def graph_payload(g: Graph) -> dict:
     # `provisional_because`; both walk the graph, and both already have a form
     # that answers the whole store in one pass.
     into = g._reverse()
+    by_src = g.by_src()
     depths = g.all_depths()
     because = g.provisional_causes()
     d["derived"] = {
@@ -127,7 +128,7 @@ def graph_payload(g: Graph) -> dict:
             # all of them so the payload's shape does not change.
             "provisional_because": because.get(vid, []),
             "depth": depths[vid],
-            "children": g.children(vid),
+            "children": g.children(vid, by_src),
             # The whole superseded edge, not a one-line epitaph for it. A
             # reversal is an edge with a payload of its own — its own targets,
             # falsifier and source — and the panel draws it as one so a reader
@@ -140,7 +141,7 @@ def graph_payload(g: Graph) -> dict:
                  "why": h.why, "format": h.format, "answer": h.answer,
                  "falsifier": h.falsifier, "source": h.source,
                  "date": h.date, "to": list(h.to)}
-                for h in g.history(vid)
+                for h in g.history(vid, by_src)
             ],
             # Kept apart from `history`, because they are different sentences
             # about this project: one says *we changed our mind*, the other
@@ -149,8 +150,9 @@ def graph_payload(g: Graph) -> dict:
             # Sent rather than computed in the page: `Graph.rival_answers` is
             # where the reading lives, and a page that worked it out from the
             # edge list would be a second implementation of an invariant.
-            "rival_answers": (rival_note(len(g.rival_answers(vid)))
-                              if g.rival_answers(vid) else None),
+            "rival_answers": (rival_note(len(rivals))
+                              if (rivals := g.rival_answers(vid, by_src))
+                              else None),
             "declined": [
                 {"from_source": h.from_source, "answer": h.answer,
                  "falsifier": h.falsifier, "source": h.source,

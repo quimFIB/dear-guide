@@ -1544,3 +1544,59 @@ def test_all_depths_agrees_with_depth_on_random_acyclic_graphs():
             if to or rng.random() < 0.5:
                 graph.edges.append(Edge(i, to, active=True))
         assert graph.all_depths() == {v: graph.depth(v) for v in graph.vertices}
+
+
+# ---- grouping the edge records by source ----------------------------------
+#
+# `active_edge`, `rival_answers`, `history` and `children` each scanned the
+# whole edge list to answer about one vertex, and `dg find` and the web view's
+# payload ask all of them for every vertex. `by_src` groups once. As everywhere
+# else it is built inside the call and dropped with it — the grouping costs
+# less than one of the scans it replaces, so there is nothing to cache and
+# nothing to invalidate.
+
+
+def test_by_src_answers_as_the_scan_does(g):
+    by = g.by_src()
+    for vid in g.vertices:
+        assert g.active_edge(vid, by) == g.active_edge(vid), vid
+        assert g.rival_answers(vid, by) == g.rival_answers(vid), vid
+        assert g.history(vid, by) == g.history(vid), vid
+        assert g.children(vid, by) == g.children(vid), vid
+
+
+def test_by_src_keeps_store_order_so_first_wins_still_means_first(g):
+    """`active_edge` is *first*-wins where a store holds rival answers, and a
+    grouping that reordered the records would quietly return the other answer —
+    a store the tool cannot write but a text-merge can, and one `validate` has
+    to survive in order to report."""
+    from dgraph.model import Edge
+    rival = Edge(src="D01", to=["D04"], active=True, answer="The rival.")
+    g.edges.append(rival)
+    by = g.by_src()
+    assert g.active_edge("D01", by) is g.active_edge("D01")
+    assert g.active_edge("D01", by) is not rival           # the first still wins
+    assert g.rival_answers("D01", by) == [rival] == g.rival_answers("D01")
+
+
+def test_by_src_keeps_history_apart_from_a_rejected_answer(g):
+    """`history` is not "every inactive edge": an answer offered at the
+    integration seam and not adopted is inactive too and was never believed.
+    The grouped path has to make the same distinction."""
+    from dgraph.model import Edge
+    g.edges.append(Edge(src="D01", to=[], active=False, answer="Offered.",
+                        from_source="somebody-else"))
+    by = g.by_src()
+    assert g.history("D01", by) == g.history("D01")
+    assert all(e.from_source is None for e in g.history("D01", by))
+
+
+def test_by_src_is_empty_for_a_vertex_with_no_edges(g):
+    """The scan returns nothing; the grouping must not raise on a missing key."""
+    from dgraph.model import Vertex
+    g.vertices["D07"] = Vertex("D07", "Nothing points from it", "Beta", "OPEN")
+    by = g.by_src()
+    assert g.active_edge("D07", by) is None
+    assert g.rival_answers("D07", by) == []
+    assert g.history("D07", by) == []
+    assert g.children("D07", by) == []
