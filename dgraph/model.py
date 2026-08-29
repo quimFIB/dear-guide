@@ -526,6 +526,15 @@ class Graph:
             for parent in into.get(v, ()):
                 m |= mask.get(parent, 0) | bit.get(parent, 0)
             mask[v] = m
+        # Testing every unsettled vertex against every PROVISIONAL one, which
+        # is O(provisional x unsettled) and only bites on a graph already in
+        # trouble -- 1.2 s at 3,000 of each, against 66 ms on a real
+        # 10,000-vertex store where a hundred vertices are PROVISIONAL.
+        #
+        # Iterating the set bits instead (`m & -m`) was tried and is *slower*:
+        # where the answers are large the bit loop does the same work in Python
+        # that this does in C, and where they are small this was never the
+        # cost. Left as the simpler of two equals.
         return {vid: sorted(u for u in unsettled if mask[vid] & bit[u])
                 for vid in prov}
 
@@ -603,7 +612,7 @@ class Graph:
         """Longest path from any root — the rank used for graph layout."""
         return self.depths(vid)[vid]
 
-    def depths(self, vid: str) -> dict[str, int]:
+    def depths(self, vid: str, _into: dict[str, set[str]] | None = None) -> dict[str, int]:
         """The depth of `vid` *and* of everything it rests on, in one walk.
 
         The walk already computes every ancestor's depth on its way to `vid`
@@ -614,7 +623,9 @@ class Graph:
         Iterative on an explicit stack: a chain a few hundred decisions deep is
         a legitimate graph and must not hit the recursion limit.
         """
-        memo: dict[str, int] = {}
+        if _into is None:
+            _into = self._reverse()   # as `ancestors`: one index for the walk,
+        memo: dict[str, int] = {}     # not a rescan of the edge list per step
         on_path: set[str] = set()  # cycle guard; validate() reports cycles properly
         stack = [vid]
         while stack:
@@ -623,12 +634,12 @@ class Graph:
                 stack.pop()
                 continue
             on_path.add(n)
-            todo = [p for p in self.depends(n)
+            todo = [p for p in self.depends(n, _into)
                     if p not in memo and p not in on_path]
             if todo:
                 stack.extend(todo)
                 continue
-            parents = self.depends(n)
+            parents = self.depends(n, _into)
             memo[n] = 0 if not parents else 1 + max(
                 memo.get(p, 0) for p in parents  # .get: an in-cycle parent counts 0
             )

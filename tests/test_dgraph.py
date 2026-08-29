@@ -1644,3 +1644,53 @@ def test_provisional_causes_over_random_graphs_including_cycles():
         fired += len(ref)
         assert graph.provisional_causes() == ref
     assert fired > 100, f"the corpus barely exercised it ({fired})"
+
+
+# ---- the shapes the fixture and the generated stores do not reach ---------
+
+
+def test_a_deep_chain_does_not_blow_the_stack_or_rescan_per_step():
+    """A chain a few thousand deep is a legal graph. Every walk here is
+    iterative for that reason — and each must also carry an index, or the walk
+    is O(chain x edges) and one `dg context` on a deep vertex hangs. `depth`
+    took 12.3 s on this before it was given one."""
+    from dgraph.model import Edge, Graph, Vertex
+    n = 3000
+    ids = [f"D{i:05d}" for i in range(n)]
+    graph = Graph(vertices={i: Vertex(i, "t", "a", "DECIDED") for i in ids},
+                  edges=[Edge(ids[i], [ids[i + 1]], active=True)
+                         for i in range(n - 1)])
+    assert graph.depth(ids[-1]) == n - 1
+    assert graph.all_depths()[ids[-1]] == n - 1
+    assert len(graph.ancestors(ids[-1])) == n - 1
+    assert len(graph.descendants(ids[0])) == n - 1
+
+
+def test_every_derivation_terminates_on_a_cycle(g):
+    """`validate` has to survive a cycle in order to report one, so nothing it
+    calls may loop forever. A cycle is an error, not a crash."""
+    from dgraph.model import Edge, Graph, Vertex
+    n = 500
+    ids = [f"D{i:05d}" for i in range(n)]
+    graph = Graph(vertices={i: Vertex(i, "t", "a", "PROVISIONAL") for i in ids},
+                  edges=[Edge(ids[i], [ids[(i + 1) % n]], active=True)
+                         for i in range(n)])
+    graph.all_depths()
+    graph.provisional_causes()
+    graph.stale_provisional()
+    graph.roots()
+    graph.unpropagated()
+    graph.ancestors(ids[0])
+    graph.descendants(ids[0])
+    assert [v for v in graph.validate() if v.check == "acyclic"]
+
+
+def test_the_derivations_hold_on_a_graph_with_no_edges_and_no_vertices():
+    from dgraph.model import Graph
+    empty = Graph(vertices={}, edges=[])
+    assert empty.all_depths() == {}
+    assert empty.roots() == []
+    assert empty.provisional_causes() == {}
+    assert empty.stale_provisional() == []
+    assert empty.unpropagated() == []
+    assert empty.by_src() == {}
