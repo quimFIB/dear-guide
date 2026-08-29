@@ -29,19 +29,44 @@ from dgraph.tasks import TaskGraph
 from dgraph.violation import Violation, cycle_from
 
 
-def rests_on(tg: TaskGraph, did: str) -> list[str]:
+def reverse(tg: TaskGraph) -> tuple[dict, dict]:
+    """`did -> tasks` for both cross-graph relations, in one pass.
+
+    `rests_on` and `evidence` each read every task to answer about one
+    decision, and the callers that matter ask about every decision in turn — a
+    lens predicate evaluated per vertex, or `late_evidence` walking the whole
+    store. Built inside the call that wants it and dropped with it, never
+    cached: same reason as `Graph._reverse`, and here the staleness would be
+    across two stores rather than one.
+    """
+    because: dict[str, list[str]] = {}
+    backs: dict[str, list[str]] = {}
+    for task in tg.tasks.values():
+        for did in task.because:
+            because.setdefault(did, []).append(task.id)
+        if task.evidence_for:
+            backs.setdefault(task.evidence_for, []).append(task.id)
+    return ({k: sorted(v) for k, v in because.items()},
+            {k: sorted(v) for k, v in backs.items()})
+
+
+def rests_on(tg: TaskGraph, did: str, _rev=None) -> list[str]:
     """The tasks that exist because of this decision. The derived reverse."""
+    if _rev is not None:
+        return list(_rev[0].get(did, ()))
     return sorted(t.id for t in tg.tasks.values() if did in t.because)
 
 
-def evidence(tg: TaskGraph, did: str) -> list[str]:
+def evidence(tg: TaskGraph, did: str, _rev=None) -> list[str]:
     """The tasks whose outcome bears on this decision. The derived reverse."""
+    if _rev is not None:
+        return list(_rev[1].get(did, ()))
     return sorted(t.id for t in tg.tasks.values() if t.evidence_for == did)
 
 
-def pending_evidence(tg: TaskGraph, did: str) -> list[str]:
+def pending_evidence(tg: TaskGraph, did: str, _rev=None) -> list[str]:
     """Evidence tasks not finished yet — what an open decision is waiting on."""
-    return [t for t in evidence(tg, did) if tg.tasks[t].unfinished]
+    return [t for t in evidence(tg, did, _rev) if tg.tasks[t].unfinished]
 
 
 #: How much an AGENT may settle on its own, read from `$DG_DECIDE`. Only ever
@@ -232,11 +257,13 @@ def lenses(g: Graph | None, tg: TaskGraph | None, *,
     if g is not None:
         preds, absent = {}, {}
         if tg is not None:
-            waiting = {vid for vid in g.frontier() if pending_evidence(tg, vid)}
+            rev = reverse(tg)
+            waiting = {vid for vid in g.frontier()
+                       if pending_evidence(tg, vid, rev)}
             preds["decidable"] = lambda vid: (
                 not g.vertices[vid].settled and not g.waiting_on(vid)
                 and vid not in waiting)
-            preds["implemented"] = lambda vid: bool(rests_on(tg, vid))
+            preds["implemented"] = lambda vid: bool(rests_on(tg, vid, rev))
             preds["awaiting-evidence"] = lambda vid: vid in waiting
         else:
             preds["decidable"] = lambda vid: (
@@ -252,8 +279,9 @@ def lenses(g: Graph | None, tg: TaskGraph | None, *,
                                     archived=archived))
     if tg is not None:
         preds, struct, absent = {}, {}, {}
-        struct["because"] = lambda did: set(rests_on(tg, did))
-        struct["evidence"] = lambda did: set(evidence(tg, did))
+        trev = reverse(tg)
+        struct["because"] = lambda did: set(rests_on(tg, did, trev))
+        struct["evidence"] = lambda did: set(evidence(tg, did, trev))
         if g is not None:
             preds["ready"] = lambda tid: ready(tg, g, tid)
             preds["gated"] = lambda tid: gated_by(tg, g, tid) is not None
@@ -522,6 +550,7 @@ def evidence_after_deciding(tg: TaskGraph, g: Graph) -> list[dict]:
     covered = {u["id"] for u in settled_on_dropped_evidence(tg, g)} \
         | {u["id"] for u in settled_on_stalled_evidence(tg, g)}
     out = []
+    rev = reverse(tg)
     for did in sorted(g.vertices):
         v = g.vertices[did]
         if not v.settled or did in covered:
@@ -529,7 +558,7 @@ def evidence_after_deciding(tg: TaskGraph, g: Graph) -> list[dict]:
         e = g.active_edge(did)
         when = e.date if e else None
         late = []
-        for tid in evidence(tg, did):
+        for tid in evidence(tg, did, rev):
             t = tg.tasks[tid]
             if t.unfinished:
                 # No baseline applies: there is nothing to read yet, so a

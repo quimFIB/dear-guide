@@ -1421,3 +1421,51 @@ def test_the_outcome_is_printed_beside_the_answer(both):
     assert context.decision(Graph.load(both / "decisions.json"), "D01",
                             TaskGraph.load(both / "tasks.json")
                             )["work"]["outcomes"]["T04"].startswith("p50")
+
+
+# ---- the reverse index ----------------------------------------------------
+#
+# `rests_on` and `evidence` each read every task to answer about one decision,
+# and the lens predicates ask them once per vertex. `cross.reverse` builds both
+# maps in one pass; as everywhere else here it is built inside the call and
+# dropped with it, so these pin the answers rather than the speed.
+
+
+def test_the_reverse_index_answers_as_the_scan_does(both):
+    tg = TaskGraph.load(both / "tasks.json")
+    g = Graph.load(both / "decisions.json")
+    rev = cross.reverse(tg)
+    for did in g.vertices:
+        assert cross.rests_on(tg, did, rev) == cross.rests_on(tg, did), did
+        assert cross.evidence(tg, did, rev) == cross.evidence(tg, did), did
+        assert cross.pending_evidence(tg, did, rev) \
+            == cross.pending_evidence(tg, did), did
+
+
+def test_the_reverse_index_is_not_vacuous(both):
+    """A map that came back empty would satisfy the test above against a store
+    where the scan is empty too."""
+    tg = TaskGraph.load(both / "tasks.json")
+    rev = cross.reverse(tg)
+    assert cross.rests_on(tg, "D01", rev) == ["T01", "T02"]
+
+
+def test_a_task_resting_on_several_decisions_appears_under_each(both):
+    """`because` is a list, so one task can be filed under more than one
+    decision — a map keyed by task rather than by decision would lose all but
+    one of them."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T01"] = replace(tg.tasks["T01"], because=["D01", "D02"])
+    rev = cross.reverse(tg)
+    assert "T01" in cross.rests_on(tg, "D01", rev)
+    assert "T01" in cross.rests_on(tg, "D02", rev)
+    assert cross.rests_on(tg, "D02", rev) == cross.rests_on(tg, "D02")
+
+
+def test_a_decision_nothing_points_at_is_empty_not_missing(both):
+    """The scan returns `[]` for an unknown id; the index must not raise on a
+    key it never built."""
+    tg = TaskGraph.load(both / "tasks.json")
+    rev = cross.reverse(tg)
+    assert cross.rests_on(tg, "D99", rev) == []
+    assert cross.evidence(tg, "D99", rev) == []
