@@ -554,11 +554,12 @@ def evidence_after_deciding(tg: TaskGraph, g: Graph) -> list[dict]:
         | {u["id"] for u in settled_on_stalled_evidence(tg, g)}
     out = []
     rev = reverse(tg)
+    by_src = g.by_src()
     for did in sorted(g.vertices):
         v = g.vertices[did]
         if not v.settled or did in covered:
             continue
-        e = g.active_edge(did)
+        e = g.active_edge(did, by_src)
         when = e.date if e else None
         late = []
         for tid in evidence(tg, did, rev):

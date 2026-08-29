@@ -87,22 +87,22 @@ def _index(tg: TaskGraph) -> str:
     return "## Index\n\n" + "\n".join(rows) + "\n"
 
 
-def _section(tg: TaskGraph, tid: str) -> str:
+def _section(tg: TaskGraph, tid: str, _adj=None) -> str:
     t = tg.tasks[tid]
     status = f"{t.status} · {t.done}" if t.status == "DONE" and t.done else t.status
 
     out = [f"{orgmd.anchor(t.id)}", f"### {t.id} — {t.title}"]
     out.append(f"- **Status:** {status}")
     out.append(f"- **Waiting on:** {', '.join(tg.waiting_on(tid)) or NONE}")
-    out.append(f"- **Unblocks:** {', '.join(tg.unblocks(tid)) or NONE}")
+    out.append(f"- **Unblocks:** {', '.join(tg.unblocks(tid, _adj)) or NONE}")
     # Only where they hold, unlike the two lines above. Provenance is absent
     # for most work, and an em dash on every section would train the eye past
     # the line on the tasks where it says something.
-    if tg.discovered_during(tid):
+    if tg.discovered_during(tid, _adj):
         out.append(f"- **Discovered during:** "
-                   f"{', '.join(tg.discovered_during(tid))}")
-    if tg.prompted(tid):
-        out.append(f"- **Turned up:** {', '.join(tg.prompted(tid))}")
+                   f"{', '.join(tg.discovered_during(tid, _adj))}")
+    if tg.prompted(tid, _adj):
+        out.append(f"- **Turned up:** {', '.join(tg.prompted(tid, _adj))}")
     # The link the whole cross-graph design exists for. Stored on the task, so
     # printing it needs nothing from the decision store and keeps this view's
     # staleness independent of `decisions.json` — leaving it out only hid it.
@@ -153,6 +153,10 @@ def _section(tg: TaskGraph, tid: str) -> str:
 
 
 def render(tg: TaskGraph) -> str:
+    # One grouping of the task edges for the whole document, as `render.render`
+    # does for the decision store: rebuilding the view is what `dg check` does
+    # to see whether it is stale, so the renderer's cost is the gate's cost.
+    adj = tg._adjacency()
     parts = [PREAMBLE, "---\n", _index(tg), "---\n"]
     # `render._index`'s twin — see there for the record that rendered nowhere.
     for area in _areas.sections(tg.areas, tg.tasks.values()):
@@ -160,7 +164,7 @@ def render(tg: TaskGraph) -> str:
         if not ids:
             continue
         parts.append(f"## {area}\n")
-        parts.extend(_section(tg, tid) for tid in ids)
+        parts.extend(_section(tg, tid, adj) for tid in ids)
         parts.append("---\n")
     return "\n".join(parts).rstrip("\n") + "\n"
 

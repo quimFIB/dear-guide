@@ -689,7 +689,7 @@ class TaskGraph:
         """Derived, never stored: what must be resolved before this can start."""
         return self._in(tid, "precedes", _adj)
 
-    def prompted(self, tid: str) -> list[str]:
+    def prompted(self, tid: str, _adj=None) -> list[str]:
         """The work that doing this one turned up. Provenance, not dependency.
 
         Deliberately absent from `waiting_on` and `ready`, which is the whole
@@ -700,7 +700,7 @@ class TaskGraph:
         What it is for is the question the edge list cannot otherwise answer —
         when `tid` is abandoned, which work existed only because of it.
         """
-        return self._out(tid, "prompted")
+        return self._out(tid, "prompted", _adj)
 
     def discovered_during(self, tid: str, _adj=None) -> list[str]:
         """The work whose doing turned this one up. The reverse of `prompted`."""

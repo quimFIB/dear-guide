@@ -47,21 +47,21 @@ mind is usually worth more than the conclusion it landed on."""
 _cell = orgmd.cell
 
 
-def _resolves_cell(g: Graph, vid: str) -> str:
-    e = g.active_edge(vid)
+def _resolves_cell(g: Graph, vid: str, _by=None) -> str:
+    e = g.active_edge(vid, _by)
     if e is None or not e.decided:
         return NONE
     return "TERMINAL" if not e.to else ", ".join(e.to)
 
 
-def _index(g: Graph) -> str:
+def _index(g: Graph, _by=None) -> str:
     rows = [
         "| ID | Decision | Status | Resolves to |",
         "|---|---|---|---|",
     ]
     order = _areas.order(g.areas)
     for v in sorted(g.vertices.values(), key=lambda v: (order(v.area), v.id)):
-        rows.append(f"| {v.id} | {_cell(v.title)} | {v.status} | {_resolves_cell(g, v.id)} |")
+        rows.append(f"| {v.id} | {_cell(v.title)} | {v.status} | {_resolves_cell(g, v.id, _by)} |")
     frontier = ", ".join(g.frontier())
     rows.append("")
     rows.append(
@@ -70,10 +70,10 @@ def _index(g: Graph) -> str:
     return "## Index\n\n" + "\n".join(rows) + "\n"
 
 
-def _section(g: Graph, vid: str) -> str:
+def _section(g: Graph, vid: str, _by=None, _into=None) -> str:
     v = g.vertices[vid]
-    e = g.active_edge(vid)
-    deps = ", ".join(g.depends(vid)) or NONE
+    e = g.active_edge(vid, _by)
+    deps = ", ".join(g.depends(vid, _into)) or NONE
     status = f"{v.status} · {e.date}" if e is not None and e.decided and e.date else v.status
 
     out = [f"{orgmd.anchor(v.id)}", f"### {v.id} — {v.title}"]
@@ -99,7 +99,7 @@ def _section(g: Graph, vid: str) -> str:
     # `decision-graph.md` is what a reader opens when they are *not* running
     # commands, so it is the surface least likely to be read beside a
     # `dg check` that would have refused this store.
-    rivals = g.rival_answers(vid)
+    rivals = g.rival_answers(vid, _by)
     if rivals:
         out.append("")
         out.append(f"> **{rival_note(len(rivals))}**")
@@ -116,7 +116,7 @@ def _section(g: Graph, vid: str) -> str:
             f"\u201c{orgmd.to_markdown(h.answer, fmt=h.format)}\u201d"
             for h in turned_down))
 
-    hist = g.history(vid)
+    hist = g.history(vid, _by)
     if hist:
         out.append("")
         # summary carries its record's tag; replaced_by was written by a later
@@ -150,7 +150,12 @@ def _superseded(g: Graph) -> str:
 
 
 def render(g: Graph) -> str:
-    parts = [PREAMBLE, "---\n", _index(g), "---\n"]
+    # One grouping of the edges and one reverse index for the whole document,
+    # rather than a scan of the edge list per vertex per field. Rendering is
+    # what made `dg check` quadratic once the checks themselves were fixed:
+    # the view is rebuilt to see whether it is stale.
+    by, into = g.by_src(), g._reverse()
+    parts = [PREAMBLE, "---\n", _index(g, by), "---\n"]
     # The registry, not the declared list. Iterating `g.areas` alone dropped a
     # record whose area the list does not mention out of the document entirely
     # — silently, with nothing above the index to say a section was missing.
@@ -159,7 +164,7 @@ def render(g: Graph) -> str:
     for area in _areas.sections(g.areas, g.vertices.values()):
         ids = sorted(v.id for v in g.vertices.values() if v.area == area)
         parts.append(f"## {area}\n")
-        parts.extend(_section(g, vid) for vid in ids)
+        parts.extend(_section(g, vid, by, into) for vid in ids)
         parts.append("---\n")
     parts.append(_superseded(g))
     return "\n".join(parts).rstrip("\n") + "\n"

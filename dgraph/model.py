@@ -712,6 +712,7 @@ class Graph:
         def add(c, m, severity="error"):
             v.append(Violation(c, m, severity))
         ids = set(self.vertices)
+        by_src = self.by_src()   # one grouping for the per-vertex reads below
 
         for vid, vert in self.vertices.items():
             if not vid.startswith("D") or not vid[1:].isdigit():
@@ -798,7 +799,7 @@ class Graph:
                 seen_active.add(e.src)
 
         for vid, vert in self.vertices.items():
-            edge = self.active_edge(vid)
+            edge = self.active_edge(vid, by_src)
             if vert.base_status == "DECIDED":
                 if edge is None or not edge.decided:
                     add(
