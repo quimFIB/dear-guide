@@ -1,0 +1,75 @@
+After indexing the renderers and the last per-record predicates
+===============================================================
+
+Run 2026-08-29, against `efficiency-study-baseline` (fef6e25). Raw data in
+`final3/`. Prompted by the question of whether `dg check` and `dg brief`
+*need* to be quadratic -- whether some algorithmic lower bound had been
+reached.
+
+    improved  > 1.15x    86
+    unchanged            26
+    regressed < 0.87x     5   <- all drift; see below
+    ------------------------
+    compared            117
+
+
+--- The answer: no, and it was not close -------------------------------
+
+`dg check` was alpha 1.85 with every check itself linear, so the assumption
+was that transitive reachability's real lower bound had been hit. It had not.
+**`dg check` rebuilds both views to see whether they are stale**, and the
+renderers asked `depends`, `active_edge`, `rival_answers`, `prerequisites`,
+`unblocks`, `discovered_during` and `prompted` once per record with no index.
+The quadratic term was in the layer that writes the file, not the layer that
+answers the question.
+
+    command          baseline      now
+    dg check       132,509 ms   3,687 ms      alpha 3.03 -> 1.69
+    dg brief         skipped    4,405 ms                 -> 1.70
+    dg render        6,239 ms   1,120 ms      alpha ~2.0 -> 1.34
+    dg context       6,120 ms     443 ms                 -> 0.78
+    dg find <word>  11,769 ms     339 ms                 -> 0.49
+    dg find waits:   3,095 ms     250 ms
+    (all at 5,000 vertices)
+
+Two more per-record questions fell out of chasing an apparent regression:
+
+    find is:orphaned   5,000 vertices   3,369 ms -> 17 ms   (165x)
+    find waits:<mid>   5,000 vertices   2,787 ms ->  8 ms   (367x)
+
+
+--- Where the real lower bounds are ---------------------------------------
+
+Worth writing down, because "this has to be quadratic" was the wrong answer
+twice and is the right answer somewhere:
+
+- **`provisional_causes` is genuinely quadratic** -- in (PROVISIONAL x
+  unsettled), because that product is its *output* size. Unavoidable if the
+  sets are wanted. `validate` does not want them: `stale_provisional` needs
+  one boolean per vertex and gets every one from a single reverse walk.
+- **All-pairs reachability** would be Theta(V*E) and is essentially
+  matrix-multiplication-hard. Nothing here asks it.
+- **Everything else** -- roots, unpropagated, cycle detection, both
+  renderers -- is Theta(V+E) work producing Theta(V+E) output.
+
+So the lower bound exists, and nothing in the hot path was anywhere near it.
+
+
+--- The five "regressions" ------------------------------------------------
+
+All at size 1,000, all in ops this work does not touch:
+
+    load.decisions   7.38 -> 9.18 ms    (JSON parsing)
+    load.tasks       3.70 -> 4.43 ms    (JSON parsing)
+    active_edge.last_id / children.mid  (0.02-0.03 ms measurements)
+
+Re-measured in-process on a quiet machine: `load.tasks` comes back at
+3.37 ms, *faster* than the baseline, and `load.decisions` at 8.45 ms. Neither
+is code -- the baseline was taken in a different session and the sweep's
+5,000-vertex block ran under load. The same shape appeared earlier in the
+study and was confirmed as drift the same way.
+
+**This is the cost of a baseline that never rebaselines**: it reports drift
+as regression and each one has to be chased. It is worth paying. The one time
+it was a real regression -- a lens cache 4.7x slower than the tool had ever
+been -- every test passed and nothing else would have caught it.
