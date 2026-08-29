@@ -586,11 +586,25 @@ def late_evidence(tg: TaskGraph, g: Graph, did: str) -> list[dict]:
     actually produced something — evidence still running has nothing to read.
     One helper, so `dg confirm --against`, the browser's control, and the check
     itself cannot disagree about who is outstanding.
+
+    **Ask `late_evidence_all` if you want this for every decision.** This form
+    computes the whole answer and returns one row of it, so a caller looping
+    over the graph pays for the whole graph once per vertex.
     """
-    for u in evidence_after_deciding(tg, g):
-        if u["id"] == did:
-            return [t for t in u["tasks"] if t["outcome"] is not None]
-    return []
+    return late_evidence_all(tg, g).get(did, [])
+
+
+def late_evidence_all(tg: TaskGraph, g: Graph) -> dict[str, list[dict]]:
+    """`late_evidence` for every decision, from one pass.
+
+    `evidence_after_deciding` already computes every decision's answer on its
+    way to any one of them — the same shape `Graph.depths` has, and the same
+    trap: the single-vertex form throws the rest away, so the joined view's
+    payload was paying for the whole cross-graph walk once per vertex. At 2,000
+    decisions that was 364 ms per vertex, about twelve minutes for the page.
+    """
+    return {u["id"]: [t for t in u["tasks"] if t["outcome"] is not None]
+            for u in evidence_after_deciding(tg, g)}
 
 
 def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:

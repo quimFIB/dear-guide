@@ -142,7 +142,7 @@ def build_decisions(n: int, degree: int, *, seed: int = 7,
 
 
 def build_tasks(n: int, degree: int, decision_ids: list[str], decided: set[str],
-                *, seed: int = 11) -> dict:
+                *, seed: int = 11, evidence_frac: float = 0.0) -> dict:
     rng = random.Random(seed)
     width = max(1, n // LAYERS)
     ids = [f"T{i:05d}" for i in range(1, n + 1)]
@@ -182,6 +182,11 @@ def build_tasks(n: int, degree: int, decision_ids: list[str], decided: set[str],
                            "date": f"2026-0{1 + i % 9}-1{i % 10}"}]
         if i % 3 == 0 and decision_ids:
             t["because"] = [decision_ids[(i * 13) % len(decision_ids)]]
+        # `--evidence-frac` off by default, and the branch consumes no
+        # randomness when it is, so every store generated before this existed
+        # regenerates byte-identically.
+        if evidence_frac and decision_ids and i % max(1, int(1 / evidence_frac)) == 0:
+            t["evidence_for"] = decision_ids[(i * 29) % len(decision_ids)]
         tasks.append(t)
 
         pool = [x for ll in (l + 1, l + 2) for x in by_layer.get(ll, [])]
@@ -195,12 +200,14 @@ def build_tasks(n: int, degree: int, decision_ids: list[str], decided: set[str],
     return {"areas": AREAS, "tasks": tasks, "edges": edges}
 
 
-def write(outdir: Path, n: int, degree: int, *, tasks_ratio: float = 0.5) -> dict:
+def write(outdir: Path, n: int, degree: int, *, tasks_ratio: float = 0.5,
+          task_degree: int | None = None, evidence_frac: float = 0.0) -> dict:
     outdir.mkdir(parents=True, exist_ok=True)
     d = build_decisions(n, degree)
     decided = {v["id"] for v in d["vertices"] if v["status"] == "DECIDED"}
     tn = max(1, int(n * tasks_ratio))
-    t = build_tasks(tn, degree, sorted(decided), decided)
+    t = build_tasks(tn, task_degree if task_degree is not None else degree,
+                    sorted(decided), decided, evidence_frac=evidence_frac)
     (outdir / "decisions.json").write_text(
         json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (outdir / "tasks.json").write_text(
@@ -222,5 +229,18 @@ if __name__ == "__main__":
     p.add_argument("outdir", type=Path)
     p.add_argument("--vertices", type=int, default=1000)
     p.add_argument("--degree", type=int, default=6)
+    # The task store used to be pinned at half the decision count and the same
+    # degree, with no `evidence_for` link ever written -- so `cross.evidence`
+    # and everything reading it answered on an empty set in every measurement
+    # taken before these existed. The defaults reproduce that exactly.
+    p.add_argument("--tasks-ratio", type=float, default=0.5,
+                   help="tasks per decision (0.5 = the original shape)")
+    p.add_argument("--task-degree", type=int, default=None,
+                   help="task out-degree; defaults to --degree")
+    p.add_argument("--evidence-frac", type=float, default=0.0,
+                   help="fraction of tasks carrying `evidence_for` (0 = none)")
     a = p.parse_args()
-    print(json.dumps(write(a.outdir, a.vertices, a.degree), indent=2))
+    print(json.dumps(write(a.outdir, a.vertices, a.degree,
+                           tasks_ratio=a.tasks_ratio,
+                           task_degree=a.task_degree,
+                           evidence_frac=a.evidence_frac), indent=2))

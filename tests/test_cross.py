@@ -1469,3 +1469,45 @@ def test_a_decision_nothing_points_at_is_empty_not_missing(both):
     rev = cross.reverse(tg)
     assert cross.rests_on(tg, "D99", rev) == []
     assert cross.evidence(tg, "D99", rev) == []
+
+
+# ---- the whole-graph form of late evidence --------------------------------
+
+
+def test_late_evidence_all_agrees_with_the_per_decision_form(both):
+    """`late_evidence(did)` computes `evidence_after_deciding` for the *whole*
+    graph and returns one row of it, so the joined view's payload paid for the
+    whole cross-graph walk once per vertex. The batched form has to give back
+    exactly the same rows."""
+    tg = TaskGraph.load(both / "tasks.json")
+    g = Graph.load(both / "decisions.json")
+    allrows = cross.late_evidence_all(tg, g)
+    for did in g.vertices:
+        assert allrows.get(did, []) == cross.late_evidence(tg, g, did), did
+
+
+def test_late_evidence_all_is_not_vacuously_empty(both):
+    """Set up the finding it exists for — a decision settled before the
+    evidence that bears on it finished — so the agreement above is between two
+    populated answers rather than two empty ones."""
+    tg = TaskGraph.load(both / "tasks.json")
+    g = Graph.load(both / "decisions.json")
+    tg.tasks["T01"] = replace(tg.tasks["T01"], evidence_for="D01")
+    finished(tg.tasks["T01"], "2026-06-01", "a result nobody has read")
+    rows = cross.late_evidence_all(tg, g)
+    assert rows.get("D01"), "expected D01 to have unread evidence"
+    assert rows["D01"] == cross.late_evidence(tg, g, "D01")
+
+
+def test_the_joined_payload_matches_the_per_decision_helpers(both):
+    """The payload now batches all four cross-graph reads. It must draw the
+    same page it drew when each was asked per vertex."""
+    from dgraph.server import joined_payload
+    tg = TaskGraph.load(both / "tasks.json")
+    g = Graph.load(both / "decisions.json")
+    by = joined_payload(g, tg)["by_decision"]
+    for did in g.vertices:
+        assert by[did]["rests_on"] == cross.rests_on(tg, did), did
+        assert by[did]["evidence"] == cross.evidence(tg, did), did
+        assert by[did]["pending_evidence"] == cross.pending_evidence(tg, did), did
+        assert by[did]["late_evidence"] == cross.late_evidence(tg, g, did), did

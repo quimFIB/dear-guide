@@ -325,18 +325,23 @@ def joined_payload(g: Graph | None, tg: TaskGraph | None) -> dict:
     """
     if g is None or tg is None:
         return {"by_decision": {}}
+    # All four of these read the whole task store, or the whole cross-graph
+    # walk, to answer about one decision -- and this comprehension asks them
+    # for every decision. Compute each once for the whole graph instead.
+    rev = cross.reverse(tg)
+    late = cross.late_evidence_all(tg, g)
     return {
         "by_decision": {
-            vid: {"rests_on": cross.rests_on(tg, vid),
-                  "evidence": cross.evidence(tg, vid),
-                  "pending_evidence": cross.pending_evidence(tg, vid),
+            vid: {"rests_on": cross.rests_on(tg, vid, rev),
+                  "evidence": cross.evidence(tg, vid, rev),
+                  "pending_evidence": cross.pending_evidence(tg, vid, rev),
                   # Results that landed *after* this answer and have never been
                   # read against it. `dg check` and `dg brief` have reported
                   # this since the finding existed; the browser showed only its
                   # benign opposite (evidence still outstanding), so a store
                   # holding an answer and a result that contradicts it read
                   # clean here.
-                  "late_evidence": cross.late_evidence(tg, g, vid)}
+                  "late_evidence": late.get(vid, [])}
             for vid in g.vertices
         }
     }
