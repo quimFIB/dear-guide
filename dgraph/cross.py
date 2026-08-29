@@ -379,10 +379,11 @@ def dropped_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
     decision is visibly waiting again, which is not a silence.
     """
     out = []
+    rev = reverse(tg)
     for did in sorted(g.vertices):
         if g.vertices[did].settled:
             continue
-        ev = evidence(tg, did)
+        ev = evidence(tg, did, rev)
         if ev and all(tg.tasks[t].status == "DROPPED" for t in ev):
             out.append({"id": did, "title": g.vertices[did].title,
                         "status": g.vertices[did].status, "tasks": ev})
@@ -408,10 +409,11 @@ def settled_on_dropped_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
     one surviving spike and the answer may yet be backed.
     """
     out = []
+    rev = reverse(tg)
     for did in sorted(g.vertices):
         if not g.vertices[did].settled:
             continue
-        ev = evidence(tg, did)
+        ev = evidence(tg, did, rev)
         if ev and all(tg.tasks[t].status == "DROPPED" for t in ev):
             out.append({"id": did, "title": g.vertices[did].title,
                         "status": g.vertices[did].status, "tasks": ev})
@@ -439,10 +441,11 @@ def _stalled_evidence(tg: TaskGraph, g: Graph, *, settled: bool) -> list[dict]:
     means to.
     """
     out = []
+    rev = reverse(tg)
     for did in sorted(g.vertices):
         if g.vertices[did].settled is not settled:
             continue
-        ev = evidence(tg, did)
+        ev = evidence(tg, did, rev)
         stopped = [tg.tasks[t].status for t in ev]
         if ev and all(k in ("PARKED", "DROPPED") for k in stopped) \
                 and "PARKED" in stopped:
@@ -624,12 +627,17 @@ def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
     # every kind here means "the head waits on the tail", and a `prompted` edge
     # means no such thing. Feeding it in would manufacture deadlocks out of
     # provenance — see `KINDS` in `dgraph/tasks.py`.
+    # One grouping each, rather than a scan of the edge list per node: this
+    # builds a node for *every* vertex and *every* task, so the unindexed form
+    # was two full scans per node across both stores.
+    by_src = g.by_src()
+    tadj = tg._adjacency()
     for vid in g.vertices:
         # `children` and `unblocks` both drop ids naming nothing, so a dangling
         # reference cannot enter the union and be walked into as a node.
-        adj.setdefault(vid, []).extend(g.children(vid))
+        adj.setdefault(vid, []).extend(g.children(vid, by_src))
     for tid in tg.tasks:
-        adj.setdefault(tid, []).extend(tg.unblocks(tid))
+        adj.setdefault(tid, []).extend(tg.unblocks(tid, tadj))
     for tid, t in tg.tasks.items():
         for did in t.because:
             if did in g.vertices:
