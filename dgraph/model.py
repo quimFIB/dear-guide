@@ -535,6 +535,49 @@ class Graph:
             stack.pop()
         return memo
 
+    def all_depths(self) -> dict[str, int]:
+        """Every vertex's depth, in one shared memo.
+
+        `depths(vid)` already keeps what it computes on the way to one vertex,
+        but `depth(vid)` throws that memo away when it returns — so asking for
+        the depth of *every* vertex, which is what the web view's payload does,
+        pays for the whole traversal once per vertex. This runs the same walk
+        from every unvisited start and keeps one memo across all of them, over
+        one shared reverse index.
+
+        On a graph with a cycle this can disagree with `depth(vid)` asked one
+        vertex at a time, and so can `depth` with itself: an in-cycle parent
+        counts 0, so the answer depends on which vertex the walk entered the
+        cycle from. `validate` reports a cycle as an error and neither reading
+        is meaningful on one. On an acyclic graph — every graph the tool will
+        write — the two agree exactly, and the tests pin that.
+        """
+        into = self._reverse()
+        memo: dict[str, int] = {}
+        for start in self.vertices:
+            if start in memo:
+                continue
+            on_path: set[str] = set()
+            stack = [start]
+            while stack:
+                n = stack[-1]
+                if n in memo:
+                    stack.pop()
+                    continue
+                on_path.add(n)
+                parents = self.depends(n, into)
+                todo = [q for q in parents
+                        if q not in memo and q not in on_path]
+                if todo:
+                    stack.extend(todo)
+                    continue
+                memo[n] = 0 if not parents else 1 + max(
+                    memo.get(q, 0) for q in parents
+                )
+                on_path.discard(n)
+                stack.pop()
+        return memo
+
     def path(self, a: str, b: str) -> list[str] | None:
         """Any decision path from a to b, following active edges."""
         stack = [(a, [a])]

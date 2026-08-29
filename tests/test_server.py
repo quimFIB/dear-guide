@@ -1017,3 +1017,31 @@ def test_the_panel_folds_at_the_same_length_the_rule_refuses_at():
     found = re.search(r"const FOLD_AT=(\d+)", src)
     assert found, "FOLD_AT is gone — the panel no longer folds"
     assert int(found.group(1)) == limits.TERSE_DEFAULT
+
+
+def test_the_payload_derives_the_same_answers_it_always_did(store, g):
+    """`graph_payload` builds `depends`, `depth` and `provisional_because` for
+    every vertex, and each used to be recomputed from scratch per vertex — 139.8 s
+    at 1,000 vertices, almost all of it in two walks that have a whole-store
+    form. The one-pass forms have to give back exactly what the per-vertex ones
+    did."""
+    from dataclasses import replace
+
+    from dgraph.server import graph_payload
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    g.vertices["D01"] = replace(g.vertices["D01"], status="REOPENED")
+    d = graph_payload(g)["derived"]
+    for vid in g.vertices:
+        assert d[vid]["depth"] == g.depth(vid), vid
+        assert d[vid]["depends"] == g.depends(vid), vid
+    # D02 is the PROVISIONAL one, and the page reads this key for no other.
+    assert d["D02"]["provisional_because"] == g.provisional_because("D02") == ["D01"]
+
+
+def test_the_payload_sends_the_key_for_every_vertex(store, g):
+    """Only PROVISIONAL vertices get a real answer now, but the key stays on
+    every vertex: the page's `d.provisional_because||[]` would cope with it
+    missing, and the payload's shape is not the place to economise."""
+    from dgraph.server import graph_payload
+    d = graph_payload(g)["derived"]
+    assert all("provisional_because" in d[vid] for vid in g.vertices)

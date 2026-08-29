@@ -1516,3 +1516,31 @@ def test_the_guards_still_walk_when_there_is_something_to_find(g):
     g.vertices["D06"] = replace(g.vertices["D06"], status="DECIDED")
     assert g.stale_provisional() == ["D02"]
     assert g.unpropagated() == [("D06", "D05")] == _slow_unpropagated(g)
+
+
+# ---- every depth in one walk ----------------------------------------------
+
+
+def test_all_depths_is_the_per_vertex_answer(g):
+    assert g.all_depths() == {vid: g.depth(vid) for vid in g.vertices}
+
+
+def test_all_depths_agrees_with_depth_on_random_acyclic_graphs():
+    """A DAG is the only shape this has to agree on — `validate` reports a
+    cycle as an error, and on one both readings are arbitrary for the same
+    reason (an in-cycle parent counts 0, so the answer depends on where the
+    walk entered). Forward-only edges make these acyclic by construction."""
+    import random
+
+    from dgraph.model import Edge, Graph, Vertex
+    rng = random.Random(99)
+    for _ in range(200):
+        n = rng.randint(1, 25)
+        ids = [f"D{i:03d}" for i in range(n)]
+        graph = Graph(vertices={i: Vertex(i, "t", "a", "DECIDED") for i in ids},
+                      edges=[])
+        for k, i in enumerate(ids):
+            to = [ids[j] for j in range(k + 1, n) if rng.random() < 0.25]
+            if to or rng.random() < 0.5:
+                graph.edges.append(Edge(i, to, active=True))
+        assert graph.all_depths() == {v: graph.depth(v) for v in graph.vertices}

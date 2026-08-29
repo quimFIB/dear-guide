@@ -104,14 +104,29 @@ def graph_payload(g: Graph) -> dict:
     # used — otherwise a record renders in an unlisted colour the legend has no
     # row for, and the area field cannot offer an area that is plainly in use.
     d["areas"] = areas.registry(g.areas, g.vertices.values())
+    # Three things this block wants for *every* vertex, each of which was being
+    # recomputed from scratch per vertex. At 1,000 vertices the payload took
+    # 139.8 s to build, 99.2 of them in `depth` and 42.2 in
+    # `provisional_because`; both walk the graph, and both already have a form
+    # that answers the whole store in one pass.
+    into = g._reverse()
+    depths = g.all_depths()
+    because = g.provisional_causes()
     d["derived"] = {
         vid: {
-            "depends": g.depends(vid),
+            "depends": g.depends(vid, into),
             # Which premises are still under review. The panel needs it to say
             # whether a PROVISIONAL decision can be re-affirmed *yet* — and to
             # say which premise, rather than offering a button that refuses.
-            "provisional_because": g.provisional_because(vid),
-            "depth": g.depth(vid),
+            #
+            # Only PROVISIONAL vertices get a real answer now, where before
+            # every vertex did. That is not a narrowing of what the page can
+            # show: `app.html` reads this key inside `if(st==="PROVISIONAL")`
+            # and nowhere else, so every other vertex's list was computed,
+            # serialised and shipped to be ignored. The key stays present for
+            # all of them so the payload's shape does not change.
+            "provisional_because": because.get(vid, []),
+            "depth": depths[vid],
             "children": g.children(vid),
             # The whole superseded edge, not a one-line epitaph for it. A
             # reversal is an edge with a payload of its own — its own targets,
