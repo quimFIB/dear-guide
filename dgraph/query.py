@@ -677,13 +677,34 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
     # drops with it. That is the same lifetime `_walk`'s memo below already
     # relies on, and for the same reason: nothing is written down, and nothing
     # outlives the question being asked.
-    edge_cache: dict[str, tuple] = {}
+    # Three caches and not one tuple, because the callers want different
+    # subsets and the lookups are not equally cheap. `active_edge` stops at the
+    # first match; `rival_answers` is a full scan with no early exit. Fetching
+    # all three together made `is:terminal` — which wants only the active edge —
+    # about five times *slower* than the uncached version it replaced, and
+    # `status:` pay for a history it never reads. Cache per lookup, fetch on
+    # demand.
+    _active: dict[str, object] = {}
+    _rivals: dict[str, list] = {}
+    _hist: dict[str, list] = {}
+    _MISS = object()          # `active_edge` returns None legitimately
 
-    def edges_of(vid: str) -> tuple:
-        got = edge_cache.get(vid)
+    def active_of(vid: str):
+        got = _active.get(vid, _MISS)
+        if got is _MISS:
+            got = _active[vid] = g.active_edge(vid)
+        return got
+
+    def rivals_of(vid: str) -> list:
+        got = _rivals.get(vid)
         if got is None:
-            got = edge_cache[vid] = (g.active_edge(vid), g.rival_answers(vid),
-                                     g.history(vid))
+            got = _rivals[vid] = g.rival_answers(vid)
+        return got
+
+    def hist_of(vid: str) -> list:
+        got = _hist.get(vid)
+        if got is None:
+            got = _hist[vid] = g.history(vid)
         return got
 
     def values(vid: str, name: str) -> list[str]:
@@ -699,7 +720,7 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
             # working, and keeps `status:BLOCKED:D05` — "blocked on *that*" —
             # available for anyone who wants it.
             out = _texts(dict.fromkeys([v.base_status, v.status]))
-        e, rivals, hist = edges_of(vid)
+        e = active_of(vid)
         if e is not None:
             out += _texts([getattr(e, name, None)])
         # And every *rival* answer, in the store `one_active_edge` refuses.
@@ -707,9 +728,9 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         # unsearchable — and `dg find` answering "nothing" about a sentence
         # that is sitting in the store is the failure this whole command is
         # shaped to avoid. Empty in every store this tool can write.
-        out += _texts(getattr(other, name, None) for other in rivals)
+        out += _texts(getattr(other, name, None) for other in rivals_of(vid))
         if name in ("summary", "why") or (archived and name in _ARCHIVED_PROSE):
-            out += _texts(getattr(h, name, None) for h in hist)
+            out += _texts(getattr(h, name, None) for h in hist_of(vid))
         return out
 
     def label(vid: str, name: str, text: str) -> str:
@@ -722,7 +743,7 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         """
         if name not in _ARCHIVED_PROSE:
             return name
-        e = edges_of(vid)[0]
+        e = active_of(vid)
         return name if e is not None and getattr(e, name, None) == text \
             else f"superseded {name}"
 
@@ -732,8 +753,8 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         "provisional": lambda vid: g.vertices[vid].base_status == "PROVISIONAL",
         "shaky": lambda vid: g.vertices[vid].base_status in _shaky(),
         "blocked": lambda vid: g.vertices[vid].base_status == "BLOCKED",
-        "terminal": lambda vid: (e := edges_of(vid)[0]) is not None and e.terminal,
-        "superseded": lambda vid: bool(edges_of(vid)[2]),
+        "terminal": lambda vid: (e := active_of(vid)) is not None and e.terminal,
+        "superseded": lambda vid: bool(hist_of(vid)),
         "orphaned": lambda vid: not g.depends(vid) and not g.children(vid),
     }
     preds.update(predicates or {})

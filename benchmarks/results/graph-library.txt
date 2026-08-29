@@ -1,0 +1,100 @@
+Should the graph be backed by a graph library?
+==============================================
+
+Spiked 2026-08-29 against networkx 3.6.1 and rustworkx 0.18.1, on the
+10,000-vertex store. Reproduce with `benchmarks/spike_library.py` and
+`benchmarks/spike_library_fair.py` (rustworkx is not a project dependency --
+`pip install rustworkx --target <dir>` and put it on PYTHONPATH).
+
+Answer: **no for the datastructure. Yes, if anything, for layout only.**
+
+Not because the libraries are slow -- because the win is already had, and
+what is left does not pay for what it costs.
+
+
+--- The measurement that decides it ---------------------------------------
+
+The first pass looked decisive for the library. `ancestors` of one vertex:
+
+    current                              3336.15 ms
+    networkx                                2.47 ms      1,350x
+    rustworkx                               0.41 ms      8,137x
+
+That is not a library result. It is an *index* result, and the same index
+costs three lines and no dependency:
+
+    current, no index                    3336.15 ms
+    current, builds its own index          17.90 ms      186x
+    current, index already in hand          2.87 ms
+    networkx  (graph already built)         2.47 ms      1.16x vs current
+    rustworkx (graph already built)         0.41 ms      7.0x  vs current
+
+So against a graph that keeps an index -- which is what the fix does --
+networkx is at **parity**, and rustworkx is **7x**. The 1,350x was the
+absence of an index being priced as the presence of a library.
+
+The bulk case, every vertex's ancestors on the 10,000-vertex store:
+
+    current (index in hand)             27,134 ms
+    rustworkx                            4,672 ms        5.8x
+
+Real, and nothing in the tool currently asks it.
+
+Other ops, with the structure already built:
+
+    op                     current    networkx   rustworkx
+    roots                    17.54        3.53        1.62
+    all depths               37.60       27.83       14.27
+    build the structure          -       75.60       21.40
+
+Note the build column against the roots row: for a single call, building a
+networkx graph (75.6 ms) costs more than answering the question with dicts
+(17.5 ms). A library only pays if the structure outlives the question -- and
+whether a derived structure may outlive the question is precisely the
+invalidation problem, not something the library solves.
+
+
+--- The three translation problems, which cost more than the speed ---------
+
+1. **The two directions are not transposes.** `children` follows the *first*
+   active edge (`active_edge` is first-wins); `depends` sees every active
+   edge. One digraph cannot answer both, so a faithful backing needs two --
+   and a store holding rival answers, which `validate` must survive in order
+   to report, is exactly where they differ.
+
+2. **The payload does not fit.** A dgraph edge is one record with a list of
+   targets and an answer, falsifier, source, date, replaced_by, why and
+   from_source. As a digraph it becomes N arcs and the payload lives outside
+   it, so every read that wants prose -- which is `dg find`, `dg node`,
+   `dg context`, the whole READ panel -- goes back to the edge list anyway.
+   The library would accelerate the traversals and leave the reads alone.
+
+3. **Superseded edges and dangling targets must be kept and skipped.** The
+   archive is inactive and stays forever; a target naming no vertex must be
+   preserved in the store and skipped in the walk, because `validate` reports
+   it. Both are "in the data, out of the graph", so the digraph is a
+   projection and the store stays the source of truth.
+
+Add to that: `pyproject.toml` declares exactly two runtime dependencies
+(typer, rich), deliberately, and the tool ships as a Claude Code plugin.
+networkx is pure Python and would buy nothing measurable. rustworkx is a
+compiled wheel per platform, for 7x on walks that are no longer the
+bottleneck.
+
+
+--- What the spike actually bought -----------------------------------------
+
+The 186x line above. Pricing the library is what exposed that `ancestors`
+had no index -- 3.3 s for one question, paid by `dg find above:` and
+`dg context` on every invocation. That is now fixed, with no dependency.
+
+A spike that returns "no" and a 159x speedup is a spike worth having run.
+
+
+--- Where a library would still earn its place -----------------------------
+
+**Layout for `dg serve`.** Assigning positions to a few thousand nodes is a
+real algorithm, the tool does not have one, and it is a pure function of the
+graph shape with nothing to invalidate. That is the opposite of the case
+above on every axis. Not proposed here; recorded so the question is not
+re-answered from scratch.

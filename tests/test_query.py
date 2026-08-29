@@ -1047,3 +1047,29 @@ def test_one_lens_is_consistent_within_itself(g):
     assert lens.values("D01", "answer") == _lens(g).values("D01", "answer")
     assert lens.label("D01", "answer", "The root answer.") == "answer"
     assert lens.label("D01", "answer", "An older answer.") == "superseded answer"
+
+
+def test_a_predicate_fetches_only_the_lookup_it_needs(g):
+    """The cache is three caches, not one tuple, and this is why.
+
+    `active_edge` stops at the first match; `rival_answers` is a full scan with
+    no early exit and `history` another pass. Fetching all three together made
+    `is:terminal` — which wants the active edge alone — about five times
+    *slower* than the uncached version it replaced, and a sweep caught it. A
+    cache that fetches more than it is asked for is not a cache.
+    """
+    from dgraph import query
+    calls = []
+    g.rival_answers = lambda vid, _f=g.rival_answers: (calls.append(vid), _f(vid))[1]
+    g.history = lambda vid, _f=g.history: (calls.append(vid), _f(vid))[1]
+    lens = query.decision_lens(g)
+    query.select(query.parse("is:terminal"), lens)
+    assert not calls, f"is:terminal fetched what it does not read: {calls}"
+
+
+def test_a_prose_search_still_reads_the_archive(g):
+    """The other half — laziness must not become a narrowing. `answer:` reads
+    superseded edges, and a lens too lazy to fetch history would quietly stop
+    finding the reversals."""
+    from dgraph import query
+    assert query.select(query.parse("answer:older"), _lens(g)) == ["D01"]
