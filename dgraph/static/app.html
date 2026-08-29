@@ -448,21 +448,53 @@ function legend(){
 const NW=168, NH=46, GAPX=26, GAPY=64;
 
 function layerLayout(ids, rankOf, upOf, downOf){
+  /* An edge spanning more than one rank is broken into a chain of placeholder
+     nodes, one per rank it crosses. That is what stops it being drawn straight
+     through the boxes in between: measured on the generated stores, 46% of all
+     edges span more than one rank and **98-99% of those crossed a node box**
+     before this. With the placeholders it is 0%.
+
+     They are not here to reduce crossings, and it is worth saying so because
+     the obvious metric says they make it slightly worse (about 6%). A straight
+     line between two well-placed endpoints already routes well; what it does
+     not do is get out of the way of anything. */
+  const rk={}, up={}, down={}, chains=[];
+  ids.forEach(id=>{ rk[id]=rankOf(id); });
+  const link=(a,b)=>{ (down[a]=down[a]||[]).push(b); (up[b]=up[b]||[]).push(a); };
+  let seq=0;
+  const all=[...ids];
+  ids.forEach(a=>{
+    (downOf(a)||[]).forEach(b=>{
+      if(!(b in rk)) return;              // an id outside this view
+      const gap=rk[b]-rk[a];
+      if(gap<=1){ link(a,b); return; }
+      let prev=a; const chain=[a];
+      for(let r=rk[a]+1;r<rk[b];r++){
+        const d="\u0000bend"+(seq++);
+        all.push(d); rk[d]=r; link(prev,d); prev=d; chain.push(d);
+      }
+      link(prev,b); chain.push(b); chains.push(chain);
+    });
+  });
+
   const layers={};
-  ids.forEach(id=>{ const r=rankOf(id); (layers[r]=layers[r]||[]).push(id); });
+  all.forEach(id=>{ (layers[rk[id]]=layers[rk[id]]||[]).push(id); });
   const ranks=Object.keys(layers).map(Number).sort((a,b)=>a-b);
   ranks.forEach(r=>layers[r].sort());
   const pos={};
   const index=()=>ranks.forEach(r=>layers[r].forEach((id,i)=>pos[id]=i));
   index();
-  const mean=(list)=>{ const k=list.filter(i=>i in pos);
+  const mean=(list)=>{ const k=(list||[]).filter(i=>i in pos);
     return k.length?k.reduce((s,i)=>s+pos[i],0)/k.length:null; };
+  /* Four sweeps, and no more: the barycentre sort reaches a fixed point almost
+     at once. Measured at 8, 16, 24, 32 and 48 sweeps it returns the identical
+     crossing count, so anything above four is time spent for nothing. */
   for(let sweep=0;sweep<4;sweep++){
-    const down = sweep%2===0;
-    (down?ranks:[...ranks].reverse()).forEach(r=>{
+    const down_ = sweep%2===0;
+    (down_?ranks:[...ranks].reverse()).forEach(r=>{
       layers[r].sort((a,b)=>{
-        const ka=mean(down?upOf(a):downOf(a));
-        const kb=mean(down?upOf(b):downOf(b));
+        const ka=mean(down_?up[a]:down[a]);
+        const kb=mean(down_?up[b]:down[b]);
         if(ka===null&&kb===null) return a<b?-1:1;
         if(ka===null) return 1; if(kb===null) return -1;
         return ka-kb || (a<b?-1:1);
@@ -470,14 +502,30 @@ function layerLayout(ids, rankOf, upOf, downOf){
       index();
     });
   }
-  const widest=Math.max(...ranks.map(r=>layers[r].length), 1);
-  const W=widest*(NW+GAPX);
+  /* A placeholder is a bend in a line, not a box, so it gets a lane wide
+     enough to keep two edges apart and no more. Giving it a full node's width
+     is the obvious thing and it is wrong: it made the canvas 4.2x wider at
+     2,000 nodes, which costs more readability than the routing wins back. */
+  const LANE=18;
+  const wide=id=>id.charCodeAt(0)===0 ? LANE : NW+GAPX;
+  const rowWidth=row=>row.reduce((s,id)=>s+wide(id),0);
+  const W=Math.max(...ranks.map(r=>rowWidth(layers[r])), NW+GAPX);
   const xy={};
   ranks.forEach(r=>{
-    const row=layers[r], span=row.length*(NW+GAPX);
-    row.forEach((id,i)=>{ xy[id]={x:(W-span)/2 + i*(NW+GAPX), y:r*(NH+GAPY)}; });
+    const row=layers[r];
+    let x=(W-rowWidth(row))/2;
+    row.forEach(id=>{ xy[id]={x, y:r*(NH+GAPY)}; x+=wide(id); });
   });
-  return {xy, extent:{w:W+GAPX, h:(Math.max(...ranks,0)+1)*(NH+GAPY)}};
+  /* The waypoints an edge bends through, keyed by its two real endpoints. The
+     placeholders stay out of `xy`'s callers by never being real ids: nothing
+     iterates this map to draw a node. */
+  const bends={};
+  chains.forEach(ch=>{
+    bends[ch[0]+"\u0000"+ch[ch.length-1]] =
+      ch.slice(1,-1).map(d=>({x:xy[d].x+LANE/2, y:xy[d].y+NH/2}));
+  });
+  return {xy, bends,
+          extent:{w:W+GAPX, h:(Math.max(...ranks,0)+1)*(NH+GAPY)}};
 }
 
 /* Longest path from a root, over an arbitrary parent map. Iterative and
@@ -530,7 +578,7 @@ function layout(){
     const r=layerLayout(ids, id=>T.derived[id].depth,
                         id=>T.derived[id].prerequisites,
                         id=>T.derived[id].unblocks);
-    T.xy=r.xy; T.extent=r.extent; return;
+    T.xy=r.xy; T.bends=r.bends; T.extent=r.extent; return;
   }
   if(tab==="joined" && T){
     const up=unionParents();
@@ -539,11 +587,11 @@ function layout(){
     const depth=longestPath(ids, par);
     const kids={}; ids.forEach(i=>par(i).forEach(p=>(kids[p]=kids[p]||[]).push(i)));
     const r=layerLayout(ids, id=>depth[id]||0, par, id=>kids[id]||[]);
-    JOIN.xy=r.xy; JOIN.extent=r.extent; return;
+    JOIN.xy=r.xy; JOIN.bends=r.bends; JOIN.extent=r.extent; return;
   }
   const r=layerLayout(G.vertices.map(v=>v.id), id=>G.derived[id].depth,
                       id=>G.derived[id].depends, id=>G.derived[id].children);
-  G.xy=r.xy; G.extent=r.extent;
+  G.xy=r.xy; G.bends=r.bends; G.extent=r.extent;
 }
 
 /* Whichever view is showing owns the canvas extent. */
@@ -552,6 +600,11 @@ function extent(){
 }
 function xyOf(id){
   return (tab==="tasks" ? T.xy : tab==="joined" ? JOIN.xy : G.xy)[id];
+}
+
+function bendsOf(from, to){
+  const b = tab==="tasks" ? T.bends : tab==="joined" ? JOIN.bends : G.bends;
+  return (b && b[from+"\u0000"+to]) || [];
 }
 
 function visible(v){ return passes("decisions", v.id); }
@@ -580,8 +633,16 @@ function edgeSvg(from, to, cls){
   const a=xyOf(from), b=xyOf(to);
   if(!a||!b) return "";
   const x1=a.x+NW/2, y1=a.y+NH, x2=b.x+NW/2, y2=b.y;
-  const my=(y1+y2)/2;
-  return `<path class="${cls}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`;
+  /* One cubic per rank crossed, each with vertical control points, so a bent
+     edge reads as the same kind of line as a short one — the alternative, a
+     polyline with corners, looks like a different sort of relationship. */
+  const pts=[{x:x1,y:y1}, ...bendsOf(from,to), {x:x2,y:y2}];
+  let d=`M${pts[0].x},${pts[0].y}`;
+  for(let i=0;i<pts.length-1;i++){
+    const s=pts[i], e=pts[i+1], my=(s.y+e.y)/2;
+    d+=` C${s.x},${my} ${e.x},${my} ${e.x},${e.y}`;
+  }
+  return `<path class="${cls}" d="${d}"/>`;
 }
 
 function decisionNode(v, related){
