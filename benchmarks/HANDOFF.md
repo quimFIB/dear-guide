@@ -18,10 +18,12 @@ Everything in `dear-guide` that touches the graph is quadratic in store size
 10,000-vertex store). The cause is that the graph is a flat `list[Edge]` with
 adjacency re-derived by linear scan on every lookup — `Graph.active_edge`
 (`model.py:250`) and `Graph.depends` (`model.py:322`). Four candidate fixes
-have been identified. Three of them are local and were measured at 2,500
-vertices with speedups of 5.6× to 5,000×; the fourth is a full edge index worth
-100–680× but needs an invalidation decision. Nothing has been changed in
-`dgraph/` — the tool is exactly as it was.
+were identified. **Two of them — B and C — are now implemented**, which took
+`dg check` on the 10,000-vertex store from ~17 minutes to 21.6 s and removed
+the cubic term (α is now 1.99). A, the lens cache worth a flat 5.7×, and D, the
+full edge index worth 100–680× but needing an invalidation decision, are still
+open. The paragraph below describing the cost is the state *before* that fix,
+and is kept because it is what the measurements were taken against.
 
 ---
 
@@ -68,14 +70,16 @@ with a section added to `README.md`. See [What was picked
 up](#what-was-picked-up-2026-08-29) at the end of this file for the numbers and
 the two probe caveats it turned up. Nothing here is outstanding.
 
-### Nothing has been implemented in `dgraph/`
+### B and C are implemented; A and D are not
 
-`git status` in `tools/dear-guide` shows one untracked directory, `benchmarks/`.
-No source file has been touched, nothing is committed, and no decision has been
-recorded in the project's own decision graph. If any of these fixes is adopted,
-that is a `dg` decision with a falsifier, not just a patch.
+`dgraph/model.py` and `tests/test_dgraph.py` are changed — see [What was
+implemented](#what-was-implemented-2026-08-29) for the diff's shape, the
+numbers and the falsifier.
 
----
+**A and D remain untouched and remain worth what the sections below say**, with
+one correction to D's case: for `roots` and `unpropagated` the index would now
+buy nothing, because C already reaches its numbers. D's remaining prize is
+`find`, and A's 5.7× is the cheap partial version of it.
 
 ## The four fixes, ranked by (measured benefit ÷ risk)
 
@@ -188,20 +192,31 @@ Neither is on the table.
    come back byte-identical, so the old numbers stand.
 2. ~~Run `probe_easy.py` at 10,000 with `--skip B`; check the `--skip` branch
    actually works. Save to `results/easy-fixes.txt`.~~ **Done** — see below.
-3. Decide whether to implement. If yes, **B then C then A** — that order is
-   increasing blast radius, and B alone converts `dg check` from cubic to
-   quadratic, which is the difference between 989 s and roughly 10 s on the
-   10,000-vertex store.
-4. Each fix needs a test that pins the *answer*, not the speed. `probe_easy.py`
-   already asserts answer-equality for all three; those assertions are the
-   tests, and they belong in `tests/test_dgraph.py` rather than in this
-   directory.
-5. `dg check` timing is the acceptance criterion. Re-run
-   `bench.py --sizes 1000 2500 5000 --cli-sizes 1000 2500 5000` afterwards and
-   compare against `results/raw.json`.
-6. Record the decision in `dear-guide`'s own graph — with a falsifier. A
-   performance decision whose falsifier is "a store shape where the index does
-   not help" is exactly the kind this tool exists to keep.
+3. ~~Decide whether to implement. If yes, **B then C then A**~~ — **B and C
+   are implemented**; see [What was implemented](#what-was-implemented-2026-08-29).
+   `dg check` on the 10,000-vertex store went from ~17 min to 21.6 s. A and D
+   are still open, and D's case is now narrower than it was.
+4. ~~Each fix needs a test that pins the *answer*, not the speed.~~ **Done for
+   B and C** — seven tests in `tests/test_dgraph.py`, mutation-checked. Note
+   that `probe_easy.py`'s own assertions turned out to be weak: on the
+   generated stores `stale_provisional` returns `[]` both ways, so the probe
+   was comparing two empty lists. The tests use a seeded random corpus instead
+   and assert the rule actually fires.
+5. ~~`dg check` timing is the acceptance criterion. Re-run `bench.py` and
+   compare against `results/raw.json`.~~ **Done** —
+   [`results/after-fixes.txt`](results/after-fixes.txt), raw data in
+   `results/after/`. `dg check` at 5,000 went 132.5 s → 13.8 s, and nothing in
+   the sweep got slower.
+6. ~~Record the decision in `dear-guide`'s own graph — with a falsifier.~~
+   **Not possible: `dear-guide` has no decision graph of its own.** There is no
+   `decisions.json` at the repo root or above it; the only two in the tree are
+   `demo/` and `demo-agentic/`, which are fixtures. The tool does not currently
+   dogfood itself, and creating a graph uninvited is the one thing its own
+   skill says not to do. The falsifier is written down in [What was
+   implemented](#what-was-implemented-2026-08-29) instead, and in the commit
+   message. **Whether `dear-guide` should track its own decisions is a question
+   for a person**, and it is the natural home for this record if the answer is
+   yes.
 
 
 ---
@@ -259,3 +274,139 @@ The evidence above only sharpens it: **B then C** is the high-value, low-risk
 pair, they need no cached state, and together they take `dg check` off the
 cubic curve. A is a separate, smaller call, and D's case now rests mostly on
 `find`.
+
+---
+
+## What was implemented (2026-08-29)
+
+**B and C are in `dgraph/model.py`. A and D are not**, and the argument for
+each is unchanged above.
+
+| | |
+|---|---|
+| `Graph.stale_provisional()` | New. One walk down from the unsettled set, replacing one `ancestors` walk per PROVISIONAL vertex. `validate` calls it. |
+| `Graph._reverse()` | New, private. `target -> sources` in one pass. Built inside a call and dropped — never cached on the graph, so no write path has to clear it. |
+| `Graph.depends(vid, _into=None)` | Takes an optional reverse index. Passing nothing computes it exactly as before. |
+| `Graph.waiting_on(vid, _into=None)` | Passes the index through, so `unpropagated` keeps *one* implementation of the rule rather than a second copy. |
+| `Graph.roots()`, `Graph.unpropagated()` | Build the index once per call instead of asking `depends` once per vertex. |
+| `Graph.ancestors(vid, _into=None)` | Likewise, so a caller doing many walks pays for the adjacency once. |
+| `Graph.provisional_because(vid, _into=None)` | Passes the index down to `ancestors`. |
+| `Graph.provisional_causes()` | New. Every PROVISIONAL vertex's unsettled premises, over one shared index. |
+| `brief.attention()` | Calls it, instead of `provisional_because` per vertex. |
+
+### A third cubic site, which the handoff had misattributed
+
+The last two rows are **beyond the literal B+C**, and were added because the
+acceptance run showed why. This file said the session-start hook was slow
+because "`dg brief` … validates too" — so fixing `validate` should have fixed
+it. It did not: after B and C, `dg check` was 3.7 s at 2,500 vertices and
+`dg brief` was **33.7 s**, with a fitted exponent of **2.67**.
+
+A profile said why. `brief.attention` (`brief.py:64`) calls
+`provisional_because` once per PROVISIONAL vertex *directly* — 14.2 s of
+`brief`'s 18.0 s, through 25 `ancestors` calls, the same cubic shape in a
+second place. B removed it from `validate` and could not remove it from here,
+because `attention` needs *which* premises hold each vertex and
+`stale_provisional` only answers *whether* any do.
+
+`provisional_causes` is the narrow fix: still one walk per vertex, so still
+quadratic, but sharing one reverse index across them drops the rescan.
+`dg brief` at 2,500 went 33.7 s → 4.0 s, its exponent 2.67 → 1.92, and it now
+completes at 5,000 and 10,000 where the harness had been skipping it.
+
+`pending.py:1452` asks about one vertex and is left alone. **`server.py:113`
+asks it once per vertex for the whole payload** — the same cubic shape, in
+`dg serve`, which was never in the sweep. Unmeasured, not known-slow;
+`provisional_causes` is the fix if it turns out to matter.
+
+### What it bought
+
+Measured on the same regenerated stores, `validate` in-process:
+
+| vertices | before | after | |
+|---|---|---|---|
+| 2,500 | 16.33 s | **0.197 s** | 83× |
+| 5,000 | 121.4 s | **0.785 s** | 155× |
+| 10,000 | 988.9 s | **3.117 s** | **317×** |
+
+α over the top two sizes is **1.99** — the cubic term is gone and the
+quadratic one remains, which is exactly what the analysis predicted and the
+reason A and D are still worth what they were worth.
+
+At the CLI, on the 10,000-vertex store: `dg check` goes from ~17 minutes to
+**21.6 s**, and `dg brief` — which the harness had been skipping — completes in
+**27.6 s**.
+
+The full acceptance re-run is [`results/after-fixes.txt`](results/after-fixes.txt),
+with the raw data in `results/after/`. Its headline: across 117 ops comparable
+against the baseline, **nothing got slower** — the lowest ratio is 0.97×, on
+ops the change does not touch, inside the drift the report already documents.
+The exponents:
+
+| | before | after |
+|---|---|---|
+| `Graph.validate` | 3.03 | **1.99** |
+| `dg check` | 3.03 | **1.90** |
+| `dg brief` | — | **1.92** (2.67 before the `brief` call site was fixed) |
+
+### Where the time went instead
+
+`dg check` is 21.6 s while `validate` is 3.1 s, so the remaining cost is no
+longer in `model.py`. A profile at 5,000 vertices puts it in two other places,
+both the same flat-list-scan shape this fix removed from the decision graph:
+
+- `cross.rests_on` and `cross.evidence` (`cross.py:30-37`) scan **every task**
+  for **every decision id** — 2.4 s of 5.7 s.
+- `TaskGraph._out` / `_in` (`tasks.py:636,651`) scan **every task edge** per
+  task — 1.2 s.
+- `Graph.active_edge` is still 1.4 s, which is fix D's territory.
+
+None of that is regression: it was always there, hidden underneath a cubic
+term. It is where the next measurement should start.
+
+### The falsifier
+
+**This is slower on a store with a large edge list and nothing PROVISIONAL.**
+The old rule short-circuits — no PROVISIONAL vertices means no walks at all —
+while the new one always pays one pass over the edges to build the adjacency.
+Measured, on the 10,000-vertex store with every vertex forced to OPEN:
+
+```
+new stale_provisional()    23.10 ms
+old equivalent              1.33 ms      <- 17x faster
+```
+
+So the trade is a **~22 ms regression** in that shape against a **986-second**
+improvement in the ordinary one, and it is bounded by the edge count rather
+than growing with it. What would overturn this decision is a real store where
+that shape is the common case and 22 ms is a cost somebody feels — at which
+point the fix is to skip the walk when no vertex is PROVISIONAL, not to revert.
+
+The same asymmetry applies to `unpropagated` on a store with no DECIDED
+vertices, for the same reason and at the same scale.
+
+### What pins it
+
+`tests/test_dgraph.py` gained 8 tests, and they pin the **answer**, not the
+speed: each states the definition the rewrite replaced and asserts the two
+agree. A speed assertion would fail on a loaded machine and pass on a rewrite
+that returns nonsense quickly.
+
+The one that does the real work is
+`test_the_rewrites_agree_on_awkward_random_graphs` — 200 seeded random graphs
+with cycles, rival active edges, dangling targets and edges from ids that name
+no vertex, asserting all three rewrites against their definitions, and
+asserting the rule actually fired more than 50 times so the corpus cannot go
+quietly empty. Both halves were checked by mutation: making `stale_provisional`
+return `[]` fails three tests, and making the walk follow only the *first*
+active edge — the `children` trap the docstring warns about — fails two.
+
+That second mutation is the one to keep in mind: the first version of
+`test_stale_provisional_follows_rival_active_edges` did **not** catch it,
+because the fixture chain D01 → D02 → D04 → D05 already reaches every fixture
+vertex by the first edge. It needed a vertex nothing else points at.
+
+`probe_easy.py`'s own assertions would not have caught either mutation: on the
+generated stores `stale_provisional` returns `[]` both ways, so the probe was
+comparing two empty lists. A probe that asserts equality is not the same thing
+as a test.

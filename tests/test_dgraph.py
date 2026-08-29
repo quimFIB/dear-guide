@@ -1323,3 +1323,149 @@ def test_the_wording_is_written_down_once(g):
     from dgraph import cli, context, render, server
     for mod in (cli, context, render, server):
         assert "active edges —" not in inspect.getsource(mod), mod.__name__
+
+
+# ---- the derivations that were rewritten for cost -------------------------
+#
+# `stale_provisional`, `roots` and `unpropagated` used to ask `depends` — and
+# so rescan the whole edge list — once per vertex; `stale_provisional` asked
+# `provisional_because`, a full upward walk, once per PROVISIONAL vertex, which
+# made `dg check` cubic. They now build the reverse adjacency, or walk down
+# from the unsettled set, once per call.
+#
+# These tests pin the **answer**, not the speed. Each states the definition the
+# rewrite replaced and asserts the two agree, so the definitions stay the
+# specification and a future optimisation has something to be wrong against.
+# A speed assertion would be the wrong test: it fails on a loaded machine and
+# passes on a rewrite that returns nonsense quickly.
+
+
+def _slow_depends(g, vid):
+    """`depends` as it read before the reverse index: one scan per call."""
+    return sorted({e.src for e in g.edges
+                   if e.active and vid in e.to and e.src in g.vertices})
+
+
+def _slow_stale_provisional(g):
+    """One full `ancestors` walk per PROVISIONAL vertex — the cubic term."""
+    return [vid for vid, v in g.vertices.items()
+            if v.base_status == "PROVISIONAL" and not g.provisional_because(vid)]
+
+
+def _slow_roots(g):
+    return sorted(v for v in g.vertices if not _slow_depends(g, v))
+
+
+def _slow_unpropagated(g):
+    return [(vid, p) for vid, v in sorted(g.vertices.items())
+            if v.base_status == "DECIDED"
+            for p in _slow_depends(g, vid) if not g.vertices[p].settled]
+
+
+def test_depends_is_the_same_with_and_without_the_reverse_index(g):
+    """The index is an optimisation and nothing else, so the two paths through
+    `depends` have to answer identically — including for a vertex nothing points
+    at, where one returns `[]` and the other misses the key."""
+    into = g._reverse()
+    for vid in g.vertices:
+        assert g.depends(vid, into) == g.depends(vid) == _slow_depends(g, vid)
+
+
+def test_the_rewritten_derivations_agree_with_the_definitions(g):
+    assert g.stale_provisional() == _slow_stale_provisional(g)
+    assert g.roots() == _slow_roots(g)
+    assert g.unpropagated() == _slow_unpropagated(g)
+
+
+def _slow_provisional_causes(g):
+    return {vid: g.provisional_because(vid) for vid, v in g.vertices.items()
+            if v.base_status == "PROVISIONAL"}
+
+
+def test_provisional_causes_is_the_per_vertex_answer(g):
+    """`dg brief` reaches the per-vertex walk without going through `validate`,
+    so it stayed cubic after the rule was fixed. The shared index has to give
+    back exactly what asking one vertex at a time gave."""
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    g.vertices["D04"] = replace(g.vertices["D04"], status="PROVISIONAL")
+    g.vertices["D01"] = replace(g.vertices["D01"], status="REOPENED")
+    causes = g.provisional_causes()
+    assert causes == _slow_provisional_causes(g)
+    # ...and it is not vacuously empty: D01 under review is why both are.
+    assert causes == {"D02": ["D01"], "D04": ["D01"]}
+
+
+def test_ancestors_is_the_same_with_and_without_the_shared_index(g):
+    into = g._reverse()
+    for vid in g.vertices:
+        assert g.ancestors(vid, into) == g.ancestors(vid)
+
+
+def test_stale_provisional_agrees_when_the_rule_actually_fires(g):
+    """The fixture is clean, so the check above compares two empty lists. Make
+    D02 PROVISIONAL under settled premises and the rule has something to find —
+    otherwise a rewrite returning `[]` unconditionally would pass."""
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    assert g.stale_provisional() == ["D02"] == _slow_stale_provisional(g)
+
+
+def test_stale_provisional_is_silent_under_an_unsettled_premise(g):
+    """The other half: D01 under review is exactly what PROVISIONAL is for, and
+    the downward walk has to reach D02 from it."""
+    g.vertices["D01"] = replace(g.vertices["D01"], status="REOPENED")
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    assert g.stale_provisional() == [] == _slow_stale_provisional(g)
+
+
+def test_stale_provisional_follows_rival_active_edges(g):
+    """`children` takes the first active edge; `depends` sees them all. The walk
+    has to use the second, or a store with two answers — which `validate` must
+    survive in order to report it — gets a warning that contradicts
+    `provisional_because`.
+
+    D07 is new and nothing else points at it, so D01's second active edge is the
+    only way down to it. Reusing a fixture vertex would not test this: the chain
+    D01 → D02 → D04 → D05 already reaches every one of them by the first edge,
+    and the assertion would hold whichever edge the walk followed.
+    """
+    from dgraph.model import Edge, Vertex
+    g.vertices["D01"] = replace(g.vertices["D01"], status="REOPENED")
+    g.vertices["D07"] = Vertex("D07", "Reachable only by the rival edge",
+                               "Beta", "PROVISIONAL")
+    g.edges.append(Edge(src="D01", to=["D07"], active=True))
+    assert g.stale_provisional() == [] == _slow_stale_provisional(g)
+
+
+def test_the_rewrites_agree_on_awkward_random_graphs():
+    """Cycles, rival active edges, dangling targets and edges from ids that name
+    no vertex — the shapes a hand-written fixture does not reach, and the ones
+    `validate` has to survive rather than crash on, since reporting them is its
+    job. Seeded, so a failure is reproducible."""
+    import random
+
+    from dgraph.model import Edge, Graph, Vertex
+    statuses = ["OPEN", "BLOCKED", "REOPENED", "DECIDED", "PROVISIONAL",
+                "TERMINAL"]
+    rng = random.Random(4242)
+    fired = 0
+    for _ in range(200):
+        ids = [f"D{i:05d}" for i in range(rng.randint(1, 30))]
+        graph = Graph(
+            vertices={i: Vertex(i, "t", "a", rng.choice(statuses)) for i in ids},
+            edges=[],
+        )
+        for i in ids:
+            for _ in range(rng.randint(0, 2)):
+                to = rng.sample(ids, rng.randint(0, min(4, len(ids))))
+                if rng.random() < 0.15:
+                    to.append("D99999")            # a target naming no vertex
+                graph.edges.append(Edge(i, to, active=rng.random() < 0.75))
+            if rng.random() < 0.05:                # a source naming no vertex
+                graph.edges.append(Edge("D99999", [rng.choice(ids)], active=True))
+        slow = _slow_stale_provisional(graph)
+        fired += len(slow)
+        assert graph.stale_provisional() == slow
+        assert graph.roots() == _slow_roots(graph)
+        assert graph.unpropagated() == _slow_unpropagated(graph)
+        assert graph.provisional_causes() == _slow_provisional_causes(graph)
+    assert fired > 50, f"the rule barely fired ({fired}) — the corpus is too easy"

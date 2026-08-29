@@ -1,9 +1,20 @@
 # How `dear-guide` scales
 
 Measured 2026-08-28/29 against synthetic stores from 200 to 10,000 decisions,
-on Python 3.14.6 / Linux 6.18 / x86-64. About 50 minutes of wall-clock
-measurement across three runs. Raw data in [`results/`](results/); every
-number below is reproducible with the commands at the end.
+on Python 3.14.6 / Linux 6.18 / x86-64.
+
+> **This report describes the tool before the fix it argues for.** Two of its
+> four candidates (B and C) were implemented on 2026-08-29, plus a third cubic
+> call site in `dg brief` that this report attributes to the wrong cause. On
+> the 10,000-vertex store `dg check` went from ~17 minutes to 21.6 s and
+> `dg brief` now finishes at all; neither is cubic any more. Every number below
+> is the *problem*, not the current state — which is the point of keeping it.
+> See [`HANDOFF.md`](HANDOFF.md#what-was-implemented-2026-08-29) for the change
+> and [`results/after-fixes.txt`](results/after-fixes.txt) for the re-run.
+
+About 50 minutes of wall-clock measurement across three runs. Raw data in
+[`results/`](results/); every number below is reproducible with the commands at
+the end.
 
 The question was: **how do find operations and graph traversals hold up as the
 stores grow?** The short answer is that they do not. Nearly everything that
@@ -240,9 +251,15 @@ stops the first scan per vertex from happening.
 
 So the ordering that falls out is **B, then C, then A** — increasing blast
 radius, and decreasing certainty about what it touches. B and C together take
-`dg check` off the cubic curve and cost nothing in cached state. Whether to
-adopt any of them is a decision for `dear-guide`'s own graph, with a falsifier;
-nothing in `dgraph/` has been changed.
+`dg check` off the cubic curve and cost nothing in cached state.
+
+**B and C were adopted**, and the rest of this report describes the tool as it
+was before them. `Graph.validate` at 10,000 vertices is now 3.1 s rather than
+988.9 s, `dg check` 21.6 s rather than ~17 minutes, and α is 1.99 — the cubic
+term is gone and the quadratic one is not. A and D are still open and still
+worth what is claimed above, except that D would no longer buy anything for
+`roots` and `unpropagated`. The change, its falsifier and what pins it are in
+[`HANDOFF.md`](HANDOFF.md#what-was-implemented-2026-08-29).
 
 ---
 
@@ -320,6 +337,8 @@ of them, and what a next session should pick up.
 | `results/validate-profile.txt` | Where `validate` spends its time |
 | `results/index-probe.txt` | The index probe's output |
 | `results/easy-fixes.txt` | The three local fixes, at 2,500 and 10,000 |
+| `results/after-fixes.txt` | The acceptance re-run once B and C were in |
+| `results/after/` | Its raw data, alongside the baseline `results/raw.json` |
 
 ## Reproducing
 

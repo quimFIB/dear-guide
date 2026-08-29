@@ -62,10 +62,17 @@ def rows(g: Graph) -> list[Row]:
 
 
 def attention(g: Graph) -> list[dict]:
-    """The PROVISIONAL vertices, and why each one is."""
+    """The PROVISIONAL vertices, and why each one is.
+
+    `provisional_causes` rather than `provisional_because` per vertex: the
+    per-vertex form rebuilds the graph's adjacency at every step of every walk,
+    which made this — the session-start hook — cubic in the store size, and it
+    reaches that independently of `validate`.
+    """
+    because = g.provisional_causes()
     return [
         {"id": vid, "title": g.vertices[vid].title, "area": g.vertices[vid].area,
-         "because": g.provisional_because(vid)}
+         "because": because[vid]}
         for vid in sorted(g.vertices)
         if g.vertices[vid].base_status == "PROVISIONAL"
     ]

@@ -319,20 +319,45 @@ class Graph:
         e = self.active_edge(vid)
         return [t for t in e.to if t in self.vertices] if e else []
 
-    def depends(self, vid: str) -> list[str]:
+    def _reverse(self) -> dict[str, set[str]]:
+        """`target -> the sources that point at it`, in one pass over the edges.
+
+        The same relation `depends` computes, built for every vertex at once.
+        It is deliberately **not** cached on the graph: callers build it inside
+        one call and drop it, so there is no lifetime to reason about and no
+        write path that has to remember to clear it. A caller that holds one
+        across a mutation is holding a stale answer, which is why nothing here
+        returns it to the outside.
+        """
+        into: dict[str, set[str]] = {}
+        for e in self.edges:
+            if e.active and e.src in self.vertices:
+                for t in e.to:
+                    into.setdefault(t, set()).add(e.src)
+        return into
+
+    def depends(self, vid: str, _into: dict[str, set[str]] | None = None) -> list[str]:
         """Derived, never stored: the parents that point at this vertex.
 
         An edge source that names no vertex is skipped: it cannot be a premise,
         and `validate()` reports the dangling edge itself. Returning it here
         would make every traversal that looks premises up crash on a graph
         `validate()` is in the middle of judging.
+
+        `_into` is a reverse index from `_reverse`, for callers asking this of
+        every vertex in turn — one scan of the edge list instead of one per
+        vertex. It is an optimisation and nothing else: the answer is identical,
+        and passing nothing recomputes it the direct way.
         """
+        if _into is not None:
+            return sorted(_into.get(vid, ()))
         return sorted(
             {e.src for e in self.edges
              if e.active and vid in e.to and e.src in self.vertices}
         )
 
-    def waiting_on(self, vid: str) -> list[str]:
+    def waiting_on(self, vid: str,
+                   _into: dict[str, set[str]] | None = None) -> list[str]:
         """The premises this vertex rests on that are not settled yet.
 
         One implementation because there are three callers with the same
@@ -340,7 +365,8 @@ class Graph:
         below, and the brief — and a vertex whose premises differ between two
         of them is exactly the disagreement this tool exists to prevent.
         """
-        return [p for p in self.depends(vid) if not self.vertices[p].settled]
+        return [p for p in self.depends(vid, _into)
+                if not self.vertices[p].settled]
 
     def descendants(self, vid: str) -> set[str]:
         seen: set[str] = set()
@@ -353,18 +379,21 @@ class Graph:
             stack.extend(self.children(cur))
         return seen
 
-    def ancestors(self, vid: str) -> set[str]:
+    def ancestors(self, vid: str,
+                  _into: dict[str, set[str]] | None = None) -> set[str]:
+        """Everything `vid` rests on, transitively. `_into` as in `depends`."""
         seen: set[str] = set()
-        stack = list(self.depends(vid))
+        stack = list(self.depends(vid, _into))
         while stack:
             cur = stack.pop()
             if cur in seen:
                 continue
             seen.add(cur)
-            stack.extend(self.depends(cur))
+            stack.extend(self.depends(cur, _into))
         return seen
 
-    def provisional_because(self, vid: str) -> list[str]:
+    def provisional_because(self, vid: str,
+                            _into: dict[str, set[str]] | None = None) -> list[str]:
         """The premises under review that a PROVISIONAL vertex rests on.
 
         The transitive form of `waiting_on`: `pending.expand` marks every decided
@@ -377,8 +406,62 @@ class Graph:
         waiting for someone to re-examine it (`stale_provisional`).
         """
         return sorted(
-            a for a in self.ancestors(vid) if not self.vertices[a].settled
+            a for a in self.ancestors(vid, _into) if not self.vertices[a].settled
         )
+
+    def provisional_causes(self) -> dict[str, list[str]]:
+        """Every PROVISIONAL vertex's unsettled premises, over one index.
+
+        `provisional_because` per vertex is a full upward walk *and* rebuilds
+        the adjacency at every step of it, which is the cubic shape `validate`
+        used to have — `dg brief` reaches it by this route rather than through
+        `validate`, so removing it there did not remove it here. Sharing one
+        reverse index across the walks leaves the walks and drops the rescan.
+
+        Still one walk per vertex, so this is quadratic and not linear. The
+        boolean question — *is anything unsettled above this?* — is answered
+        for every vertex at once by `stale_provisional`; this one returns
+        *which* premises, which a reader has to be told one vertex at a time.
+        """
+        into = self._reverse()
+        return {vid: self.provisional_because(vid, into)
+                for vid, v in self.vertices.items()
+                if v.base_status == "PROVISIONAL"}
+
+    def stale_provisional(self) -> list[str]:
+        """The PROVISIONAL vertices whose every premise has been settled again.
+
+        `provisional_because(vid)` answers this one vertex at a time, and each
+        call is a full upward walk — so asking it once per PROVISIONAL vertex
+        was the cubic term in `validate`, and the largest single cost the tool
+        had. This asks the question the other way round and pays for one walk
+        total.
+
+        A vertex rests on an unsettled premise exactly when it is *reachable*,
+        along active edges, from some unsettled vertex. So collecting the
+        descendants of the whole unsettled set in one pass answers every
+        vertex's question at once, and what is left over is this list.
+
+        The walk follows every active edge rather than `children`, which takes
+        only the first: `provisional_because` reaches through `depends`, which
+        sees them all, and the two must agree on a store holding rival answers
+        — `validate` has to survive one in order to report it.
+        """
+        kids: dict[str, list[str]] = {}
+        for e in self.edges:
+            if e.active:
+                for t in e.to:
+                    if t in self.vertices:
+                        kids.setdefault(e.src, []).append(t)
+        seen: set[str] = set()
+        stack = [v for v, vert in self.vertices.items() if not vert.settled]
+        while stack:
+            for nxt in kids.get(stack.pop(), ()):
+                if nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
+        return [vid for vid, v in self.vertices.items()
+                if v.base_status == "PROVISIONAL" and vid not in seen]
 
     def unpropagated(self) -> list[tuple[str, str]]:
         """DECIDED vertices resting on an unsettled premise, each with it.
@@ -389,11 +472,14 @@ class Graph:
         vertices are affected — the same reason `waiting_on` has one
         implementation and three callers.
         """
+        into = self._reverse()
         return [(vid, p) for vid, v in sorted(self.vertices.items())
-                if v.base_status == "DECIDED" for p in self.waiting_on(vid)]
+                if v.base_status == "DECIDED"
+                for p in self.waiting_on(vid, into)]
 
     def roots(self) -> list[str]:
-        return sorted(v for v in self.vertices if not self.depends(v))
+        into = self._reverse()
+        return sorted(v for v in self.vertices if not into.get(v))
 
     def frontier(self) -> list[str]:
         return sorted(
@@ -568,14 +654,13 @@ class Graph:
                     f"{vid} is {vert.status} but carries a decided edge",
                 )
 
-        for vid, vert in self.vertices.items():
-            if vert.base_status == "PROVISIONAL" and not self.provisional_because(vid):
-                add(
-                    "stale_provisional",
-                    f"{vid} is PROVISIONAL but every premise it rests on is "
-                    f"settled again — re-examine it, then `dg confirm {vid}`",
-                    "warning",
-                )
+        for vid in self.stale_provisional():
+            add(
+                "stale_provisional",
+                f"{vid} is PROVISIONAL but every premise it rests on is "
+                f"settled again — re-examine it, then `dg confirm {vid}`",
+                "warning",
+            )
 
         for vid, p in self.unpropagated():
             add(
