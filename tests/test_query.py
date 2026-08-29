@@ -1073,3 +1073,40 @@ def test_a_prose_search_still_reads_the_archive(g):
     finding the reversals."""
     from dgraph import query
     assert query.select(query.parse("answer:older"), _lens(g)) == ["D01"]
+
+
+# ---- the per-record predicates and structural terms -----------------------
+#
+# `is:orphaned` and both `waits:` terms asked a question of *every* record in
+# the store, and each ask was a scan of the edge list. They now read an index,
+# and `waits:` reads it forwards instead of asking every vertex whether it
+# depends on the argument. These pin that the answers did not move.
+
+
+def test_is_orphaned_finds_what_the_scanning_form_found(g):
+    from dgraph import query
+    from dgraph.model import Vertex
+    scanning = {v for v in g.vertices
+                if not g.depends(v) and not g.children(v)}
+    got = set(query.select(query.parse("is:orphaned"), _lens(g)))
+    assert got == scanning
+    # ...and with something actually orphaned, so this is not two empty sets.
+    g.vertices["D07"] = Vertex("D07", "Connected to nothing", "Beta", "OPEN")
+    assert set(query.select(query.parse("is:orphaned"), _lens(g))) == {"D07"}
+
+
+def test_waits_reads_forwards_and_finds_the_same_vertices(g):
+    """`waits:D01` is "who rests on D01?". Asked of every vertex that is a scan
+    each time; read from D01's own edges it is one lookup. It has to union
+    *every* active edge, not follow the first: `depends` sees them all, so a
+    rival answer's targets rest on D01 too."""
+    from dgraph import query
+    from dgraph.model import Edge
+    for arg in list(g.vertices):
+        scanning = {v for v in g.vertices if arg in g.depends(v)}
+        got = set(query.select(query.parse(f"waits:{arg}"), _lens(g)))
+        assert got == scanning, arg
+    g.edges.append(Edge(src="D01", to=["D05"], active=True, answer="A rival."))
+    assert "D05" in set(query.select(query.parse("waits:D01"), _lens(g)))
+    assert set(query.select(query.parse("waits:D01"), _lens(g))) == \
+        {v for v in g.vertices if "D01" in g.depends(v)}

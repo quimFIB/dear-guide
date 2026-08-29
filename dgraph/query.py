@@ -688,6 +688,16 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
     # three lookups below is a dict hit rather than a scan. Built here and
     # dropped with the lens, exactly as the caches are.
     by_src = g.by_src()
+    # The reverse index is only wanted by `is:orphaned`, and building it for
+    # every lens would tax every other query to pay for one. Built on first
+    # ask, then held for the life of the lens like the caches below.
+    _rev: list = []
+
+    def _rev_lazy():
+        if not _rev:
+            _rev.append(g._reverse())
+        return _rev[0]
+
     _active: dict[str, object] = {}
     _rivals: dict[str, list] = {}
     _hist: dict[str, list] = {}
@@ -759,14 +769,22 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         "blocked": lambda vid: g.vertices[vid].base_status == "BLOCKED",
         "terminal": lambda vid: (e := active_of(vid)) is not None and e.terminal,
         "superseded": lambda vid: bool(hist_of(vid)),
-        "orphaned": lambda vid: not g.depends(vid) and not g.children(vid),
+        # Both indexed: this is asked of every vertex in the store, so the
+        # scanning form was two full passes over the edge list per vertex --
+        # 3.4 s at 5,000 vertices, the last per-vertex scan left in `dg find`.
+        "orphaned": lambda vid: (not g.depends(vid, _rev_lazy())
+                                 and not g.children(vid, by_src)),
     }
     preds.update(predicates or {})
 
     struct: dict[str, Callable[[str], set[str]]] = {
         "under": lambda arg: g.descendants(arg),
         "above": lambda arg: g.ancestors(arg),
-        "waits": lambda arg: {v for v in g.vertices if arg in g.depends(v)},
+        # "who rests on `arg`?" read forwards instead of asked of every vertex.
+        # `depends` unions *every* active edge, so this must too — `children`
+        # takes the first and would miss a rival answer's targets.
+        "waits": lambda arg: {x for e in by_src.get(arg, ()) if e.active
+                              for x in e.to if x in g.vertices},
     }
     struct.update(structural or {})
 
@@ -838,11 +856,18 @@ def task_lens(tg, *, predicates=None, structural=None, arg_kind=None,
             return "produced earlier"
         return name
 
+    _adj: list = []
+
+    def _adj_lazy():
+        if not _adj:
+            _adj.append(tg._adjacency())
+        return _adj[0]
+
     preds: dict[str, Callable[[str], bool]] = {
         "outstanding": lambda tid: tg.tasks[tid].unfinished,
         "resolved": lambda tid: tg.tasks[tid].resolved,
-        "blocked": lambda tid: tg.blocked(tid),
-        "orphaned": lambda tid: bool(tg.abandoned_origins(tid)),
+        "blocked": lambda tid: tg.blocked(tid, _adj_lazy()),
+        "orphaned": lambda tid: bool(tg.abandoned_origins(tid, _adj_lazy())),
         # Not covered by `is:blocked`: a parked task may have every
         # prerequisite resolved and still be put down, which is the point of
         # having a status for it. Blocked is what the graph says; parked is
@@ -852,7 +877,10 @@ def task_lens(tg, *, predicates=None, structural=None, arg_kind=None,
     preds.update(predicates or {})
 
     struct: dict[str, Callable[[str], set[str]]] = {
-        "waits": lambda arg: {t for t in tg.tasks if arg in tg.prerequisites(t)},
+        # `prerequisites` and `unblocks` are exact inverses — both union every
+        # `precedes` edge of that kind — so the reverse question is the forward
+        # lookup, and does not need asking of every task.
+        "waits": lambda arg: set(tg.unblocks(arg, _adj_lazy())),
         "after": lambda arg: _reach(tg.unblocks, arg),
         "during": lambda arg: set(tg.prompted(arg)),
     }

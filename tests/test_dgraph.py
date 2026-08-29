@@ -1694,3 +1694,38 @@ def test_the_derivations_hold_on_a_graph_with_no_edges_and_no_vertices():
     assert empty.stale_provisional() == []
     assert empty.unpropagated() == []
     assert empty.by_src() == {}
+
+
+def test_rendering_reads_the_graph_through_an_index_without_changing_a_byte(g):
+    """`dg check` rebuilds both views to see whether they are stale, so the
+    renderer's cost is the commit gate's cost — which is why it now takes a
+    grouping of the edges rather than scanning per record.
+
+    The view is a *file people read and diff*, so the only acceptable outcome
+    is that the bytes are unchanged. This pins that the indexed reads and the
+    scanning ones produce the same document, by rendering the same graph with
+    the index deliberately withheld."""
+    from dgraph import render as r
+    by, into = g.by_src(), g._reverse()
+    for vid in g.vertices:
+        # `None` for either index is the scanning path — the code as it was.
+        assert r._section(g, vid, by, into) == r._section(g, vid), vid
+        assert r._resolves_cell(g, vid, by) == r._resolves_cell(g, vid), vid
+    # ...and set up the records whose reads the index could plausibly reorder:
+    # a superseded edge, and a rival answer the archive must not swallow.
+    from dgraph.model import Edge
+    g.edges.append(Edge(src="D01", to=["D04"], active=True, answer="A rival."))
+    # Both indexes rebuilt, not just the one whose store changed. Reusing the
+    # `_reverse` from above fails this assertion, which is the rule these are
+    # built per call to obey: an index that outlives a write is a stale answer,
+    # and here it would render a premise list the store no longer has.
+    by2, into2 = g.by_src(), g._reverse()
+    for vid in g.vertices:
+        assert r._section(g, vid, by2, into2) == r._section(g, vid), vid
+
+
+def test_the_task_view_renders_the_same_with_and_without_the_index(tg):
+    from dgraph import task_render as tr
+    adj = tg._adjacency()
+    for tid in tg.tasks:
+        assert tr._section(tg, tid, adj) == tr._section(tg, tid), tid
