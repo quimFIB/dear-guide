@@ -603,3 +603,87 @@ was never the value; being made to look closely at what you already have was.
 - **Nothing is cubic and nothing is linear.** Every exponent sits between 1.6
   and 2.0 except `dg find`, which is now dominated by interpreter start-up
   (244 ms) and JSON parsing (106 ms) rather than by store size.
+
+---
+
+## Round four: the renderers, and where the audit stopped
+
+This round began with a question worth writing down, because it was the right
+question and its first answer was wrong: **do `dg check` and `dg brief` need
+to be quadratic?** Transitive reachability has a genuine lower bound, so a
+validator sitting at α ≈ 1.85 with every check linear looks finished.
+
+It was not finished, and the quadratic term was not in any check.
+
+### `dg check` rebuilds both views to see whether they are stale
+
+So the renderers' cost is the commit gate's cost. And both renderers asked
+`depends`, `active_edge`, `rival_answers`, `prerequisites`, `unblocks`,
+`waiting_on`, `ready`, `discovered_during` and `prompted` **once per record,
+with no index** — the pattern this whole branch is about, one layer further
+out, in the code that writes the file rather than the code that answers the
+question.
+
+Three more per-record questions fell out of chasing what looked like a
+regression and turned out to be drift:
+
+| | | |
+|---|---|---|
+| `find is:orphaned` | 3,369 ms → **17 ms** | 5,000 vertices |
+| `find waits:<mid>` | 2,787 ms → **8 ms** | 5,000 vertices |
+| `TaskGraph._in` | 1,641 ms → **61 ms** | inside `dg check` |
+
+`waits:` is the one worth understanding. *"Who rests on `arg`?"* was asked of
+every vertex in turn; read from `arg`'s own edge records it is a single
+lookup. It has to union **every** active edge rather than follow the first —
+`depends` sees them all, so a rival answer's targets rest on `arg` too, and
+`children` would miss them.
+
+### Where the lower bounds actually are
+
+Since "this has to be quadratic" was the wrong answer twice, here is where it
+is the right one:
+
+- **`provisional_causes` is genuinely quadratic**, in (PROVISIONAL ×
+  unsettled), because that product *is* its output size. Unavoidable if the
+  sets are wanted. `validate` does not want them: `stale_provisional` needs one
+  boolean per vertex and gets every one from a single reverse walk.
+- **All-pairs reachability** would be Θ(V·E), essentially
+  matrix-multiplication-hard. Nothing here asks it.
+- **Everything else** — roots, unpropagated, cycle detection, both renderers —
+  is Θ(V+E) work producing Θ(V+E) output.
+
+Nothing on a hot path was anywhere near a bound.
+
+### Why the audit stopped here, and not because it ran out
+
+**Six passes, and every one ended with a profile that looked settled.** Each
+time the next question turned up another instance of the identical pattern.
+The reason is mundane and worth knowing: indexing one call site inside a
+function does not index its siblings, and nothing reveals that except
+measuring again.
+
+So "the profile looks clean" is not a stopping rule — it was true, and wrong,
+six times. The rule used instead is a threshold: `dg check` on 5,000
+decisions is 1.56 s against the 132.5 s it started at, α is 1.33, and the
+largest single entry in its profile is 61 ms of a 731 ms total. That is past
+any bar worth arguing about, and the remaining wins are small.
+
+**The pattern to look for, if anybody picks this up again**, is the one that
+turned up five separate times: *a function that computes the whole answer, a
+caller that keeps one row, and a loop around the caller.* `Graph.depth` over
+`depths`, `provisional_because` per vertex, `late_evidence` per decision,
+`depths` itself, and every renderer accessor. If there is a seventh, that is
+its signature.
+
+### What is deliberately not done
+
+- **`dg serve`'s payload is 96% payload construction** — building Python dicts
+  and serialising 11 MB of JSON for a page that renders a viewport. Every graph
+  question underneath it is milliseconds. That is a design question about what
+  the page should be sent, not an optimisation, and it is the right place for
+  anybody continuing.
+- **The edge index is never cached.** Every structure here is built inside the
+  call and dropped. It stays that way unless somebody measures a case where the
+  build actually hurts — the whole reason fix D was takeable is that nobody had
+  measured it (0.7 ms) before assuming it needed a lifetime.

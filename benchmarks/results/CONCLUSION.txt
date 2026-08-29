@@ -1,0 +1,106 @@
+The efficiency audit: final numbers
+===================================
+
+2026-08-29. Everything measured against the tag `efficiency-study-baseline`
+(fef6e25) -- `main` as it stood before any of this work. Raw data `final4/`.
+
+    improved  > 1.15x    90
+    unchanged            24
+    regressed < 0.87x     3   <- drift; see the note at the bottom
+    ------------------------
+    compared            117
+
+
+--- The commands ----------------------------------------------------------
+
+                       1,000 vertices        5,000 vertices
+    dg check       1,930 ->   278 ms   132,509 -> 1,630 ms
+    dg brief       3,935 ->   333 ms    (skipped) -> 2,390 ms
+    dg render        445 ->   216 ms     6,239 -> 1,149 ms
+    dg context       459 ->   184 ms     6,120 ->   452 ms
+    dg find <word>   665 ->   188 ms    11,769 ->   345 ms
+    dg find <miss> 1,162 ->   222 ms    23,314 ->   548 ms
+    dg find waits:   295 ->   169 ms     3,095 ->   251 ms
+
+At 10,000 vertices, measured separately:
+
+    Graph.validate     988.9 s -> ~2 s
+    dg serve payload   139.8 s (at 1,000) -> 117 ms
+    dg find quokka      48.7 s -> 0.54 s
+
+
+--- The exponents ---------------------------------------------------------
+
+                  before   after
+    dg check        3.03    1.41
+    dg brief          --    1.50
+    dg render       ~2.0    1.41
+    dg context      ~2.0    0.81
+    dg find <word>  ~2.0    0.54     (dominated by process start-up)
+    Graph.validate  3.03    1.48
+
+Nothing is cubic. Nothing above 1.5.
+
+
+--- Both stores large and dense -------------------------------------------
+
+5,000 decisions + 5,000 tasks, both dense, with the `evidence_for` links that
+no earlier measurement had: `dg check` 2.85 s, `dg brief` 4.39 s. Density is
+close to free -- five times the arcs on *both* sides costs 1.15x -- and size
+governs at about alpha 1.6. Details in `two-graph.txt`.
+
+
+--- Should it use a graph library? No -------------------------------------
+
+Asked three ways and refused three times, each with a speedup attached.
+Details in `graph-library.txt`. The summary: four times a measurement showed
+a large library win, and four times it was an algorithm gap in the code being
+compared against.
+
+    ancestors            1,350x "library win"  -> a missing index      159x
+    dg find               85% assumed "text"   -> ungrouped records      90x
+    provisional_causes      11x "library win"  -> a walk per vertex      16x
+    cross-graph checks           the algorithm -> unindexed evidence     9.6x
+
+The cycle detection over both stores -- the most graph-theoretic thing here --
+costs 63 ms on a 5,000+5,000 store. Everything expensive around it was
+fetching data into a shape it could use.
+
+
+--- What the pattern was --------------------------------------------------
+
+Six passes, five instances of one shape: **a function computes the whole
+answer, a caller keeps one row, and a loop wraps the caller.**
+
+    Graph.depth over depths            server payload, 99.2 s of 139.8 s
+    provisional_because per vertex     dg brief, still cubic after B
+    late_evidence per decision         joined view, ~12 min at 2,000
+    depths without an index            dg context on a deep chain, 12.3 s
+    every renderer accessor            dg check, 63% of what was left
+
+Each pass ended with a profile that looked settled, and each time the next
+question found another. Indexing one call site inside a function does not
+index its siblings, and nothing reveals that except measuring again.
+
+
+--- Where the real lower bounds are ---------------------------------------
+
+- `provisional_causes` is genuinely quadratic in (PROVISIONAL x unsettled),
+  because that is its *output* size. `validate` does not need it:
+  `stale_provisional` wants one boolean per vertex and gets all of them from
+  one reverse walk.
+- All-pairs reachability would be Theta(V*E). Nothing asks it.
+- Everything else is Theta(V+E) work producing Theta(V+E) output.
+
+
+--- The three regressions -------------------------------------------------
+
+All at 1,000 vertices, all in ops this work never touched: `load.decisions`
+and `load.tasks` (JSON parsing) and two sub-microsecond `active_edge`
+measurements. Re-measured in-process on a quiet machine, `load.tasks` comes
+back *faster* than the baseline.
+
+This is what a baseline that never rebaselines costs: it reports drift as
+regression and each one has to be chased. Worth paying. The one time it was
+real -- a lens cache 4.7x slower than the tool had ever been -- every test
+passed and nothing else would have caught it.
