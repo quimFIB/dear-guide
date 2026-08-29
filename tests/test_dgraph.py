@@ -1469,3 +1469,50 @@ def test_the_rewrites_agree_on_awkward_random_graphs():
         assert graph.unpropagated() == _slow_unpropagated(graph)
         assert graph.provisional_causes() == _slow_provisional_causes(graph)
     assert fired > 50, f"the rule barely fired ({fired}) — the corpus is too easy"
+
+
+# ---- the short-circuits, which are the point of the two guards -------------
+#
+# Asserting the *answer* here proves nothing: both return `[]` either way. What
+# has to hold is that the edge list is never walked, because the per-vertex form
+# these replaced got that for free — it started no walk when there was nothing
+# to walk for — and without it the rewrite is slower on an ordinary store that
+# happens to have nothing under review. A timing assertion would be the wrong
+# test, so the edge list is made to raise instead.
+
+
+class _Unwalkable(list):
+    """A list that refuses to be iterated, so a walk over it is a test failure."""
+
+    def __iter__(self):
+        raise AssertionError("the edge list was walked when it need not be")
+
+
+def test_stale_provisional_does_not_walk_with_nothing_provisional(g):
+    """The fixture has no PROVISIONAL vertex, so there is no question to answer
+    and no reason to build the adjacency to answer it."""
+    g.edges = _Unwalkable(g.edges)
+    assert g.stale_provisional() == []
+
+
+def test_unpropagated_does_not_walk_with_nothing_decided(g):
+    """The same guard on the other rule: `propagation` is about DECIDED
+    vertices resting on unsettled premises, so with nothing DECIDED there is
+    nothing it can report."""
+    for vid in list(g.vertices):
+        g.vertices[vid] = replace(g.vertices[vid], status="OPEN")
+    g.edges = _Unwalkable(g.edges)
+    assert g.unpropagated() == []
+
+
+def test_the_guards_still_walk_when_there_is_something_to_find(g):
+    """The other half — a guard that always short-circuits would pass both
+    tests above and be silently broken."""
+    # D02 rests on D01, which is DECIDED — so PROVISIONAL is no longer true of
+    # it and `stale_provisional` has something to say.
+    g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
+    # D06 rests on D05, which is OPEN — the `propagation` pair. The fixture is
+    # clean as it ships, so both states have to be made deliberately.
+    g.vertices["D06"] = replace(g.vertices["D06"], status="DECIDED")
+    assert g.stale_provisional() == ["D02"]
+    assert g.unpropagated() == [("D06", "D05")] == _slow_unpropagated(g)

@@ -447,6 +447,16 @@ class Graph:
         sees them all, and the two must agree on a store holding rival answers
         — `validate` has to survive one in order to report it.
         """
+        prov = [vid for vid, v in self.vertices.items()
+                if v.base_status == "PROVISIONAL"]
+        if not prov:
+            # The walk below is one pass over every edge, and with nothing
+            # PROVISIONAL there is no question for it to answer. Worth the two
+            # lines: the per-vertex form this replaced short-circuited here for
+            # free — it never started a walk — so without this the rewrite is
+            # *slower* on a large store that happens to have nothing under
+            # review, which is an ordinary state and not a corner case.
+            return []
         kids: dict[str, list[str]] = {}
         for e in self.edges:
             if e.active:
@@ -460,8 +470,7 @@ class Graph:
                 if nxt not in seen:
                     seen.add(nxt)
                     stack.append(nxt)
-        return [vid for vid, v in self.vertices.items()
-                if v.base_status == "PROVISIONAL" and vid not in seen]
+        return [vid for vid in prov if vid not in seen]
 
     def unpropagated(self) -> list[tuple[str, str]]:
         """DECIDED vertices resting on an unsettled premise, each with it.
@@ -472,9 +481,12 @@ class Graph:
         vertices are affected — the same reason `waiting_on` has one
         implementation and three callers.
         """
+        decided = [(vid, v) for vid, v in sorted(self.vertices.items())
+                   if v.base_status == "DECIDED"]
+        if not decided:
+            return []                      # as `stale_provisional`, same reason
         into = self._reverse()
-        return [(vid, p) for vid, v in sorted(self.vertices.items())
-                if v.base_status == "DECIDED"
+        return [(vid, p) for vid, v in decided
                 for p in self.waiting_on(vid, into)]
 
     def roots(self) -> list[str]:
