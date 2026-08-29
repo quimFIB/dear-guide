@@ -3,14 +3,20 @@
 Measured 2026-08-28/29 against synthetic stores from 200 to 10,000 decisions,
 on Python 3.14.6 / Linux 6.18 / x86-64.
 
-> **This report describes the tool before the fix it argues for.** Two of its
-> four candidates (B and C) were implemented on 2026-08-29, plus a third cubic
-> call site in `dg brief` that this report attributes to the wrong cause. On
-> the 10,000-vertex store `dg check` went from ~17 minutes to 21.6 s and
-> `dg brief` now finishes at all; neither is cubic any more. Every number below
-> is the *problem*, not the current state — which is the point of keeping it.
-> See [`HANDOFF.md`](HANDOFF.md#what-was-implemented-2026-08-29) for the change
-> and [`results/after-fixes.txt`](results/after-fixes.txt) for the re-run.
+> **This report describes the tool before the fixes it argues for.** Most of
+> them were taken on 2026-08-29 — three of the four candidates here, plus four
+> more the report does not name. Across 117 ops measured against the state
+> below: **62 improved, 55 unchanged, 0 regressed**, and nothing is cubic any
+> more (`dg check` 3.03 → 1.92, and ~17 minutes → 21.6 s at 10,000 vertices).
+>
+> Every number below is the *problem*, not the current state — which is the
+> point of keeping it. The current state is
+> [`results/round-two.txt`](results/round-two.txt); the account of what changed
+> and why is [`HANDOFF.md`](HANDOFF.md#round-two-2026-08-29-later).
+>
+> One thing this report does not contain, because nobody measured it: **`dg
+> serve` was far worse than anything here** — 139.8 s to build the payload at
+> 1,000 vertices, and it did not finish at 2,500. It is now 117 ms.
 
 About 50 minutes of wall-clock measurement across three runs. Raw data in
 [`results/`](results/); every number below is reproducible with the commands at
@@ -338,6 +344,9 @@ of them, and what a next session should pick up.
 | `results/index-probe.txt` | The index probe's output |
 | `results/easy-fixes.txt` | The three local fixes, at 2,500 and 10,000 |
 | `results/after-fixes.txt` | The acceptance re-run once B and C were in |
+| `results/round-two.txt` | The acceptance re-run after everything else |
+| `results/graph-library.txt` | Pricing networkx and rustworkx, and why the answer is no |
+| `spike_library.py`, `spike_library_fair.py` | That spike |
 | `results/after/` | Its raw data, alongside the baseline `results/raw.json` |
 
 ## Reproducing

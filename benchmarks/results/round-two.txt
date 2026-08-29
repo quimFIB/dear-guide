@@ -1,0 +1,88 @@
+Acceptance re-run after round two
+=================================
+
+Run 2026-08-29, same generator, same machine, same command shape as the
+baseline in `../raw.json`. Raw data: `after2/`.
+
+    python3 benchmarks/bench.py --work /tmp/dg-bench --out benchmarks/results/after2 \
+        --sizes 1000 2500 5000 --degree 6 --cli-sizes 1000 2500 5000 \
+        --densities --cap 60 --deadline 1500
+
+Compared op-for-op at matching (op, size, layer) against the tool as it was
+before any of this work:
+
+    improved  > 1.15x    62
+    unchanged            55
+    regressed < 0.87x     0
+    ------------------------
+    compared            117
+
+The slowest ratio is 0.93x, on `active_edge.last_id` -- a 0.13 ms
+measurement, inside the drift the baseline documents for a repeat run.
+
+
+--- The exponents ----------------------------------------------------------
+
+                 before   after
+Graph.validate     3.03    1.99
+dg check           3.03    1.92
+dg brief             --    1.89   (2.67 mid-way, before brief's own call site)
+dg context         ~2.0    1.88
+dg render          ~2.0    1.85
+dg find <word>     ~2.0    1.64
+
+Nothing is cubic. Nothing is linear either -- that is what the edge index
+(fix D) would be for, and it is not built.
+
+
+--- The commands a person waits on ----------------------------------------
+
+                    1,000        2,500          5,000
+dg check       1930 -> 724     -> 3,335    132,509 -> 12,587 ms
+dg brief       3935 -> 796     -> 3,643     (skipped) -> 13,539 ms
+dg find <word>  665 -> 269     ->   695     11,769 -> 2,164 ms
+dg find <miss> 1162 -> 303     ->   794     23,314 -> 2,311 ms
+
+"(skipped)" is the baseline harness declining an op whose projection
+exceeded its 60 s cap. Everything now completes at every size.
+
+Note the last two rows: a search that finds *nothing* used to cost about
+twice one that found something, because the did-you-mean pass rebuilds a
+vocabulary from every piece of prose in both stores. It is now within 7% of
+a successful search, without the cap that was proposed -- `words()` reads
+through the same lens and shares its cache.
+
+Measured separately, in-process, on the larger stores:
+
+    Graph.validate    10,000     988.9 s ->    3.1 s
+    dg check          10,000     ~17 min ->   21.6 s
+    dg brief          10,000   (skipped) ->   27.6 s
+    dg find quokka    10,000      48.7 s ->    7.8 s
+    server payload     1,000     139.8 s ->  117 ms
+    server payload    10,000   (unusable) -> 11.6 s
+
+
+--- The regression this sweep caught --------------------------------------
+
+Worth recording, because every test passed while it was true.
+
+The lens cache was first written to fetch the active edge, the rival answers
+and the history together. Most callers want one of the three, and they are
+not equally cheap: `active_edge` stops at the first match, `rival_answers` is
+a full scan with no early exit. So `is:terminal`, which reads the active edge
+alone, went from one early-exiting scan to three full ones:
+
+    find.is_terminal    5,000    398.9 ->  1,884.9 ms    0.21x
+    find.field_status   5,000  1,117.2 ->  1,908.1 ms    0.58x
+
+That is 4.7x slower than the tool before any of this work, in a run where
+1,981 tests passed. The answers were right; only the cost was wrong, and no
+test asserts cost.
+
+Splitting it into three caches filled on demand fixed it -- `is:terminal` is
+now 333.8 ms, better than the baseline. The test that pins it is structural:
+`rival_answers` and `history` are wrapped to record their calls, and
+`is:terminal` must make none.
+
+**This is the argument for keeping the sweep.** It is the only thing here
+that compares against the original tool rather than against the last commit.

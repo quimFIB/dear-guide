@@ -18,12 +18,14 @@ Everything in `dear-guide` that touches the graph is quadratic in store size
 10,000-vertex store). The cause is that the graph is a flat `list[Edge]` with
 adjacency re-derived by linear scan on every lookup — `Graph.active_edge`
 (`model.py:250`) and `Graph.depends` (`model.py:322`). Four candidate fixes
-were identified. **Two of them — B and C — are now implemented**, which took
-`dg check` on the 10,000-vertex store from ~17 minutes to 21.6 s and removed
-the cubic term (α is now 1.99). A, the lens cache worth a flat 5.7×, and D, the
-full edge index worth 100–680× but needing an invalidation decision, are still
-open. The paragraph below describing the cost is the state *before* that fix,
-and is kept because it is what the measurements were taken against.
+were identified. **Three of them — A, B and C — are now implemented**, along
+with four more this file did not name, and the whole of [Round
+two](#round-two-2026-08-29-later) below. Nothing is cubic: `dg check` went from
+~17 minutes to 21.6 s on the 10,000-vertex store and its exponent from 3.03 to
+1.92. **D, the full edge index, is the only candidate here left undone**, and
+deliberately — it was deferred pending the library spike, which has now
+reported. The paragraph below describing the cost is the state *before* any of
+it, and is kept because it is what every measurement was taken against.
 
 ---
 
@@ -166,6 +168,13 @@ backwards. Build the vocabulary from rows already read, or cap it.
 ---
 
 ## Should this use a graph library?
+
+*Superseded — this was reasoned, not measured. It was spiked properly later
+and the conclusion held, but for different reasons and with a 159× speedup
+falling out of it: see [Should this use a graph library? — asked again, and
+priced](#should-this-use-a-graph-library--asked-again-and-priced) and
+`results/graph-library.txt`. Kept because the argument below is still the
+shape of the answer.*
 
 Checked, and the answer is no. There is no `networkx`, `igraph`, `rustworkx` or
 `scipy` anywhere in the tree; `pyproject.toml` declares exactly two runtime
@@ -364,6 +373,9 @@ both the same flat-list-scan shape this fix removed from the decision graph:
 None of that is regression: it was always there, hidden underneath a cubic
 term. It is where the next measurement should start.
 
+**It did, and all three were fixed** — `cross.reverse`, `TaskGraph._adjacency`
+and the lens cache. See [Round two](#round-two-2026-08-29-later).
+
 ### The falsifier
 
 **This is slower on a store with a large edge list and nothing PROVISIONAL.**
@@ -410,3 +422,118 @@ vertex by the first edge. It needed a vertex nothing else points at.
 generated stores `stale_provisional` returns `[]` both ways, so the probe was
 comparing two empty lists. A probe that asserts equality is not the same thing
 as a test.
+
+---
+
+## Round two (2026-08-29, later)
+
+Eight further candidates were put up, seven taken. The pattern is the same one
+throughout: **a derived structure built inside the call that needs it and
+dropped with it** — never cached on the object, so no write path has to
+remember anything. That constraint is what made all of these takeable without
+answering fix D's invalidation question.
+
+| | what | result |
+|---|---|---|
+| `server.graph_payload` | all depths in one pass; `provisional_causes` | 139,811 ms → **117 ms** at 1,000 (1,193×) |
+| `TaskGraph._adjacency` | group task edges by `(src, kind)` once | `blocked_ids` 103.7 → **5.9 ms** at 2,500 |
+| `cross.reverse` | decision → task maps in one pass | `rests_on` × V 434.6 → **1.5 ms** at 5,000 |
+| `decision_lens` | per-vertex edge lookups, cached lazily | `dg find` 48.7 s → **7.75 s** at 10,000 |
+| `Graph.ancestors` | build the reverse index inside the walk | 3,336 → **21 ms** at 10,000 (159×) |
+| `Graph.descendants` | a forward index, for the same reason | **8.9 ms** at 10,000 |
+| `stale_provisional`, `unpropagated` | short-circuit when there is nothing to find | closes the falsifier below |
+
+### `dg serve` was the worst thing in the tool, and nobody had measured it
+
+`graph_payload` builds a `derived` block per vertex, and three of its entries
+recomputed the whole graph each time. At 1,000 vertices it took **139.8
+seconds**; at 2,500 it did not finish. That is worse than `dg check` ever was,
+and it is the one a person sits in front of waiting.
+
+`depth` was 99.2 s of it. `depths(vid)` already computes every ancestor's depth
+on the way and hands back the memo — and `depth(vid)` throws all of it away to
+keep one number, so asking for every vertex walked the graph once per vertex.
+`provisional_because` was the other 42.2 s, the same cubic shape `dg brief` had.
+
+It was never in the sweep, which is why the study missed it. **An operation
+nobody measured was two orders of magnitude worse than every operation
+everybody measured.**
+
+### The regression the sweep caught, which the tests did not
+
+The lens cache was written to fetch the active edge, the rival answers and the
+history together. Most callers want one of the three, and they are not equally
+cheap: `active_edge` stops at the first match, `rival_answers` is a full scan
+with no early exit. So `is:terminal` went from one early-exiting scan to three
+full ones — **4.7× slower than before any of this work**:
+
+```
+find.is_terminal    5,000 vertices    398.9 ms -> 1,884.9 ms    0.21x
+find.field_status   5,000 vertices  1,117.2 ms -> 1,908.1 ms    0.58x
+```
+
+Every test passed. The answers were right; only the cost was wrong, and no test
+asserts cost. Splitting it into three caches filled on demand fixed it
+(`is:terminal` now 333.8 ms, better than baseline), and the test that pins it
+wraps `rival_answers` and `history` to record their calls and asserts
+`is:terminal` makes none.
+
+**Keep the acceptance sweep.** It is the only thing in this project that
+compares against the tool as it was rather than against the last commit, and it
+is what turned a green suite into a caught regression.
+
+### The falsifier from round one is closed
+
+`stale_provisional` and `unpropagated` now start no walk when nothing is
+PROVISIONAL, or nothing DECIDED — the short-circuit the per-vertex forms had
+for free. On the 10,000-vertex store forced all-OPEN: 23.10 → 1.56 ms, against
+the old form's 1.33 ms. The tests are structural, replacing the edge list with
+one that raises when iterated.
+
+### What the sweep says
+
+`results/round-two.txt`, raw data in `results/after2/`. Across 117 ops
+comparable against the tool before any of this work: **62 improved, 55
+unchanged, 0 regressed.** Exponents, all measured:
+
+| | before | after |
+|---|---|---|
+| `Graph.validate` | 3.03 | 1.99 |
+| `dg check` | 3.03 | 1.92 |
+| `dg brief` | — | 1.89 |
+| `dg context` | ~2.0 | 1.88 |
+| `dg render` | ~2.0 | 1.85 |
+| `dg find <word>` | ~2.0 | 1.64 |
+
+### Should this use a graph library? — asked again, and priced
+
+The answer is still no, but the earlier section argues it from the wrong
+place. Spiked properly against networkx 3.6.1 and rustworkx 0.18.1:
+`results/graph-library.txt`.
+
+The short version: the first measurement showed a 1,350× win for the library
+on `ancestors`, and **that was an index result, not a library result**. Against
+a graph that keeps an index — which is what the fix does — networkx is at
+parity and rustworkx is 7×. Set against a compiled per-platform wheel in a
+two-dependency Claude Code plugin, plus three translation problems that do not
+go away (the two directions are not transposes; edge payloads live outside a
+digraph; superseded edges and dangling targets must be kept and skipped), 7× on
+walks that are no longer the bottleneck does not pay.
+
+What the spike *did* buy is the 159× on `ancestors` — pricing the library is
+what exposed that it had no index. **A spike that returns "no" and a speedup is
+worth running.**
+
+### What is left
+
+- **Fix D, the edge index**, deliberately deferred until the spike reported.
+  It now has a narrower case than the study gives it: `roots`, `unpropagated`,
+  `ancestors` and `descendants` all reach index speed without it. What is left
+  is `active_edge` inside `dg find`, which is real but is a constant, not an
+  exponent.
+- **A graph library for `dg serve`'s layout** — the one place it clearly earns
+  its keep, and a different problem from this one.
+- **Nothing is linear.** Every remaining exponent is between 1.6 and 2.0, and
+  the ceiling has moved from about 1,000 vertices to comfortably past 10,000.
+  Whether that is worth pushing further is a question about what store sizes
+  are real, not a question about the code.
