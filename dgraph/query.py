@@ -666,6 +666,26 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
     names = tuple(f for f in _fields_of(Vertex, Edge)
                   if f not in hidden and f not in out_of)
 
+    # `values` is called once per *field* per vertex, and each call asked the
+    # graph for the active edge, the rival answers and the history again. A
+    # decision has seven prose fields, so answering one search cost roughly
+    # twenty full scans of the edge list per vertex — and `rival_answers` is
+    # the sharpest of them, a scan with no early exit that returns `[]` in
+    # every store this tool can write.
+    #
+    # The cache lives on this lens, which the caller builds per invocation and
+    # drops with it. That is the same lifetime `_walk`'s memo below already
+    # relies on, and for the same reason: nothing is written down, and nothing
+    # outlives the question being asked.
+    edge_cache: dict[str, tuple] = {}
+
+    def edges_of(vid: str) -> tuple:
+        got = edge_cache.get(vid)
+        if got is None:
+            got = edge_cache[vid] = (g.active_edge(vid), g.rival_answers(vid),
+                                     g.history(vid))
+        return got
+
     def values(vid: str, name: str) -> list[str]:
         v = g.vertices[vid]
         out = _texts([getattr(v, name, None)])
@@ -679,7 +699,7 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
             # working, and keeps `status:BLOCKED:D05` — "blocked on *that*" —
             # available for anyone who wants it.
             out = _texts(dict.fromkeys([v.base_status, v.status]))
-        e = g.active_edge(vid)
+        e, rivals, hist = edges_of(vid)
         if e is not None:
             out += _texts([getattr(e, name, None)])
         # And every *rival* answer, in the store `one_active_edge` refuses.
@@ -687,10 +707,9 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         # unsearchable — and `dg find` answering "nothing" about a sentence
         # that is sitting in the store is the failure this whole command is
         # shaped to avoid. Empty in every store this tool can write.
-        out += _texts(getattr(other, name, None)
-                      for other in g.rival_answers(vid))
+        out += _texts(getattr(other, name, None) for other in rivals)
         if name in ("summary", "why") or (archived and name in _ARCHIVED_PROSE):
-            out += _texts(getattr(h, name, None) for h in g.history(vid))
+            out += _texts(getattr(h, name, None) for h in hist)
         return out
 
     def label(vid: str, name: str, text: str) -> str:
@@ -703,7 +722,7 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         """
         if name not in _ARCHIVED_PROSE:
             return name
-        e = g.active_edge(vid)
+        e = edges_of(vid)[0]
         return name if e is not None and getattr(e, name, None) == text \
             else f"superseded {name}"
 
@@ -713,8 +732,8 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         "provisional": lambda vid: g.vertices[vid].base_status == "PROVISIONAL",
         "shaky": lambda vid: g.vertices[vid].base_status in _shaky(),
         "blocked": lambda vid: g.vertices[vid].base_status == "BLOCKED",
-        "terminal": lambda vid: (e := g.active_edge(vid)) is not None and e.terminal,
-        "superseded": lambda vid: bool(g.history(vid)),
+        "terminal": lambda vid: (e := edges_of(vid)[0]) is not None and e.terminal,
+        "superseded": lambda vid: bool(edges_of(vid)[2]),
         "orphaned": lambda vid: not g.depends(vid) and not g.children(vid),
     }
     preds.update(predicates or {})

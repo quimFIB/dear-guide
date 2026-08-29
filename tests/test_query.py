@@ -994,3 +994,56 @@ def test_the_positive_form_of_an_absent_field_never_matches(both):
     is negation doing its job, not a hole in the field table."""
     got = dg(both, "find", "--ids", "is:outstanding or falsifier:zzz")
     assert got.stdout.split() == ["T02", "T03", "T04"]
+
+
+# ---- the lens's per-vertex edge cache -------------------------------------
+#
+# `values` is called once per field per vertex and used to re-ask the graph for
+# the active edge, the rival answers and the history every time — about twenty
+# scans of the edge list per vertex to answer one search. The lens now fetches
+# them once per vertex.
+#
+# The cache is safe because of *when* it dies, not because of what it holds:
+# the lens is built per invocation and dropped with it. So what is pinned here
+# is the lifetime — that a lens built after a change sees the change — rather
+# than the speed.
+
+
+def _lens(g):
+    from dgraph import query
+    return query.decision_lens(g)
+
+
+def test_the_lens_cache_does_not_change_what_a_search_finds(g):
+    from dgraph import query
+    for q in ("answer:root", "is:terminal", "is:superseded", "older"):
+        parsed = query.parse(q)
+        first = query.select(parsed, _lens(g))
+        second = query.select(parsed, _lens(g))
+        assert first == second, q
+    # ...and it still reaches the superseded edge, which is the archive that
+    # `values` reads history for.
+    assert query.select(query.parse("answer:older"), _lens(g)) == ["D01"]
+
+
+def test_a_lens_built_after_a_change_sees_it(g):
+    """The cache lives on the lens, so a new lens must not inherit a stale one.
+    A cache that outlived its lens would make `dg find` answer from a store
+    that no longer exists — and the tool's own rule is that nothing derived is
+    kept."""
+    from dgraph import query
+    before = query.select(query.parse("answer:root"), _lens(g))
+    assert before == ["D01"]
+    g.active_edge("D01").answer = "A completely different answer."
+    assert query.select(query.parse("answer:root"), _lens(g)) == []
+    assert query.select(query.parse("answer:different"), _lens(g)) == ["D01"]
+
+
+def test_one_lens_is_consistent_within_itself(g):
+    """The other side of the same coin: within a single lens the cached reading
+    is the reading, for every field, so two fields of one vertex cannot
+    disagree about which edge is active."""
+    lens = _lens(g)
+    assert lens.values("D01", "answer") == _lens(g).values("D01", "answer")
+    assert lens.label("D01", "answer", "The root answer.") == "answer"
+    assert lens.label("D01", "answer", "An older answer.") == "superseded answer"
