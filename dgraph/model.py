@@ -852,7 +852,7 @@ class Graph:
             if colour.get(vid):
                 continue
             colour[vid] = 1
-            stack = [(vid, iter(self.children(vid)))]
+            stack = [(vid, iter(self.children(vid, by_src)))]
             trail = [vid]
             while stack:
                 n, kids = stack[-1]
@@ -864,7 +864,7 @@ class Graph:
                     if colour.get(c) == 2:
                         continue
                     colour[c] = 1
-                    stack.append((c, iter(self.children(c))))
+                    stack.append((c, iter(self.children(c, by_src))))
                     trail.append(c)
                     break
                 else:

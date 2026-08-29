@@ -60,17 +60,17 @@ reported until somebody picks it up, drops it, or removes the dependency.
 """
 
 
-def _index(tg: TaskGraph) -> str:
+def _index(tg: TaskGraph, _adj=None) -> str:
     rows = [
         "| ID | Task | Status | Waiting on | Because |",
         "|---|---|---|---|---|",
     ]
     order = _areas.order(tg.areas)
     for t in sorted(tg.tasks.values(), key=lambda t: (order(t.area), t.id)):
-        waiting = ", ".join(tg.waiting_on(t.id)) or NONE
+        waiting = ", ".join(tg.waiting_on(t.id, _adj)) or NONE
         rows.append(f"| {t.id} | {orgmd.cell(t.title)} | {t.status} | {waiting} "
                     f"| {', '.join(t.because) or NONE} |")
-    ready = ", ".join(t for t in sorted(tg.tasks) if tg.ready(t))
+    ready = ", ".join(t for t in sorted(tg.tasks) if tg.ready(t, _adj))
     rows.append("")
     # Qualified, because this file is rendered from one store: `tg.ready` means
     # "nothing outstanding in *this* graph", and a task whose premise is still
@@ -93,7 +93,7 @@ def _section(tg: TaskGraph, tid: str, _adj=None) -> str:
 
     out = [f"{orgmd.anchor(t.id)}", f"### {t.id} — {t.title}"]
     out.append(f"- **Status:** {status}")
-    out.append(f"- **Waiting on:** {', '.join(tg.waiting_on(tid)) or NONE}")
+    out.append(f"- **Waiting on:** {', '.join(tg.waiting_on(tid, _adj)) or NONE}")
     out.append(f"- **Unblocks:** {', '.join(tg.unblocks(tid, _adj)) or NONE}")
     # Only where they hold, unlike the two lines above. Provenance is absent
     # for most work, and an em dash on every section would train the eye past
@@ -157,7 +157,7 @@ def render(tg: TaskGraph) -> str:
     # does for the decision store: rebuilding the view is what `dg check` does
     # to see whether it is stale, so the renderer's cost is the gate's cost.
     adj = tg._adjacency()
-    parts = [PREAMBLE, "---\n", _index(tg), "---\n"]
+    parts = [PREAMBLE, "---\n", _index(tg, adj), "---\n"]
     # `render._index`'s twin — see there for the record that rendered nowhere.
     for area in _areas.sections(tg.areas, tg.tasks.values()):
         ids = sorted(t.id for t in tg.tasks.values() if t.area == area)
