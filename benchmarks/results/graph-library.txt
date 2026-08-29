@@ -98,3 +98,154 @@ real algorithm, the tool does not have one, and it is a pure function of the
 graph shape with nothing to invalidate. That is the opposite of the case
 above on every axis. Not proposed here; recorded so the question is not
 re-answered from scratch.
+
+
+===========================================================================
+Part two: the `dg serve` spike (2026-08-29, later)
+===========================================================================
+
+The section above rules a library out for one-shot CLI commands on an
+amortisation argument: a `dg` process loads JSON, asks one question and
+exits, so a 20 ms build is never repaid. `dg serve` is the exception in
+principle -- one process, loaded once, answering many requests -- so the
+argument does not apply there and the question was left open.
+
+Spiked with `benchmarks/spike_serve.py`: hold a rustworkx PyDiGraph alive
+across requests and re-price the payload.
+
+
+--- First run: the library won -------------------------------------------
+
+    piece                    current   rustworkx
+    all_depths                  46.0        18.8
+    provisional_causes       1,137.4       101.4
+    depends x V                 23.7        20.0
+    -- traversal subtotal    1,207.1       140.2
+
+    whole payload            4,177.8 ms -> 3,110.9 ms projected
+    saving per request       1,066.9 ms
+    requests to repay build  under one
+
+A real 1.34x on the whole payload, build repaid immediately. That is a
+"yes", and it contradicted the expectation going in.
+
+But `provisional_causes` was 94% of it -- and that is one upward walk per
+PROVISIONAL vertex, which is a shape, not a language.
+
+
+--- The same question, one topological pass, plain Python -----------------
+
+A vertex's unsettled ancestors are the union of its parents', plus any
+parent that is itself unsettled. Carry that down a topological order and
+every vertex is answered at once; hold the set as a Python int so the union
+is a single `|`.
+
+    provisional_causes    1,135.5 ms -> 63.1 ms      (rustworkx: 101.4 ms)
+
+**Plain Python, with the right algorithm, beats the compiled library doing
+the wrong one.**
+
+
+--- Second run: the library lost ------------------------------------------
+
+    piece                    current   rustworkx
+    all_depths                  44.0        18.4
+    provisional_causes          65.8       108.9
+    depends x V                 29.5        19.3
+    -- traversal subtotal      139.3       146.5
+
+    whole payload            3,150.8 ms -> 3,158.1 ms projected
+    saving per request          -7.3 ms
+
+The library is now marginally *slower*, and there is nothing left for it to
+win even where its build is free. Note rustworkx still beats the current
+code on `all_depths` (2.4x) and `depends` (1.5x) -- it is genuinely faster
+at graph algorithms. It is just that those are now 139 ms of a 3,151 ms
+payload, and the other 96% is building the payload dict, which no graph
+library touches.
+
+
+--- The conclusion, and the pattern ---------------------------------------
+
+**No, in both places, and for a better reason than the first pass gave.**
+
+Three times in this session a measurement showed a large library win, and
+three times it was an algorithm gap in the code being compared against:
+
+    ancestors           1,350x "library win"  -> a missing index     (159x)
+    dg find              85% of it "text"     -> ungrouped records    (90x)
+    provisional_causes    11x "library win"   -> a walk per vertex     (16x)
+
+Each was found by pricing the library, and none of the three needed one.
+That is the argument for spiking a dependency you intend to refuse: the
+comparison is what makes you look closely at what you already have.
+
+Where a library would still earn its place is unchanged and untested here:
+**layout for the web view.** A real algorithm the tool does not have, a pure
+function of graph shape, nothing to invalidate.
+
+
+===========================================================================
+Part three: does the library win on DENSER graphs?
+===========================================================================
+
+A fair objection to both parts above: every store they used was degree 6 --
+58,632 arcs over 10,000 vertices, about 5.9 arcs per vertex. That is sparse,
+and a compiled library should gain as per-edge work starts to dominate.
+
+Tested with `benchmarks/spike_density.py`: 2,000 vertices held fixed, out-degree
+swept, so edge count varies alone.
+
+  arcs/v     arcs  |     all_depths     |    prov_causes     |   ancestors x V
+                   |  cur    rx     x   |  cur    rx     x   |   cur     rx     x
+     5.9   11,706  |  7.0   3.1   2.2   |  9.5   4.0   2.4   |  1037   160   6.5
+    15.4   30,702  | 15.1   5.8   2.6   | 20.4   6.0   3.4   |  2593   226  11.5
+    30.6   61,106  | 24.7   9.5   2.6   | 31.8   7.4   4.3   |  5623   385  14.6
+    60.8  121,520  | 43.5  17.3   2.5   | 58.0  14.8   3.9   | 12469   684  18.2
+
+**The objection is correct.** For reachability the library's advantage grows
+monotonically with density -- `ancestors x V` goes 6.5x -> 18.2x as arcs per
+vertex go 5.9 -> 60.8. That is exactly the predicted effect: a walk that
+touches ten times as many edges spends ten times as long in the per-edge
+inner loop, which is where compiled code wins and interpreted code loses.
+
+`all_depths` is flat at ~2.5x, because a topological pass is dominated by
+bookkeeping per *vertex* rather than per edge.
+
+
+--- Why it still does not change the answer -------------------------------
+
+Two reasons, and the first is the stronger.
+
+**1. The op with the steepest density gain is one nothing performs.**
+`ancestors x V` -- every vertex's ancestors -- is where the library pulls
+away, and no surface in the tool asks it. `provisional_causes` was shaped
+like that until this session; it is now one topological pass, and its curve
+is the flat one.
+
+**2. At the extreme the traversals are still a rounding error.** 10,000
+vertices at 305,593 arcs (30.6 per vertex, five times the standard store):
+
+    all_depths            cur   151.2 ms    rx  49.1 ms
+    provisional_causes    cur   213.4 ms
+    graph_payload         cur 4,351.9 ms
+
+The traversals are ~365 ms of a 4,352 ms payload. A 3x on them saves ~240 ms
+-- **5.5% of the page**. The other 94% is building the payload dict and
+serialising it, which no graph library touches at any density.
+
+
+--- The honest caveat -----------------------------------------------------
+
+Two limits on this test, stated rather than buried:
+
+- `gen_store.py` draws targets from the next two layers, so degree is bounded
+  by layer width and truly dense graphs are not reachable with it. Degree 61
+  at 2,000 vertices is the practical ceiling here.
+- **A decision graph with 30 arcs per vertex is not a realistic shape.** It
+  means each decision opens thirty others. The dense end of this sweep is a
+  stress test, not a forecast, and the sparse end is where real stores sit.
+
+So: the library does get better with density, the effect is real and was
+worth measuring, and it would take a workload made of whole-graph reachability
+on a store far denser and larger than this tool's shape to matter.

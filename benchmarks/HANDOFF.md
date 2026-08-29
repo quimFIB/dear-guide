@@ -537,3 +537,69 @@ worth running.**
   the ceiling has moved from about 1,000 vertices to comfortably past 10,000.
   Whether that is worth pushing further is a question about what store sizes
   are real, not a question about the code.
+
+---
+
+## Round three: fix D, and the library asked a third time
+
+### Fix D had no blocker
+
+The whole of this file treats the edge index as the fix that needs an
+invalidation decision — twelve mutation sites, a cached attribute, a question
+about where the structure dies. **That was an assumption, not a measurement.**
+It assumed the index had to be *cached* to be worth building.
+
+Grouping 11,000 edge records by source costs **0.7 ms**, which is less than one
+of the scans it replaces. So it is built inside the call and dropped, like
+everything else here — no cached attribute, no write path touched, none of the
+twelve sites changed.
+
+    dg find quokka      10,000 vertices   48.71 s -> 0.54 s     (90x)
+    dg find zzzabsent   10,000 vertices   (never finished) -> 0.94 s
+    server payload      10,000 vertices   10.8 s -> 3.2 s
+
+It was found by pricing a graph library, not by looking for it. `dg find` was
+assumed to be text-bound; a profile put **85% of it in four edge readers and
+0.045 s in the actual text matching**. What remained was not a graph algorithm
+at all — it was *"hand me the records attached to this vertex, with their
+payloads"*, which a digraph discards by design.
+
+### The library, asked a third time and answered properly
+
+`results/graph-library.txt` now has both halves. The short version:
+
+| what looked like a library win | what it actually was | fix |
+|---|---|---|
+| `ancestors` 1,350× | a missing reverse index | 159× |
+| `dg find` "is text-bound" | ungrouped edge records | 90× |
+| `provisional_causes` 11× | one upward walk per vertex | 16× |
+
+Three times a measurement showed a large library win, and three times it was an
+algorithm gap in the code being compared against. The `dg serve` spike is the
+sharpest: it first said **yes, 1.34× on the payload, build repaid immediately**
+— a genuine positive result. Replacing the walk-per-vertex with one topological
+pass carrying a bitset then made **plain Python faster than rustworkx** at the
+same question (63 ms against 101 ms), and the second run of the spike put the
+library at 146.5 ms against the current 139.3 ms — marginally *slower*, with
+nothing left to win.
+
+rustworkx is still genuinely faster at graph algorithms — 2.4× on `all_depths`,
+1.5× on `depends`. Those are now 139 ms of a 3,151 ms payload. **The other 96%
+is building the payload dict, which no graph library touches.**
+
+**That is the case for spiking a dependency you expect to refuse.** The verdict
+was never the value; being made to look closely at what you already have was.
+
+### What is actually left
+
+- **`dg serve`'s payload is 96% payload construction** — 3.0 s of 3.15 s at
+  10,000 vertices, building Python dicts and serialising 11 MB of JSON for a
+  page that renders a viewport. Every graph question underneath it is now
+  answered in 139 ms. If `dg serve` is to get faster the lever is **sending
+  less**, not computing faster, and that is a design question about the page
+  rather than an optimisation.
+- **A library for layout.** Unchanged, untested, and the one place the case is
+  clean.
+- **Nothing is cubic and nothing is linear.** Every exponent sits between 1.6
+  and 2.0 except `dg find`, which is now dominated by interpreter start-up
+  (244 ms) and JSON parsing (106 ms) rather than by store size.

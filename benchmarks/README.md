@@ -11,8 +11,9 @@ on Python 3.14.6 / Linux 6.18 / x86-64.
 >
 > Every number below is the *problem*, not the current state — which is the
 > point of keeping it. The current state is
-> [`results/round-two.txt`](results/round-two.txt); the account of what changed
-> and why is [`HANDOFF.md`](HANDOFF.md#round-two-2026-08-29-later).
+> [`results/final.txt`](results/final.txt): **67 ops improved, 50 unchanged, 0
+> regressed**, and `dg find` at 10,000 vertices went 48.7 s → 0.54 s. The
+> account of what changed and why is [`HANDOFF.md`](HANDOFF.md).
 >
 > One thing this report does not contain, because nobody measured it: **`dg
 > serve` was far worse than anything here** — 139.8 s to build the payload at
@@ -345,6 +346,8 @@ of them, and what a next session should pick up.
 | `results/easy-fixes.txt` | The three local fixes, at 2,500 and 10,000 |
 | `results/after-fixes.txt` | The acceptance re-run once B and C were in |
 | `results/round-two.txt` | The acceptance re-run after everything else |
+| `results/final.txt` | The last one, after fix D |
+| `spike_serve.py`, `spike_density.py` | Whether a library pays in `dg serve`, and on denser graphs |
 | `results/graph-library.txt` | Pricing networkx and rustworkx, and why the answer is no |
 | `spike_library.py`, `spike_library_fair.py` | That spike |
 | `results/after/` | Its raw data, alongside the baseline `results/raw.json` |
