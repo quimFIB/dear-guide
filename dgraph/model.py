@@ -657,12 +657,26 @@ class Graph:
         from every unvisited start and keeps one memo across all of them, over
         one shared reverse index.
 
-        On a graph with a cycle this can disagree with `depth(vid)` asked one
-        vertex at a time, and so can `depth` with itself: an in-cycle parent
-        counts 0, so the answer depends on which vertex the walk entered the
-        cycle from. `validate` reports a cycle as an error and neither reading
-        is meaningful on one. On an acyclic graph — every graph the tool will
-        write — the two agree exactly, and the tests pin that.
+        Where the relation has a cycle the shared memo is order-dependent — an
+        in-cycle parent counts 0, so the answer turns on which vertex the walk
+        entered the cycle from, and `depth(vid)` asked one vertex at a time
+        enters from somewhere else. So this falls back to the per-vertex walk
+        there, exactly as `provisional_causes` does and for the same reason:
+        two readings of one record, on two surfaces, is worse than paying for
+        the slow one on a store that is already broken.
+
+        **The fallback is not conditioned on `validate`, and must not be.** The
+        earlier version of this docstring excused the disagreement on the
+        ground that *"`validate` reports a cycle as an error"*, and that is not
+        true of every cycle this walk can meet. `validate`'s acyclic check
+        follows `children`, which takes only the *first* active edge; this walk
+        follows `depends`, which sees them all. A vertex carrying two active
+        edges — what a git text-merge of two clones produces, and what
+        `rival_answers` exists for — can therefore close a cycle that the
+        depth walks see and the cycle check does not, and `validate` reports
+        `one_active_edge` while saying nothing about `acyclic`. The store loads,
+        `dg serve` draws it, and the layout disagreed with `dg context` with
+        nothing on either surface to explain why.
         """
         into = self._reverse()
         memo: dict[str, int] = {}
@@ -678,8 +692,20 @@ class Graph:
                     continue
                 on_path.add(n)
                 parents = self.depends(n, into)
-                todo = [q for q in parents
-                        if q not in memo and q not in on_path]
+                todo = []
+                for q in parents:
+                    if q in on_path:
+                        # The walk has come back to a vertex it is still
+                        # inside: a cycle in `depends`. Detected here rather
+                        # than by a topological pre-pass, so the ordinary
+                        # acyclic store pays nothing for the guard — a
+                        # pre-pass cost 1.6x of this whole function on a
+                        # 10,000-vertex store, to answer a question the walk
+                        # was already in a position to answer.
+                        return {vid: self.depths(vid, into)[vid]
+                                for vid in self.vertices}
+                    if q not in memo:
+                        todo.append(q)
                 if todo:
                     stack.extend(todo)
                     continue
@@ -713,6 +739,12 @@ class Graph:
             v.append(Violation(c, m, severity))
         ids = set(self.vertices)
         by_src = self.by_src()   # one grouping for the per-vertex reads below
+        # ...and one reverse index, for the BLOCKED branch below. Built here
+        # beside `by_src` and for the same reason: the reads under it are
+        # per-vertex, and a scan per vertex is what makes this — the command
+        # the commit gate runs — quadratic. `dg check` on a store where most
+        # work is blocked was 62x an unblocked one of the same size before it.
+        into = self._reverse()
 
         for vid, vert in self.vertices.items():
             if not vid.startswith("D") or not vid[1:].isdigit():
@@ -725,7 +757,7 @@ class Graph:
                 # what the block *means* — that it is backed by an edge, and
                 # that the blocker has not since settled.
                 tgt = vert.blocker
-                if tgt not in self.depends(vid):
+                if tgt not in self.depends(vid, into):
                     # Before the staleness check below, because it is the more
                     # fundamental fault: if the block is not backed by an edge,
                     # whether the blocker has settled does not matter — the

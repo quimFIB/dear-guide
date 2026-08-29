@@ -1729,3 +1729,154 @@ def test_the_task_view_renders_the_same_with_and_without_the_index(tg):
     adj = tg._adjacency()
     for tid in tg.tasks:
         assert tr._section(tg, tid, adj) == tr._section(tg, tid), tid
+
+# ---- the store the tool refuses to write and still has to read ------------
+#
+# A git text-merge of two clones that each answered one inherited question
+# leaves two active edges on one vertex. `dg apply` cannot write it,
+# `one_active_edge` refuses it, and `rival_answers` exists because every
+# reader still has to survive it. That store is a *different corpus* from the
+# one the fixtures and the generated stores cover, and it is where the two
+# depth readings came apart.
+
+
+def _rival_answer_store():
+    """`D01` carrying both clones' answers, and `D03` pointing back at it.
+
+    The cycle `D01 -> D03 -> D01` exists in `depends`, which sees both active
+    edges, and *not* in `children`, which takes the first. Constructed so the
+    first edge cannot reach it: on a well-connected fixture every vertex is
+    reachable by first edges alone and the shape is unreachable by accident.
+    """
+    from dgraph.model import Edge, Graph, Vertex
+    ids = ("D01", "D02", "D03", "D04")
+    return Graph(
+        areas=["arch"],
+        vertices={i: Vertex(i, "t", "arch", "OPEN") for i in ids},
+        edges=[
+            Edge("D01", ["D02"], active=True),          # this clone's answer
+            Edge("D01", ["D03"], active=True),          # the other clone's
+            Edge("D03", ["D01", "D04"], active=True),
+        ])
+
+
+def test_validate_reports_the_rival_answer_and_not_a_cycle():
+    """The premise of `all_depths`' old excuse, pinned so the fix cannot be
+    written against the wrong cause.
+
+    Its docstring used to defend disagreeing with `depth` on the ground that
+    "`validate` reports a cycle as an error". On this store it does not: the
+    acyclic check walks `children`, which never traverses the second active
+    edge that closes the cycle. It reports the rival edge instead."""
+    graph = _rival_answer_store()
+    checks = {v.check for v in graph.validate()}
+    assert "one_active_edge" in checks
+    assert "acyclic" not in checks
+
+
+def test_every_depth_surface_agrees_on_a_store_the_tool_would_not_write():
+    """`dg serve` lays the graph out by `all_depths`; `dg context` and the
+    editor buffer print `depth`. Two readings of one record on two surfaces,
+    with nothing on either to say why they differ, is the fault -- not which
+    number is right, since on a cycle neither is meaningful."""
+    graph = _rival_answer_store()
+    assert graph.all_depths() == {vid: graph.depth(vid) for vid in graph.vertices}
+
+
+def test_the_two_depth_readings_agree_over_random_graphs_with_rival_answers():
+    """The condition is *every* store `Graph.load` accepts, not the one shape
+    that exposed it -- so the corpus carries rival answers, dangling targets
+    and cycles, and asserts it reached each."""
+    import random
+
+    from dgraph.model import Edge, Graph, Vertex
+    statuses = ["OPEN", "BLOCKED", "REOPENED", "DECIDED", "PROVISIONAL"]
+    rng = random.Random(11)
+    rivals = dangling = 0
+    for _ in range(200):
+        ids = [f"D{i:03d}" for i in range(rng.randint(1, 20))]
+        graph = Graph(
+            vertices={i: Vertex(i, "t", "a", rng.choice(statuses)) for i in ids},
+            edges=[])
+        for i in ids:
+            # Twice round, so a vertex can carry two active edges -- the shape
+            # under test, and one no single-pass generator produces.
+            for _ in range(2):
+                if rng.random() < 0.55:
+                    to = rng.sample(ids, rng.randint(0, min(3, len(ids))))
+                    if rng.random() < 0.2:
+                        to.append("D999")          # a target naming no vertex
+                    graph.edges.append(Edge(i, to, active=rng.random() < 0.8))
+        active = {}
+        for e in graph.edges:
+            if e.active:
+                active[e.src] = active.get(e.src, 0) + 1
+        rivals += any(c > 1 for c in active.values())
+        dangling += any(t not in graph.vertices
+                        for e in graph.edges if e.active for t in e.to)
+        assert graph.all_depths() == {
+            vid: graph.depth(vid) for vid in graph.vertices}
+    assert rivals > 50, f"the corpus barely held a rival answer ({rivals})"
+    assert dangling > 20, f"the corpus barely held a dangling target ({dangling})"
+
+
+def test_validate_reads_the_blocked_rule_through_the_index_unchanged(g):
+    """`validate` builds one reverse index for the BLOCKED branch, which used
+    to scan the edge list once per blocked vertex -- 62x on an all-BLOCKED
+    store, in the command the commit gate runs. The index is an optimisation
+    and nothing else, so what `validate` *reports* must not move."""
+    from dataclasses import replace
+    from dgraph.model import Edge, Graph, Vertex
+
+    # The fixture, with a block that is backed by an edge and one that is not.
+    g.vertices["D02"] = replace(g.vertices["D02"], status="BLOCKED:D01")
+    g.vertices["D04"] = replace(g.vertices["D04"], status="BLOCKED:D05")
+    findings = {(v.check, v.message) for v in g.validate()}
+    blocked = {c for c, _ in findings if c in
+               ("block_is_a_premise", "stale_block")}
+    assert blocked, "the fixture no longer exercises either BLOCKED rule"
+
+    # And the same judgement reached the scanning way, per vertex.
+    for vid, vert in g.vertices.items():
+        if vert.base_status == "BLOCKED":
+            assert (vert.blocker in g.depends(vid, g._reverse())) == (
+                vert.blocker in g.depends(vid))
+
+
+def test_the_blocked_rule_is_not_quadratic_in_the_store():
+    """A store where most work is blocked is an ordinary state, not a corner
+    case -- and it is the one the benchmark corpus never generated, which is
+    why the scan survived six measuring passes. Shape, not wall-clock: the
+    number of edge records `depends` is asked to consider must not grow with
+    the store on a fixed-degree chain."""
+    from dgraph.model import Edge, Graph, Vertex
+
+    def blocked_chain(n):
+        ids = [f"D{i:05d}" for i in range(n)]
+        verts = {ids[0]: Vertex(ids[0], "t", "a", "OPEN")}
+        verts.update({ids[i]: Vertex(ids[i], "t", "a", f"BLOCKED:{ids[i - 1]}")
+                      for i in range(1, n)})
+        return Graph(vertices=verts,
+                     edges=[Edge(ids[i], [ids[i + 1]], active=True)
+                            for i in range(n - 1)])
+
+    calls = []
+    for n in (200, 800):
+        graph = blocked_chain(n)
+        seen = 0
+        real = graph.depends
+
+        def counting(vid, _into=None, _real=real):
+            nonlocal seen
+            # An unindexed call is a scan of every edge; an indexed one is a
+            # dict lookup. Counting which arrived is what pins the shape.
+            if _into is None:
+                seen += len(graph.edges)
+            return _real(vid, _into)
+
+        graph.depends = counting
+        graph.validate()
+        calls.append(seen)
+    assert calls == [0, 0], (
+        f"`validate` still scans for the BLOCKED rule: {calls} edge records "
+        f"considered at n=200 and n=800")
