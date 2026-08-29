@@ -1600,3 +1600,47 @@ def test_by_src_is_empty_for_a_vertex_with_no_edges(g):
     assert g.rival_answers("D07", by) == []
     assert g.history("D07", by) == []
     assert g.children("D07", by) == []
+
+
+def test_provisional_causes_falls_back_on_a_cycle(g):
+    """The topological pass cannot order a cycle, and a vertex inside one has
+    no well-defined set of ancestors above it. `validate` reports the cycle;
+    until it is fixed this has to answer *something* rather than report that
+    those vertices rest on nothing — so it falls back to the walk, which has
+    its own guard."""
+    g.vertices["D01"] = replace(g.vertices["D01"], status="REOPENED")
+    g.vertices["D04"] = replace(g.vertices["D04"], status="PROVISIONAL")
+    # Extend D04's own active edge rather than adding a second one: `children`
+    # is first-wins, so a rival edge would not be on the followed path and the
+    # cycle would not exist for the walk that has to survive it.
+    g.active_edge("D04").to.append("D02")                      # D02 → D04 → D02
+    assert [v for v in g.validate() if v.check == "acyclic"], "expected a cycle"
+    assert g.provisional_causes() == _slow_provisional_causes(g)
+    assert g.provisional_causes()["D04"] == ["D01"]
+
+
+def test_provisional_causes_over_random_graphs_including_cycles():
+    """The fast path and the fallback have to agree with the definition on both
+    shapes, and the corpus must actually contain each."""
+    import random
+
+    from dgraph.model import Edge, Graph, Vertex
+    statuses = ["OPEN", "BLOCKED", "REOPENED", "DECIDED", "PROVISIONAL",
+                "TERMINAL"]
+    rng = random.Random(7)
+    fired = 0
+    for _ in range(200):
+        ids = [f"D{i:03d}" for i in range(rng.randint(1, 25))]
+        graph = Graph(
+            vertices={i: Vertex(i, "t", "a", rng.choice(statuses)) for i in ids},
+            edges=[])
+        for i in ids:
+            if rng.random() < 0.8:                    # cycles allowed on purpose
+                graph.edges.append(Edge(
+                    i, rng.sample(ids, rng.randint(0, min(4, len(ids)))),
+                    active=True))
+        ref = {v: graph.provisional_because(v) for v, x in graph.vertices.items()
+               if x.base_status == "PROVISIONAL"}
+        fired += len(ref)
+        assert graph.provisional_causes() == ref
+    assert fired > 100, f"the corpus barely exercised it ({fired})"

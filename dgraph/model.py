@@ -482,9 +482,52 @@ class Graph:
         *which* premises, which a reader has to be told one vertex at a time.
         """
         into = self._reverse()
-        return {vid: self.provisional_because(vid, into)
-                for vid, v in self.vertices.items()
-                if v.base_status == "PROVISIONAL"}
+        prov = [vid for vid, v in self.vertices.items()
+                if v.base_status == "PROVISIONAL"]
+        if not prov:
+            return {}
+
+        # One pass in topological order instead of one upward walk per
+        # PROVISIONAL vertex. Each vertex's unsettled ancestors are the union
+        # of its parents', plus any parent that is itself unsettled — so
+        # carrying that set down the order answers every vertex at once. The
+        # set is a Python int used as a bitset, one bit per unsettled vertex,
+        # because the union is then a single `|` rather than a set merge.
+        unsettled = [v for v, vert in self.vertices.items() if not vert.settled]
+        bit = {v: 1 << i for i, v in enumerate(unsettled)}
+        indeg = {v: len(into.get(v, ())) for v in self.vertices}
+        kids: dict[str, list[str]] = {}
+        for tgt, srcs in into.items():
+            if tgt not in self.vertices:
+                continue          # a dangling target: `validate` reports it,
+            for s in srcs:        # and a walk that trusts it crashes first
+                kids.setdefault(s, []).append(tgt)
+        order: list[str] = []
+        stack = [v for v, d in indeg.items() if d == 0]
+        while stack:
+            n = stack.pop()
+            order.append(n)
+            for c in kids.get(n, ()):
+                indeg[c] -= 1
+                if indeg[c] == 0:
+                    stack.append(c)
+
+        if len(order) != len(self.vertices):
+            # A cycle: the order does not cover it, and a vertex inside one has
+            # no well-defined set of ancestors *above* it. `validate` reports
+            # the cycle; until somebody fixes it, fall back to the walk, which
+            # has its own `seen` guard and answers something rather than
+            # silently claiming those vertices rest on nothing.
+            return {vid: self.provisional_because(vid, into) for vid in prov}
+
+        mask: dict[str, int] = {}
+        for v in order:
+            m = 0
+            for parent in into.get(v, ()):
+                m |= mask.get(parent, 0) | bit.get(parent, 0)
+            mask[v] = m
+        return {vid: sorted(u for u in unsettled if mask[vid] & bit[u])
+                for vid in prov}
 
     def stale_provisional(self) -> list[str]:
         """The PROVISIONAL vertices whose every premise has been settled again.
