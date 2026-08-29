@@ -368,20 +368,47 @@ class Graph:
         return [p for p in self.depends(vid, _into)
                 if not self.vertices[p].settled]
 
+    def _forward(self) -> dict[str, list[str]]:
+        """`src -> the vertices its active edge opens`, in one pass.
+
+        The `children` side of `_reverse`, and it has to keep `active_edge`'s
+        first-wins rule: where a store holds rival answers, `children` follows
+        the first and `depends` sees them all, so the two directions are *not*
+        transposes of each other and cannot share one structure. Built inside
+        the call and dropped with it, as everything derived here is.
+        """
+        out: dict[str, list[str]] = {}
+        for e in self.edges:
+            if e.active and e.src not in out:
+                out[e.src] = [x for x in e.to if x in self.vertices]
+        return out
+
     def descendants(self, vid: str) -> set[str]:
+        # One forward index for the whole walk. Without it every step rescans
+        # the edge list to find one active edge.
+        kids = self._forward()
         seen: set[str] = set()
-        stack = list(self.children(vid))
+        stack = list(kids.get(vid, ()))
         while stack:
             cur = stack.pop()
             if cur in seen:
                 continue
             seen.add(cur)
-            stack.extend(self.children(cur))
+            stack.extend(kids.get(cur, ()))
         return seen
 
     def ancestors(self, vid: str,
                   _into: dict[str, set[str]] | None = None) -> set[str]:
-        """Everything `vid` rests on, transitively. `_into` as in `depends`."""
+        """Everything `vid` rests on, transitively.
+
+        Builds its own reverse index when the caller has none. Without one this
+        rescanned the whole edge list at every step of the walk, which on a
+        10,000-vertex store was 3.3 s for a single question — `dg find above:`
+        and `dg context` each ask it once, and paid that. `_into` is still
+        taken so a caller already holding one does not build a second.
+        """
+        if _into is None:
+            _into = self._reverse()
         seen: set[str] = set()
         stack = list(self.depends(vid, _into))
         while stack:
