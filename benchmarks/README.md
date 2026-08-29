@@ -354,6 +354,17 @@ of them, and what a next session should pick up.
 
 ## Reproducing
 
+**Every "before" number here is against the tag `efficiency-study-baseline`**
+(`fef6e25`), which is `main` as it stood before any of this work. Nothing in
+`results/` compares against the previous commit; they all compare against that
+one tree, which is the only measurement in the project that never rebaselines
+— and the reason a lens cache 4.7x slower than the tool had ever been was
+caught while 1,981 tests passed.
+
+```sh
+git show efficiency-study-baseline --stat | head -3    # the tree behind the "before" column
+```
+
 ```sh
 cd tools/dear-guide
 
