@@ -1880,3 +1880,51 @@ def test_the_blocked_rule_is_not_quadratic_in_the_store():
     assert calls == [0, 0], (
         f"`validate` still scans for the BLOCKED rule: {calls} edge records "
         f"considered at n=200 and n=800")
+
+
+def test_the_declined_answers_are_read_through_the_index_not_scanned():
+    """`rejected` is `history`'s counterpart, and the one a person actually
+    reads: `dg node`'s "Offered and not adopted", the panel's declined cards.
+
+    `history` was given the index when the renderers were indexed and this was
+    not — so both doors that ask it *per vertex*, the renderer and the web
+    payload, scanned the whole edge list once per record. That was 90% of
+    `render` on a 10,000-vertex store, and `dg check` rebuilds the view to test
+    whether it is stale, so it was most of the commit gate.
+
+    Counted and not timed, as the BLOCKED rule above: what must not grow with
+    the store is the number of edge records considered."""
+    from dgraph import render as r
+    from dgraph import server
+    from dgraph.model import Edge, Graph, Vertex
+
+    n = 60
+    ids = [f"D{i:04d}" for i in range(n)]
+    graph = Graph(
+        areas=["a"],
+        vertices={i: Vertex(i, "t", "a", "DECIDED") for i in ids},
+        edges=[Edge(ids[i], [ids[i + 1]], active=True, answer="ans",
+                    falsifier="f", source="s", date="2026-01-01")
+               for i in range(n - 1)])
+    # One genuine declined answer, so the branch this feeds is not dead.
+    graph.edges.append(Edge(ids[0], [], active=False, answer="theirs",
+                            source="them", date="2026-01-02",
+                            from_source="another writer"))
+
+    real, scans = Graph.rejected, []
+
+    def counting(self, vid, _by=None):
+        if _by is None:
+            scans.append(vid)
+        return real(self, vid, _by) if "_by" in real.__code__.co_varnames \
+            else real(self, vid)
+
+    Graph.rejected = counting
+    try:
+        assert "Offered and not adopted" in r.render(graph)
+        assert server.graph_payload(graph)["derived"][ids[0]]["declined"]
+    finally:
+        Graph.rejected = real
+    assert scans == [], (
+        f"`rejected` was scanned rather than looked up for {len(scans)} "
+        f"record(s) — the renderer and the payload ask it once per vertex")

@@ -325,16 +325,23 @@ class Graph:
             key=lambda e: e.date or "",
         )
 
-    def rejected(self, vid: str) -> list[Edge]:
+    def rejected(self, vid: str, _by=None) -> list[Edge]:
         """Answers offered to this question and not adopted, oldest first.
 
         `history`'s counterpart. A reader needs both and needs them apart: one
         says *we changed our mind*, the other says *somebody else answered this
         differently and we did not take it*.
+
+        Takes the grouping for the same reason `history` does, and it is the
+        reason the pair has to be read together: both doors that ask this ask
+        it once per vertex — the renderer and the web payload — and on a store
+        with no declined answers at all it still scanned every edge to find
+        none. Empty answer, full price.
         """
+        rows = _by.get(vid, ()) if _by is not None else (
+            e for e in self.edges if e.src == vid)
         return sorted(
-            (e for e in self.edges
-             if e.src == vid and e.from_source is not None),
+            (e for e in rows if e.from_source is not None),
             key=lambda e: e.date or "",
         )
 

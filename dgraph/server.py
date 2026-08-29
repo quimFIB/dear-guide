@@ -157,7 +157,7 @@ def graph_payload(g: Graph) -> dict:
                 {"from_source": h.from_source, "answer": h.answer,
                  "falsifier": h.falsifier, "source": h.source,
                  "date": h.date, "to": list(h.to), "format": h.format}
-                for h in g.rejected(vid)
+                for h in g.rejected(vid, by_src)
             ],
         }
         for vid in g.vertices

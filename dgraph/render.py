@@ -108,7 +108,7 @@ def _section(g: Graph, vid: str, _by=None, _into=None) -> str:
             out.append(f"*Also current:* "
                        f"{orgmd.to_markdown(other.answer, fmt=other.format)}")
 
-    turned_down = g.rejected(vid)
+    turned_down = g.rejected(vid, _by)
     if turned_down:
         out.append("")
         out.append("*Offered and not adopted:* " + " · ".join(
