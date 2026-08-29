@@ -278,8 +278,13 @@ class Graph:
         reader, which is what `F-F4` is. Anything that *shows* an answer to a
         person asks `rival_answers` first.
         """
-        for e in (self.edges if _by is None else _by.get(vid, ())):
-            if (_by is not None or e.src == vid) and e.active:
+        if _by is not None:
+            for e in _by.get(vid, ()):
+                if e.active:
+                    return e
+            return None
+        for e in self.edges:
+            if e.src == vid and e.active:
                 return e
         return None
 
@@ -313,10 +318,10 @@ class Graph:
         it is what stops `dg integrate` reading a rejected answer as a reopen,
         since that derivation counts archived edges to recover the acts.
         """
+        rows = (e for e in _by.get(vid, ())) if _by is not None else (
+            e for e in self.edges if e.src == vid)
         return sorted(
-            (e for e in (self.edges if _by is None else _by.get(vid, ()))
-             if (_by is not None or e.src == vid)
-             and not e.active and e.from_source is None),
+            (e for e in rows if not e.active and e.from_source is None),
             key=lambda e: e.date or "",
         )
 
