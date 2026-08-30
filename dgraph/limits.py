@@ -143,6 +143,7 @@ from pathlib import Path
 # `launch` means. They are imported back under the names they have always had:
 # this module is where the *judgement* is, and every call site of
 # `limits.write_policy` still reads correctly.
+from dgraph import project
 from dgraph.env import (BUDGET_ENV, INFINITE, SILENT_DEFAULT,  # noqa: F401
                         SILENT_ENV, TERSE_DEFAULT, TERSE_ENV, TERSE_OFF,
                         WRITE_ENV, WRITE_POLICIES, BadSpan, approx_span,
@@ -205,6 +206,27 @@ def writable_roots(root: Path | None) -> list[str]:
     return sorted(set(out))
 
 
+def protected_paths(root: Path | None) -> list[str]:
+    """The files *inside* a writable root that an agent must not write directly.
+
+    The two stores, and only those. Everything else under the project is an
+    agent's to write: findings, code, both trays -- staging is how a fan-out
+    proposes, so a tray an agent could not write would leave it nothing to do.
+
+    The views are deliberately absent. `decision-graph.md` and `tasks.md` are
+    generated, and an agent runs `dg render` like anybody else; protecting them
+    would refuse the tool its own output.
+
+    **This is the same list a confinement backend seals**, which is why it lives
+    here beside `writable_roots` rather than in whichever launcher renders it.
+    One policy, rendered per platform -- the alternative is a mount set and a
+    verdict free to disagree about what the record is.
+    """
+    if root is None:
+        return []
+    return [_real(root / project.STORE_NAME), _real(root / project.TASKS_NAME)]
+
+
 def refuse_write(path, owner: str | None, root: Path | None,
                  chosen: str | None = None) -> str | None:
     """Why this write is the person's call -- or `None` if the agent may make it.
@@ -214,6 +236,17 @@ def refuse_write(path, owner: str | None, root: Path | None,
     """
     if owner is None:
         return None
+    # Before `$DG_WRITE`, and deliberately so. The stores sit *inside* the
+    # writable root, so every scope check passes them and the refusal, when it
+    # came at all, came from the filesystem: `Device or resource busy`, which
+    # names no fix and no rule. This is a statement about the *mechanism* --
+    # the record is reached through `dg` -- rather than about scope, so it
+    # holds at `open` too, where scope has nothing to say.
+    if str(path).strip() and _real(path) in protected_paths(root):
+        return (f"{owner} may not write {_real(path)} with an editor — it is "
+                f"the record, and every op reaches it through `dg`. Stage the "
+                f"change (`dg add`, `dg decide`, `dg task …`); applying the "
+                f"tray is the supervisor's call")
     if write_policy(chosen) == "open":
         return None
     if not str(path).strip():

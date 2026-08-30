@@ -390,3 +390,47 @@ def test_the_values(value, limit):
     `$DG_WRITE`: a typo in a launcher's environment must not take the graph
     away from the supervisor sharing the tray."""
     assert limits.terse_limit(value) == limit
+
+
+# ---- the record is reached through `dg`, not through an editor -------------
+#
+# The stores sit *inside* the writable root, so every scope check passed them
+# and the refusal, where it came at all, came from the filesystem once a
+# confinement backend had sealed them: `Device or resource busy`, which names
+# no rule and no fix. This is the verdict that names both.
+
+def test_the_stores_are_refused_with_a_reason_that_names_the_fix(tmp_path):
+    why = limits.refuse_write(tmp_path / "decisions.json", "brisk-beacon",
+                              tmp_path, "launch")
+    assert why and "dg add" in why and "supervisor" in why
+
+
+def test_the_stores_are_refused_at_open_too(tmp_path):
+    """A statement about the *mechanism*, not about scope — so `open`, which
+    has nothing to say about scope, does not license it either."""
+    for store in ("decisions.json", "tasks.json"):
+        assert limits.refuse_write(tmp_path / store, "brisk-beacon",
+                                   tmp_path, "open") is not None
+
+
+def test_the_trays_and_the_views_stay_writable(tmp_path):
+    """Staging is how a fan-out proposes, and a view is the tool's own output.
+    A rule that caught either would leave an agent nothing to do."""
+    for name in (".dgraph-pending.json", ".dgraph-task-pending.json",
+                 "decision-graph.md", "tasks.md", "findings/x.md"):
+        assert limits.refuse_write(tmp_path / name, "brisk-beacon",
+                                   tmp_path, "launch") is None
+
+
+def test_the_supervisor_may_still_write_the_stores(tmp_path):
+    """`None` is not a lesser identity — `dg repair` is a thing a person does."""
+    assert limits.refuse_write(tmp_path / "decisions.json", None,
+                               tmp_path, "launch") is None
+
+
+def test_protected_paths_is_the_list_a_backend_seals(tmp_path):
+    """One policy, rendered per platform. A mount set built from somewhere else
+    would be free to disagree with the verdict about what the record is."""
+    assert limits.protected_paths(tmp_path) == [
+        str(tmp_path / "decisions.json"), str(tmp_path / "tasks.json")]
+    assert limits.protected_paths(None) == []
