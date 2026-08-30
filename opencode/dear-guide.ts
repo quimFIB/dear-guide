@@ -28,6 +28,22 @@ const COMPACTED =
  */
 const TRIGGERS = ["commit", "rm"]
 
+/**
+ * How long the gate is told this adapter will wait, in seconds.
+ *
+ * `dg gate` stopped being a pure function when the consent broker landed: it
+ * can block while a person decides. **The caller owns the bound** — the gate
+ * answers `deny` before it runs out, rather than the caller deciding the
+ * question by giving up.
+ *
+ * `$` here has no timeout of its own, so nothing would ever have forced the
+ * issue on this host — and that is exactly why the number is passed. Claude
+ * Code's hooks gave up at 5 seconds and allowed the write, opencode waited
+ * forever, and one rule with two answers by host is what the gate exists to
+ * prevent. It is kept equal to `hooks/prewrite.py`'s `DEADLINE` by a test.
+ */
+const DEADLINE = "100"
+
 /** The same switch both Claude Code hooks honour. Documented in the README. */
 function off(): boolean {
   const v = (process.env.DG_HOOK_OFF ?? "").trim()
@@ -164,7 +180,7 @@ export const DearGuidePlugin: Plugin = async ({ $, directory }) => {
       if (field && (process.env.DG_AGENT ?? "").trim()) {
         const target = String((output.args as any)?.[field] ?? "")
         if (target) {
-          const { code, out } = await run("gate", "--write", target, "--json")
+          const { code, out } = await run("gate", "--write", target, "--deadline", DEADLINE, "--json")
           // Silent on every failure, unlike the commit gate below. An
           // unjudged commit may record a contradiction permanently; an
           // unjudged write is an ordinary file operation nobody asked to be
@@ -221,7 +237,9 @@ export const DearGuidePlugin: Plugin = async ({ $, directory }) => {
       // (2) stay silent, for the reason the brief does; anything else says so,
       // because a command that went through unchecked must not look identical
       // to a project that never had a graph.
-      const { code, out } = await run("gate", "--command", command, "--json")
+      const { code, out } = await run(
+        "gate", "--command", command, "--deadline", DEADLINE, "--json",
+      )
       if (code === null || code === 127 || code === 2) return
       if (code !== 0) {
         console.error(

@@ -472,7 +472,8 @@ def _origin(v) -> str | None:
     return v.origin
 
 
-def verdict(command: str, proj: project.Project | None = None) -> dict:
+def verdict(command: str, proj: project.Project | None = None,
+            deadline: float | None = None) -> dict:
     """The gate. Never raises, never blocks on anything, always answers.
 
     "Never raises" is load-bearing: both host adapters read a crash as "no
@@ -488,7 +489,7 @@ def verdict(command: str, proj: project.Project | None = None) -> dict:
         # so it is asked only when a trigger word is present. `combine` returns
         # the strongest and carries both reasons, which is how `dg rm D01 &&
         # git commit` already answered two rules at once.
-        answers = [exec_verdict(command)]
+        answers = [exec_verdict(command, deadline)]
         if may_trigger(command):
             answers.append(_verdict(command, proj))
         return combine(answers)
@@ -501,7 +502,8 @@ def verdict(command: str, proj: project.Project | None = None) -> dict:
         }
 
 
-def write_verdict(path: str, proj: project.Project | None = None) -> dict:
+def write_verdict(path: str, proj: project.Project | None = None,
+                  deadline: float | None = None) -> dict:
     """The same gate, asked about a write instead of a command.
 
     This is what makes the agent write scope host-neutral. The policy is
@@ -509,9 +511,15 @@ def write_verdict(path: str, proj: project.Project | None = None) -> dict:
     policy of their own, so widening the gate here widens it under Claude Code
     and opencode at once, and a third host earns it by relaying the same shape.
 
-    Only ever `allow` or `ask`. The rule is consent rather than prohibition —
-    see `limits` — so there is no write this can deny outright, and an adapter
-    that only knows how to relay a refusal still passes the reason on.
+    `allow` or `ask` on its own, and `deny` only where a broker resolved it —
+    the rule is consent rather than prohibition, so there is no write *this
+    module* refuses outright; a `deny` here is somebody's answer, or the fact
+    that nobody gave one inside `deadline`. See `_resolved`.
+
+    `deadline` is what the caller will wait, in seconds. **The caller owns it**
+    (D26): passed down, the gate answers before that runs out, and the
+    adapter's own give-up branch is never reached. Unset means `broker`'s
+    default, which is for a person at a terminal with nothing timing them.
 
     Never raises, for the reason `verdict` gives: an exception reads as "no
     verdict" and the write proceeds. Unlike `verdict` the fallback is `allow`
@@ -533,10 +541,10 @@ def write_verdict(path: str, proj: project.Project | None = None) -> dict:
         return _allow()
     if not reason:
         return _allow()
-    return _resolved("write", path, owner, reason, root)
+    return _resolved("write", path, owner, reason, root, deadline)
 
 
-def exec_verdict(command: str) -> dict:
+def exec_verdict(command: str, deadline: float | None = None) -> dict:
     """The same gate, asked whether an agent may run this at all.
 
     A sibling of `write_verdict` rather than a branch of `verdict`, and the
@@ -546,16 +554,16 @@ def exec_verdict(command: str) -> dict:
     this program*, which is a question about the remit and has nothing to say
     about `TRIGGERS`.
 
-    **Nothing calls this yet, deliberately.** Both adapters send only what
-    `may_trigger` matches, so wiring this in means widening what they send —
-    every command rather than the two words — and until a broker exists to
-    answer an `ask`, a headless run has nobody to ask and every command would
-    be refused. The policy ships first; the switch is its own change.
+    **`verdict` calls this on every command it is given**, and both adapters
+    now send every command for an owned caller — see `may_trigger`. That switch
+    waited for the broker, because until something could answer an `ask` a
+    headless run had nobody to ask and every command would have been refused.
 
-    Only ever `allow` or `ask`, for the reason `write_verdict` gives: consent
-    rather than prohibition. Never raises, and falls back to `allow` for the
-    same reason it does there — a command this could not judge is not a record
-    this could not vouch for.
+    `allow` or `ask` on its own, and `deny` only where a broker resolved it, or
+    where nobody resolved it inside `deadline` — for the reason `write_verdict`
+    gives, and with the same caller-owned bound. Never raises, and falls back
+    to `allow` for the same reason it does there: a command this could not
+    judge is not a record this could not vouch for.
     """
     try:
         owner = pending.owner()
@@ -564,11 +572,11 @@ def exec_verdict(command: str) -> dict:
         return _allow()
     if not reason:
         return _allow()
-    return _resolved("exec", command, owner, reason)
+    return _resolved("exec", command, owner, reason, deadline=deadline)
 
 
 def _resolved(kind: str, target: str, owner: str | None, reason: str,
-              root=None) -> dict:
+              root=None, deadline: float | None = None) -> dict:
     """`ask`, unless a broker is listening and turns it into an answer.
 
     **No broker means no broker**, not a degraded one: `consult` answers `None`
@@ -584,9 +592,16 @@ def _resolved(kind: str, target: str, owner: str | None, reason: str,
     try:
         if not broker.listening(root):
             return {"verdict": "ask", "reason": reason}
+        # `roots` was in the request's shape from the start and was never
+        # filled by the only caller — so the broker could not tell a grant it
+        # could implement from one the floor would overrule. It is the gate
+        # that knows, because it is what the gate just judged against. `P-F11`.
         req = broker.request(kind, str(target), owner or "", reason,
-                             holding=_holding(owner))
-        res = broker.consult(req, root)
+                             holding=_holding(owner),
+                             roots=(limits.writable_roots(root)
+                                    if kind == "write" else None))
+        res = (broker.consult(req, root) if deadline is None
+               else broker.consult(req, root, deadline))
     except Exception:
         return {"verdict": "ask", "reason": reason}
     if not res:

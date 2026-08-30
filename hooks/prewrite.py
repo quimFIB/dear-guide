@@ -22,10 +22,25 @@ import shutil
 import subprocess
 import sys
 
-#: Smaller than `precommit.py`'s. That gate shells out to `git` several times;
-#: this one resolves two paths and compares strings, so a second is already
-#: generous and the cost of waiting is paid on every single write.
-TIMEOUT = 5
+#: Three numbers and one relation: `DEADLINE < TIMEOUT < the host's own`, the
+#: last of which is `timeout` on this hook's entry in `hooks/hooks.json`.
+#: `tests/test_plugin.py` asserts the chain, because it is a chain only as long
+#: as nobody edits one number alone.
+#:
+#: **This used to be 5, and the comment above it said a second was generous
+#: because the gate "resolves two paths and compares strings".** That was true
+#: of a pure function. `dg gate` can now block on a consent broker while a
+#: person decides, and a caller that gives up first has decided the question
+#: itself — silently, and in the direction of allowing the write. Audit `P-F1`.
+#:
+#: So the gate is *told* what this will wait for, and answers `deny` before it
+#: runs out; the branch below is the backstop for a `dg` that hung rather than
+#: the ordinary path. The number is large because the cost is paid only when
+#: somebody is actually being asked — with no broker listening the gate still
+#: answers in milliseconds, and a project that never heard of this pays
+#: nothing.
+DEADLINE = 100
+TIMEOUT = 110
 
 #: The tools whose input names a file this hook should judge, and the field the
 #: path arrives in. `Read`, `Grep` and `Glob` are deliberately absent: reads are
@@ -78,17 +93,36 @@ def main() -> int:
         return 0
     try:
         r = subprocess.run(
-            [dg, "gate", "--write", path, "--json"],
+            [dg, "gate", "--write", path, "--deadline", str(DEADLINE), "--json"],
             cwd=payload.get("cwd") or os.getcwd(), capture_output=True,
             text=True, errors="replace", timeout=TIMEOUT,
         )
+    except subprocess.TimeoutExpired:
+        # **A refusal, not a silence.** The gate was given `DEADLINE` and this
+        # waits `TIMEOUT`, so reaching here means `dg` itself hung rather than
+        # that a supervisor was slow — and a write allowed because the judge
+        # never came back is the one outcome this hook exists to prevent. It is
+        # the same reasoning `broker.consult` already applies to an unreachable
+        # decider one layer in.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                f"dg gate did not answer within {TIMEOUT}s, so this write was "
+                f"judged by nothing. An unjudged write is not consent. "
+                f"`dg check` says whether the graph is readable; "
+                f"`DG_HOOK_OFF=1` turns this off deliberately."),
+        }}))
+        return 0
     except Exception:
-        # Every failure to run the gate is silent here, and that is the
+        # Every *other* failure to run the gate is silent here, and that is the
         # opposite of `precommit.py`, which says so. The asymmetry follows
         # `gate.write_verdict`'s: an unjudged commit may record a contradiction
-        # permanently, while an unjudged write is an ordinary file operation
-        # nobody asked to be consulted about. Announcing every one of those
-        # would train the reader to ignore the message that matters.
+        # permanently, while a write the gate could not be *run* for is an
+        # ordinary file operation nobody asked to be consulted about.
+        # Announcing every one of those would train the reader to ignore the
+        # message that matters. A timeout is not among them any more, because
+        # it is the case where something *was* deciding.
         return 0
     if r.returncode != 0:
         return 0

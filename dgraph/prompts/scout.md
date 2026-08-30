@@ -146,6 +146,19 @@ You are running under **`$DG_WRITE=⟨WRITE⟩`**. ⟨WRITE_PROSE⟩
 Put what you produce at `⟨FINDINGS⟩`, one file per task, and name it in the
 `--outcome` when you finish.
 
+<!-- ⟨AREA_PROSE⟩: whether a new area may be filed under, and what happens. -->
+⟨AREA_PROSE⟩
+
+## What you may run
+
+<!-- ⟨EXEC_PROSE⟩: the allowlist, and what a command outside it does. This is
+     usually the first rule you meet, so it is stated rather than discovered. -->
+⟨EXEC_PROSE⟩
+
+<!-- ⟨CONFINE_PROSE⟩: whether a floor is under all of the above, and what it
+     means for a refusal that arrives from the kernel rather than from `dg`. -->
+⟨CONFINE_PROSE⟩
+
 ## Your budget
 
 <!-- ⟨BUDGET_PROSE⟩: how long, and what to do about it — or that none was set. -->

@@ -282,6 +282,26 @@ def exec_allow(value: str | None = None) -> tuple[str, ...]:
         tok for tok in raw.split() if tok and not (NOT_A_NAME & set(tok))))
 
 
+def _confine_modes() -> tuple[str, ...]:
+    """`confine.CONFINE_MODES`, read rather than copied.
+
+    Every other entry in `VARS` reads its tuple from the module that owns it, so
+    a value added there is a value this table knows about. These two were
+    spelled out as literals — inert while `_read_confine` bypassed `.choices`,
+    and wrong the day a third backend lands. Audit `P-F12`.
+
+    Imported late for the reason `_confine_mode` gives: `confine` reads
+    `limits`, which reads this module.
+    """
+    from dgraph import confine
+    return confine.CONFINE_MODES
+
+
+def _backends() -> tuple[str, ...]:
+    from dgraph import confine
+    return confine.BACKENDS
+
+
 def _confine_mode(raw: str | None) -> str:
     """`$DG_CONFINE`, parsed for a *decision*. See `confine.mode`, which owns
     the values; imported late because `confine` reads `limits`, which reads
@@ -400,11 +420,11 @@ VARS: tuple[Var, ...] = (
         exec_allow, _show_exec_allow, "nothing — every command asks",
         fails_open=False),
     Var(CONFINE_ENV, "whether a floor is required below the tool layer",
-        _confine_mode, str, "off", fails_open=False,
-        choices=("off", "require")),
+        _confine_mode, str, _confine_modes()[0], fails_open=False,
+        choices=_confine_modes()),
     Var(FLOOR_ENV, "which backend provides it",
-        _floor_backend, str, "host", fails_open=False,
-        choices=("host", "bwrap")),
+        _floor_backend, str, _backends()[0], fails_open=False,
+        choices=_backends()),
     Var(AREA_ENV, "whether it may file under a new area",
         area_policy, str, AREA_POLICIES[0], fails_open=True,
         choices=AREA_POLICIES),

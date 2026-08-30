@@ -67,12 +67,36 @@ ENV_FIELDS = {"decide": "DG_DECIDE", "write": "DG_WRITE",
               "budget": "DG_BUDGET", "exec_allow": "DG_EXEC_ALLOW",
               "confine": "DG_CONFINE", "floor": "DG_FLOOR"}
 
+
+@dataclass(frozen=True)
+class Host:
+    """One runner a launch line can be generated for.
+
+    `carries` is why this is a record rather than a string. A confinement
+    backend expressed as the runner's own settings can only be applied by a
+    spawn line speaking that runner's vocabulary — so *which* runners can apply
+    it is a fact about the runner, and leaving it as an `== "claude"` in
+    `render_launch` is what produced `P-F2`: an opencode plan declaring a floor
+    that no line it generates could ever carry, with nothing to say so.
+
+    A backend that wraps the command is absent from every entry on purpose.
+    `dg-agent run` prepends those, host-neutrally, so no runner has to claim
+    one and a runner that did would be claiming credit for a floor it is not
+    applying.
+    """
+
+    #: The spawn, with `{prompt}` to fill.
+    spawn: str
+    #: Confinement backends this runner can carry itself.
+    carries: tuple[str, ...] = ()
+
+
 #: The hosts a launch line can be generated for. `mixed` is not among them
 #: because a fan-out across two hosts is two launch files, and pretending
 #: otherwise would produce a script that runs neither.
 HOSTS = {
-    "claude": 'claude -p "$(cat {prompt})"',
-    "opencode": 'opencode run "$(cat {prompt})"',
+    "claude": Host('claude -p "$(cat {prompt})"', carries=("host",)),
+    "opencode": Host('opencode run "$(cat {prompt})"'),
 }
 
 
@@ -280,6 +304,39 @@ def plan_env(spec: dict) -> dict[str, str]:
     return out
 
 
+def plan_fault(plan: Plan) -> str | None:
+    """Why this plan could never be launched as it stands — or `None`.
+
+    One combination, and it is the one no invocation can fix: a floor expressed
+    as the runner's own settings, under a runner that does not read them. There
+    is nothing to say at run time about that, because the pair is wrong rather
+    than the command — so it is refused where it is *written*, which is the
+    same place `--decide evidenced` is refused and for the same reason.
+
+    Derived from `Host.carries` and `confine.configures_runner`, never from a
+    host's name. The `== "claude"` this replaces is what let the pair be written
+    in the first place.
+    """
+    from dgraph import confine as _confine
+    if plan.confine == "off":
+        return None
+    try:
+        if not _confine.configures_runner(plan.floor, None):
+            return None
+    except ValueError as exc:
+        return str(exc)
+    host = HOSTS.get(plan.host)
+    if host is None or plan.floor in host.carries:
+        return None
+    portable = [b for b in _confine.BACKENDS if not _confine.configures_runner(b, None)]
+    return (f"a {plan.floor!r} floor is the runner's own settings, and "
+            f"{plan.host} does not read them — so no line generated here could "
+            f"apply it and the run would be unconfined while saying otherwise. "
+            f"Use --floor {' or '.join(portable) or 'a backend that wraps the '
+            f'command'}, which wraps the command under any runner, or "
+            f"--confine off and mean it")
+
+
 def readiness(proj: project.Project | None = None) -> list[Check]:
     """What has to be true before a fan-out can start.
 
@@ -455,14 +512,86 @@ def _terse_prose(value: str) -> str:
 
 
 def _write_prose(policy: str, root: Path) -> str:
+    """Where writes may go, and the two files inside that scope that are not
+    an agent's to write.
+
+    **The stores are named, and that is `P-F5`.** This used to promise writing
+    "freely" under the roots, which stopped being true when
+    `limits.protected_paths` landed: `decisions.json` and `tasks.json` are
+    inside every one of those roots and are refused by a different rule, with a
+    different fix. A prompt that promises a scope the gate will not give is
+    worse than one that said nothing, because the agent has no way to check.
+    """
+    stores = ", ".join(f"`{Path(p).name}`" for p in limits.protected_paths(root))
+    record = (f" The one exception is the record itself — {stores} — which "
+              f"nothing writes with an editor. Every change to it goes through "
+              f"`dg` and lands in the tray; applying the tray is the "
+              f"supervisor's call." if stores else "")
     if policy == "open":
         return ("Your writes are not scoped. Stay inside the project anyway "
-                "unless you have been told otherwise.")
+                "unless you have been told otherwise." + record)
     roots = ", ".join(f"`{r}`" for r in limits.writable_roots(root))
     return (f"You may write freely under {roots}. A write anywhere else stops "
             f"and asks the person — that is the policy, not a broken tool, so "
             f"put the file somewhere in scope or say what you need and why. "
-            f"Reading is never restricted.")
+            f"Reading is never restricted." + record)
+
+
+def _exec_prose(names: list[str]) -> str:
+    """What may be run without asking, and what an unlisted command does.
+
+    Stated rather than discovered. This is usually the *first* rule an agent
+    meets — it fires before a single write — and the prompt said nothing about
+    it at all, so a scout met a refusal naming a variable it had never been
+    told existed, with no move but to guess. `P-F5`.
+    """
+    if not names:
+        return ("**Nothing is on your exec allowlist**, so every command you "
+                "run is put to the person first. That is a launcher that has "
+                "not filled `$DG_EXEC_ALLOW` in rather than a rule about you — "
+                "say so early, because until it is set you cannot even run "
+                "`dg`.")
+    shown = ", ".join(f"`{n}`" for n in names)
+    return (f"You may run {shown} without asking. **Anything else stops and "
+            f"goes to the person**, and so does any command line that runs "
+            f"more than one program — a pipe, a redirect, `&&`, a subshell — "
+            f"because which program *that* runs cannot be read off the front "
+            f"of it. Run the parts separately, or ask for the line as written "
+            f"and it will be remembered for the rest of your run. This is the "
+            f"policy, not a broken tool.")
+
+
+def _confine_prose(mode: str, floor: str) -> str:
+    """Whether a kernel-level floor sits under all of the above.
+
+    Worth a paragraph because of what a refusal *looks like* when it comes from
+    there: `Device or resource busy` or `Read-only file system`, from the tool
+    the agent happened to be using, with no rule named. An agent that has been
+    told the floor exists reads that as a boundary; one that has not reads it
+    as a broken machine and retries.
+    """
+    if mode == "off":
+        return ("No kernel-level floor is in place, so the rules above are "
+                "enforced by `dg` and the gate. Hold to them anyway.")
+    return (f"A confinement floor (`{floor}`) sits under all of the above, so "
+            f"the boundaries are enforced by the kernel and not only by the "
+            f"tooling. A refusal from it does **not** name a rule — you will "
+            f"see `Read-only file system` or `Device or resource busy` from "
+            f"whatever tool you were using. That is this policy, not a broken "
+            f"machine and not something to retry: check the scope above, and "
+            f"if the write was legitimate, say what you need and why.")
+
+
+def _area_prose(policy: str) -> str:
+    if policy == "strict":
+        return ("**`$DG_AREA=strict`**: you may file only under an area "
+                "already in use. A genuinely new one is refused at stage time "
+                "and goes back to a person as a proposal — say what it should "
+                "be called and why.")
+    return ("**`$DG_AREA=open`**: you may file under a new area, though one "
+            "that closely resembles an area already in use is refused so that "
+            "two names for one thing do not appear. Prefer an area already in "
+            "use; the list above is what there is.")
 
 
 def _budget_prose(seconds: int | None) -> str:
@@ -554,6 +683,9 @@ def render_scout(plan: Plan, proj: project.Project | None = None) -> str:
         "WRITE_PROSE": _write_prose(plan.write, proj.root),
         "FINDINGS": plan.findings,
         "BUDGET_PROSE": _budget_prose(plan.budget),
+        "AREA_PROSE": _area_prose(plan.area),
+        "EXEC_PROSE": _exec_prose(list(plan.exec_allow)),
+        "CONFINE_PROSE": _confine_prose(plan.confine, plan.floor),
     }
     for token, value in fills.items():
         body = body.replace(f"⟨{token}⟩", value)
@@ -580,7 +712,7 @@ def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
     """
     proj = proj or project.find()
     prompt = f"{plan.out}/scout.md"
-    spawn = HOSTS[plan.host].format(prompt=shlex.quote(prompt))
+    spawn = HOSTS[plan.host].spawn.format(prompt=shlex.quote(prompt))
     # The half of the floor `dg-agent run` cannot apply. A backend that wraps
     # the command is host-neutral and is prepended there; one that configures
     # the runner speaks the runner's own vocabulary, so it can only be carried
@@ -590,12 +722,14 @@ def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
     # and a launcher's own settings are the ones a runner honours, so this is
     # the version that is obviously out of an agent's reach rather than out of
     # reach by a second rule.
-    if plan.confine != "off" and plan.host == "claude":
+    carried = False
+    if plan.confine != "off" and plan.floor in HOSTS[plan.host].carries:
         from dgraph import confine as _confine
         arg = _confine.settings_arg(_confine.render(plan.floor, proj.root))
         if arg:
             spawn = spawn.replace("claude -p",
                                   f"claude --settings {shlex.quote(arg)} -p", 1)
+            carried = True
     env_file = shlex.quote(f"{plan.out}/{ENV_NAME}")
     lines = [
         "#!/usr/bin/env bash",
@@ -646,7 +780,8 @@ def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
             ]
     lines += [
         "for i in $(seq 1 %d); do" % plan.agents,
-        f"  dg-agent run --plan {env_file} \\",
+        f"  dg-agent run{' --floor-applied' if carried else ''} "
+        f"--plan {env_file} \\",
         f"    -- {spawn} &",
         "done",
         "",

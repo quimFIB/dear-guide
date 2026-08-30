@@ -228,3 +228,124 @@ def test_only_the_host_neutral_half_is_prepended(tmp_path, monkeypatch):
     assert _floor_prefix({"DG_CONFINE": "require", "DG_FLOOR": "host"}) == []
     prefix = _floor_prefix({"DG_CONFINE": "require", "DG_FLOOR": "bwrap"})
     assert prefix and prefix[0] == "bwrap" and prefix[-1] == "--"
+
+
+# ---- backend x launcher: is the carrier this backend needs applied? --------
+#
+# `P-F2`. The preflight asks whether a backend is *available*. Neither half of
+# it asked whether the carrier that backend renders was ever *applied*, and for
+# `host` — the default — `dg-agent run` applies nothing at all.
+
+def test_a_backend_says_which_half_of_the_launch_carries_it(tmp_path):
+    """The seam, asked as a question rather than inferred at each call site.
+
+    `bwrap` renders an argv prefix, which anything can prepend; `host` renders
+    settings, which only a spawn line speaking that runner's vocabulary can
+    carry. Every refusal below turns on this distinction, so it is derived from
+    the rendering rather than written down beside it."""
+    assert confine.configures_runner("host", tmp_path)
+    assert not confine.configures_runner("bwrap", tmp_path)
+
+
+def test_a_run_that_cannot_apply_its_own_floor_is_refused(tmp_path, monkeypatch):
+    """The finding: `$DG_CONFINE=require` with the default backend spawned an
+    unconfined child while every surface reported a floor."""
+    from typer.testing import CliRunner
+    from dgraph import agents
+    from dgraph.agent_cli import app
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(confine, "available", lambda b: (True, ""))
+
+    res = CliRunner().invoke(app, ["run", "--", "true"], env={
+        "DG_CONFINE": "require", "DG_FLOOR": "host"})
+    assert res.exit_code == 2, res.output
+    assert agents.load(tmp_path) == {}, "a name was claimed for a run that never happened"
+
+    # …and the token is what says the other half was applied upstream.
+    ok = CliRunner().invoke(app, ["run", "--floor-applied", "--", "true"], env={
+        "DG_CONFINE": "require", "DG_FLOOR": "host"})
+    assert ok.exit_code == 0, ok.output
+
+
+def test_the_token_is_only_about_the_half_this_command_cannot_apply(tmp_path,
+                                                                    monkeypatch):
+    """`bwrap` is prepended here, so it needs no assertion from anybody — and
+    claiming one must not be how a launcher gets out of a floor that *is*
+    applicable."""
+    from typer.testing import CliRunner
+    from dgraph.agent_cli import app, _floor_prefix
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(confine, "available", lambda b: (True, ""))
+    assert _floor_prefix({"DG_CONFINE": "require", "DG_FLOOR": "bwrap"})
+    res = CliRunner().invoke(app, ["run", "--", "true"], env={
+        "DG_CONFINE": "require", "DG_FLOOR": "bwrap"})
+    assert res.exit_code == 0, res.output
+
+
+# ---- the store is sealed on purpose; say so (`P-F4`) ----------------------
+
+def test_a_sealed_store_says_which_rule_sealed_it(tmp_path, monkeypatch):
+    """`T04` taught the *gate* to name the store rather than leaving the kernel
+    to say it. `dg`'s own writes do not go through the gate and still met the
+    kernel: `dg apply --mine` — the step the agent loop runs right after
+    `dg task start` — failed with `Device or resource busy` reported as
+    "tasks.json could not be read", which is wrong about the operation and
+    names a `dg check` that will report a healthy graph."""
+    from dgraph import project
+    store = tmp_path / project.STORE_NAME
+    store.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("DG_CONFINE", "require")
+
+    def sealed(*a, **kw):
+        raise OSError(16, "Device or resource busy")
+
+    monkeypatch.setattr(project.os, "replace", sealed)
+    with pytest.raises(project.Sealed) as exc:
+        project.write_atomic(store, "{}")
+
+    said = str(exc.value)
+    assert "confinement floor" in said and project.STORE_NAME in said
+    assert "dg apply" in said or "supervisor" in said
+    assert "could not be read" not in said
+
+
+def test_an_ordinary_write_failure_is_not_dressed_up_as_a_floor(tmp_path,
+                                                                monkeypatch):
+    """A full disk under a confined run is still a full disk. Only the two
+    errors a read-only bind actually raises, and only on a protected path."""
+    from dgraph import project
+    monkeypatch.setenv("DG_CONFINE", "require")
+    store = tmp_path / project.STORE_NAME
+    store.write_text("{}", encoding="utf-8")
+
+    def full(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(project.os, "replace", full)
+    with pytest.raises(OSError) as exc:
+        project.write_atomic(store, "{}")
+    assert not isinstance(exc.value, project.Sealed)
+
+    # …and an ordinary file, sealed or not, is nobody's record.
+    other = tmp_path / "findings.md"
+    monkeypatch.setattr(project.os, "replace",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            OSError(16, "Device or resource busy")))
+    with pytest.raises(OSError) as exc:
+        project.write_atomic(other, "x")
+    assert not isinstance(exc.value, project.Sealed)
+
+
+def test_no_floor_declared_means_no_floor_blamed(tmp_path, monkeypatch):
+    """`$DG_CONFINE` unset is the default. A busy store there is a fact about
+    the filesystem, not about a rule nobody asked for."""
+    from dgraph import project
+    monkeypatch.delenv("DG_CONFINE", raising=False)
+    store = tmp_path / project.TASKS_NAME
+    store.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(project.os, "replace",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            OSError(16, "Device or resource busy")))
+    with pytest.raises(OSError) as exc:
+        project.write_atomic(store, "{}")
+    assert not isinstance(exc.value, project.Sealed)

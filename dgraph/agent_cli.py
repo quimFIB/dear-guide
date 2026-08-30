@@ -59,8 +59,9 @@ import json
 import os
 import shlex
 import subprocess
+import time as _time
 import sys
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import date as _date
 
 import typer
@@ -199,13 +200,22 @@ def agent_claim(
 @app.command("list")
 def agent_list() -> None:
     """Every name held, when it was claimed, and what it still has staged."""
+    from dgraph import broker as _broker
+    proj = project.find()
     leases = agents.load()
-    staged = agents.in_trays(project.find())
+    staged = agents.in_trays(proj)
     if not leases and not staged:
         cli.con.print("[dim]no names claimed[/]")
         return
+    # Only where a broker is running, because the column can only ever be empty
+    # otherwise and an always-blank column reads as "nobody is waiting" rather
+    # than "nothing could tell you". `P-F7`.
+    blocked = _broker.waiting(proj.root)
+    columns = ["Name", "Since", "Staged", "Holding", "Budget", "Seen"]
+    if _broker.listening(proj.root):
+        columns.append("Waiting")
     t = Table(header_style="bold", title="Names held")
-    for c in ("Name", "Since", "Staged", "Holding", "Budget", "Seen"):
+    for c in columns:
         t.add_column(c)
     quiet_names = {r["agent"] for r in agents.silent()}
     # Names with ops but no lease are listed too, and marked. That is what a
@@ -235,9 +245,19 @@ def agent_list() -> None:
             seen = f"[yellow]silent {limits.approx_span(quiet)}[/]"
         else:
             seen = limits.approx_span(quiet)
-        t.add_row(cli._x(name), since, str(staged.get(name, 0)),
-                  ", ".join(rec.get("holding") or ()) or "[dim]—[/]", spend,
-                  seen)
+        row = [cli._x(name), since, str(staged.get(name, 0)),
+               ", ".join(rec.get("holding") or ()) or "[dim]—[/]", spend, seen]
+        if "Waiting" in columns:
+            # `Seen` cannot say this and has not been able to since the
+            # heartbeat landed: an agent blocked on a person stamps its lease
+            # exactly as a working one does, so `3s` means *alive* and nothing
+            # more. This is the cell that says which.
+            w = blocked.get(name)
+            row.append("[dim]—[/]" if not w else
+                       f"[yellow]{w.get('kind', 'consent')} "
+                       f"{limits.approx_span(max(0, int(_time.time() - w.get('since', 0))))}"
+                       f"[/]")
+        t.add_row(*row)
     cli.con.print(t)
     if any(agents.over_budget()):
         cli.con.print("[dim]`dg-agent expire` hands back what the spent ones "
@@ -251,6 +271,15 @@ def agent_list() -> None:
                   f"work. A long build looks the same as a dead agent — check "
                   f"before parking anything. ${limits.SILENT_ENV} sets the "
                   f"window[/]")
+    if blocked:
+        # No command offered, like `silent` above and for the opposite reason:
+        # there is nothing wrong. An agent waiting on consent is an agent doing
+        # what the design asks, and what unblocks it is the person at
+        # `dg-agent broker` answering.
+        cli.con.print(f"[dim]waiting = blocked on a consent decision, not "
+                  f"stalled — `dg-agent broker` is where it is answered. Its "
+                  f"heartbeat keeps stamping, so `Seen` cannot tell you "
+                  f"this[/]")
     cli.con.print(f"[dim]{len(agents.sequence()) - len(set(leases) | set(staged))} "
               f"of {len(agents.sequence())} names free[/]")
 
@@ -360,6 +389,11 @@ def agent_setup(
         None, "--exec-allow", metavar="NAMES",
         help="program names an agent may run unasked, space-separated; "
              "replaces what the project's marker files proposed"),
+    confine: str = typer.Option(
+        None, "--confine", help="require | off — whether a confinement floor "
+                                "is required below the tool layer"),
+    floor: str = typer.Option(
+        None, "--floor", help="host | bwrap — which backend provides it"),
     brief: str = typer.Option(None, "--brief",
                               help="one paragraph: what a good session produces"),
     read: list[str] = typer.Option(None, "--read", metavar="PATH:WHAT",
@@ -409,11 +443,13 @@ def agent_setup(
             "ready": all(c.ok for c in checks),
             "checks": [{"ok": c.ok, "label": c.label, "fix": c.fix}
                        for c in checks],
-            "defaults": {"focus": plan.focus, "agents": plan.agents,
-                         "host": plan.host, "decide": plan.decide,
-                         "write": plan.write, "budget": plan.budget,
-                         "terse": plan.terse, "area": plan.area,
-                         "findings": plan.findings, "out": plan.out},
+            # Every field, from the plan itself. Listed by hand, this reported
+            # eight of eleven — and the three it left out were the three an
+            # agent calling back with flags could not have known about
+            # (`P-F6`). `asdict` is what makes a new field visible here by
+            # arriving, rather than by somebody remembering.
+            "defaults": {k: v for k, v in asdict(plan).items()
+                         if k not in ("brief", "reads", "capture")},
             "asks": ["--brief", "--read PATH:WHAT", "--findings"],
         }, ensure_ascii=False))
         return
@@ -421,7 +457,7 @@ def agent_setup(
     given = {"focus": focus, "agents": n, "host": host, "decide": decide,
              "write": write_scope, "area": area, "budget": budget,
              "terse": terse, "brief": brief, "read": read,
-             "exec_allow": exec_allow,
+             "exec_allow": exec_allow, "confine": confine, "floor": floor,
              "findings": findings, "out": out}
     interactive = not any(v not in (None, (), []) for v in given.values())
 
@@ -445,6 +481,16 @@ def agent_setup(
             cli.con.print(f"[red]✗ {cli._x(exc)}[/]")
             raise typer.Exit(2) from None
         plan = replace(plan, capture=capture)
+
+    # Before anything is written, for the reason `_setup_from_flags` refuses a
+    # mistyped policy: a plan that cannot be launched confined is a plan whose
+    # prompt will assert a floor to an agent that has none, and there is no
+    # invocation later that could put it right.
+    fault = fanout.plan_fault(plan)
+    if fault:
+        cli.con.print(f"[red]✗ {cli._x(fault)}[/]\n"
+                      f"[dim]nothing was written[/]")
+        raise typer.Exit(2)
 
     if dry_run:
         cli.con.print("[dim]— fanout/scout.md —[/]")
@@ -519,8 +565,15 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
                 f"{', '.join(repr(b) for b in bad)} carries shell syntax and "
                 f"would never match one")
 
+    # Refused rather than defaulted, like every other word flag here. A floor
+    # is the one value where a silent fallback means an unconfined run that
+    # says it is confined, which is the whole of `P-F2`.
+    from dgraph import confine as _confine
+
     return replace(
         plan,
+        confine=one_of("confine", given.get("confine"), set(_confine.CONFINE_MODES)),
+        floor=one_of("floor", given.get("floor"), set(_confine.BACKENDS)),
         focus=[s.strip() for s in given["focus"].split(",") if s.strip()]
               if given["focus"] else plan.focus,
         agents=given["agents"] or plan.agents,
@@ -1000,6 +1053,47 @@ def _floor_prefix(composed: dict[str, str]) -> list[str]:
     return _confine.render(chosen, root).prefix
 
 
+def _floor_unapplied(composed: dict[str, str], applied: bool) -> str | None:
+    """Why this run would be unconfined despite declaring a floor — or `None`.
+
+    **The preflight's blind spot, and the whole of `P-F2`.**
+    `confine.preflight` asks whether a backend is *available*; this asks whether
+    the carrier it renders is *applied*. Both questions have to be asked here,
+    because a backend can be perfectly usable on this machine and still be
+    carried by nobody: `host` renders settings, only a spawn line can carry
+    them, and this command composes no spawn line.
+
+    `applied` is `--floor-applied`, asserted by whoever built the spawn line —
+    a *hand-off*, never a reading of the command. Sniffing the argv for
+    `--settings` would be reading a command line this tool did not compose,
+    which is the parsing `limits.recognise` refuses one layer down, and it would
+    pass for a `--settings` naming a file whose contents nothing checked.
+
+    The token is only about the half this command cannot apply. A backend whose
+    floor is an argv prefix is applied right here, so asserting it changes
+    nothing — an assertion that could excuse an applicable floor would be a way
+    out of one.
+    """
+    from dgraph import confine as _confine
+    try:
+        if _confine.mode(composed.get(_confine.CONFINE_ENV)) == "off":
+            return None
+        chosen = _confine.backend(composed.get(_confine.FLOOR_ENV))
+        if not _confine.configures_runner(chosen, project.find().root):
+            return None
+    except ValueError as exc:
+        return str(exc)
+    if applied:
+        return None
+    return (f"${_confine.CONFINE_ENV}=require and ${_confine.FLOOR_ENV}="
+            f"{chosen}, whose floor is the runner's own settings — and this "
+            f"command can only prepend argv, so nothing here would apply it. "
+            f"Launch through the generated `{fanout.OUT_DIR}/launch.sh`, which "
+            f"carries the settings and says so with `--floor-applied`; or "
+            f"choose ${_confine.FLOOR_ENV}=bwrap, which wraps the command; or "
+            f"say ${_confine.CONFINE_ENV}=off and mean it")
+
+
 def _hold_back(name: str, why: str) -> list[str]:
     """Park whatever `name` still holds as DOING. The `expire` mechanism, run
     when the information is freshest.
@@ -1057,6 +1151,13 @@ def agent_broker(
                       f"fix the rung and start again[/]")
         raise typer.Exit(2) from None
 
+    # Before anything is bound, so a deep checkout gets a sentence rather than
+    # a traceback out of `socket.bind`. `P-F9`.
+    unbindable = _broker.unbindable(proj.root)
+    if unbindable:
+        cli.con.print(f"[red]✗ {cli._x(unbindable)}[/]")
+        raise typer.Exit(2)
+
     b = _broker.Broker(root=proj.root, prompt=_broker.terminal_prompt)
     cli.con.print(
         f"[green]listening[/] on {cli._x(_broker.SOCKET_NAME)} "
@@ -1090,6 +1191,10 @@ def agent_run(
     name: str = typer.Option(
         None, "--agent", metavar="NAME",
         help="run under a name already claimed, instead of claiming one"),
+    floor_applied: bool = typer.Option(
+        False, "--floor-applied",
+        help="the spawn line already carries this backend's settings; "
+             "`dg-agent setup` writes this on the lines it generates"),
 ) -> None:
     """Claim a name, compose the environment, and run one agent under it.
 
@@ -1154,6 +1259,7 @@ def agent_run(
     from dgraph import confine as _confine
     unfloored = _confine.preflight(mode_=composed.get(_confine.CONFINE_ENV),
                                    backend_=composed.get(_confine.FLOOR_ENV))
+    unfloored = unfloored or _floor_unapplied(composed, floor_applied)
     if unfloored:
         cli.con.print(f"[red]✗ {cli._x(unfloored)}[/]\n"
                       f"[dim]nothing was spawned and no name was claimed[/]")

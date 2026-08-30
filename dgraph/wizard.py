@@ -30,7 +30,7 @@ from dataclasses import replace
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from dgraph import cross, env, fanout, limits
+from dgraph import confine as _confine, cross, env, fanout, limits
 
 con = Console()
 
@@ -148,6 +148,31 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
             break
         con.print("[yellow]  `on`, `off`, or a character count[/]")
 
+    con.print("\n[bold]What may an agent run without asking?[/]  "
+              "[dim]$DG_EXEC_ALLOW[/]")
+    con.print("[dim]Program names, space-separated — names, not command lines. "
+              "Anything else stops and goes to `dg-agent broker`, and so does "
+              "any line running more than one program. Derived from this "
+              "project's marker files; edit or empty it.[/]")
+    exec_allow = _names("", " ".join(plan.exec_allow))
+
+    con.print("\n[bold]Is a confinement floor required?[/]  [dim]$DG_CONFINE · "
+              "$DG_FLOOR[/]")
+    con.print("[dim]require: the boundaries above are enforced by the kernel "
+              "too, so a shell redirection no gate sees is refused as well · "
+              "off: the gate and the broker are all that judge. A run that "
+              "asks for a floor it cannot get refuses to start.[/]")
+    confine = Prompt.ask("  confine", choices=list(_confine.CONFINE_MODES),
+                         default=plan.confine)
+    floor = plan.floor
+    if confine != "off":
+        floor = Prompt.ask("  backend", choices=list(_confine.BACKENDS),
+                           default=plan.floor)
+        ok, why = _confine.available(floor)
+        if not ok:
+            con.print(f"[yellow]  {floor} will not confine anything here — "
+                      f"{why}[/]")
+
     capture = Confirm.ask("\nRecord the run (.dgraph-capture/)?",
                           default=plan.capture)
 
@@ -160,16 +185,31 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
                   focus=[s.strip() for s in focus.split(",") if s.strip()],
                   reads=reads, findings=findings or plan.findings, agents=n,
                   host=host, decide=decide, write=write, area=area,
-                  budget=budget, terse=terse, capture=capture)
+                  budget=budget, terse=terse, capture=capture,
+                  exec_allow=exec_allow, confine=confine, floor=floor)
 
     con.print(f"\n[bold]{out.agents} agent(s) on {out.host}[/] · "
               f"$DG_DECIDE={out.decide} · $DG_WRITE={out.write} · "
               f"$DG_AREA={out.area} · $DG_TERSE={out.terse} · "
-              f"budget {limits.show_span(out.budget)}"
+              f"budget {limits.show_span(out.budget)} · "
+              f"{len(out.exec_allow) or 'no'} program(s) unasked · "
+              f"floor {out.floor if out.confine != 'off' else 'off'}"
               + (" · captured" if out.capture else ""))
     con.print(f"[dim]focus {', '.join(out.focus) or '(none)'} · "
               f"findings at {out.findings}[/]")
     return out if Confirm.ask("Write the files?", default=True) else None
+
+
+def _names(label: str, default: str) -> list[str]:
+    """A space-separated list of program names, asked once and kept in order.
+
+    Not validated here beyond splitting: `fanout.read_env_plan` and
+    `_compose` both refuse a token carrying shell syntax, at the two moments a
+    launcher can still fix it, and a third rule written here would be a third
+    thing to keep true.
+    """
+    raw = Prompt.ask(label, default=default)
+    return list(dict.fromkeys(raw.split()))
 
 
 def collect(plan: fanout.Plan, proj, *, interactive: bool,

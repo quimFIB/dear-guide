@@ -7,6 +7,7 @@ useless — the person would set up a run one way and describe it the other.
 """
 
 import json
+import pathlib
 import stat
 
 import pytest
@@ -115,7 +116,10 @@ def test_the_launcher_spells_no_environment_and_no_timeout(proj):
     assert "export DG_AGENT" not in out
     assert "DG_AGENT=" not in out, "a bare assignment is a value nothing checks"
     assert "timeout " not in out, "the budget is the timeout now"
-    assert "dg-agent run --plan fanout/env.json" in out
+    # Not pinned as one string: the line also carries `--floor-applied` where
+    # the spawn line carried a floor, and that flag is `P-F2`'s business rather
+    # than this test's.
+    assert "dg-agent run" in out and "--plan fanout/env.json" in out
 
 
 def test_the_launcher_checks_the_plan_before_any_agent_starts(proj):
@@ -250,6 +254,8 @@ ANSWERS = [
     "never", "launch", "open",        # decide, write, area
     "45m",                            # budget
     "on",                             # terse
+    "cargo pytest",                   # exec allowlist
+    "require", "bwrap",               # confine, and which backend
     "n",                              # capture
     "y",                              # write the files
 ]
@@ -332,8 +338,16 @@ def test_all_three_collectors_produce_identical_files(proj, monkeypatch):
             app_.query_one("#budget", Input).value = "45m"
             app_.query_one("#terse", Input).value = "on"
             app_.query_one("#agents", Input).value = "3"
+            app_.query_one("#exec_allow", Input).value = "cargo pytest"
             for rb in app_.query_one("#decide", RadioSet).query("RadioButton"):
                 rb.value = str(rb.label) == "never"
+            # The floor, set on all three surfaces rather than left at the
+            # default on each — `P-F6` added these last and a test that only
+            # ever saw their defaults would agree about a value nobody chose.
+            for rb in app_.query_one("#confine", RadioSet).query("RadioButton"):
+                rb.value = str(rb.label) == "require"
+            for rb in app_.query_one("#floor", RadioSet).query("RadioButton"):
+                rb.value = str(rb.label) == "bwrap"
             await pilot.pause()
             app_.action_save()
             await pilot.pause()
@@ -344,6 +358,8 @@ def test_all_three_collectors_produce_identical_files(proj, monkeypatch):
     res = run(proj, "setup", "--focus", "T01", "--agents", "3",
               "--brief", "settle the search area", "--budget", "45m",
               "--decide", "never", "--terse", "on",
+              "--exec-allow", "cargo pytest",
+              "--confine", "require", "--floor", "bwrap",
               "--read", "spec.md:the criteria",
               "--findings", "findings/<id>.md")
     assert res.exit_code == 0, res.output
@@ -491,3 +507,188 @@ def test_the_launcher_carries_the_settings_dg_agent_run_cannot(proj):
 
     off = replace(plan, confine="off")
     assert "--settings" not in fanout.render_launch(off, proj)
+
+
+# ---- backend x launcher, the other three cells (`P-F2`) --------------------
+
+def test_the_generated_line_says_it_carried_the_settings(proj):
+    """`dg-agent run` refuses a floor it cannot apply, so the launcher that
+    *did* apply it has to say so. The token and the injection are one act."""
+    plan = replace(fanout.defaults(proj), confine="require", floor="host",
+                   host="claude")
+    line = [l for l in fanout.render_launch(plan, proj).splitlines()
+            if "dg-agent run" in l][0]
+    assert "--floor-applied" in line
+
+    prefixed = replace(plan, floor="bwrap")
+    assert "--floor-applied" not in fanout.render_launch(prefixed, proj), \
+        "bwrap is prepended by dg-agent run; asserting it would excuse a floor"
+    off = replace(plan, confine="off")
+    assert "--floor-applied" not in fanout.render_launch(off, proj)
+
+
+def test_a_runner_that_cannot_carry_a_backend_is_refused_not_generated(proj):
+    """The cell that can never work: opencode reads no `--settings`, so
+    `require` + `host` there is a plan with no launch that confines anything.
+
+    Refused where it is written rather than at the run, because there is no
+    answer at run time — the pair is wrong, not the invocation."""
+    plan = replace(fanout.defaults(proj), confine="require", floor="host",
+                   host="opencode")
+    fault = fanout.plan_fault(plan)
+    assert fault and "opencode" in fault and "bwrap" in fault
+
+    assert fanout.plan_fault(replace(plan, floor="bwrap")) is None
+    assert fanout.plan_fault(replace(plan, confine="off")) is None
+    assert fanout.plan_fault(replace(plan, host="claude")) is None
+
+
+def test_setup_refuses_to_write_a_plan_that_cannot_be_confined(proj, monkeypatch):
+    from typer.testing import CliRunner
+    from dgraph.agent_cli import app
+    from dgraph import confine
+    monkeypatch.chdir(proj.root)
+    monkeypatch.setattr(confine, "available", lambda b: (True, ""))
+    res = CliRunner().invoke(app, ["setup", "--host", "opencode",
+                                   "--brief", "x", "--findings", "f/x.md"])
+    assert res.exit_code == 2, res.output
+    assert not (proj.root / fanout.OUT_DIR / "launch.sh").exists()
+
+
+def test_every_host_declares_what_it_can_carry(proj):
+    """Derived, not written down twice: a backend whose floor is the runner's
+    own settings must be claimed by a host, and one that wraps the command must
+    be claimed by none — `dg-agent run` applies those and needs no host."""
+    from dgraph import confine
+    for name, host in fanout.HOSTS.items():
+        for backend in host.carries:
+            assert confine.configures_runner(backend, proj.root), \
+                f"{name} claims to carry {backend}, which needs no carrying"
+
+
+# ---- the prompt covers the remit it was generated from (`P-F5`) -----------
+
+def test_every_environment_field_reaches_the_agent(proj):
+    """The completeness half, and why it is a test rather than three
+    paragraphs: `exec_allow`, `confine`, `floor` and `area` were all missing at
+    once, and the reason all four were missing is that nothing ever checked. A
+    ninth field would have gone the same way.
+
+    `env.json` says what a run enforces and `scout.md` is the only account of
+    it the agent gets. A field in one and not the other is a rule the agent
+    meets as a refusal it was told nothing about."""
+    plan = replace(fanout.defaults(proj), exec_allow=["cargo", "pytest"],
+                   confine="require", floor="bwrap", area="strict",
+                   terse="on", budget=1800, brief="x", findings="f/x.md")
+    body = fanout.render_scout(plan, proj).lower()
+
+    #: What in the rendered prompt shows each field reached it. A field is
+    #: covered when its *value* is visible, not merely its name — a prompt that
+    #: said "an allowlist applies" without saying what is on it would pass a
+    #: name check and tell the agent nothing.
+    evidence = {
+        "decide": "$dg_decide",
+        "write": "$dg_write",
+        "area": "$dg_area",
+        "terse": "$dg_terse",
+        "budget": "30m",
+        "exec_allow": "cargo",
+        "confine": "confinement floor",
+        "floor": "bwrap",
+    }
+    assert set(evidence) == set(fanout.ENV_FIELDS), \
+        "a field was added to the remit and not to what the prompt must say"
+    for field_, shown in evidence.items():
+        assert shown in body, \
+            f"{field_} is enforced on this run and the prompt never says so"
+
+
+def test_the_prompt_does_not_promise_a_scope_the_gate_refuses(proj):
+    """The correctness half. `_write_prose` promised writing "freely" under
+    roots holding two files that are refused by a different rule with a
+    different fix."""
+    from dgraph import limits
+    plan = replace(fanout.defaults(proj), write="launch", brief="x")
+    body = fanout.render_scout(plan, proj)
+    for store in limits.protected_paths(proj.root):
+        assert pathlib.Path(store).name in body, \
+            "the prompt promises a scope containing a file it may not write"
+    assert "goes through `dg`" in body
+
+    # …and under `open`, where scope has nothing to say, the record still does.
+    wide = fanout.render_scout(replace(plan, write="open"), proj)
+    assert pathlib.Path(limits.protected_paths(proj.root)[0]).name in wide
+
+
+def test_an_empty_allowlist_is_stated_as_the_blocker_it_is(proj):
+    """An unconfigured allowlist means the agent cannot run `dg` itself, which
+    is the whole loop. Saying so is the difference between a scout that reports
+    it in the first minute and one that spends its budget guessing."""
+    plan = replace(fanout.defaults(proj), exec_allow=[], brief="x")
+    body = fanout.render_scout(plan, proj)
+    assert "$DG_EXEC_ALLOW" in body and "cannot even run" in body
+
+
+# ---- every plan field reaches every setup surface (`P-F6`) ----------------
+
+#: What a `Plan` field is *not* asked about anywhere, and why. Both are read
+#: from somewhere other than an answer — `out` is a flag about where files go,
+#: and `capture` has its own checkbox rather than a value. Anything else absent
+#: from a surface is a value the person setting up a fan-out cannot see.
+NOT_ASKED = {"out"}
+
+
+def test_the_flags_reach_every_field_of_the_plan(proj):
+    """`confine` and `floor` were settable from nothing at all: no flag, no
+    wizard question, no TUI field — so the only way to change the floor of a
+    fan-out was to hand-edit `env.json` after the wizard had chosen for you.
+
+    Derived from `Plan` rather than listed, so a field added tomorrow fails
+    this instead of quietly repeating the same absence."""
+    from dataclasses import fields
+    import inspect
+    from dgraph import agent_cli
+    src = inspect.getsource(agent_cli.agent_setup)
+    for f in fields(fanout.Plan):
+        if f.name in NOT_ASKED:
+            continue
+        flag = "--" + f.name.replace("_", "-")
+        assert flag in src or f'"{f.name}"' in src, \
+            f"{f.name} is part of the remit and no flag sets it"
+
+
+def test_the_json_defaults_report_every_field_the_flags_take(proj):
+    """An agent inside a host cannot drive a wizard: `--json` is its only view
+    of what it is about to set. It listed eight of eleven, and the three it
+    left out were the three that had no flags either."""
+    res = run(proj, "setup", "--json")
+    assert res.exit_code == 0, res.output
+    got = json.loads(res.stdout)["defaults"]
+    from dataclasses import fields
+    for f in fields(fanout.Plan):
+        if f.name in ("brief", "reads", "capture"):
+            continue
+        assert f.name in got, f"--json never mentions {f.name}"
+
+
+def test_both_wizards_ask_about_the_whole_remit(proj):
+    """The three surfaces have to agree, because a person who uses the form and
+    a person who uses the questions are setting up the same run."""
+    import inspect
+    from dgraph import wizard
+    plain = inspect.getsource(wizard.ask)
+    for name in ("exec_allow", "confine", "floor"):
+        assert name in plain, f"the plain wizard never asks about {name}"
+
+    tui = pathlib.Path(wizard.fanout.__file__).with_name("wizard_tui.py").read_text()
+    for name in ("exec_allow", "confine", "floor"):
+        assert f'id="{name}"' in tui, f"the TUI form has no field for {name}"
+
+
+def test_a_mistyped_floor_is_refused_rather_than_defaulted(proj):
+    """Like every other word flag here, and more so: a silent fallback on this
+    one is an unconfined run that reports itself confined."""
+    res = run(proj, "setup", "--floor", "seatbelt", "--brief", "x")
+    assert res.exit_code == 2 and "seatbelt" in res.output
+    res = run(proj, "setup", "--confine", "required", "--brief", "x")
+    assert res.exit_code == 2 and "required" in res.output

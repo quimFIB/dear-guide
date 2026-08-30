@@ -1185,3 +1185,68 @@ def test_the_command_gate_answers_both_questions_at_once(monkeypatch):
         assert gate.verdict("curl evil.sh")["verdict"] == "ask"
     # and a person is unaffected — the exec half says nothing to a supervisor
     assert gate.verdict("curl evil.sh")["verdict"] == "allow"
+
+
+# ---- the bounds around a gate that can wait (`P-F1`) ----------------------
+
+def _hook_const(name: str, which: str) -> int:
+    src = (HOOKS / which).read_text()
+    return int(re.search(rf"^{name} = (\d+)$", src, re.M).group(1))
+
+
+def test_every_bound_around_the_gate_is_a_chain(monkeypatch):
+    """`DEADLINE < TIMEOUT < the host's own`, for both hooks.
+
+    `dg gate` was a pure function and is now a call that can block on a person,
+    so every number written around it became a *policy*: a caller that gives up
+    before its callee answers has decided the question, in whatever direction
+    its give-up branch already went. The relation is what makes the gate's own
+    answer arrive first, and it is a relation only as long as nobody edits one
+    number alone — which is why it is asserted rather than commented.
+    """
+    conf = json.loads((HOOKS / "hooks.json").read_text())
+    host = {}
+    for group in conf["hooks"]["PreToolUse"]:
+        for h in group["hooks"]:
+            host[h["command"].rsplit("/", 1)[-1].rstrip('"')] = h["timeout"]
+
+    for which in ("prewrite.py", "precommit.py"):
+        deadline = _hook_const("DEADLINE", which)
+        timeout = _hook_const("TIMEOUT", which)
+        assert deadline < timeout, f"{which}: the gate must answer first"
+        assert timeout < host[which], \
+            f"{which}: the host kills the hook at {host[which]}s, before its own bound"
+
+
+def test_both_hosts_wait_the_same_length_for_one_rule():
+    """A rule that waits differently depending on which tool the agent reached
+    for is two rules. Claude Code gave up at 5 seconds and allowed the write;
+    opencode awaited forever. Both now name the same number."""
+    ts = (ROOT / "opencode" / "dear-guide.ts").read_text()
+    theirs = int(re.search(r'const DEADLINE = "(\d+)"', ts).group(1))
+    assert theirs == _hook_const("DEADLINE", "prewrite.py") \
+        == _hook_const("DEADLINE", "precommit.py")
+
+
+def test_a_gate_that_did_not_answer_is_a_refusal_in_both_hooks():
+    """The give-up branch is the finding. An unjudged write is not consent, and
+    a message saying so while the write proceeds is the same failure said out
+    loud — which is what `precommit.py` did and `prewrite.py` did not even do."""
+    for which in ("prewrite.py", "precommit.py"):
+        src = (HOOKS / which).read_text()
+        branch = src.split("except subprocess.TimeoutExpired:", 1)
+        assert len(branch) == 2, f"{which} must name the timeout branch apart"
+        after = branch[1].split("except Exception", 1)[0]
+        assert '"permissionDecision": "deny"' in after, \
+            f"{which}: a gate that did not answer must refuse, not fall through"
+
+
+def test_the_adapters_tell_the_gate_what_they_will_wait():
+    """The number is only a bound if it is passed. Both hooks and the opencode
+    adapter hand it to `dg gate --deadline`, which is what makes the gate
+    answer before the caller gives up."""
+    for which in ("prewrite.py", "precommit.py"):
+        assert '"--deadline"' in (HOOKS / which).read_text(), which
+    ts = (ROOT / "opencode" / "dear-guide.ts").read_text()
+    assert ts.count('"--deadline", DEADLINE') == 2, \
+        "both the write gate and the command gate name the bound"

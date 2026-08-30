@@ -28,7 +28,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import (Button, Checkbox, Footer, Header, Input, Label,
                              RadioButton, RadioSet, Static, TextArea)
 
-from dgraph import cross, env, fanout, limits
+from dgraph import confine as _confine, cross, env, fanout, limits
 
 #: The budgets offered as buttons. A free-text field is there too — these are
 #: the ones worth one keystroke, chosen to bracket what a scout actually needs
@@ -144,6 +144,35 @@ class Wizard(App):
                          classes="hint")
             yield Input(self.plan.terse, id="terse")
 
+            yield Label("What may an agent run without asking?  "
+                        "$DG_EXEC_ALLOW", classes="q")
+            yield Static("Program names, space-separated — names, not command "
+                         "lines. Anything else stops and goes to the broker, "
+                         "and so does any line running more than one program. "
+                         "Derived from this project's marker files.",
+                         classes="hint")
+            yield Input(" ".join(self.plan.exec_allow), id="exec_allow")
+
+            yield Label("Is a confinement floor required?  $DG_CONFINE",
+                        classes="q")
+            yield Static("require: the boundaries above are enforced by the "
+                         "kernel too, so a shell redirection no gate sees is "
+                         "refused as well · off: the gate and the broker are "
+                         "all that judge. A run that asks for a floor it "
+                         "cannot get refuses to start.", classes="hint")
+            with RadioSet(id="confine"):
+                for p in _confine.CONFINE_MODES:
+                    yield RadioButton(p, value=(p == self.plan.confine))
+
+            yield Label("…and which backend provides it?  $DG_FLOOR",
+                        classes="q")
+            yield Static(" · ".join(
+                f"{b}: {'usable here' if _confine.available(b)[0] else _confine.available(b)[1]}"
+                for b in _confine.BACKENDS), classes="hint")
+            with RadioSet(id="floor"):
+                for p in _confine.BACKENDS:
+                    yield RadioButton(p, value=(p == self.plan.floor))
+
             yield Checkbox("Record the run (.dgraph-capture/)", self.plan.capture,
                            id="capture")
         with Horizontal(id="actions"):
@@ -201,6 +230,10 @@ class Wizard(App):
             budget=budget,
             terse=terse,
             capture=self.query_one("#capture", Checkbox).value,
+            exec_allow=list(dict.fromkeys(
+                (self.query_one("#exec_allow", Input).value or "").split())),
+            confine=self._chosen("confine", self.plan.confine),
+            floor=self._chosen("floor", self.plan.floor),
         )
 
     def action_save(self) -> None:

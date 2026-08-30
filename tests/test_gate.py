@@ -731,3 +731,37 @@ def test_exec_verdict_only_ever_allows_or_asks(monkeypatch):
 def test_exec_verdict_says_nothing_to_a_supervisor(monkeypatch):
     monkeypatch.setenv("DG_EXEC_ALLOW", "cargo")
     assert gate.exec_verdict("curl evil.sh") == {"verdict": "allow", "reason": ""}
+
+
+# ---- the prose says what the gate does now (`P-F8`) -----------------------
+
+def test_no_docstring_still_promises_a_gate_that_cannot_deny():
+    """Comments here carry the reasoning and are load-bearing, and these are the
+    sentences a third-host author reads before writing an adapter. Five of them
+    described the gate as it was before the broker: `exec_verdict` said nothing
+    called it, both verdicts said they were "only ever allow or ask", and
+    `dg gate --help` told an adapter to skip the command for anything without a
+    trigger word — which for an agent means never enforcing `$DG_EXEC_ALLOW`."""
+    import inspect
+    from dgraph import cli, gate as _gate, limits as _limits
+
+    assert "Nothing calls this yet" not in inspect.getsource(_gate.exec_verdict)
+    for fn in (_gate.write_verdict, _gate.exec_verdict):
+        assert "Only ever `allow` or `ask`" not in (fn.__doc__ or ""), fn.__name__
+        assert "deadline" in (fn.__doc__ or ""), fn.__name__
+
+    help_ = cli.gate.__doc__ or ""
+    assert "answers only allow or ask" not in help_
+    assert "$DG_AGENT" in help_ and "send everything" in help_.lower() or \
+        "must send everything" in help_
+    assert "never `deny`: the rule" not in (_limits.__doc__ or "")
+
+
+def test_the_trigger_contract_names_the_half_that_is_conditional():
+    """`--triggers` is the anti-drift guard for an adapter this repo does not
+    test, and it checked the *names* while the sentence beside them went false.
+    A third host implementing what it said would never enforce the exec
+    allowlist."""
+    from dgraph import cli
+    help_ = cli.gate.__doc__ or ""
+    assert "only where `$DG_AGENT` is unset" in help_

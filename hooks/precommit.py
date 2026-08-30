@@ -19,13 +19,22 @@ import shutil
 import subprocess
 import sys
 
-#: The gate's own budget is bounded by `gate.GIT_TIMEOUT` per `git` call, and
-#: it makes a handful of them plus a re-render of both views. This has to be
-#: comfortably larger than that, because the alternative to waiting is not
-#: "gate faster" — it is "run the command ungated", which is the one outcome
-#: the gate exists to prevent. `hooks/hooks.json` allows the hook process
-#: longer again.
-TIMEOUT = 20
+#: Three numbers and one relation: `DEADLINE < TIMEOUT < the host's own`, the
+#: last being `timeout` on this hook's entry in `hooks/hooks.json`.
+#: `tests/test_plugin.py` asserts the chain, and asserts that both hooks name
+#: the same `DEADLINE` — one rule must not wait differently depending on which
+#: tool the agent reached for.
+#:
+#: The gate's budget has two parts now. `gate.GIT_TIMEOUT` bounds each `git`
+#: call, and it makes a handful of them plus a re-render of both views; and
+#: since the consent broker it can also block while a *person* decides whether
+#: an agent may run this. The second dwarfs the first, and it is why 20 was
+#: wrong: the alternative to waiting is not "gate faster", it is "run the
+#: command ungated", which is the one outcome the gate exists to prevent.
+#:
+#: `DEADLINE` is what the gate is told, so it answers before this gives up.
+DEADLINE = 100
+TIMEOUT = 110
 
 #: `dg gate`'s blocking verdicts, in the vocabulary `permissionDecision` uses.
 #: `warn` is deliberately absent — it is not a permission decision at all, and
@@ -123,13 +132,23 @@ def main() -> int:
         return 0
     try:
         r = subprocess.run(
-            [dg, "gate", "--command", command, "--json"],
+            [dg, "gate", "--command", command, "--deadline", str(DEADLINE),
+             "--json"],
             cwd=payload.get("cwd") or os.getcwd(), capture_output=True,
             text=True, errors="replace", timeout=TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        # The gate's budget expiring undoes "never fail open" from the outside.
-        say(UNCHECKED.format(how=f"dg gate did not finish within {TIMEOUT}s"))
+        # **A refusal, not a message.** The gate's budget expiring undoes
+        # "never fail open" from the outside, and saying so while running the
+        # command anyway is the milder half of `P-F1`: the reader is told, and
+        # the command runs unjudged regardless. The gate was given `DEADLINE`
+        # and this waits `TIMEOUT`, so reaching here means `dg` hung.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": UNCHECKED.format(
+                how=f"dg gate did not finish within {TIMEOUT}s"),
+        }}))
         return 0
     except Exception:
         # `dg` could not be run at all — a shebang pointing at an interpreter

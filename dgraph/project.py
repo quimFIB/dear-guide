@@ -14,6 +14,7 @@ Resolution order:
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 import stat
 import tempfile
@@ -210,6 +211,59 @@ def find(start: Path | None = None) -> Project:
     return Project(cur)
 
 
+class Sealed(OSError):
+    """A write the confinement floor refused, named as the rule it is.
+
+    **The kernel's own error names the wrong thing.** A read-only bind over the
+    store answers `Device or resource busy` to a rename, which every caller
+    above reported as "the store could not be read" — wrong about which
+    operation failed, and pointing at a `dg check` that will report a perfectly
+    healthy graph. The rule is that under a floor the record is the
+    supervisor's to write and an agent stages instead, which is a sentence
+    somebody can act on.
+
+    A subclass of `OSError` so that every existing `except OSError` still
+    catches it and nothing has to learn a new failure to keep working.
+    """
+
+
+#: What a read-only bind raises for a write, per backend. `EBUSY` is what
+#: bwrap's ro-bind answers to the rename `write_atomic` finishes with; `EROFS`
+#: is what a read-only mount answers to the open. Nothing else is a floor, and
+#: a full disk under a confined run is still a full disk.
+_SEALED_ERRNOS = (errno.EBUSY, errno.EROFS, errno.EPERM, errno.EACCES)
+
+
+def _sealed(path: Path, exc: OSError) -> Sealed | None:
+    """Turn a write failure into the rule that caused it, where it was one.
+
+    Three conditions, all required, because each one alone would mislabel
+    something ordinary: the errno a floor actually raises, a path that is one
+    of `limits.protected_paths`, and a floor that was **declared** — a project
+    that never asked for one must not be told its filesystem trouble is a
+    policy.
+    """
+    if exc.errno not in _SEALED_ERRNOS:
+        return None
+    from dgraph import confine, limits
+    try:
+        if confine.mode() == "off":
+            return None
+    except ValueError:
+        return None
+    root = find(path.parent).root
+    if os.path.realpath(path) not in limits.protected_paths(root):
+        return None
+    return Sealed(
+        exc.errno,
+        f"{path.name} is the record, and this run declared a confinement "
+        f"floor (${confine.CONFINE_ENV}=require) — so the file is read-only to "
+        f"everything inside it, including `dg`. That is the rule working: an "
+        f"agent stages, and applying the tray is the supervisor's call. "
+        f"`dg pending` shows what is staged; the supervisor runs `dg apply`. "
+        f"(The kernel said: {exc.strerror}.)")
+
+
 def write_atomic(path: Path, text: str) -> None:
     """Replace a file's contents, or leave the old ones entirely intact.
 
@@ -259,6 +313,12 @@ def write_atomic(path: Path, text: str) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+    except OSError as exc:
+        # Before the blanket handler below, and re-raised as itself where this
+        # is not a floor. A refusal that names its rule is the difference
+        # between "the tool is broken" and "this is the supervisor's call".
+        tmp.unlink(missing_ok=True)
+        raise (_sealed(path, exc) or exc) from None
     except BaseException:
         # Including KeyboardInterrupt and SystemExit: an interrupted write is
         # precisely the case this exists for, and a temp file left in the

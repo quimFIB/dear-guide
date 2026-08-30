@@ -249,6 +249,14 @@ def test_export_never_offers_the_agent_name(run, monkeypatch):
 
 
 def _plan(proj, **over):
+    """A plan file, with no floor unless a test asks for one.
+
+    `Plan()` proposes `confine="require"`, and since `P-F2` a `dg-agent run`
+    that cannot apply the declared floor refuses rather than spawning an
+    unconfined child. These tests are about the other five variables, so they
+    say `off` and mean it; the floor has its own tests in `test_confine.py`.
+    """
+    over.setdefault("confine", "off")
     spec = fanout.env_plan(fanout.Plan(**over))
     path = proj.root / "env.json"
     path.write_text(json.dumps(spec), encoding="utf-8")
@@ -549,3 +557,14 @@ def test_env_plan_file_refuses_a_non_list(tmp_path):
     spec.write_text(json.dumps({"exec_allow": "cargo git"}))
     with pytest.raises(ValueError):
         fanout.read_env_plan(spec)
+
+
+def test_no_policy_vocabulary_is_spelled_twice(monkeypatch):
+    """`P-F12`. Every entry in `VARS` reads its legal values from the module
+    that owns them, so a backend added to `confine` is one `dg-agent env`
+    offers. Asserted by adding one and watching the table follow, which a
+    literal could not."""
+    from dgraph import confine, env as _env
+    assert _env.BY_NAME[confine.CONFINE_ENV].choices == confine.CONFINE_MODES
+    assert _env.BY_NAME[confine.FLOOR_ENV].choices == confine.BACKENDS
+    assert _env.BY_NAME[confine.FLOOR_ENV].unset == confine.BACKENDS[0]

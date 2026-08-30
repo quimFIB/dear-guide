@@ -34,13 +34,24 @@ mistake is caught.
     launch    the project root and the system temporary directory. Anywhere
               else is the person's call.
 
-**There is no third value, and no `deny`.** A scope narrower than `launch` --
-temp only, say -- would refuse a scout writing the findings it was launched to
-produce, which is the ordinary case rather than an edge one. And an out-of-scope
-write is answered `ask`, never `deny`: the rule is *consent*, not prohibition,
-and a refusal the person cannot lift from where they are standing is
-indistinguishable from a broken tool. `ask` is the verdict both adapters already
-translate into "this is the user's call".
+**There is no third value, and nothing here says `deny`.** A scope narrower
+than `launch` -- temp only, say -- would refuse a scout writing the findings it
+was launched to produce, which is the ordinary case rather than an edge one.
+And an out-of-scope write is *this module's* `ask`, never its `deny`: the rule
+is consent, not prohibition, and a refusal the person cannot lift from where
+they are standing is indistinguishable from a broken tool.
+
+What changed under that, and it is worth being exact because the sentence used
+to stop above: `dg gate` now hands an `ask` to a **consent broker** where one is
+listening, and returns whatever the person there answered — which may be `deny`.
+That is the rule intact rather than reversed. The prohibition is still nobody's
+to write here; what a `deny` carries is a *decision*, or the fact that nobody
+made one inside the caller's deadline, and an undecided request was never
+consent either. With no broker the verdict is the `ask` it has always been.
+
+There are two exceptions to "the scope decides", both above `$DG_WRITE` in
+`refuse_write` and both about the *mechanism* rather than the scope: the two
+stores are refused at any scope, because the record is reached through `dg`.
 
 Reads are never judged. An agent that cannot read the repository it is reasoning
 about is not constrained, it is blindfolded, and every interesting thing a

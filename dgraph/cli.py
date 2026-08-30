@@ -289,6 +289,25 @@ STATUS_STYLE = {
 UNREADABLE = (OSError, ValueError, TypeError)
 
 
+def _say_sealed(exc: "project.Sealed") -> bool:
+    """The one rendering of a store a confinement floor refused.
+
+    Written once and called from both apply doors rather than repeated in each,
+    because `project.Sealed` subclasses `OSError` and therefore lands in the
+    `UNREADABLE` branch by default — under a headline that is wrong twice over:
+    the store read perfectly well, and `dg check` will report a healthy graph.
+    Audit `P-F4`.
+
+    Not a red ✗ with a fix to type. The floor working as designed is not a
+    failure of the agent's, and what it should do next — leave the ops staged
+    for a supervisor — has already happened.
+    """
+    con.print(f"[yellow]· not applied — the record is sealed[/]\n{_x(exc)}\n"
+              f"[dim]nothing was lost: the ops are still staged, and "
+              f"`dg pending` is what the supervisor reads[/]")
+    return False
+
+
 def _g() -> Graph:
     proj = project.find()
     if not proj.has_decisions:
@@ -1318,6 +1337,10 @@ def gate(
     triggers: bool = typer.Option(False, "--triggers",
                                   help="Print the substrings an adapter's fast "
                                        "path must let through, one per line."),
+    deadline: float = typer.Option(
+        None, "--deadline", metavar="SECONDS",
+        help="how long the caller will wait; this answers `deny` before it "
+             "runs out rather than letting the caller give up in silence."),
 ) -> None:
     """Judge a shell command or a write before a host does it.
 
@@ -1327,18 +1350,29 @@ def gate(
     verdict. Always exits 0 — the verdict is the output, and an adapter must be
     able to tell a refusal from a crash.
 
-    `--command` is the commit gate: allow, warn, ask or deny.
+    `--command` answers two rules at once: whether an agent may run this
+    program at all (`$DG_EXEC_ALLOW`), and whether the command would leave the
+    record contradicting itself. allow, warn, ask or deny.
 
-    `--write` is the agent write scope, and answers only allow or ask. It reads
-    `$DG_WRITE`, is never consulted for a caller with no `$DG_AGENT`, and never
-    judges a read — see `dgraph/limits.py` for why each of those is the case.
+    `--write` is the agent write scope. It reads `$DG_WRITE`, is never
+    consulted for a caller with no `$DG_AGENT`, and never judges a read — see
+    `dgraph/limits.py` for why each of those is the case.
 
-    `--triggers` prints `gate.TRIGGERS` instead of judging anything. An adapter
-    skips this command entirely for a shell command containing none of them, so
-    a third host — or a check on the two that exist — can read the list from the
-    tool rather than copy it and let it go stale, which is how the removal
-    verdict came to be unreachable from both. It says nothing about `--write`,
-    which has no fast path: every write is judged, because a path carries no
+    **Either can answer `deny` where a consent broker resolved an `ask`**, or
+    where nobody resolved one inside `--deadline`. Both were `allow`-or-`ask`
+    before the broker existed, and an adapter that only relays a refusal still
+    passes the reason on.
+
+    `--triggers` prints `gate.TRIGGERS` instead of judging anything, so a third
+    host can read the list from the tool rather than copy it and let it go
+    stale — which is how the removal verdict came to be unreachable from both.
+
+    **The fast path those words are for is only sound for a supervisor.** An
+    adapter may skip this command for a shell command containing none of them
+    *only where `$DG_AGENT` is unset*. For an agent it must send everything:
+    whether it may run `cargo` depends on `$DG_EXEC_ALLOW` and on no word in
+    the command, so a word list could only be widened by guessing. Neither
+    applies to `--write`, which has no fast path at all — a path carries no
     substring that could tell an in-scope one from an out-of-scope one.
     """
     from dgraph import gate as _gate
@@ -1359,8 +1393,8 @@ def gate(
         con.print("[red]--command and --write are separate questions — "
                   "ask them one at a time[/]")
         raise typer.Exit(2)
-    v = (_gate.write_verdict(write) if write is not None
-         else _gate.verdict(command))
+    v = (_gate.write_verdict(write, deadline=deadline) if write is not None
+         else _gate.verdict(command, deadline=deadline))
     if as_json:
         print(json.dumps(v, ensure_ascii=False))
         return
@@ -2959,6 +2993,8 @@ def _apply_decisions(ops: list[dict], dry_run: bool) -> bool:
         con.print(f"[red]✗ aborted, nothing written[/]\n{_x(exc)}\n"
                   f"[dim]`dg pending` to review; `dg drop <id>` to unstage[/]")
         return False
+    except project.Sealed as exc:
+        return _say_sealed(exc)
     except UNREADABLE as exc:
         con.print(f"[red]✗ nothing written — {project.STORE_NAME} could not "
                   f"be read[/]\n{_x(exc)}\n"
@@ -2997,6 +3033,8 @@ def _apply_tasks(ops: list[dict], dry_run: bool) -> bool:
                   f"[dim]`dg task pending` to review; `dg task drop-op <id>` to "
                   f"unstage[/]")
         return False
+    except project.Sealed as exc:
+        return _say_sealed(exc)
     except UNREADABLE as exc:
         con.print(f"[red]✗ nothing written — {project.TASKS_NAME} could not "
                   f"be read[/]\n{_x(exc)}\n"

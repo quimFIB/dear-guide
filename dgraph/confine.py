@@ -103,6 +103,19 @@ def render(backend: str, root: Path | None) -> Launch:
     return (_bwrap if backend == "bwrap" else _host)(policy(root))
 
 
+def configures_runner(backend: str, root: Path | None = None) -> bool:
+    """Whether this backend's floor can only be applied by the spawn line.
+
+    **Derived from the rendering rather than listed beside it.** The two
+    backends differ in *shape* — one wraps the command, one configures the
+    runner — and every refusal about an unapplied floor turns on that
+    difference. A list would be a second statement of it, free to disagree with
+    `render` the day a third backend lands, which is exactly how `$DG_FLOOR`
+    came to be applied by one launcher and not the other.
+    """
+    return render(backend, root).settings is not None
+
+
 def _bwrap(c: Confinement) -> Launch:
     """A mount namespace: read-only everywhere, writable where the policy says.
 
