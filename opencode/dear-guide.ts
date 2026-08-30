@@ -199,7 +199,19 @@ export const DearGuidePlugin: Plugin = async ({ $, directory }) => {
       // `["commit"]` for as long as commits were all the gate judged, and
       // stayed that way after `dg rm` was added, so the gate's `ask` on a
       // removal was never reached from here.
-      if (!TRIGGERS.some((t) => command.includes(t))) return
+      //
+      // **An agent skips the fast path entirely**, and that asymmetry is what
+      // makes the command gate an allowlist rather than a denylist. Whether an
+      // agent may run `cargo` depends on `$DG_EXEC_ALLOW`, not on any word in
+      // the command, so no word list can be sound for it — widening one means
+      // guessing more words, which is what this project refuses to do with
+      // shell. A person is unaffected and pays what they paid before.
+      //
+      // `$DG_AGENT` is the fast path the write scope above already uses, for
+      // the same reason: it is the one thing separating a session the remit
+      // applies to from every ordinary use of the host.
+      const owned = Boolean((process.env.DG_AGENT ?? "").trim())
+      if (!owned && !TRIGGERS.some((t) => command.includes(t))) return
 
       // `run`, not `dg`: that collapses every failure into null, and here the
       // failures differ. `dg gate` is written never to fail open — it catches

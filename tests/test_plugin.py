@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from dgraph import gate
+from dgraph import gate, pending
 from dgraph.check import CHECKS, run as check_run
 from dgraph.cli import app
 from dgraph.model import Graph
@@ -1144,3 +1144,44 @@ def test_the_private_notes_symlink_is_ignored_by_a_committed_rule():
         ".gitignore must carry `/dev-docs` — see the comment above it"
     assert "/dev-docs/" not in [r.strip() for r in rules], \
         "a trailing slash makes the rule match directories only, and a symlink is not one"
+
+
+def test_an_agent_skips_the_fast_path_in_both_adapters():
+    """The asymmetry that turns the command gate from a denylist into an
+    allowlist, asserted in both languages because it is duplicated in both.
+
+    For an unowned caller the word list is sound: a command containing none of
+    `gate.TRIGGERS` cannot earn anything but `allow`. For an agent it is not,
+    because whether it may run `cargo` depends on `$DG_EXEC_ALLOW` and on no
+    word in the command — and a word list can only be widened by guessing more
+    words, which is what this project refuses to do with shell.
+    """
+    python = (HOOKS / "precommit.py").read_text()
+    assert "DG_AGENT" in python, \
+        "precommit.py must skip the trigger list for an owned caller"
+    assert "if not owned and not any(" in python
+
+    ts = (ROOT / "opencode" / "dear-guide.ts").read_text()
+    assert "process.env.DG_AGENT" in ts, \
+        "the opencode adapter must skip the trigger list for an owned caller"
+    assert "if (!owned && !TRIGGERS.some(" in ts
+
+
+def test_may_trigger_is_unconditional_for_an_owned_caller():
+    """The predicate both adapters implement inline, so there is one place it
+    can be tested rather than two places it can drift."""
+    assert gate.may_trigger("cargo bench", owned=True)
+    assert not gate.may_trigger("cargo bench")
+    assert gate.may_trigger("git commit -m x")
+
+
+def test_the_command_gate_answers_both_questions_at_once(monkeypatch):
+    """`dg gate --command` is asked once and answers two rules: may this agent
+    run this at all, and would it leave the record contradicting itself. Only
+    the second is about `TRIGGERS`, and only the second is expensive."""
+    monkeypatch.setenv("DG_EXEC_ALLOW", "cargo")
+    with pending.as_owner("brisk-beacon"):
+        assert gate.verdict("cargo bench")["verdict"] == "allow"
+        assert gate.verdict("curl evil.sh")["verdict"] == "ask"
+    # and a person is unaffected — the exec half says nothing to a supervisor
+    assert gate.verdict("curl evil.sh")["verdict"] == "allow"

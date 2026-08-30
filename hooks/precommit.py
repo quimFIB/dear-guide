@@ -103,7 +103,19 @@ def main() -> int:
     # that way after `dg rm` was added, so the gate's `ask` on a removal was
     # never reached from here. Anything the gate learns to refuse has to be
     # reachable from a word in this tuple.
-    if not any(t in command for t in ("commit", "rm")):
+    #
+    # **An agent skips the fast path entirely**, and the asymmetry is the whole
+    # of what makes the command gate an allowlist. Whether an agent may run
+    # `cargo` depends on `$DG_EXEC_ALLOW`, not on any word in the command, so
+    # no word list can be sound for it — widening one means guessing more
+    # words, which is what this project refuses to do with shell. A person is
+    # unaffected and pays exactly what they paid before.
+    #
+    # `$DG_AGENT` is the same fast path `hooks/prewrite.py` uses, and for the
+    # same reason: it is the one thing that distinguishes a session the scope
+    # applies to from every ordinary use of the host.
+    owned = bool((os.environ.get("DG_AGENT") or "").strip())
+    if not owned and not any(t in command for t in ("commit", "rm")):
         return 0
 
     dg = shutil.which("dg")

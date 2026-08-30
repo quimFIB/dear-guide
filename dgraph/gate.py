@@ -416,14 +416,26 @@ def _records(commit: _Commit, root: Path, staged: set[Path]):
 TRIGGERS = ("commit", "rm")
 
 
-def may_trigger(command: str) -> bool:
+def may_trigger(command: str, owned: bool = False) -> bool:
     """Whether `command` is worth handing to `verdict` at all.
 
     The predicate the adapters implement inline — they are stdlib-only and
     cannot import this module — kept here so there is something for them to be
     tested against. See `TRIGGERS`.
+
+    **`owned` short-circuits it, and that is what turned the command gate from
+    a denylist into an allowlist.** For an unowned caller the word list is a
+    sound fast path: a command containing none of them cannot earn anything but
+    `allow`, so skipping it hides nothing. For an agent it is not sound at all,
+    because whether it may run `cargo` depends on `$DG_EXEC_ALLOW` and not on
+    any word in the command — a word list can only ever be widened by guessing
+    more words, which is the shape this project refuses for shell.
+
+    So an agent sends everything and a person sends what it always did. The
+    cost lands exactly where the rule does, and a project that never heard of
+    this pays nothing.
     """
-    return any(t in command for t in TRIGGERS)
+    return True if owned else any(t in command for t in TRIGGERS)
 
 
 def _allow() -> dict:
@@ -469,7 +481,17 @@ def verdict(command: str, proj: project.Project | None = None) -> dict:
     therefore becomes a deny that says what could not be read.
     """
     try:
-        return _verdict(command, proj)
+        # Two questions, one answer. `exec_verdict` asks whether this agent may
+        # run this at all; `_verdict` asks whether the command would leave the
+        # record contradicting itself. Only the second is about `TRIGGERS`, and
+        # only the second is expensive — it shells out to `git` several times —
+        # so it is asked only when a trigger word is present. `combine` returns
+        # the strongest and carries both reasons, which is how `dg rm D01 &&
+        # git commit` already answered two rules at once.
+        answers = [exec_verdict(command)]
+        if may_trigger(command):
+            answers.append(_verdict(command, proj))
+        return combine(answers)
     except Exception as exc:
         return {
             "verdict": "deny",
