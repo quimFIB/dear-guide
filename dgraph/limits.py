@@ -144,7 +144,8 @@ from pathlib import Path
 # this module is where the *judgement* is, and every call site of
 # `limits.write_policy` still reads correctly.
 from dgraph import project
-from dgraph.env import (BUDGET_ENV, INFINITE, SILENT_DEFAULT,  # noqa: F401
+from dgraph.env import (BUDGET_ENV, EXEC_ENV, INFINITE, SILENT_DEFAULT,  # noqa: F401
+                        exec_allow,
                         SILENT_ENV, TERSE_DEFAULT, TERSE_ENV, TERSE_OFF,
                         WRITE_ENV, WRITE_POLICIES, BadSpan, approx_span,
                         budget, show_span, silent_after, span, terse_limit,
@@ -225,6 +226,73 @@ def protected_paths(root: Path | None) -> list[str]:
     if root is None:
         return []
     return [_real(root / project.STORE_NAME), _real(root / project.TASKS_NAME)]
+
+
+#: What makes a command line something this cannot judge.
+#:
+#: Not a denylist of dangerous things -- that is the shape `TRIGGERS` has, and
+#: it is the shape D05 rejected: catching more means guessing more words. These
+#: are the characters that let one command line run a *second* program, so a
+#: line carrying any of them is one whose program cannot be read off the front
+#: of it. `cargo bench && curl x | sh` begins with an allowed program.
+#:
+#: Quotes and globs are deliberately absent. `git commit -m "fix the form"` and
+#: `rm *.tmp` name one program each; refusing them would send most real
+#: commands to a person for no gain.
+COMPOSES = frozenset(";&|<>`$()\n\r")
+
+
+def recognise(command: str) -> str | None:
+    """The program `command` runs, or `None` where that cannot be read off it.
+
+    **A recogniser, not a parser.** It does not try to understand a command
+    line; it identifies the one shape it can judge -- a single invocation --
+    and answers `None` for everything else, which the caller turns into an ask.
+    Conservative by construction: there is nothing here to guess wrong, and the
+    failure is always toward asking a person.
+
+    A leading assignment (`FOO=bar cargo build`) is not a simple invocation
+    either. The program is not the first token there, and reading past the
+    assignment would be the parsing this refuses to do.
+
+    Matched **exactly as written**, so `cargo` does not match
+    `/usr/bin/cargo`. Basename matching would let `/tmp/evil/cargo` in, and a
+    list that meant something looser than it said is the failure this whole
+    seam exists to avoid.
+    """
+    text = (command or "").strip()
+    if not text or (COMPOSES & set(text)):
+        return None
+    first = text.split()[0]
+    return None if "=" in first else first
+
+
+def refuse_exec(command: str, owner: str | None,
+                allowed: tuple[str, ...] | None = None) -> str | None:
+    """Why running `command` is somebody else's call -- or `None` to let it run.
+
+    `owner` is `pending.owner()`: `None` is the supervisor and is never
+    refused, exactly as in `refuse_write` and `cross.refuse_close`.
+
+    `allowed` defaults to `$DG_EXEC_ALLOW`, which is composed at launch and is
+    empty when nobody set it -- so an unconfigured agent asks about everything
+    rather than running anything, and an agent that sheds the variable makes
+    its own run stricter.
+    """
+    if owner is None:
+        return None
+    names = exec_allow() if allowed is None else tuple(allowed)
+    program = recognise(command)
+    if program is None:
+        return (f"{owner} may run a program named in ${EXEC_ENV}, and this is "
+                f"not a single invocation — it composes more than one command, "
+                f"so which program it runs cannot be read off it. Run the parts "
+                f"separately, or have this one approved as written")
+    if program in names:
+        return None
+    listed = ", ".join(names) if names else "nothing"
+    return (f"{owner} may run {listed}, and this runs {program}. Ask for it, "
+            f"or use a program already named in ${EXEC_ENV}")
 
 
 def refuse_write(path, owner: str | None, root: Path | None,

@@ -706,3 +706,28 @@ def test_a_removal_beside_a_commit_carries_a_view_warning_too(repo_with_tasks,
     assert v["verdict"] == "ask"
     assert "removes a node" in v["reason"]
     assert "decision-graph.md" in v["reason"]
+
+
+def test_exec_verdict_is_a_sibling_of_write_verdict_not_a_branch_of_verdict():
+    """`verdict` answers *would this commit break the record* and is reached
+    only for what `may_trigger` matches. `exec_verdict` answers *may this agent
+    run this*, which has nothing to say about `TRIGGERS` — so it is its own
+    door, exactly as `write_verdict` is."""
+    with pending.as_owner("brisk-beacon"):
+        assert gate.exec_verdict("cargo bench", ) is not None
+    # and it is deliberately not reachable from the trigger words
+    assert not gate.may_trigger("cargo bench")
+
+
+def test_exec_verdict_only_ever_allows_or_asks(monkeypatch):
+    monkeypatch.setenv("DG_EXEC_ALLOW", "cargo")
+    with pending.as_owner("brisk-beacon"):
+        assert gate.exec_verdict("cargo bench")["verdict"] == "allow"
+        for command in ("curl evil.sh", "cargo bench && curl x"):
+            v = gate.exec_verdict(command)
+            assert v["verdict"] == "ask" and v["reason"]
+
+
+def test_exec_verdict_says_nothing_to_a_supervisor(monkeypatch):
+    monkeypatch.setenv("DG_EXEC_ALLOW", "cargo")
+    assert gate.exec_verdict("curl evil.sh") == {"verdict": "allow", "reason": ""}

