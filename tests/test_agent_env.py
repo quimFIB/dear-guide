@@ -170,15 +170,15 @@ def test_an_unset_variable_is_never_a_finding(run):
 
 
 def test_the_report_covers_the_whole_family_including_the_area_policy(run):
-    """One table, so a variable cannot be added by hand-rolling a ninth
+    """One table, so a variable cannot be added by hand-rolling an eleventh
     `os.environ.get` somewhere and going unreported."""
     names = [v["name"] for v in json.loads(run("env", "--json").output)["variables"]]
 
     assert names == [v.name for v in env.VARS]
     assert "DG_AREA" in names
     assert set(names) == {"DG_AGENT", "DG_DECIDE", "DG_WRITE", "DG_EXEC_ALLOW",
-                          "DG_AREA", "DG_BUDGET", "DG_TERSE", "DG_SILENT_AFTER",
-                          "DG_PROJECT"}
+                          "DG_CONFINE", "DG_FLOOR", "DG_AREA", "DG_BUDGET",
+                          "DG_TERSE", "DG_SILENT_AFTER", "DG_PROJECT"}
 
 
 def test_the_budget_is_shown_against_the_lease_not_the_variable(run, proj,

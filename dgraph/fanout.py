@@ -64,7 +64,8 @@ ENV_NAME = "env.json"
 #: a plan file that carried them would be a second copy of `scout.md`.
 ENV_FIELDS = {"decide": "DG_DECIDE", "write": "DG_WRITE",
               "area": "DG_AREA", "terse": "DG_TERSE",
-              "budget": "DG_BUDGET", "exec_allow": "DG_EXEC_ALLOW"}
+              "budget": "DG_BUDGET", "exec_allow": "DG_EXEC_ALLOW",
+              "confine": "DG_CONFINE", "floor": "DG_FLOOR"}
 
 #: The hosts a launch line can be generated for. `mixed` is not among them
 #: because a fan-out across two hosts is two launch files, and pretending
@@ -139,6 +140,13 @@ class Plan:
     #: default is a guess about somebody else's project. `dg-agent setup`
     #: derives a proposal from the filesystem rather than leaving it blank.
     exec_allow: list[str] = field(default_factory=list)
+    #: `$DG_CONFINE` and `$DG_FLOOR`. `require` here while the tool's own
+    #: default is `off`, for the same reason `decide`, `write` and `terse` are
+    #: tighter than theirs: a fan-out is where the failure these guard against
+    #: actually happens. `dg-agent setup` drops it back to `off` and says so
+    #: where no backend is usable, rather than writing a plan that cannot run.
+    confine: str = "require"
+    floor: str = "host"
     #: The three answers no graph can supply.
     brief: str = ""
     reads: list[tuple[str, str]] = field(default_factory=list)
@@ -164,7 +172,8 @@ def env_plan(plan: Plan) -> dict:
     """
     return {"decide": plan.decide, "write": plan.write, "area": plan.area,
             "terse": plan.terse, "budget": plan.budget,
-            "exec_allow": list(plan.exec_allow)}
+            "exec_allow": list(plan.exec_allow),
+            "confine": plan.confine, "floor": plan.floor}
 
 
 def read_env_plan(path) -> dict:
@@ -185,8 +194,11 @@ def read_env_plan(path) -> dict:
         raise ValueError(f"{path}: unknown key(s) {', '.join(unknown)} — this "
                          f"file holds the environment and nothing else "
                          f"({', '.join(ENV_FIELDS)})")
+    from dgraph import confine as _confine
     for key, allowed in (("decide", _env.POLICIES), ("write", _env.WRITE_POLICIES),
-                         ("area", _env.AREA_POLICIES)):
+                         ("area", _env.AREA_POLICIES),
+                         ("confine", _confine.CONFINE_MODES),
+                         ("floor", _confine.BACKENDS)):
         if key in raw and raw[key] not in allowed:
             raise ValueError(f"{path}: {key} is {raw[key]!r}, not one of "
                              f"{', '.join(allowed)}")
@@ -375,8 +387,18 @@ def propose_exec_allow(proj: project.Project | None = None) -> list[str]:
 
 def defaults(proj: project.Project | None = None) -> Plan:
     """A plan with everything the graph can answer already answered."""
+    from dgraph import confine as _confine
     proj = proj or project.find()
     plan = replace(Plan(), exec_allow=propose_exec_allow(proj))
+    # Proposed, then checked. A plan that asked for a floor no backend here can
+    # provide is a plan that refuses to launch, and the wizard's job is to hand
+    # back something that runs — so it drops to `off` and the reason travels in
+    # `dg-agent env`, where a launcher reads it before the first agent starts.
+    if not _confine.available(plan.floor)[0]:
+        other = next((b for b in _confine.BACKENDS
+                      if _confine.available(b)[0]), None)
+        plan = replace(plan, floor=other or plan.floor,
+                       confine="require" if other else "off")
     try:
         from dgraph.tasks import TaskGraph
         from dgraph import cross

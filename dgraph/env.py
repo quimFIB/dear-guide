@@ -102,6 +102,13 @@ BUDGET_ENV = "DG_BUDGET"
 #: How long a record's prose field may be. See `limits.py`.
 TERSE_ENV = "DG_TERSE"
 
+#: Whether a confinement floor is required, and which backend provides it.
+#: Both live in `dgraph/confine.py`, which owns the values and the probes; they
+#: are named here so `dg-agent env` reports the whole remit in one table rather
+#: than nine variables and two that are read somewhere else.
+CONFINE_ENV = "DG_CONFINE"
+FLOOR_ENV = "DG_FLOOR"
+
 #: When a quiet agent is reported. **Not a limit** -- nothing acts on it.
 SILENT_ENV = "DG_SILENT_AFTER"
 SILENT_DEFAULT = 900
@@ -275,6 +282,25 @@ def exec_allow(value: str | None = None) -> tuple[str, ...]:
         tok for tok in raw.split() if tok and not (NOT_A_NAME & set(tok))))
 
 
+def _confine_mode(raw: str | None) -> str:
+    """`$DG_CONFINE`, parsed for a *decision*. See `confine.mode`, which owns
+    the values; imported late because `confine` reads `limits`, which reads
+    this module."""
+    from dgraph import confine
+    try:
+        return confine.mode(raw)
+    except ValueError:
+        return confine.CONFINE_MODES[0]
+
+
+def _floor_backend(raw: str | None) -> str:
+    from dgraph import confine
+    try:
+        return confine.backend(raw)
+    except ValueError:
+        return confine.BACKENDS[0]
+
+
 def _show_exec_allow(value) -> str:
     names = tuple(value or ())
     if not names:
@@ -373,6 +399,12 @@ VARS: tuple[Var, ...] = (
     Var(EXEC_ENV, "what it may run without asking",
         exec_allow, _show_exec_allow, "nothing — every command asks",
         fails_open=False),
+    Var(CONFINE_ENV, "whether a floor is required below the tool layer",
+        _confine_mode, str, "off", fails_open=False,
+        choices=("off", "require")),
+    Var(FLOOR_ENV, "which backend provides it",
+        _floor_backend, str, "host", fails_open=False,
+        choices=("host", "bwrap")),
     Var(AREA_ENV, "whether it may file under a new area",
         area_policy, str, AREA_POLICIES[0], fails_open=True,
         choices=AREA_POLICIES),
@@ -430,6 +462,34 @@ class Reading:
             return ""
         return (f"${self.var.name}={self.raw} {self.note} "
                 f"Set it where the agent is launched.")
+
+
+def _read_confine(raw: str | None) -> tuple[object, bool, str]:
+    """Set and not understood is a **finding**, not a fallback.
+
+    These two are the exception `$DG_BUDGET` already is. A misread policy here
+    is not a rule weakened by a notch — it is a run that believes it is
+    confined and is not, which is the one thing a floor exists to rule out.
+    """
+    from dgraph import confine
+    try:
+        return confine.mode(raw), True, ""
+    except ValueError:
+        return (confine.CONFINE_MODES[0], False,
+                f"is not one of {', '.join(confine.CONFINE_MODES)} — and this "
+                f"is one of the two here a typo must not widen: a run that "
+                f"believes it is confined and is not is the single thing a "
+                f"floor exists to rule out. `--check` refuses it.")
+
+
+def _read_floor(raw: str | None) -> tuple[object, bool, str]:
+    from dgraph import confine
+    try:
+        return confine.backend(raw), True, ""
+    except ValueError:
+        return (confine.BACKENDS[0], False,
+                f"is not one of {', '.join(confine.BACKENDS)} — reported "
+                f"rather than defaulted, for the reason ${CONFINE_ENV} is.")
 
 
 def _read_exec_allow(raw: str | None) -> tuple[object, bool, str]:
@@ -533,6 +593,8 @@ def _read_project(raw: str | None) -> tuple[object, bool, str]:
 _READERS: dict[str, Callable[[str | None], tuple[object, bool, str]]] = {
     AGENT_ENV: _read_agent,
     EXEC_ENV: _read_exec_allow,
+    CONFINE_ENV: _read_confine,
+    FLOOR_ENV: _read_floor,
     POLICY_ENV: lambda raw: _read_choice(BY_NAME[POLICY_ENV], raw),
     WRITE_ENV: lambda raw: _read_choice(BY_NAME[WRITE_ENV], raw),
     AREA_ENV: lambda raw: _read_choice(BY_NAME[AREA_ENV], raw),

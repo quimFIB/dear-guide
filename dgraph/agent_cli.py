@@ -711,6 +711,16 @@ def _effect(r: env.Reading, proj: project.Project) -> str:
         if value == "open":
             return "anywhere"
         return ", ".join(limits.writable_roots(proj.root))
+    if name == env.CONFINE_ENV:
+        if value == "off":
+            return "no floor — the gate and the broker are all that judge"
+        from dgraph import confine
+        ok, why = confine.available(env.reading(env.FLOOR_ENV).value)
+        return "a floor is required" if ok else f"REQUIRED but {why}"
+    if name == env.FLOOR_ENV:
+        from dgraph import confine
+        ok, why = confine.available(value)
+        return f"{value} — usable here" if ok else f"{value} — {why}"
     if name == env.EXEC_ENV:
         # The vocabulary of the refusal, like every branch here: what a reader
         # needs is how many commands are about to escalate, not the tuple.

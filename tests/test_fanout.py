@@ -156,7 +156,7 @@ def test_the_plan_is_the_remit_and_nothing_else(proj):
     spec = json.loads(written[2].read_text(encoding="utf-8"))
 
     assert set(spec) == {"decide", "write", "area", "terse", "budget",
-                         "exec_allow"}
+                         "exec_allow", "confine", "floor"}
     # The default plan proposes an allowlist from the project's marker files,
     # so `DG_EXEC_ALLOW` is here. It is a *proposal* — `env.json` is where a
     # person cuts it down — which is why it lands in the file rather than only
@@ -164,6 +164,7 @@ def test_the_plan_is_the_remit_and_nothing_else(proj):
     # variable is absent rather than assigned to nothing.
     composed = fanout.plan_env(spec)
     assert composed.pop("DG_EXEC_ALLOW").split()[:2] == ["dg", "dg-agent"]
+    composed.pop("DG_CONFINE"), composed.pop("DG_FLOOR")
     assert composed == {
         "DG_DECIDE": "evidence", "DG_WRITE": "launch", "DG_AREA": "open",
         "DG_TERSE": "on", "DG_BUDGET": "30m"}
