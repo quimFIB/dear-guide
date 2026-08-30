@@ -356,6 +356,10 @@ def agent_setup(
                               help="`on`, a character count, or `off` — how "
                                    "long a field may be before the "
                                    "development belongs in a file"),
+    exec_allow: str = typer.Option(
+        None, "--exec-allow", metavar="NAMES",
+        help="program names an agent may run unasked, space-separated; "
+             "replaces what the project's marker files proposed"),
     brief: str = typer.Option(None, "--brief",
                               help="one paragraph: what a good session produces"),
     read: list[str] = typer.Option(None, "--read", metavar="PATH:WHAT",
@@ -417,6 +421,7 @@ def agent_setup(
     given = {"focus": focus, "agents": n, "host": host, "decide": decide,
              "write": write_scope, "area": area, "budget": budget,
              "terse": terse, "brief": brief, "read": read,
+             "exec_allow": exec_allow,
              "findings": findings, "out": out}
     interactive = not any(v not in (None, (), []) for v in given.values())
 
@@ -500,6 +505,20 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
                 f"--terse wants `on`, `off`, or a character count, not "
                 f"{given['terse']!r}")
 
+    # Replaces the proposal rather than adding to it. A launcher spelling the
+    # list out has read what the markers found and decided otherwise, and a
+    # flag that quietly kept the rest would make `--exec-allow dg` mean
+    # something wider than it says.
+    exec_names = plan.exec_allow
+    if given.get("exec_allow") is not None:
+        exec_names = list(dict.fromkeys(given["exec_allow"].split()))
+        bad = [n for n in exec_names if env.NOT_A_NAME & set(n)]
+        if bad:
+            raise ValueError(
+                f"--exec-allow takes program names, not command lines — "
+                f"{', '.join(repr(b) for b in bad)} carries shell syntax and "
+                f"would never match one")
+
     return replace(
         plan,
         focus=[s.strip() for s in given["focus"].split(",") if s.strip()]
@@ -511,6 +530,7 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
         area=one_of("area", given["area"], set(env.AREA_POLICIES)),
         budget=budget,
         terse=terse,
+        exec_allow=exec_names,
         brief=given["brief"] or plan.brief,
         reads=reads or plan.reads,
         findings=given["findings"] or plan.findings,

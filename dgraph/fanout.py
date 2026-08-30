@@ -306,10 +306,77 @@ def readiness(proj: project.Project | None = None) -> list[Check]:
     return out
 
 
+#: The loop itself. An agent that had to ask before `dg show` would be asking
+#: about the commands a fan-out is made of, and the supervisor answering would
+#: be approving its own procedure a hundred times over.
+ALWAYS = ("dg", "dg-agent")
+
+#: Programs that cannot change anything by themselves.
+#:
+#: Reads are never judged -- an agent that cannot read the repository it is
+#: reasoning about is blindfolded rather than constrained -- and a `cat` that
+#: had to be approved would contradict that in spirit while obeying it in
+#: letter. Redirection does not widen these, because `cat a > b` is
+#: composition and `limits.recognise` sends it to a person anyway.
+#:
+#: **`find` and `sed` are deliberately absent**, and their absence is not an
+#: oversight to be fixed by whoever notices it. `find -delete` deletes and
+#: `sed -i` rewrites in place -- and `sed -i` on the decision store is the
+#: exact move `limits.protected_paths` exists to stop.
+READERS = ("ls", "cat", "head", "tail", "wc", "grep", "rg", "diff",
+           "file", "stat", "which", "pwd", "echo", "basename", "dirname")
+
+#: What a marker file says about the programs a fan-out will need. A proposal
+#: for a person to edit, never a decision: `dg-agent setup` writes it into
+#: `env.json` where it can be read back, cut down, and diffed next time.
+#:
+#: Coarse on purpose. `cargo` here means all of cargo, and that concedes
+#: arbitrary code execution -- running a build tool *is* running project code,
+#: so `cargo build` is no safer than `cargo run` and a finer list would claim a
+#: precision it could not keep. What answers that is a confinement floor, not a
+#: longer allowlist.
+MARKERS = {
+    "Cargo.toml": ("cargo",),
+    "pyproject.toml": ("python3", "pytest"),
+    "setup.py": ("python3", "pytest"),
+    "requirements.txt": ("python3", "pytest"),
+    "package.json": ("npm", "node"),
+    "Makefile": ("make",),
+    "go.mod": ("go",),
+    "dune-project": ("dune",),
+    "_CoqProject": ("dune", "rocq", "coqc"),
+    "CMakeLists.txt": ("cmake", "ctest"),
+    # All of git, including the config that points its pager at a shell. Listed
+    # because a fan-out that cannot read its own history is hobbled, and put
+    # here rather than in `ALWAYS` so that it shows up in `env.json` as
+    # something a launcher chose to keep.
+    ".git": ("git",),
+}
+
+
+def propose_exec_allow(proj: project.Project | None = None) -> list[str]:
+    """What this project looks like it needs, for a person to edit.
+
+    The first setup field answered by the **filesystem** rather than by the
+    graph, and the reason a per-run list beats a committed one: a list written
+    once goes stale in a repository nobody re-reads it in, and a derived one is
+    recomputed every run and cannot.
+
+    Order is `ALWAYS`, then readers, then whatever the markers found, so the
+    line reads as the loop, the eyes, and the work.
+    """
+    proj = proj or project.find()
+    found: list[str] = [*ALWAYS, *READERS]
+    for marker, programs in MARKERS.items():
+        if (proj.root / marker).exists():
+            found.extend(programs)
+    return list(dict.fromkeys(found))
+
+
 def defaults(proj: project.Project | None = None) -> Plan:
     """A plan with everything the graph can answer already answered."""
     proj = proj or project.find()
-    plan = Plan()
+    plan = replace(Plan(), exec_allow=propose_exec_allow(proj))
     try:
         from dgraph.tasks import TaskGraph
         from dgraph import cross

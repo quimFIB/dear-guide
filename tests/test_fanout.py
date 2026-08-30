@@ -157,10 +157,14 @@ def test_the_plan_is_the_remit_and_nothing_else(proj):
 
     assert set(spec) == {"decide", "write", "area", "terse", "budget",
                          "exec_allow"}
-    # `DG_EXEC_ALLOW` is absent rather than empty: the default plan lists no
-    # programs, and an empty assignment would make `dg-agent env` report a
-    # variable somebody had chosen when nobody had.
-    assert fanout.plan_env(spec) == {
+    # The default plan proposes an allowlist from the project's marker files,
+    # so `DG_EXEC_ALLOW` is here. It is a *proposal* — `env.json` is where a
+    # person cuts it down — which is why it lands in the file rather than only
+    # in the launcher. `test_agent_env` pins the empty case, where the
+    # variable is absent rather than assigned to nothing.
+    composed = fanout.plan_env(spec)
+    assert composed.pop("DG_EXEC_ALLOW").split()[:2] == ["dg", "dg-agent"]
+    assert composed == {
         "DG_DECIDE": "evidence", "DG_WRITE": "launch", "DG_AREA": "open",
         "DG_TERSE": "on", "DG_BUDGET": "30m"}
 
@@ -412,3 +416,60 @@ def test_a_bad_field_limit_is_refused_rather_than_defaulted(proj):
     flag exists to prevent."""
     res = run(proj, "setup", "--terse", "loose", "--brief", "x")
     assert res.exit_code == 2 and "--terse" in res.output
+
+
+# ---- what a project looks like it needs -----------------------------------
+#
+# The first setup field answered by the filesystem rather than by the graph,
+# and the reason a per-run list beats a committed one: a list written once goes
+# stale in a repository nobody re-reads it in, and a derived one is recomputed
+# every run and cannot.
+
+def test_the_loop_is_always_proposed(proj):
+    """An agent that had to ask before `dg show` would be asking about the
+    commands a fan-out is made of."""
+    names = fanout.propose_exec_allow(proj)
+    assert names[:2] == ["dg", "dg-agent"]
+
+
+def test_readers_are_proposed_because_reads_are_never_judged(proj):
+    """A `cat` that had to be approved would obey the rule in letter while
+    contradicting it in spirit. Redirection does not widen them — `cat a > b`
+    is composition, and the recogniser sends it to a person anyway."""
+    names = fanout.propose_exec_allow(proj)
+    assert {"ls", "cat", "grep"} <= set(names)
+
+
+def test_find_and_sed_are_not_proposed(proj):
+    """Their absence is not an oversight for whoever notices it to fix.
+    `find -delete` deletes and `sed -i` rewrites in place — and `sed -i` on the
+    decision store is the exact move `limits.protected_paths` exists to stop."""
+    names = fanout.propose_exec_allow(proj)
+    assert "find" not in names and "sed" not in names
+
+
+@pytest.mark.parametrize("marker, expected", [
+    ("Cargo.toml", "cargo"),
+    ("pyproject.toml", "pytest"),
+    ("package.json", "npm"),
+    ("Makefile", "make"),
+    ("go.mod", "go"),
+])
+def test_a_marker_file_proposes_its_toolchain(proj, marker, expected):
+    (proj.root / marker).write_text("")
+    assert expected in fanout.propose_exec_allow(proj)
+
+
+def test_nothing_is_proposed_twice(proj):
+    """`pyproject.toml` and `requirements.txt` both mean python3, and a list
+    naming it twice would read as two decisions."""
+    (proj.root / "pyproject.toml").write_text("")
+    (proj.root / "requirements.txt").write_text("")
+    names = fanout.propose_exec_allow(proj)
+    assert len(names) == len(set(names))
+    assert names.count("python3") == 1
+
+
+def test_the_default_plan_carries_the_proposal(proj):
+    (proj.root / "Cargo.toml").write_text("")
+    assert "cargo" in fanout.defaults(proj).exec_allow
