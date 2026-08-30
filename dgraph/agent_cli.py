@@ -965,6 +965,56 @@ def _hold_back(name: str, why: str) -> list[str]:
     return held
 
 
+@app.command("broker")
+def agent_broker(
+    write: str = typer.Option(None, "--write-rung", help="off | auto | scoped | user"),
+    exec_: str = typer.Option(None, "--exec-rung", help="off | auto | scoped | user"),
+) -> None:
+    """Answer the consent requests a fan-out's agents block on.
+
+    `dg gate` is a pure function, so where it cannot allow something it says
+    `ask` — and in a headless run there is nobody to ask, which turns consent
+    into a refusal nobody chose. This is the process standing there.
+
+    Run it in its own terminal, beside the fan-out. It listens on a socket in
+    the project, answers one request at a time because a person answers one at
+    a time, and exits on Ctrl-C. **Nothing needs it**: with no broker listening
+    the gate returns the verdict it always did, so a project that never starts
+    one behaves exactly as it did before.
+
+    The two rungs are read *here* rather than by the gate, and that placement
+    is the point: the gate runs inside the agent's own process, so a rung read
+    there is one the agent could widen.
+    """
+    from dgraph import broker as _broker
+    try:
+        proj = project.find()
+    except Exception as exc:
+        cli.con.print(f"[red]✗ no graph here — {cli._x(exc)}[/]")
+        raise typer.Exit(2) from None
+    given = {"DG_CONSENT_WRITE": write, "DG_CONSENT_EXEC": exec_}
+    for name, value in given.items():
+        if value is not None:
+            os.environ[name] = value
+    try:
+        rungs = {k: _broker.rung(k) for k in _broker.LADDERS}
+    except ValueError as exc:
+        cli.con.print(f"[red]✗ {cli._x(exc)}[/]\n[dim]nothing is listening; "
+                      f"fix the rung and start again[/]")
+        raise typer.Exit(2) from None
+
+    b = _broker.Broker(root=proj.root, prompt=_broker.terminal_prompt)
+    cli.con.print(
+        f"[green]listening[/] on {cli._x(_broker.SOCKET_NAME)} "
+        f"[dim]write={rungs['write']} exec={rungs['exec']} · "
+        f"answers go to {cli._x(_broker.LOG_NAME)} · Ctrl-C to stop[/]")
+    try:
+        b.serve()
+    except KeyboardInterrupt:
+        cli.con.print("\n[dim]stopped — agents now get the gate's own verdict, "
+                      "which in a headless run is a refusal[/]")
+
+
 @app.command("run", context_settings={"allow_interspersed_args": False})
 def agent_run(
     command: list[str] = typer.Argument(

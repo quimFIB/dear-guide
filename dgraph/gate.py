@@ -505,10 +505,13 @@ def write_verdict(path: str, proj: project.Project | None = None) -> dict:
     except Exception:
         root = None
     try:
-        reason = limits.refuse_write(path, pending.owner(), root)
+        owner = pending.owner()
+        reason = limits.refuse_write(path, owner, root)
     except Exception:
         return _allow()
-    return {"verdict": "ask", "reason": reason} if reason else _allow()
+    if not reason:
+        return _allow()
+    return _resolved("write", path, owner, reason, root)
 
 
 def exec_verdict(command: str) -> dict:
@@ -533,10 +536,58 @@ def exec_verdict(command: str) -> dict:
     this could not vouch for.
     """
     try:
-        reason = limits.refuse_exec(command, pending.owner())
+        owner = pending.owner()
+        reason = limits.refuse_exec(command, owner)
     except Exception:
         return _allow()
-    return {"verdict": "ask", "reason": reason} if reason else _allow()
+    if not reason:
+        return _allow()
+    return _resolved("exec", command, owner, reason)
+
+
+def _resolved(kind: str, target: str, owner: str | None, reason: str,
+              root=None) -> dict:
+    """`ask`, unless a broker is listening and turns it into an answer.
+
+    **No broker means no broker**, not a degraded one: `consult` answers `None`
+    and the verdict is the `ask` this always returned, so a project that never
+    started one behaves exactly as it did. That is why the broker ships without
+    a new hard dependency and without the two-procedures problem confinement
+    has.
+
+    A broker that is listening but does not answer is a **deny**, composed
+    there rather than here -- an unreachable decider is not consent.
+    """
+    from dgraph import broker
+    try:
+        if not broker.listening(root):
+            return {"verdict": "ask", "reason": reason}
+        req = broker.request(kind, str(target), owner or "", reason,
+                             holding=_holding(owner))
+        res = broker.consult(req, root)
+    except Exception:
+        return {"verdict": "ask", "reason": reason}
+    if not res:
+        return {"verdict": "ask", "reason": reason}
+    return {"verdict": "allow" if res.get("verdict") == "allow" else "deny",
+            "reason": res.get("reason") or reason}
+
+
+def _holding(owner: str | None) -> dict:
+    """What the agent is working on, so an escalation can say *why*.
+
+    A prompt that says only "an agent wants to write a file" is one people
+    learn to approve blindly; the task and the decision it bears on are what
+    make it readable, and the graph already knows both.
+    """
+    if not owner:
+        return {}
+    try:
+        from dgraph import agents
+        tid = agents.holdings().get(owner)
+        return {"task": tid} if tid else {}
+    except Exception:
+        return {}
 
 
 #: The verdicts, weakest first. `combine` returns the strongest, which is the

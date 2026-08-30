@@ -215,6 +215,12 @@ def test_every_staging_command_is_covered():
         ("setup",),
         # Reports; writes nothing at all.
         ("env",),
+        # A server. It answers consent requests and writes only its own log —
+        # never an op, never a tray. The grants it hands out are held in memory
+        # and die with it, deliberately: the lease file has to stay writable by
+        # agents because the heartbeat stamps it, so a grant written there would
+        # be one an agent could award itself.
+        ("broker",),
     }
     #: Commands that DO write a tray but cannot be expressed as a `CASES` entry,
     #: with the test that covers them instead. Separate from `NO_TRAY` because
