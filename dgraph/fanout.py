@@ -64,7 +64,7 @@ ENV_NAME = "env.json"
 #: a plan file that carried them would be a second copy of `scout.md`.
 ENV_FIELDS = {"decide": "DG_DECIDE", "write": "DG_WRITE",
               "area": "DG_AREA", "terse": "DG_TERSE",
-              "budget": "DG_BUDGET"}
+              "budget": "DG_BUDGET", "exec_allow": "DG_EXEC_ALLOW"}
 
 #: The hosts a launch line can be generated for. `mixed` is not among them
 #: because a fan-out across two hosts is two launch files, and pretending
@@ -134,6 +134,11 @@ class Plan:
     #: them back to a person before the work that found it can be filed. The
     #: similarity guard is what makes `open` safe, and it is on either way.
     area: str = "open"
+    #: `$DG_EXEC_ALLOW`. Program names, never command lines -- see `env`. Empty
+    #: by default, which means every command escalates, because the alternative
+    #: default is a guess about somebody else's project. `dg-agent setup`
+    #: derives a proposal from the filesystem rather than leaving it blank.
+    exec_allow: list[str] = field(default_factory=list)
     #: The three answers no graph can supply.
     brief: str = ""
     reads: list[tuple[str, str]] = field(default_factory=list)
@@ -158,7 +163,8 @@ def env_plan(plan: Plan) -> dict:
     that can refuse. `plan_env` renders it back for the environment.
     """
     return {"decide": plan.decide, "write": plan.write, "area": plan.area,
-            "terse": plan.terse, "budget": plan.budget}
+            "terse": plan.terse, "budget": plan.budget,
+            "exec_allow": list(plan.exec_allow)}
 
 
 def read_env_plan(path) -> dict:
@@ -189,6 +195,28 @@ def read_env_plan(path) -> dict:
         if word not in _env.TERSE_OFF and _env.terse_limit(word) is None:
             raise ValueError(f"{path}: terse is {raw['terse']!r}, not `on`, "
                              f"`off`, or a character count")
+    if "exec_allow" in raw:
+        # A list of names, checked here for the reason `decide` is: this file
+        # is read back by the thing that spawns agents, and a name carrying
+        # shell syntax would be dropped silently at parse time -- narrowing the
+        # run without saying so. Refused at the launcher, where it is fixable.
+        names = raw["exec_allow"]
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            raise ValueError(f"{path}: exec_allow is {names!r} — a list of "
+                             f"program names")
+        # `n.split() != [n]` rather than a character test: one entry is one
+        # name, and an entry with a space in it is a *subcommand*. Left in, it
+        # would not be refused later either -- `env.exec_allow` splits on
+        # whitespace, so `"git commit"` would quietly become two allowed
+        # programs, `git` and `commit`, the second of which nobody listed.
+        bad = [n for n in names
+               if n.split() != [n] or (_env.NOT_A_NAME & set(n))]
+        if bad:
+            raise ValueError(
+                f"{path}: exec_allow holds {', '.join(repr(b) for b in bad)} — "
+                f"program names, not command lines — one name per entry. A "
+                f"subcommand would silently become two allowed programs, and a "
+                f"pipe is a rule nothing would ever match")
     if raw.get("budget") is not None:
         # The type *and* the range, because every other field here is
         # range-checked and this one was not: `isinstance(int)` let `0` and
@@ -228,6 +256,14 @@ def plan_env(spec: dict) -> dict[str, str]:
             if value is None:
                 continue
             value = _env.show_span(value)
+        elif key == "exec_allow":
+            # Absent rather than empty when there is nothing in it: unset and
+            # `""` mean the same thing to `env.exec_allow`, and an empty
+            # assignment in the child would make `dg-agent env` report a
+            # variable somebody had chosen when nobody had.
+            if not value:
+                continue
+            value = " ".join(value)
         out[name] = str(value)
     return out
 

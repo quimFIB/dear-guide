@@ -170,14 +170,14 @@ def test_an_unset_variable_is_never_a_finding(run):
 
 
 def test_the_report_covers_the_whole_family_including_the_area_policy(run):
-    """One table, so a variable cannot be added by hand-rolling an eighth
+    """One table, so a variable cannot be added by hand-rolling a ninth
     `os.environ.get` somewhere and going unreported."""
     names = [v["name"] for v in json.loads(run("env", "--json").output)["variables"]]
 
     assert names == [v.name for v in env.VARS]
     assert "DG_AREA" in names
-    assert set(names) == {"DG_AGENT", "DG_DECIDE", "DG_WRITE", "DG_AREA",
-                          "DG_BUDGET", "DG_TERSE", "DG_SILENT_AFTER",
+    assert set(names) == {"DG_AGENT", "DG_DECIDE", "DG_WRITE", "DG_EXEC_ALLOW",
+                          "DG_AREA", "DG_BUDGET", "DG_TERSE", "DG_SILENT_AFTER",
                           "DG_PROJECT"}
 
 
@@ -491,3 +491,61 @@ def test_a_plan_budget_that_means_something_is_kept(good, tmp_path):
     path = tmp_path / "env.json"
     path.write_text(json.dumps({"budget": good}))
     assert fanout.read_env_plan(str(path))["budget"] == good
+
+
+# ---- $DG_EXEC_ALLOW ------------------------------------------------------
+#
+# The list the recogniser matches a command against. It is composed at launch
+# like the other five and never read from `fanout/env.json` when a command is
+# judged: that file sits inside the project an agent may write to, so a list
+# read at gate time would be one the agent could append `bash` to between two
+# commands.
+
+def test_exec_allow_keeps_order_and_drops_duplicates():
+    assert env.exec_allow("cargo git pytest cargo") == ("cargo", "git", "pytest")
+
+
+def test_exec_allow_unset_is_empty_so_everything_asks():
+    """The one variable here whose unreadable value **narrows**.
+
+    An agent that drops it gets an empty list and every command escalates, so
+    shedding the variable makes its own run stricter. That is why the table
+    marks it `fails_open=False` while `$DG_DECIDE` beside it is True.
+    """
+    assert env.exec_allow("") == ()
+    assert env.BY_NAME[env.EXEC_ENV].fails_open is False
+
+
+def test_exec_allow_drops_command_lines_and_says_which():
+    r = env.reading(env.EXEC_ENV, {env.EXEC_ENV: "cargo git|sh $(id) pytest"})
+    assert r.value == ("cargo", "pytest")
+    assert r.ok is False
+    assert "git|sh" in r.complaint and "$(id)" in r.complaint
+
+
+def test_exec_allow_round_trips_plan_to_environment():
+    spec = fanout.env_plan(fanout.Plan(exec_allow=["cargo", "git"]))
+    assert spec["exec_allow"] == ["cargo", "git"]
+    assert fanout.plan_env(spec)[env.EXEC_ENV] == "cargo git"
+
+
+def test_exec_allow_absent_from_the_environment_when_empty():
+    """Absent, not `""`. The two mean the same to `env.exec_allow`, and an
+    empty assignment would make `dg-agent env` report a variable somebody had
+    chosen when nobody had."""
+    assert env.EXEC_ENV not in fanout.plan_env(fanout.env_plan(fanout.Plan()))
+
+
+def test_env_plan_file_refuses_a_command_line(tmp_path):
+    spec = tmp_path / "env.json"
+    spec.write_text(json.dumps({"exec_allow": ["cargo", "git commit"]}))
+    with pytest.raises(ValueError) as exc:
+        fanout.read_env_plan(spec)
+    assert "program names" in str(exc.value)
+
+
+def test_env_plan_file_refuses_a_non_list(tmp_path):
+    spec = tmp_path / "env.json"
+    spec.write_text(json.dumps({"exec_allow": "cargo git"}))
+    with pytest.raises(ValueError):
+        fanout.read_env_plan(spec)

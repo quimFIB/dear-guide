@@ -68,6 +68,24 @@ POLICIES = ("open", "evidence", "never")
 WRITE_ENV = "DG_WRITE"
 WRITE_POLICIES = ("open", "launch")
 
+#: What an agent may run without asking. Space-separated **program names** --
+#: names, not command lines and not subcommands. `dg-agent run` composes it at
+#: launch from the plan, for the reason every other value here is composed
+#: there: a list read when a command is judged would be live, and
+#: `fanout/env.json` sits inside the project an agent may write to.
+#:
+#: Unset is the **empty** list, so every command escalates. That is the one
+#: direction this may fail in: an agent that drops the variable makes its own
+#: run stricter, never wider, which is the opposite of `$DG_DECIDE` and is why
+#: `fails_open` is False for it.
+EXEC_ENV = "DG_EXEC_ALLOW"
+
+#: What makes a token something other than a program name. A token carrying one
+#: of these was written as a *command line*, and judging command lines belongs
+#: to the recogniser rather than to this list -- so it is dropped and reported
+#: rather than matched against, which would let `git|sh` in as a name.
+NOT_A_NAME = frozenset(";&|<>$`()[]{}*?!\\\"'\n\t")
+
 #: Whether an agent may file under an area nobody has used yet. See
 #: `pending.refuse_area`.
 #:
@@ -241,6 +259,30 @@ def terse_limit(value: str | None = None) -> int | None:
     return int(raw) if raw.isdigit() else None
 
 
+def exec_allow(value: str | None = None) -> tuple[str, ...]:
+    """`$DG_EXEC_ALLOW` as the program names an agent may run unasked.
+
+    Order is kept and duplicates are dropped, because this is read by a person
+    in `dg-agent env` as often as it is matched against.
+
+    A token that is not a program name is **dropped**, not raised: this is
+    consulted on the path of every command, and the drop narrows rather than
+    widens, so there is nothing here that failing quietly could cost. What it
+    would cost is silence, and `_read_exec_allow` is what reports it.
+    """
+    raw = (value if value is not None else os.environ.get(EXEC_ENV) or "")
+    return tuple(dict.fromkeys(
+        tok for tok in raw.split() if tok and not (NOT_A_NAME & set(tok))))
+
+
+def _show_exec_allow(value) -> str:
+    names = tuple(value or ())
+    if not names:
+        return "nothing — every command asks"
+    shown = ", ".join(names[:4])
+    return shown if len(names) <= 4 else f"{shown}, +{len(names) - 4} more"
+
+
 def budget(value: str | None = None) -> int | None:
     """`$DG_BUDGET` as seconds, or `None` for no limit.
 
@@ -328,6 +370,9 @@ VARS: tuple[Var, ...] = (
     Var(WRITE_ENV, "where it may write without asking",
         write_policy, str, WRITE_POLICIES[0], fails_open=True,
         choices=WRITE_POLICIES),
+    Var(EXEC_ENV, "what it may run without asking",
+        exec_allow, _show_exec_allow, "nothing — every command asks",
+        fails_open=False),
     Var(AREA_ENV, "whether it may file under a new area",
         area_policy, str, AREA_POLICIES[0], fails_open=True,
         choices=AREA_POLICIES),
@@ -385,6 +430,23 @@ class Reading:
             return ""
         return (f"${self.var.name}={self.raw} {self.note} "
                 f"Set it where the agent is launched.")
+
+
+def _read_exec_allow(raw: str | None) -> tuple[object, bool, str]:
+    """The names, and a complaint naming any token that was not one.
+
+    Not understood here means *some token was dropped*, never the whole value:
+    a list with one bad entry still has the good ones, and refusing it wholesale
+    would turn a typo into an empty allowlist that asks about everything.
+    """
+    names = exec_allow(raw)
+    dropped = [tok for tok in (raw or "").split() if tok not in names]
+    if dropped:
+        return (names, False,
+                f"— dropped {', '.join(repr(d) for d in dropped)}: this list "
+                f"holds program names, not command lines, and a name carrying "
+                f"shell syntax would never have matched one.")
+    return names, True, ""
 
 
 def _read_agent(raw: str | None) -> tuple[object, bool, str]:
@@ -470,6 +532,7 @@ def _read_project(raw: str | None) -> tuple[object, bool, str]:
 #: answer "was that chosen, or fallen into".
 _READERS: dict[str, Callable[[str | None], tuple[object, bool, str]]] = {
     AGENT_ENV: _read_agent,
+    EXEC_ENV: _read_exec_allow,
     POLICY_ENV: lambda raw: _read_choice(BY_NAME[POLICY_ENV], raw),
     WRITE_ENV: lambda raw: _read_choice(BY_NAME[WRITE_ENV], raw),
     AREA_ENV: lambda raw: _read_choice(BY_NAME[AREA_ENV], raw),

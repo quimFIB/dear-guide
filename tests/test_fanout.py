@@ -155,7 +155,11 @@ def test_the_plan_is_the_remit_and_nothing_else(proj):
     written = fanout.write(fanout.defaults(proj), proj)
     spec = json.loads(written[2].read_text(encoding="utf-8"))
 
-    assert set(spec) == {"decide", "write", "area", "terse", "budget"}
+    assert set(spec) == {"decide", "write", "area", "terse", "budget",
+                         "exec_allow"}
+    # `DG_EXEC_ALLOW` is absent rather than empty: the default plan lists no
+    # programs, and an empty assignment would make `dg-agent env` report a
+    # variable somebody had chosen when nobody had.
     assert fanout.plan_env(spec) == {
         "DG_DECIDE": "evidence", "DG_WRITE": "launch", "DG_AREA": "open",
         "DG_TERSE": "on", "DG_BUDGET": "30m"}

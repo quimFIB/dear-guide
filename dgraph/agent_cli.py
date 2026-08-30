@@ -691,6 +691,13 @@ def _effect(r: env.Reading, proj: project.Project) -> str:
         if value == "open":
             return "anywhere"
         return ", ".join(limits.writable_roots(proj.root))
+    if name == env.EXEC_ENV:
+        # The vocabulary of the refusal, like every branch here: what a reader
+        # needs is how many commands are about to escalate, not the tuple.
+        n = len(value or ())
+        if not n:
+            return "every command asks"
+        return f"{n} program{'' if n == 1 else 's'} run unasked; the rest ask"
     if name == env.AREA_ENV:
         return ("any area; a new one is checked against the ones in use"
                 if value == "open" else "only areas already in use")
@@ -910,6 +917,25 @@ def _compose(spec: dict | None, given: dict) -> dict[str, str]:
             raise ValueError(f"--terse wants `on`, `off`, or a character "
                              f"count, not {given['terse']!r}")
         out[env.TERSE_ENV] = terse
+    if given.get("exec_allow") is not None:
+        # Raises, like `--budget` and unlike the three word flags, and for the
+        # same reason: a dropped name is not a wider rule, it is a different
+        # list. `env.exec_allow` drops silently on the judged path because a
+        # drop there narrows and the report catches it; here the launcher is
+        # standing at the terminal and can fix the typo before anything spawns.
+        names = given["exec_allow"].split()
+        bad = [n for n in names if env.NOT_A_NAME & set(n)]
+        if bad:
+            raise ValueError(
+                f"--exec-allow takes program names, not command lines — "
+                f"{', '.join(repr(b) for b in bad)} carries shell syntax and "
+                f"would never match one")
+        # An explicit empty list is a *choice* — every command asks — so it
+        # overrides a plan that listed some, where a `continue` would silently
+        # keep the plan's.
+        out[env.EXEC_ENV] = " ".join(dict.fromkeys(names))
+        if not names:
+            out.pop(env.EXEC_ENV)
     if given.get("budget") is not None:
         # Raises, where `$DG_WRITE` is merely ignored. A misread budget is not
         # a wider rule, it is a different number, and both directions are
@@ -954,6 +980,9 @@ def agent_run(
                               help="`on`, a character count, or `off`"),
     budget: str = typer.Option(None, "--budget",
                                help="`30m`, `1800`, or `infinite`"),
+    exec_allow: str = typer.Option(
+        None, "--exec-allow", metavar="NAMES",
+        help="program names the agent may run unasked, space-separated"),
     name: str = typer.Option(
         None, "--agent", metavar="NAME",
         help="run under a name already claimed, instead of claiming one"),
@@ -1008,7 +1037,7 @@ def agent_run(
     try:
         composed = _compose(spec, {"decide": decide, "write": write_scope,
                                    "area": area, "terse": terse,
-                                   "budget": budget})
+                                   "budget": budget, "exec_allow": exec_allow})
     except (ValueError, env.BadSpan) as exc:
         cli.con.print(f"[red]✗ {cli._x(exc)}[/]\n"
                       f"[dim]nothing was spawned and no name was claimed[/]")
