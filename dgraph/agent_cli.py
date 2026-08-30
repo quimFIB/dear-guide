@@ -870,6 +870,14 @@ def agent_env(
 
     faults = [r for r in readings if not r.ok]
     conflicts = _plan_conflicts(spec, readings) if spec is not None else []
+    # A third kind of finding, and the one no reading can express: every value
+    # here can be perfectly legible and the floor still not exist. `require`
+    # with no usable backend is a run that reports itself confined and is not.
+    from dgraph import confine as _confine
+    unfloored = _confine.preflight(**({} if spec is None else {
+        "mode_": spec.get("confine"), "backend_": spec.get("floor")}))
+    if unfloored:
+        conflicts = [*conflicts, unfloored]
 
     if as_json:
         print(json.dumps({
@@ -974,6 +982,22 @@ def _compose(spec: dict | None, given: dict) -> dict[str, str]:
         seconds = env.span(given["budget"])
         out[env.BUDGET_ENV] = env.show_span(seconds)
     return out
+
+
+def _floor_prefix(composed: dict[str, str]) -> list[str]:
+    """The argv a confining backend wraps the child in, or nothing.
+
+    Only the host-neutral half. A backend whose floor is expressed as the
+    runner's own settings has nothing to prepend, and its half is carried by
+    the spawn line — which is where anything host-specific belongs, and is why
+    this command can stay ignorant of what it is launching.
+    """
+    from dgraph import confine as _confine
+    if _confine.mode(composed.get(_confine.CONFINE_ENV)) == "off":
+        return []
+    chosen = _confine.backend(composed.get(_confine.FLOOR_ENV))
+    root = project.find().root
+    return _confine.render(chosen, root).prefix
 
 
 def _hold_back(name: str, why: str) -> list[str]:
@@ -1123,6 +1147,24 @@ def agent_run(
                       f"[dim]nothing was spawned and no name was claimed[/]")
         raise typer.Exit(2) from None
 
+    # Before the name is claimed and before anything is spawned, which is the
+    # same rule `_compose` follows: a run that believes it is confined and is
+    # not is the one outcome a floor exists to rule out, and the runner's own
+    # sandbox does not refuse — it warns on a stderr nobody reads and proceeds.
+    from dgraph import confine as _confine
+    unfloored = _confine.preflight(mode_=composed.get(_confine.CONFINE_ENV),
+                                   backend_=composed.get(_confine.FLOOR_ENV))
+    if unfloored:
+        cli.con.print(f"[red]✗ {cli._x(unfloored)}[/]\n"
+                      f"[dim]nothing was spawned and no name was claimed[/]")
+        raise typer.Exit(2)
+
+    try:
+        wrap = _floor_prefix(composed)
+    except ValueError as exc:
+        cli.con.print(f"[red]✗ {cli._x(exc)}[/]")
+        raise typer.Exit(2) from None
+
     seconds = env.span(composed.get(env.BUDGET_ENV))
     if name is None:
         try:
@@ -1144,7 +1186,8 @@ def agent_run(
     # stopped the wrapper while the work carried on would be the advisory
     # budget this command exists to replace.
     try:
-        proc = subprocess.Popen(list(command), env=child, start_new_session=True)
+        proc = subprocess.Popen([*wrap, *command], env=child,
+                                start_new_session=True)
     except OSError as exc:
         cli.con.print(f"[red]✗ could not run {cli._x(command[0])} — "
                       f"{cli._x(exc)}[/]\n[dim]{cli._x(name)} stays claimed; "

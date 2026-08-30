@@ -581,6 +581,21 @@ def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
     proj = proj or project.find()
     prompt = f"{plan.out}/scout.md"
     spawn = HOSTS[plan.host].format(prompt=shlex.quote(prompt))
+    # The half of the floor `dg-agent run` cannot apply. A backend that wraps
+    # the command is host-neutral and is prepended there; one that configures
+    # the runner speaks the runner's own vocabulary, so it can only be carried
+    # by the line that knows which runner it is calling — this one.
+    #
+    # A literal string on argv rather than a file: settings are read at launch,
+    # and a launcher's own settings are the ones a runner honours, so this is
+    # the version that is obviously out of an agent's reach rather than out of
+    # reach by a second rule.
+    if plan.confine != "off" and plan.host == "claude":
+        from dgraph import confine as _confine
+        arg = _confine.settings_arg(_confine.render(plan.floor, proj.root))
+        if arg:
+            spawn = spawn.replace("claude -p",
+                                  f"claude --settings {shlex.quote(arg)} -p", 1)
     env_file = shlex.quote(f"{plan.out}/{ENV_NAME}")
     lines = [
         "#!/usr/bin/env bash",

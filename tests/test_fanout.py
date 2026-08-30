@@ -474,3 +474,20 @@ def test_nothing_is_proposed_twice(proj):
 def test_the_default_plan_carries_the_proposal(proj):
     (proj.root / "Cargo.toml").write_text("")
     assert "cargo" in fanout.defaults(proj).exec_allow
+
+
+def test_the_launcher_carries_the_settings_dg_agent_run_cannot(proj):
+    """The half of the floor that is the runner's own vocabulary. `dg-agent run`
+    is host-neutral and can only prepend argv, so a backend that configures the
+    runner is carried by the one line that knows which runner it is calling."""
+    plan = replace(fanout.defaults(proj), confine="require", floor="host")
+    line = [l for l in fanout.render_launch(plan, proj).splitlines()
+            if "claude" in l][0]
+    assert "--settings" in line and '"sandbox"' in line
+    assert line.index("--settings") < line.index("-p")
+
+    bare = replace(plan, floor="bwrap")
+    assert "--settings" not in fanout.render_launch(bare, proj)
+
+    off = replace(plan, confine="off")
+    assert "--settings" not in fanout.render_launch(off, proj)

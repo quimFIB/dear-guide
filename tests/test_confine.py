@@ -163,3 +163,68 @@ def test_the_two_policy_values_are_refused_rather_than_widened():
         confine.mode("requrie")
     with pytest.raises(ValueError):
         confine.backend("seatbelt")
+
+
+# ---- the preflight, and the refusal it guards -----------------------------
+#
+# The finding this module was built around: the runner's own sandbox does not
+# fail closed. With a dependency missing it warns on the child's stderr and
+# runs the command unconfined — and in a headless fan-out nobody reads that
+# stream, so the run reports itself configured while nothing is in force.
+
+def test_a_project_that_asked_for_no_floor_is_not_told_it_is_missing_one():
+    assert confine.preflight(mode_="off") is None
+    assert confine.preflight(mode_="off", backend_="bwrap") is None
+
+
+def test_a_required_floor_with_no_usable_backend_is_a_finding(monkeypatch):
+    monkeypatch.setattr(confine, "available",
+                        lambda b: (False, "bubblewrap is not installed"))
+    why = confine.preflight(mode_="require", backend_="bwrap")
+    assert why and "not installed" in why
+    assert "=off and mean it" in why, "the refusal must name the honest way out"
+
+
+def test_an_unreadable_policy_is_itself_the_finding():
+    assert "not one of" in confine.preflight(mode_="requrie")
+    assert "not one of" in confine.preflight(mode_="require", backend_="seatbelt")
+
+
+def test_check_refuses_a_run_that_would_believe_it_is_confined(tmp_path, monkeypatch):
+    """`dg-agent env --check` is what `fanout/launch.sh` runs before the first
+    agent starts, so this is where the refusal has to land: at the launcher,
+    where it can still be fixed."""
+    from typer.testing import CliRunner
+    from dgraph.agent_cli import app
+    monkeypatch.setattr(confine, "available", lambda b: (False, "nothing here"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DG_CONFINE", "require")
+    assert CliRunner().invoke(app, ["env", "--check"]).exit_code == 1
+    monkeypatch.setenv("DG_CONFINE", "off")
+    assert CliRunner().invoke(app, ["env", "--check"]).exit_code == 0
+
+
+def test_run_refuses_before_it_claims_a_name(tmp_path, monkeypatch):
+    """Nothing spawned and no name claimed, which is the promise `_compose`
+    already makes for a value it cannot read."""
+    from typer.testing import CliRunner
+    from dgraph import agents
+    from dgraph.agent_cli import app
+    monkeypatch.setattr(confine, "available", lambda b: (False, "nothing here"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DG_CONFINE", "require")
+    res = CliRunner().invoke(app, ["run", "--", "true"])
+    assert res.exit_code == 2
+    assert agents.load(tmp_path) == {}, "a name was claimed for a run that never happened"
+
+
+def test_only_the_host_neutral_half_is_prepended(tmp_path, monkeypatch):
+    """`dg-agent run` prepends an argv prefix and nothing else. A backend whose
+    floor is the runner's own settings has nothing to prepend — its half rides
+    the spawn line, which is where anything host-specific belongs."""
+    from dgraph.agent_cli import _floor_prefix
+    monkeypatch.chdir(tmp_path)
+    assert _floor_prefix({}) == []
+    assert _floor_prefix({"DG_CONFINE": "require", "DG_FLOOR": "host"}) == []
+    prefix = _floor_prefix({"DG_CONFINE": "require", "DG_FLOOR": "bwrap"})
+    assert prefix and prefix[0] == "bwrap" and prefix[-1] == "--"

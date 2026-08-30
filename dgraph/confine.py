@@ -240,3 +240,37 @@ def backend(value: str | None = None) -> str:
         raise ValueError(f"${FLOOR_ENV}={raw} is not one of "
                          f"{', '.join(BACKENDS)}")
     return raw
+
+
+def preflight(root: Path | None = None, *, mode_: str | None = None,
+              backend_: str | None = None) -> str | None:
+    """Why the declared floor would not confine anything here — or `None`.
+
+    **This is the finding the whole module was built around.** The runner's own
+    sandbox does not fail closed: with a dependency missing it prints a warning
+    on the child's stderr and runs the command unconfined. In a headless
+    fan-out nobody reads that stream, so the run reports itself as configured —
+    `env.json` says `require`, `dg-agent env` prints the remit — while nothing
+    is in force. A rule that is removed silently in the direction of more
+    permission is the failure this project already names for its own variables;
+    this is the same failure one layer down.
+
+    So the answer is a refusal at the launcher, where it can still be fixed,
+    rather than a warning at a child nobody is watching.
+
+    Silent when `$DG_CONFINE=off`, which is the default: a project that never
+    asked for a floor must not be told it is missing one.
+    """
+    try:
+        if mode(mode_) == "off":
+            return None
+        chosen = backend(backend_)
+    except ValueError as exc:
+        return str(exc)
+    ok, why = available(chosen)
+    if ok:
+        return None
+    return (f"${CONFINE_ENV}=require and ${FLOOR_ENV}={chosen}, but {why}. "
+            f"Install what is missing, choose another backend, or say "
+            f"${CONFINE_ENV}=off and mean it — a run that believes it is "
+            f"confined and is not is worse than one that knows it is not.")
