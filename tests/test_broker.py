@@ -164,6 +164,43 @@ def test_auto_decides_here_rather_than_at_a_person(running):
     assert res["verdict"] == "allow" and "outcome path" in res["reason"]
 
 
+def test_a_rung_with_nothing_attached_is_named_at_the_door():
+    """The `auto` branch answers `deny` and publishes no `waiting`, so a broker
+    started this way is quiet in all three places a supervisor would look. The
+    refusal has to arrive before any of that, and has to name the way out."""
+    why = broker.unattachable({"write": "scoped", "exec": "auto"}, auto=None)
+    assert why and "$DG_CONSENT_EXEC" in why and "scoped" in why
+    assert "$DG_CONSENT_WRITE" not in why
+
+    both = broker.unattachable({"write": "auto", "exec": "auto"}, auto=None)
+    assert "$DG_CONSENT_WRITE" in both and "$DG_CONSENT_EXEC" in both
+
+
+def test_the_door_opens_by_itself_once_a_policy_exists():
+    """It asks what will actually be attached, not a module global — so writing
+    an auto policy is the whole change, with no second place to remember."""
+    rungs = {"write": "auto", "exec": "auto"}
+    assert broker.unattachable(rungs, auto=lambda req: (True, "", None)) is None
+    assert broker.unattachable({"write": "scoped", "exec": "user"}, auto=None) is None
+
+
+def test_the_broker_will_not_start_on_a_rung_it_cannot_honour(store, monkeypatch):
+    """Nothing bound, so the launcher is stopped by a sentence in the terminal
+    it is standing in, rather than by agents being denied in another one."""
+    from typer.testing import CliRunner
+    from dgraph.agent_cli import app
+    monkeypatch.setenv("DG_CONSENT_EXEC", "scoped")
+    monkeypatch.setenv("COLUMNS", "200")
+
+    res = CliRunner().invoke(app, ["broker", "--exec-rung", "auto"])
+
+    assert res.exit_code == 2
+    assert "no auto policy" in res.output and "scoped" in res.output
+    assert "listening on" not in res.output
+    assert not broker.listening(store)
+    assert not (store / broker.SOCKET_NAME).exists()
+
+
 # ---- the two properties that make this safe to add -----------------------
 
 def test_no_broker_means_no_broker_and_the_gate_answers_as_it_always_did(

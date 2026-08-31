@@ -1133,6 +1133,12 @@ def agent_broker(
     The two rungs are read *here* rather than by the gate, and that placement
     is the point: the gate runs inside the agent's own process, so a rung read
     there is one the agent could widen.
+
+    **`auto` is refused rather than offered.** It is a rung of the model — it
+    decides here instead of at a person — but nothing in the package attaches a
+    policy for it to decide with, so it would answer `deny` to everything while
+    this printed `auto` and published nobody as waiting. Refused at the door
+    until a policy exists; `scoped` is what it was reached for.
     """
     from dgraph import broker as _broker
     try:
@@ -1151,14 +1157,33 @@ def agent_broker(
                       f"fix the rung and start again[/]")
         raise typer.Exit(2) from None
 
-    # Before anything is bound, so a deep checkout gets a sentence rather than
-    # a traceback out of `socket.bind`. `P-F9`.
+    # Both refusals sit before anything is bound, so nothing has started that
+    # would have to be torn down — and so the launcher, which is about to run
+    # `launch.sh` in the next terminal, is stopped by a sentence rather than by
+    # agents that quietly get denied.
+    #
+    # `auto` first, because it is the one that would otherwise *look* like it
+    # worked: nothing is attached to decide with, so the rung answers `deny` to
+    # everything while the banner below still prints `auto`.
+    unattachable = _broker.unattachable(rungs, auto=None)
+    if unattachable:
+        cli.con.print(f"[red]✗ {cli._x(unattachable)}[/]\n[dim]nothing is "
+                      f"listening; fix the rung and start again[/]")
+        raise typer.Exit(2)
+
+    # A deep checkout gets a sentence rather than a traceback out of
+    # `socket.bind`. `P-F9`.
     unbindable = _broker.unbindable(proj.root)
     if unbindable:
         cli.con.print(f"[red]✗ {cli._x(unbindable)}[/]")
         raise typer.Exit(2)
 
-    b = _broker.Broker(root=proj.root, prompt=_broker.terminal_prompt)
+    # `rungs` is what was just read and reported; passing it keeps the
+    # class's "read once at construction" to one read. Re-deriving it in
+    # `__post_init__` worked only because the loop above had already put
+    # the values in `os.environ`, which is a second source for one rule.
+    b = _broker.Broker(root=proj.root, prompt=_broker.terminal_prompt,
+                       rungs=rungs)
     cli.con.print(
         f"[green]listening[/] on {cli._x(_broker.SOCKET_NAME)} "
         f"[dim]write={rungs['write']} exec={rungs['exec']} · "

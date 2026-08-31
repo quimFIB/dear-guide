@@ -117,6 +117,43 @@ def unbindable(root: Path | None = None) -> str | None:
             f"link.")
 
 
+def unattachable(rungs: dict[str, str], auto: object = None) -> str | None:
+    """Why this broker could not honour the rungs it was given — or `None`.
+
+    `auto` is the rung that decides *here* instead of at a person, so it needs
+    a policy attached to decide with. With none, `decide` takes the auto branch
+    and answers `deny` to every request — while the banner still prints
+    `auto`, `dg-agent list` shows nobody blocked, since `_waiting` is published
+    only around a prompt, and the terminal stays as quiet as it does when
+    nothing has been asked yet. Three readings that all say the run is healthy.
+
+    That is the failure this process was added to remove, arriving in the
+    process itself: a run reporting itself configured while nothing whatever is
+    in force. So it is refused **at the door** — like `unbindable` above, like
+    `confine.preflight` one layer down — rather than once per request, and the
+    refusal names the way out, because a check that offered none would be
+    answered by deleting the check.
+
+    Takes the policy that will actually be attached rather than reading a
+    module global: the day one exists, this opens by itself and there is no
+    second place to remember.
+    """
+    if auto is not None:
+        return None
+    named = sorted(k for k, v in (rungs or {}).items()
+                   if v == "auto" and k in LADDERS)
+    if not named:
+        return None
+    which = ", ".join(f"${LADDERS[k][0]}" for k in named)
+    is_are = "is" if len(named) == 1 else "are"
+    return (f"{which} {is_are} set to `auto`, and this broker has no auto "
+            f"policy to attach — the rung would answer `deny` to every request "
+            f"while reporting itself as configured. Use `scoped`, where you "
+            f"are asked once per command and `[s]cope` remembers what you "
+            f"granted; or `off`, where this answers nothing and the gate's own "
+            f"verdict stands.")
+
+
 def rung(kind: str, environ: dict | None = None) -> str:
     """Which rung governs `kind`, read from the broker's own environment.
 
