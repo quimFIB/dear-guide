@@ -368,6 +368,26 @@ def test_a_claim_publishes_when_it_is_staged_not_when_it_lands(proj, monkeypatch
         app, ["--project", str(proj.root), "task"]).output
 
 
+def test_a_staged_claim_leaves_the_ready_list(proj, monkeypatch):
+    """The other half of publishing a claim. The lease says *who*; this is
+    *whether*, and it has to come from the store plus the tray or the queue
+    goes on offering work somebody has taken — which under a confinement floor
+    is every claim, since an agent there can never apply."""
+    monkeypatch.setenv("DG_AGENT", "")
+    name = agents.claim(proj.root)
+    before = runner.invoke(app, ["--project", str(proj.root), "task"]).output
+    assert "T02" in [l for l in before.splitlines()
+                     if l.strip().startswith("ready")][0]
+
+    runner.invoke(app, ["--project", str(proj.root), "task", "start", "T02"],
+                  env={"DG_AGENT": name})
+
+    after = runner.invoke(app, ["--project", str(proj.root), "task"]).output
+    ready = [l for l in after.splitlines() if l.strip().startswith("ready")][0]
+    assert "T02" not in ready
+    assert "staged" in after and f"held by {name}" in after
+
+
 def test_staging_the_end_of_work_releases_the_claim_too(proj, monkeypatch):
     """Symmetry, or the lease says held for work nobody is doing. `park` is
     what an agent is told to stage before it stops, and under a floor that

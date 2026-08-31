@@ -120,12 +120,29 @@ def tasks(proj: project.Project) -> dict:
         except Exception:
             g = None
 
+    # **Ready is asked of the store plus the tray, and the counts are not.**
+    # `dg task` shows the same reading, and the two must agree or the session
+    # brief sends the next agent at work somebody has already claimed — a claim
+    # is staged long before anybody applies it, and under a confinement floor
+    # an agent cannot apply at all (`cli._sealed`). The counts stay on the
+    # record because that is what they are: a proposal is reported one line
+    # above, as `STAGED BUT NOT APPLIED`.
+    #
+    # Defensive: a tray that will not preview leaves the store's own answer,
+    # which is what this said before there was a tray to consult.
+    ready_tg = tg
+    try:
+        from dgraph import task_pending
+        ready_tg = task_pending.preview(tg)
+    except Exception:
+        pass
+
     if g is None:
-        ready = [t for t in tg.frontier() if tg.ready(t)]
+        ready = [t for t in ready_tg.frontier() if ready_tg.ready(t)]
         reviewed: list[dict] = []
         loose: list[dict] = []
     else:
-        ready = [t for t in tg.frontier() if cross.ready(tg, g, t)]
+        ready = [t for t in ready_tg.frontier() if cross.ready(ready_tg, g, t)]
         reviewed = cross.under_review(tg, g)
         loose = cross.unharvested(tg, g)
     return {

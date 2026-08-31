@@ -32,6 +32,36 @@ def run(store, monkeypatch):
     return go
 
 
+def test_the_frontier_shows_what_is_staged_and_says_so(run, store):
+    """A reader showing only the record left agents proposing questions their
+    neighbours had already proposed, and left the supervisor unable to see why.
+    Marked rather than shown plainly: a row reading OPEN for an op nobody has
+    applied is the tray asserting itself as the record."""
+    assert run("add", "--id", "D07", "--title", "staged and unapplied",
+               "--area", "Alpha").exit_code == 0
+    out = run("show").output
+    assert "D07" in out and "staged" in out
+
+
+def test_a_reader_prints_the_record_when_the_tray_will_not_preview(run, store):
+    """The staging guard stops here and the reader must not: this is what
+    somebody runs to find out what is wrong, and refusing to print at exactly
+    that moment is the opposite of useful."""
+    (store / ".dgraph-pending.json").write_text(
+        json.dumps([{"op": "add_edge", "from": "D99", "to": ["D01"],
+                     "active": True}]), encoding="utf-8")
+
+    res = run("show")
+    assert res.exit_code == 0
+    # The frontier itself, still printed: `D05` is the fixture's open one.
+    assert "D05" in res.output
+    assert "no longer apply cleanly" in res.output and "dg pending" in res.output
+
+    # ...while the guard still refuses on that same tray.
+    assert run("add", "--id", "D07", "--title", "x",
+               "--area", "Alpha").exit_code == 1
+
+
 def test_check_names_the_rule_that_broke(run, store, g):
     """The reported bug: `[no_orphans]` was parsed as a style tag and dropped,
     leaving `!  (warning) D01 is connected to nothing` with no rule name."""

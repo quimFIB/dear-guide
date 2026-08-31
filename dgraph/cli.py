@@ -329,6 +329,52 @@ def _g() -> Graph:
         raise typer.Exit(1) from None
 
 
+def _reading(g: Graph) -> tuple[Graph, set[str], bool]:
+    """What a *reader* shows: the store plus the tray, and which rows came from it.
+
+    `_eff` is this same graph for a different audience, and the difference is
+    what to do when the tray will not preview. A staging guard must stop —
+    staging more on top of a batch that no longer applies helps nobody. A
+    reader must not: it is what somebody runs to find out what is going on, and
+    refusing to print at exactly that moment is the opposite of useful. So this
+    falls back to the store and says so where `_eff` exits.
+
+    **The ids come back with it because a proposal has to be visible *as* one.**
+    These commands are read by the supervisor as well as by agents, and a row
+    reading `DONE` for an op nobody applied is the tray asserting itself as the
+    record — which is the whole distinction `dg pending` exists to keep.
+    """
+    try:
+        eff = pending.preview(g)
+    except (pending.ApplyError, OSError, ValueError):
+        return g, set(), True
+    staged = {v for v in eff.vertices
+              if v not in g.vertices
+              or eff.vertices[v].status != g.vertices[v].status}
+    return eff, staged, False
+
+
+def _treading(tg: TaskGraph) -> tuple[TaskGraph, set[str], bool]:
+    """`_reading`'s twin over the task store — see it for why a reader falls
+    back where a guard stops."""
+    try:
+        eff = task_pending.preview(tg)
+    except (pending.ApplyError, OSError, ValueError):
+        return tg, set(), True
+    staged = {t for t in eff.tasks
+              if t not in tg.tasks
+              or eff.tasks[t].status != tg.tasks[t].status}
+    return eff, staged, False
+
+
+def _say_fell_back(review: str, fix: str) -> None:
+    """One line when a reader showed the store because the tray would not
+    preview. Dim and after the listing: what was printed is still true, it is
+    just less than was asked for."""
+    con.print(f"[dim]note: the staged ops no longer apply cleanly, so this is "
+              f"the record alone — `{review}` to review, `{fix}` to fix[/]")
+
+
 def _eff(g: Graph, skip: int | None = None) -> Graph:
     """The store plus the staged ops — what stage-time guards judge against.
 
@@ -442,12 +488,14 @@ def show(
     releases. `--full` gives the table instead, which clips nothing and is the
     one to reach for when two titles read the same at the width above.
     """
-    g = _g()
+    g, staged, fell_back = _reading(_g())
     att = _brief.attention(g)
     if full:
-        _show_table(g, att)
+        _show_table(g, att, staged)
     else:
-        _show_listing(g, att)
+        _show_listing(g, att, staged)
+    if fell_back:
+        _say_fell_back("dg pending", "dg drop <id>")
 
 
 def _width() -> int:
@@ -473,7 +521,8 @@ def _say(lines: list[str]) -> None:
         con.print(line, soft_wrap=True, highlight=False)
 
 
-def _show_listing(g: Graph, att: list[dict]) -> None:
+def _show_listing(g: Graph, att: list[dict],
+                  staged: set[str] | None = None) -> None:
     """The frontier as one line per decision — the default, and the piped one."""
     rows = _brief.rows(g)
     ev = _brief.evidence_map(project.find())
@@ -494,6 +543,11 @@ def _show_listing(g: Graph, att: list[dict]) -> None:
             aside.append("unblocks " + ", ".join(r.unblocks))
         if not aside:
             aside.append("decidable now")
+        # Last, so it qualifies what the rest of the line said rather than
+        # replacing it: this row is a proposal, and `decidable now` about one
+        # nobody has applied would be an invitation to act on the tray.
+        if staged and r.id in staged:
+            aside.append("staged")
         # The base status, not the stored one: `BLOCKED:D04` says the blocker
         # twice, once here and once in `waits D04` above. Dropping it from the
         # column gives four characters back to every title in the listing.
@@ -522,13 +576,17 @@ def _show_listing(g: Graph, att: list[dict]) -> None:
     con.print(compact.hint("dg show --full", "the table, nothing clipped"))
 
 
-def _show_table(g: Graph, att: list[dict]) -> None:
+def _show_table(g: Graph, att: list[dict],
+                staged: set[str] | None = None) -> None:
     """The detailed frontier: every title in full, every relation its own column."""
     t = Table(title="Frontier", header_style="bold")
     for c in ("ID", "Decision", "Status", "Waiting on", "Unblocks", "Area"):
         t.add_column(c)
     for r in _brief.rows(g):
-        t.add_row(r.id, _x(r.title), _tag(g.vertices[r.id]),
+        tag = _tag(g.vertices[r.id])
+        if staged and r.id in staged:
+            tag = f"{tag} [dim](staged)[/]"
+        t.add_row(r.id, _x(r.title), tag,
                   ", ".join(r.waiting_on) or "—",
                   ", ".join(r.unblocks) or "—", _x(r.area))
     con.print(t)
@@ -3962,7 +4020,7 @@ def task_show(
     """
     if ctx.invoked_subcommand is not None:
         return
-    tg = _tg()
+    tg, staged, fell_back = _treading(_tg())
     g = _decisions_or_none()
 
     def waiting_for(tid: str) -> tuple[list[str], str | None]:
@@ -3979,18 +4037,21 @@ def task_show(
         return waiting, gate
 
     if full:
-        _task_table(tg, waiting_for)
+        _task_table(tg, waiting_for, staged)
     else:
-        _task_listing(tg, waiting_for)
+        _task_listing(tg, waiting_for, staged)
 
     ready = [tid for tid in sorted(tg.tasks)
              if tg.ready(tid) and not _gated_by(tg, g, tid)]
     con.print(f"[green]ready[/] {', '.join(ready) or '—'}")
+    if fell_back:
+        _say_fell_back("dg task pending", "dg task drop-op <id>")
     if not full:
         con.print(compact.hint("dg task --full", "the table, nothing clipped"))
 
 
-def _task_listing(tg: TaskGraph, waiting_for) -> None:
+def _task_listing(tg: TaskGraph, waiting_for,
+                  staged: set[str] | None = None) -> None:
     """Outstanding work as one line per task — the default, and the piped one."""
     frontier = tg.frontier()
     con.print(f"[bold]TASKS[/]  {len(frontier)} outstanding of "
@@ -4037,6 +4098,10 @@ def _task_listing(tg: TaskGraph, waiting_for) -> None:
                          else "parked")
         elif not aside:
             aside.append("startable")
+        # See `_show_listing`: last, and it qualifies the rest. A staged claim
+        # reading `startable` is what sent two agents at one task.
+        if staged and tid in staged:
+            aside.append("staged")
         # Yellow for the whole aside where a premise is undecided: the reason
         # this task is not startable is in there, and the eye needs sending to
         # the line before it reads which of the four bits says so.
@@ -4050,7 +4115,8 @@ def _task_listing(tg: TaskGraph, waiting_for) -> None:
         con.print("  [dim]nothing outstanding[/]")
 
 
-def _task_table(tg: TaskGraph, waiting_for) -> None:
+def _task_table(tg: TaskGraph, waiting_for,
+                staged: set[str] | None = None) -> None:
     """Outstanding work in full: every title whole, every relation its own column."""
     t = Table(title="Tasks", header_style="bold")
     for c in ("ID", "Task", "Status", "Waiting on", "Because", "Area"):
@@ -4061,8 +4127,10 @@ def _task_table(tg: TaskGraph, waiting_for) -> None:
         premise = ", ".join(task.because) or "—"
         if gate:
             premise = f"[yellow]{premise}[/]"
-        t.add_row(tid, _x(task.title),
-                  f"[{TASK_STYLE.get(task.status, 'white')}]{task.status}[/]",
+        shown = f"[{TASK_STYLE.get(task.status, 'white')}]{task.status}[/]"
+        if staged and tid in staged:
+            shown = f"{shown} [dim](staged)[/]"
+        t.add_row(tid, _x(task.title), shown,
                   ", ".join(waiting) or "—", premise, _x(task.area))
     con.print(t)
 
