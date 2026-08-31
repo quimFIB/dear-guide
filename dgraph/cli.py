@@ -3162,6 +3162,54 @@ def _tstage_all(ops: list[dict], *, new_area: bool = False) -> None:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
     _stage_all(ops, task_pending.path(), new_area=new_area)
+    _lease_staged(ops)
+
+
+def _lease_staged(ops: list[dict]) -> None:
+    """Publish a claim when it is *staged*, not when the tray is applied.
+
+    `agents.holdings` argues that the lease is a fact about the RUN and the
+    store a record of the work, and it is right — but the only writer of a
+    hold was `applying.py`, which tied the first to the second. Under a
+    confinement floor the second cannot happen at all: the stores are sealed,
+    `dg apply --mine` refuses **by design** (`cli._sealed`), and the claim then
+    silently never appeared. Three agents read the same `startable` frontier
+    and re-asked each other's questions, which is the one failure
+    `fanout/scout.md` warns about in as many words.
+
+    The lease file is writable under every floor — `limits.protected_paths`
+    names the two stores and nothing else, because the heartbeat has to reach
+    it — so the fact this records was always allowed to be recorded. Only its
+    trigger was in the wrong place.
+
+    `applying.py` stays the authority when a batch lands: it syncs against the
+    status the store will actually hold, which is the stronger reading. This is
+    the earlier, weaker one — what the writer has said they are doing.
+
+    `agents.hold` returns early on an empty name — *a person holds nothing* —
+    so a supervisor's own `dg task start` still writes no lease.
+
+    Best-effort, exactly like its counterpart, and for the same reason: staging
+    must not fail because scratch could not be written. A hold left by an op
+    that is later dropped rather than applied is cleared by `dg-agent release`
+    and `dg-agent expire`, which end every run anyway.
+    """
+    who = pending.owner()
+    if not who:
+        return
+    try:
+        for op in ops:
+            if op.get("op") != "set_status":
+                continue
+            tid = op.get("task")
+            if not tid:
+                continue
+            if op.get("status") == "DOING":
+                agents.hold(who, tid)
+            else:
+                agents.drop_hold(tid)
+    except (OSError, ValueError):
+        pass
 
 
 def _next_hint(offer) -> str:

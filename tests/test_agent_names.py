@@ -344,6 +344,54 @@ def _holding(run, proj, tid="T01"):
     return name
 
 
+def test_a_claim_publishes_when_it_is_staged_not_when_it_lands(proj, monkeypatch):
+    """The claim has to be visible to an agent that cannot apply.
+
+    Under a confinement floor the stores are sealed and `dg apply --mine`
+    refuses **by design** — `cli._sealed` says so and leaves the ops staged.
+    A hold written only by `applying` therefore never appeared at all, and
+    three agents read the same `startable` frontier and re-asked each other's
+    questions. The lease is writable under every floor, so the fact was always
+    recordable; only its trigger sat behind the apply.
+    """
+    monkeypatch.setenv("DG_AGENT", "")
+    name = agents.claim(proj.root)
+    started = runner.invoke(app, ["--project", str(proj.root), "task", "start",
+                                  "T02"], env={"DG_AGENT": name})
+    assert started.exit_code == 0
+
+    # Nothing has been applied: the store still reads TODO...
+    assert json.loads((proj.root / "tasks.json").read_text())["tasks"][1]["status"] == "TODO"
+    # ...and the claim is published anyway.
+    assert agents.holdings(proj.root) == {"T02": name}
+    assert f"held by {name}" in runner.invoke(
+        app, ["--project", str(proj.root), "task"]).output
+
+
+def test_staging_the_end_of_work_releases_the_claim_too(proj, monkeypatch):
+    """Symmetry, or the lease says held for work nobody is doing. `park` is
+    what an agent is told to stage before it stops, and under a floor that
+    never lands either."""
+    monkeypatch.setenv("DG_AGENT", "")
+    name = agents.claim(proj.root)
+    env = {"DG_AGENT": name}
+    runner.invoke(app, ["--project", str(proj.root), "task", "start", "T02"],
+                  env=env)
+    assert agents.holdings(proj.root) == {"T02": name}
+
+    runner.invoke(app, ["--project", str(proj.root), "task", "park", "T02",
+                        "--why", "ran out of budget"], env=env)
+    assert agents.holdings(proj.root) == {}
+
+
+def test_a_person_staging_a_start_still_holds_nothing(run, proj, monkeypatch):
+    """`agents.hold` returns early on an empty name and this must not route
+    around it: a supervisor at a terminal is not a lease."""
+    monkeypatch.setenv("DG_AGENT", "")
+    assert run("task", "start", "T02").exit_code == 0
+    assert agents.holdings(proj.root) == {}
+
+
 def test_prune_keeps_back_a_name_still_holding_work(run, proj, monkeypatch, arun):
     """The trap this guard exists for, and it is the FIRST MINUTE of an agent's
     life: it has claimed a task and not staged anything yet, which reads as
