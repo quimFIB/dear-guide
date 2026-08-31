@@ -48,8 +48,17 @@ Then read the frontier again. **Do not stop after one task.** One agent
 finishing makes work startable for another that was never told it existed;
 stopping early leaves the queue sitting there.
 
-Two things that are easy to get wrong:
+Three things that are easy to get wrong:
 
+- **`dg pending` again, immediately before you stage a question.** Every agent
+  starts at once, so the tray you read when you began is the emptiest it will
+  ever be — and the store behind it is emptier still, because nothing anybody
+  stages is written until somebody applies it. Three agents once read both
+  within fifteen seconds of each other, all found nothing, and two of them
+  proposed the same question ten seconds apart. Reading early is not reading:
+  read the tray at the moment you stage, and where somebody has already asked
+  your question, build on theirs — `dg dep`, or work that brings evidence to
+  it — rather than asking it again in your own words.
 - **`dg apply --mine` after `dg task start`.** Where the run is unconfined this
   lands your claim in the record for everybody. Where there is a confinement
   floor it refuses — the stores are sealed and applying is the supervisor's —
