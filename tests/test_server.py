@@ -1310,3 +1310,62 @@ def test_the_editor_buffer_is_handed_the_effective_graph_not_the_store(srv, stor
         (pathlib.Path(server.__file__).read_text(encoding="utf-8")), \
         "/api/compose no longer hands the editor the effective graph"
 
+
+# ---- the claim marker (audit `G-F5`, the half separation did not remove) ---
+
+
+def test_the_panel_marks_a_record_a_staged_op_speaks_for(srv, dual):
+    """The harm the finding opened with. The panel reads the store, which is
+    the decided model — but a task reading `TODO · ready` while an agent holds
+    a staged claim sends a supervisor at work already taken, and the footer
+    cannot say so because it lists ops by writer, never by subject."""
+    before = jreq(srv, "/api/tasks")[1]
+    assert before["contested"] == {}
+    code, res = jreq(srv, "/api/task-pending", "POST",
+                     {"op": "set_status", "task": "T01", "status": "DOING"})
+    assert code == 200, res
+
+    got = jreq(srv, "/api/tasks")[1]
+    mark = got["contested"].get("T01")
+    assert mark, "a staged claim on T01 is invisible on the surface that reads it"
+    assert mark["op"] == "set_status" and mark["to"] == "DOING"
+    # …and the reading itself is untouched: the panel still draws the record.
+    assert got["derived"]["T01"]["ready"] == before["derived"]["T01"]["ready"]
+    assert got["frontier"] == before["frontier"]
+
+
+def test_the_marker_carries_who_claimed_it(srv, dual):
+    """An unattributed "somebody staged something" tells a supervisor nothing
+    they can act on. `by` is the field `stage_all` stamps — the marker read
+    `agent` first, which no op carries, so every mark came back `by: null`."""
+    from dgraph import pending as _p
+    from dgraph import task_pending as _tp
+    with _p.as_owner("agile-azimuth"):
+        _p.stage_all([{"op": "set_status", "task": "T01", "status": "DOING"}],
+                     _tp.path())
+    mark = jreq(srv, "/api/tasks")[1]["contested"]["T01"]
+    assert mark["by"] == "agile-azimuth"
+    assert mark["ref"], "the marker cannot point at its row in the tray"
+
+
+def test_both_stores_get_the_marker(srv, dual):
+    """An agent may stage a `close` on a question the panel still shows OPEN
+    and decidable, which is the same failure on the other store."""
+    code, res = jreq(srv, "/api/pending", "POST",
+                     dict(CLOSE, answer="a", source="s", falsifier="f", to=[]))
+    assert code == 200, res
+    assert "D05" in jreq(srv, "/api/graph")[1]["contested"]
+
+
+def test_the_marker_never_restyles_the_record(srv, store):
+    """A claim is a mark beside the box, never a change to how the box reads.
+
+    The first version cleared `stroke-dasharray` on a claimed node — and the
+    dashes are the *waiting* reading, so a task both waiting on a premise and
+    claimed would have shown one and hidden the other. Pinned as the property,
+    since it is the whole argument for a marker over a merge."""
+    page = _page()
+    assert ".claim-dot{" in page, "the marker is gone"
+    assert ".node.claimed rect" not in page, (
+        "a rule restyles the record's own box on a claim — the mark must sit "
+        "beside the reading, not alter it")

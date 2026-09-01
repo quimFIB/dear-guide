@@ -159,8 +159,11 @@ def test_the_plan_is_the_remit_and_nothing_else(proj):
     written = fanout.write(fanout.defaults(proj), proj)
     spec = json.loads(written[2].read_text(encoding="utf-8"))
 
-    assert set(spec) == {"decide", "write", "area", "terse", "budget",
-                         "exec_allow", "confine", "floor"}
+    # Derived from `ENV_FIELDS`, not listed. The literal here held the same
+    # eight `env_plan` did, so the two agreed with each other and both
+    # disagreed with the table — which is what let `apply` be missing from the
+    # remit for as long as it was. Audit `G-F1`.
+    assert set(spec) == set(fanout.ENV_FIELDS)
     # The default plan proposes an allowlist from the project's marker files,
     # so `DG_EXEC_ALLOW` is here. It is a *proposal* — `env.json` is where a
     # person cuts it down — which is why it lands in the file rather than only
@@ -170,8 +173,8 @@ def test_the_plan_is_the_remit_and_nothing_else(proj):
     assert composed.pop("DG_EXEC_ALLOW").split()[:2] == ["dg", "dg-agent"]
     composed.pop("DG_CONFINE"), composed.pop("DG_FLOOR")
     assert composed == {
-        "DG_DECIDE": "evidence", "DG_WRITE": "launch", "DG_AREA": "open",
-        "DG_TERSE": "on", "DG_BUDGET": "30m"}
+        "DG_DECIDE": "evidence", "DG_APPLY": "own", "DG_WRITE": "launch",
+        "DG_AREA": "open", "DG_TERSE": "on", "DG_BUDGET": "30m"}
 
 
 def test_the_plan_is_read_back_and_a_bad_value_in_it_is_refused(proj, tmp_path):
@@ -609,6 +612,40 @@ def test_every_environment_field_reaches_the_agent(proj):
             f"{field_} is enforced on this run and the prompt never says so"
 
 
+def test_every_environment_field_is_written_to_the_plan(proj):
+    """The other axis of the same table, and the one nothing read.
+
+    `test_every_environment_field_reaches_the_agent` maps `ENV_FIELDS` to what
+    must be visible in the rendered prompt. Nothing mapped it to the *file* the
+    prompt claims to have been rendered from — so `env_plan` held eight of the
+    nine, `apply` was the missing one, and `--preset scout` wrote a prompt
+    saying `dg apply` is refused beside an `env.json` that set nothing.
+
+    A guard on one axis is why nobody looks at the other. Audit `G-F1`."""
+    got = fanout.env_plan(fanout.defaults(proj))
+    assert set(got) == set(fanout.ENV_FIELDS), (
+        "a field is in the remit and not in env.json: "
+        f"{sorted(set(fanout.ENV_FIELDS) - set(got))}")
+
+
+def test_the_remit_a_preset_writes_is_the_remit_the_child_runs_under(proj):
+    """The whole path, because either guard above could pass while the path
+    between them dropped a field: plan → `env.json` → `plan_env` → the child's
+    environment. `scout` is the case that mattered — it is the only preset that
+    moves `$DG_APPLY`, and the one somebody reaches for when they do not yet
+    trust a fan-out."""
+    res = run(proj, "setup", "--preset", "scout", "--brief", "x")
+    assert res.exit_code == 0, res.output
+    spec = json.loads((proj.root / fanout.OUT_DIR / fanout.ENV_NAME)
+                      .read_text(encoding="utf-8"))
+    assert spec["apply"] == "never", "the preset's apply never reached the file"
+    assert fanout.plan_env(spec)["DG_APPLY"] == "never", \
+        "the file's apply never reached the child's environment"
+    # …and the prompt says the same thing, which is the claim the pair keeps.
+    assert "$DG_APPLY=never" in (proj.root / fanout.OUT_DIR
+                                 / "scout.md").read_text(encoding="utf-8")
+
+
 def test_the_prompt_does_not_promise_a_scope_the_gate_refuses(proj):
     """The correctness half. `_write_prose` promised writing "freely" under
     roots holding two files that are refused by a different rule with a
@@ -727,7 +764,17 @@ def test_a_preset_answers_the_whole_policy_block(proj):
                          terse="off", exec_allow=["rm"], confine="off",
                          floor="bwrap", budget=99)
     out = fanout.apply_preset(edited, "scout", proj)
-    assert out.decide == "never"
+    # Derived from `Preset`'s own fields rather than listed: this test's
+    # docstring claims *every* field the remit covers, and it asserted five of
+    # six — `apply` was added to `Preset` and to no assertion here. Audit
+    # `G-F1`.
+    import dataclasses
+    for field_ in dataclasses.fields(fanout.Preset):
+        if field_.name in ("name", "row", "exec_scope"):
+            continue
+        assert getattr(out, field_.name) == \
+            getattr(fanout.PRESETS["scout"], field_.name), \
+            f"{field_.name} varies by preset and the preset did not set it"
     assert (out.write, out.area, out.terse) == ("launch", "open", "on")
     assert out.exec_allow == [*fanout.ALWAYS, *fanout.READERS]
     # The budget is deliberately untouched: it follows the size of the work

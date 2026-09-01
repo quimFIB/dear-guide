@@ -34,6 +34,8 @@ import os
 import socket
 import threading
 import time
+from queue import Empty as _Empty
+from queue import SimpleQueue as _Queue
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -69,9 +71,9 @@ WAITING_NAME = ".dgraph-consent.waiting.json"
 #: Two rather than one field in one file, because they have **two different
 #: writers** — the broker publishes the ask, and whoever is relaying writes the
 #: answer — and a single file rewritten whole by both is a lost answer the
-#: first time they overlap. Serial by construction: `decide` handles one
-#: request at a time, so there is never a second ask outstanding and neither
-#: file needs a queue.
+#: first time they overlap. Serial by construction: `decide` has one caller and
+#: handles one request at a time, so there is never a second ask outstanding and
+#: neither file needs a queue.
 #: **They do not live in the project, and that is the whole of their safety.**
 #: The first version put them beside the socket, where every agent may write
 #: freely under `$DG_WRITE=launch` and where a confinement floor seals nothing
@@ -143,6 +145,13 @@ def unrelayable(root: Path | None = None) -> str | None:
 #: longer than the caller does means the person's answer is never thrown away
 #: by the front end before the caller has stopped listening for it.
 RELAY_WAIT = 120
+
+#: How much longer than the caller this end holds a question open, so the
+#: person's answer is never thrown away here before the caller has stopped
+#: listening for it. Small: past the caller's bound the verdict is undeliverable
+#: anyway, and holding the broker — which decides serially — past that point
+#: queues every other agent behind somebody who can no longer help.
+RELAY_MARGIN = 20
 
 #: The rungs, per kind. `$DG_CONSENT_EXEC` sits one stricter than
 #: `$DG_CONSENT_WRITE` by default because writing a file inside a known tree is
@@ -249,6 +258,38 @@ def unattachable(rungs: dict[str, str], auto: object = None) -> str | None:
             f"verdict stands.")
 
 
+#: What the host adapters give the gate, and therefore the shortest bound any
+#: request will carry in an ordinary run. Read from `hooks/prewrite.py` by
+#: `tests/test_plugin.py` rather than copied — this is the *floor check's*
+#: number and the chain test is what keeps it the same one.
+ADAPTER_DEADLINE = 100
+
+
+def unwaitable(wait: float | None) -> str | None:
+    """Why this `--relay-wait` would discard answers — or `None`.
+
+    Refused **at the door**, like `unbindable`, `unattachable` and
+    `unrelayable` beside it, and for the reason they are: a relay that will
+    throw away verdicts is knowable before anything binds, and a check made
+    once per request would be a refusal the supervisor meets in the middle of
+    a run.
+
+    Under the caller's bound the relay gives up first, and the answer a person
+    was two seconds from giving is discarded with nobody told. `wait_for` now
+    reads the bound out of each request, so this only bites a request that
+    carries none — but that is exactly the terminal case, and a number chosen
+    below the adapters' is a number chosen wrong. Audit `G-F3`.
+    """
+    if wait is None or wait > ADAPTER_DEADLINE:
+        return None
+    return (f"--relay-wait {wait:g} is under the {ADAPTER_DEADLINE}s both host "
+            f"adapters give the gate, so a request carrying no deadline of its "
+            f"own would be abandoned here while its caller was still waiting — "
+            f"and the answer you were about to give would be thrown away with "
+            f"nothing to say so. Use at least {ADAPTER_DEADLINE + 1}; the "
+            f"default is {RELAY_WAIT}.")
+
+
 def rung(kind: str, environ: dict | None = None) -> str:
     """Which rung governs `kind`, read from the broker's own environment.
 
@@ -314,7 +355,17 @@ class Broker:
     Serial because a person answers serially, and a queue of prompts racing
     each other in one terminal is unreadable. Agents blocked behind one another
     are visible as `Waiting` in `dg-agent list` rather than inferred from
-    silence.
+    silence — **which was this docstring's claim before it was true.** Requests
+    were accepted and decided in one loop, so a queued one sat unread in the
+    backlog, never reached `decide`, published nothing, and read as an agent
+    working normally with a fresh heartbeat. `G-F4`.
+
+    A reader thread accepts and reads now, so an agent is visible before its
+    turn; `serve` remains the **only** caller of `decide`, so serial is still
+    a property of the shape and not a lock to be held. That mattered enough to
+    choose the two-thread form over a thread per connection: `Relay`'s single
+    slot rests on it, and converting a structural guarantee into a maintained
+    one is the move this repo files as a finding when it meets it elsewhere.
     """
 
     root: Path
@@ -335,6 +386,15 @@ class Broker:
     #: broker that re-read it would answer two identical requests differently
     #: with nothing in the log to say why.
     rungs: dict[str, str] = field(default_factory=dict)
+    #: The waiting map is rewritten whole and two threads reach it — the reader
+    #: publishing a queued agent, and the decider publishing and clearing the
+    #: one being asked. Read-modify-write on a shared file, which is the shape
+    #: this repo has a whole audit pass about.
+    #:
+    #: **It is the only thing the two threads share**, and that is deliberate:
+    #: `decide` has exactly one caller, so the grants, the log and the verdict
+    #: need no lock and the serial property needs no maintaining. `G-F4`.
+    _status: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def __post_init__(self) -> None:
         if not self.rungs:
@@ -352,7 +412,20 @@ class Broker:
         The order is memory, then rung, then a person -- so a granted scope
         costs no prompt, and the round trip it does cost is a socket call
         rather than somebody's attention, which is the economy that mattered.
+
+        **Every exit clears the waiting state**, not only the prompted one. A
+        request is published as queued before its turn comes, and most requests
+        never reach a prompt at all — a remembered grant, `off`, a target
+        outside the floor's mounts. Left behind, those entries are an agent
+        shown as blocked forever on a decision that was made instantly. `G-F4`.
         """
+        try:
+            return self._decide(req)
+        finally:
+            with contextlib.suppress(Exception):
+                self._waiting((req.get("agent") or "").strip(), None)
+
+    def _decide(self, req: dict) -> dict:
         agent = (req.get("agent") or "").strip()
         kind = req.get("kind")
         target = req.get("target") or ""
@@ -410,7 +483,31 @@ class Broker:
         # `auto` as a run that reports itself healthy while nothing is in
         # force, and a blocked-but-invisible agent is the same reading arriving
         # by another road.
-        self._waiting(agent, req)
+        # **A person is not asked about a caller that has gone.** Reading on
+        # arrival made this reachable: a request now waits its turn, and by the
+        # time the turn comes its caller may have given up — so without this
+        # the queue spends the supervisor's attention on questions whose
+        # answers cannot be delivered, which is precisely what `dg-agent
+        # consent` refuses to let them do (`G-F2`). Checked here rather than at
+        # the door because the caller can leave *during* the wait, which is the
+        # case that matters.
+        #
+        # After the rungs, so `off` still answers `off` and a remembered grant
+        # still answers instantly: those cost nobody anything and their log
+        # lines are true. This is only about the prompt.
+        over = gone_for(req)
+        if over is not None:
+            return _answer(req, "deny",
+                           f"{agent} stopped waiting {int(over)}s ago — its "
+                           f"deadline had passed before this request reached "
+                           f"the front of the queue, and a verdict given now "
+                           f"would reach nobody",
+                           by="unanswered")
+        # Republished, not merely left: this agent may have been queued a moment
+        # ago and the map still says so. The same call clears `queued`, so the
+        # transition from *waiting for a turn* to *waiting on you* is one
+        # write. `G-F4`.
+        self._waiting(agent, req, queued=False)
         try:
             allow, why, grant = ask()
         except NoAnswer as exc:
@@ -419,27 +516,34 @@ class Broker:
             # answered — the same event through different doors.
             return _answer(req, "deny", str(exc) or "nobody answered",
                            by="unanswered")
-        finally:
-            self._waiting(agent, None)
         return self._settle(req, agent, allow, why, grant, by=by)
 
-    def _waiting(self, agent: str, req: dict | None) -> None:
+    def _waiting(self, agent: str, req: dict | None, *,
+                 queued: bool = False) -> None:
         """Publish, or clear, what `agent` is blocked on.
 
         Best-effort and rewritten whole, like the log and for the same reason:
         a broker that stopped answering because it could not write a status
         file would be worse than a status file that is briefly wrong.
+
+        `queued` distinguishes *waiting on a person* from *waiting on another
+        agent's turn*. Both are blocked and both must show, but they are not
+        the same news: the first is answerable now and the second is not, and a
+        supervisor who cannot tell them apart cannot tell one question from
+        five. Rewritten whole under `_status`, because two threads publish here
+        now — the accept path and the decider. `G-F4`.
         """
         path = self.root / WAITING_NAME
         with contextlib.suppress(Exception):
-            now = waiting(self.root)
-            if req is None:
-                now.pop(agent, None)
-            else:
-                now[agent] = {"kind": req.get("kind"),
-                              "target": req.get("target"),
-                              "since": time.time()}
-            project.write_atomic(path, json.dumps(now, ensure_ascii=False))
+            with self._status:
+                now = waiting(self.root)
+                if req is None:
+                    now.pop(agent, None)
+                else:
+                    now[agent] = {"kind": req.get("kind"),
+                                  "target": req.get("target"),
+                                  "since": time.time(), "queued": queued}
+                project.write_atomic(path, json.dumps(now, ensure_ascii=False))
 
     def _unmountable(self, req: dict) -> str | None:
         """Why no grant could make this write work — or `None`.
@@ -517,27 +621,79 @@ class Broker:
             srv.listen(16)
             os.rename(staging, path)
             srv.settimeout(0.5)
+            # **Two threads, and the split is exactly one question wide.**
+            # Reading a request and deciding it used to be the same loop, so a
+            # second agent's request sat unread in the listen backlog while the
+            # first was being answered: it never reached `decide`, published no
+            # waiting state, and `dg-agent list` showed it `Waiting —` beside a
+            # fresh `Seen` — which reads as *alive*. That is the reading the
+            # column exists to end, arriving from the other side. `G-F4`.
+            #
+            # Publishing *waiting* needs the request, and the request needs the
+            # socket read. So the read moves and nothing else does: one reader
+            # accepts, reads and publishes; this loop goes on deciding, one at
+            # a time, **and it is still the only caller of `decide`.** Serial
+            # stays a property of the shape rather than of a lock somebody must
+            # remember to hold — which matters because `Relay`'s single slot
+            # rests on it, and a maintained invariant is the thing this
+            # codebase has a whole audit shape about.
+            queue: "_Queue[tuple[socket.socket, dict]]" = _Queue()
+            reader = threading.Thread(target=self._read_loop,
+                                      args=(srv, queue, stop), daemon=True)
+            reader.start()
             while stop is None or not stop.is_set():
                 try:
-                    conn, _ = srv.accept()
-                except socket.timeout:
+                    conn, req = queue.get(timeout=0.2)
+                except _Empty:
                     continue
                 with conn:
-                    self._one(conn)
+                    with contextlib.suppress(Exception):
+                        self._answer_one(conn, req)
+            reader.join(timeout=2)
         finally:
             srv.close()
             for gone in (path, staging, self.root / WAITING_NAME):
                 with contextlib.suppress(FileNotFoundError):
                     gone.unlink()
 
-    def _one(self, conn: socket.socket) -> None:
-        try:
-            raw = _read_line(conn)
-            req = json.loads(raw) if raw else {}
-        except Exception as exc:
-            _write_line(conn, {"v": 1, "verdict": "deny",
-                               "reason": f"unreadable request ({exc!r})"})
-            return
+    def _read_loop(self, srv: socket.socket, queue, stop) -> None:
+        """Accept, read, publish, hand over. Never decides.
+
+        The whole of the second thread, and its whole job is to make an agent
+        *visible* before its turn comes. It writes the waiting map and touches
+        nothing else the decider owns — no grants, no log, no verdict.
+
+        An unreadable request is answered here rather than queued: it has no
+        agent to publish and no decision to make, so passing it on would put a
+        non-question in front of a person.
+        """
+        while stop is None or not stop.is_set():
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return                      # the socket closed under us
+            try:
+                raw = _read_line(conn)
+                req = json.loads(raw) if raw else {}
+            except Exception as exc:
+                with conn:
+                    with contextlib.suppress(Exception):
+                        _write_line(conn, {"v": 1, "verdict": "deny",
+                                           "reason": f"unreadable request ({exc!r})"})
+                continue
+            # Queued, and said so. Both are blocked on this broker; only one is
+            # answerable now, and a supervisor who cannot tell them apart
+            # cannot tell one question from five. The decider republishes with
+            # `queued=False` when the turn comes.
+            agent = (req.get("agent") or "").strip()
+            if agent:
+                with contextlib.suppress(Exception):
+                    self._waiting(agent, req, queued=True)
+            queue.put((conn, req))
+
+    def _answer_one(self, conn: socket.socket, req: dict) -> None:
         try:
             res = self.decide(req)
         except Exception as exc:  # never raise at a blocked agent
@@ -694,9 +850,12 @@ class Relay:
     recorded risk: see `D40`, which is open, and which is why this docstring
     says so rather than implying more.
 
-    Serial by construction, like the broker it serves: `decide` handles one
-    request at a time, so there is exactly one question outstanding and the
-    slot below needs no queue.
+    Serial by construction, like the broker it serves: `Broker.serve` is the
+    only caller of `decide` and answers one request at a time, so there is
+    exactly one question outstanding and the slot below needs no queue. A
+    reader thread was added beside that loop so a queued agent is visible
+    before its turn (`G-F4`) — it accepts, reads and publishes, and never
+    decides, which is why this sentence still holds.
     """
 
     def __init__(self, root: Path | None = None, wait: float = RELAY_WAIT):
@@ -723,6 +882,29 @@ class Relay:
         """
         return self._await(req, "auto")
 
+    def wait_for(self, req: dict) -> float:
+        """How long to hold this request open: the **caller's** bound, where it
+        named one.
+
+        `RELAY_WAIT` is the fallback for a request that carries none, not the
+        number. It was the number, and its comment justified it against a
+        constant in another file — *"just over the 100s both host adapters
+        pass"* — which is a relation maintained by hand between two files that
+        cannot see each other. `--relay-wait` could break it silently, and did:
+        below the caller's bound the relay gave up first and threw away an
+        answer the caller was still waiting for. Audit `G-F3`.
+
+        A small margin over the caller, so the person's answer is never
+        discarded by this end before the caller has stopped listening — which
+        is what the old constant was reaching for, now against the number it
+        was reaching for rather than a copy of it.
+        """
+        named = req.get("deadline")
+        if not isinstance(named, (int, float)) or named <= 0:
+            return self.wait
+        left = float(named) - max(0.0, time.time() - float(req.get("asked") or time.time()))
+        return max(1.0, left + RELAY_MARGIN)
+
     def _await(self, req: dict, level: str) -> tuple[bool, str, Grant | None]:
         published = dict(req)
         published["level"] = level
@@ -732,11 +914,21 @@ class Relay:
             self._pending = published
             self._verdict = None
             self._answered.clear()
+        held = self.wait_for(req)
         try:
-            if not self._answered.wait(self.wait):
+            if not self._answered.wait(held):
+                # The message no longer asserts anything about the caller. It
+                # used to say the caller's deadline had passed, which the
+                # broker had no way to know and which was false whenever
+                # `--relay-wait` sat under it — a false reason written into the
+                # one artefact a supervisor reads afterwards. `G-F3`.
                 raise NoAnswer(
-                    f"nobody answered the relay within {int(self.wait)}s — the "
-                    f"caller's own deadline had already passed")
+                    f"nobody answered the relay within {held:.0f}s"
+                    + (f", which is the {req['deadline']:.0f}s "
+                       f"{req.get('agent') or 'the caller'} said it would wait"
+                       if isinstance(req.get("deadline"), (int, float))
+                       and req["deadline"] > 0 else
+                       " (no caller deadline was named)"))
             with self._lock:
                 got = self._verdict
             if got is None:                       # answered, then withdrawn
@@ -874,6 +1066,28 @@ def send_answer(root: Path | None, ident: str, allow: bool, why: str,
     return None if got.get("ok") else (got.get("error") or "refused")
 
 
+def gone_for(req: dict) -> float | None:
+    """How long ago this request's caller stopped listening — or `None`.
+
+    `None` means *still waiting*, or that no bound was named and it may be
+    waiting indefinitely. A number means the gate has already answered itself
+    and moved on, so a verdict given now reaches nobody.
+
+    The question `dg-agent consent` could not ask before the deadline was in
+    the request. Without it the command showed a dead request as live, took an
+    answer for it, and printed `allowed` in green while the log recorded
+    `delivered: false` — the one surface a person acts on saying the opposite
+    of the one artefact they read afterwards. Audit `G-F2`.
+    """
+    named, asked = req.get("deadline"), req.get("asked")
+    if not isinstance(named, (int, float)) or named <= 0:
+        return None
+    if not isinstance(asked, (int, float)):
+        return None
+    over = time.time() - float(asked) - float(named)
+    return over if over > 0 else None
+
+
 def _verb(req: dict) -> str:
     return "run" if req.get("kind") == "exec" else "write"
 
@@ -1003,7 +1217,8 @@ def _heartbeat(agent: str | None, root: Path | None) -> threading.Event:
 
 
 def request(kind: str, target: str, agent: str, reason: str,
-            holding: dict | None = None, roots: list[str] | None = None) -> dict:
+            holding: dict | None = None, roots: list[str] | None = None,
+            deadline: float | None = None) -> dict:
     """The object the gate sends, and why each field is in it.
 
     `id` is stable over `(agent, kind, target)` so a retry re-attaches to a
@@ -1011,9 +1226,25 @@ def request(kind: str, target: str, agent: str, reason: str,
     `gate` carries the gate's own conclusion because **the broker decides and
     never re-derives policy** -- `limits` stays the single home, which is the
     "adapters hold no policy of their own" rule one level up.
+
+    **`deadline` is how long the caller will wait, and it belongs here.** `D26`
+    put the bound on the caller and the caller does pass it — to `consult`,
+    which sets it on the socket and stops. Everything past that socket was then
+    deciding against a number it could not see: `RELAY_WAIT` was a constant
+    guessing at it, `dg-agent consent` could not tell a live request from one
+    whose agent had gone, and the relay's own refusal asserted *"the caller's
+    own deadline had already passed"* about a caller with ninety-five seconds
+    left. One absent field, three surfaces guessing. `roots` was the same shape
+    one pass earlier and was fixed the same way, for the reason that
+    generalises it: the gate knows, because it is what the gate just judged
+    against. Audit `G-F3`.
+
+    `None` where nobody named one — a person at a terminal, who may wait as
+    long as they like. Readers must treat that as *no bound*, never as zero.
     """
     import hashlib
     ident = hashlib.sha256(f"{agent}|{kind}|{target}".encode()).hexdigest()[:12]
     return {"v": 1, "id": ident, "agent": agent, "kind": kind,
             "target": target, "gate": {"verdict": "ask", "reason": reason},
-            "holding": holding or {}, "roots": roots or []}
+            "holding": holding or {}, "roots": roots or [],
+            "deadline": deadline, "asked": time.time()}

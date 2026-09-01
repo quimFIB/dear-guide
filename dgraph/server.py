@@ -175,6 +175,9 @@ def graph_payload(g: Graph) -> dict:
     # alone the form prefilled an id another writer had already staged, and
     # `stage` then refused the post it had just invited. Audit `G-F5`.
     d["next_id"], d["next_id_fault"] = _next("D", lambda: editor.next_offer(g))
+    # The decision store's half of the same marker — an agent may have staged a
+    # `close` on a question the panel still shows as OPEN and decidable.
+    d["contested"] = contested(pending.load(), "vertex")
     return d
 
 
@@ -229,6 +232,41 @@ def task_depth(tg: TaskGraph) -> dict[str, int]:
     return depth
 
 
+def contested(tray: list[dict], key: str) -> dict[str, dict]:
+    """Which records a staged op speaks for, by id — the panel's marker.
+
+    **The panel reads the store and the tray keeps its own footer**, which is
+    the decided reading model: a canvas holds a pan, a zoom and an open
+    inspector, and folding staged ops into the graph moves all three under
+    somebody mid-read. What that split does *not* buy is silence about a
+    claim — a task reading `TODO · ready` while an agent holds a staged
+    `set_status … DOING` sends the supervisor at work already taken, and the
+    footer cannot say so because it lists ops by writer, never by which record
+    each speaks for. This is that index, and nothing else: the readings stay
+    the store's. Audit `G-F5`.
+
+    `key` is `vertex` or `task` — the field the op names its subject with, and
+    `id` for an `add_*`, which names its subject with that instead. First op
+    wins per id, matching the tray's own order, and the writer travels with it
+    (`by`, the field `stage_all` stamps) because *who* claimed it is most of
+    what the marker is for — an unattributed "somebody staged something" tells
+    a supervisor nothing they can act on.
+
+    `ref` travels too, so the panel can point at the row in its own footer
+    rather than making the reader find it.
+    """
+    out: dict[str, dict] = {}
+    for op in tray or ():
+        if not isinstance(op, dict):
+            continue
+        rid = op.get(key) or op.get("id")
+        if not rid or rid in out:
+            continue
+        out[rid] = {"op": op.get("op"), "by": op.get("by") or None,
+                    "to": op.get("status") or None, "ref": op.get("ref")}
+    return out
+
+
 def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
     """The task graph as the browser needs it.
 
@@ -272,6 +310,9 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
     }
     d["frontier"] = tg.frontier()
     d["counts"] = tg.counts()
+    # Beside the readings, never inside them: every value above is still the
+    # store's. See `contested`.
+    d["contested"] = contested(pending.load(task_pending.path()), "task")
     # `graph_payload`'s twin: what the new-task form prefills, from the same
     # function `dg task add --edit` prefills it with.
     d["next_id"], d["next_id_fault"] = _next(

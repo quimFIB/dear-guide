@@ -1218,6 +1218,50 @@ def test_every_bound_around_the_gate_is_a_chain(monkeypatch):
             f"{which}: the host kills the hook at {host[which]}s, before its own bound"
 
 
+def test_the_relay_is_in_the_chain_it_was_written_against(monkeypatch):
+    """The fourth number, which arrived after the chain test and outside it.
+
+    `RELAY_WAIT`'s comment states the relation that is the whole of the value —
+    *"just over the 100s both host adapters pass as `--deadline`"* — and that
+    relation was maintained by hand between two files that cannot see each
+    other, with a user-facing `--relay-wait` free to break it silently. A
+    chain edited one number at a time is not a chain, which is the sentence
+    this suite already had and did not apply to the number that arrived next.
+    Audit `G-F3`."""
+    from dgraph import broker
+    deadline = _hook_const("DEADLINE", "prewrite.py")
+    assert broker.ADAPTER_DEADLINE == deadline, (
+        "the relay's floor and the adapters' deadline have drifted apart")
+    assert broker.RELAY_WAIT > deadline, (
+        "a request carrying no deadline is abandoned before its caller gives up")
+    # …and the door refuses what the relation forbids, rather than the relation
+    # only being asserted here.
+    assert broker.unwaitable(deadline) is not None
+    assert broker.unwaitable(deadline - 1) is not None
+    assert broker.unwaitable(broker.RELAY_WAIT) is None
+    assert broker.unwaitable(None) is None, "no bound named is not a fault"
+
+
+def test_a_relay_holds_a_request_for_as_long_as_its_caller_will(monkeypatch):
+    """The bound comes out of the request now, and `RELAY_WAIT` is the fallback
+    for one that carries none — never the number. A relay that outlives its
+    caller holds the broker, which decides serially, against every other agent
+    queued behind somebody who can no longer help."""
+    from dgraph import broker
+    r = broker.Relay(Path("/tmp"), wait=broker.RELAY_WAIT)
+    import time
+    now = time.time()
+    assert r.wait_for({}) == broker.RELAY_WAIT, "no deadline named: the fallback"
+    assert r.wait_for({"deadline": None}) == broker.RELAY_WAIT
+    # Named: the caller's, plus the margin, less what has already elapsed.
+    held = r.wait_for({"deadline": 100, "asked": now})
+    assert 100 < held <= 100 + broker.RELAY_MARGIN
+    older = r.wait_for({"deadline": 100, "asked": now - 60})
+    assert older < held, "time already spent waiting is not counted twice"
+    assert r.wait_for({"deadline": 100, "asked": now - 500}) >= 1.0, \
+        "a long-expired request must still yield a positive wait, not a hang"
+
+
 def test_both_hosts_wait_the_same_length_for_one_rule():
     """A rule that waits differently depending on which tool the agent reached
     for is two rules. Claude Code gave up at 5 seconds and allowed the write;

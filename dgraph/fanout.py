@@ -200,11 +200,19 @@ def env_plan(plan: Plan) -> dict:
     The budget is seconds, not `30m`: it is the one field that is a *number*,
     and writing it as a span would mean the file round-tripped through a parser
     that can refuse. `plan_env` renders it back for the environment.
+
+    **Derived from `ENV_FIELDS`, never listed.** The list version held eight of
+    the nine and the missing one was `apply` — so `--preset scout` wrote a
+    prompt telling the agent *`dg apply` is refused for you* and an `env.json`
+    that set nothing, and the preset whose row reads "proposes only · nothing
+    lands unapproved" landed its proposals unapproved. Every other mechanism
+    around this file already reads the table: `plan_env` renders from it,
+    `read_env_plan` accepts its keys, and the prompt guard maps it to what must
+    be visible in `scout.md`. This was the one that spelled the fields out, and
+    it is the one that fell behind. Audit `G-F1`.
     """
-    return {"decide": plan.decide, "write": plan.write, "area": plan.area,
-            "terse": plan.terse, "budget": plan.budget,
-            "exec_allow": list(plan.exec_allow),
-            "confine": plan.confine, "floor": plan.floor}
+    return {k: (list(v) if isinstance(v, list) else v)
+            for k, v in ((k, getattr(plan, k)) for k in ENV_FIELDS)}
 
 
 def read_env_plan(path) -> dict:

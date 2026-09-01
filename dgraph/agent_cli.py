@@ -254,9 +254,13 @@ def agent_list() -> None:
             # exactly as a working one does, so `3s` means *alive* and nothing
             # more. This is the cell that says which.
             w = blocked.get(name)
+            # `queued` and blocked-on-a-person are both blocked and read
+            # differently: the first is not answerable yet, so a supervisor
+            # counting questions must not count it as one. `G-F4`.
             row.append("[dim]—[/]" if not w else
                        f"[yellow]{w.get('kind', 'consent')} "
                        f"{limits.approx_span(max(0, int(_time.time() - w.get('since', 0))))}"
+                       f"{' [dim](queued)[/]' if w.get('queued') else ''}"
                        f"[/]")
         t.add_row(*row)
     cli.con.print(t)
@@ -277,10 +281,16 @@ def agent_list() -> None:
         # there is nothing wrong. An agent waiting on consent is an agent doing
         # what the design asks, and what unblocks it is the person at
         # `dg-agent broker` answering.
+        queued = sum(1 for w in blocked.values() if w.get("queued"))
         cli.con.print(f"[dim]waiting = blocked on a consent decision, not "
                   f"stalled — `dg-agent broker` is where it is answered. Its "
                   f"heartbeat keeps stamping, so `Seen` cannot tell you "
-                  f"this[/]")
+                  f"this[/]"
+                  + (f"\n[dim]{queued} of them {'is' if queued == 1 else 'are'} "
+                     f"[/][yellow]queued[/]"
+                     f"[dim] behind another agent's question — the broker asks "
+                     f"one at a time, so answering the one in front releases "
+                     f"them[/]" if queued else ""))
     cli.con.print(f"[dim]{len(agents.sequence()) - len(set(leases) | set(staged))} "
               f"of {len(agents.sequence())} names free[/]")
 
@@ -1252,8 +1262,12 @@ def agent_consent(
 
     level = req.get("level")
     waited = int(_time.time() - float(req.get("since") or _time.time()))
+    # Whether the agent is still listening. A verdict for one that has gone is
+    # refused rather than taken — see below, and `broker.gone_for`.
+    gone = _broker.gone_for(req)
     if as_json:
-        print(json.dumps({"pending": req, "waited": waited}, ensure_ascii=False))
+        print(json.dumps({"pending": req, "waited": waited,
+                          "gone_for": gone}, ensure_ascii=False))
         return
 
     chosen = [f for f, on in (("--allow", allow), ("--deny", deny),
@@ -1269,7 +1283,14 @@ def agent_consent(
             cli.con.print(f"  [dim]({cli._x(where)})[/]")
         if (req.get("gate") or {}).get("reason"):
             cli.con.print(f"  [dim]{cli._x(req['gate']['reason'])}[/]")
-        cli.con.print(f"  [dim]waiting {waited}s[/]")
+        if gone is None:
+            cli.con.print(f"  [dim]waiting {waited}s[/]")
+        else:
+            # Said where the wait used to be, because it is the same fact
+            # turned over: this is not somebody waiting on you. `G-F2`.
+            cli.con.print(f"  [red]gave up {int(gone)}s ago[/] [dim]— its "
+                          f"deadline was {int(req['deadline'])}s and it has "
+                          f"stopped listening[/]")
         # The one thing an answerer has to know before answering: which rung
         # published this, and therefore what the log will say produced the
         # verdict. On `user` that word is `person`, and it is only true if a
@@ -1288,6 +1309,20 @@ def agent_consent(
     if len(chosen) > 1:
         cli.con.print(f"[red]✗ {', '.join(chosen)} — answer one way[/]")
         raise typer.Exit(2)
+    # Refused, not warned. An `allow` for a caller that has gone is a verdict
+    # nobody receives, and recording it would put in the consent log the very
+    # ambiguity `delivered` exists to resolve — a supervisor reading it
+    # afterwards cannot tell a permission that was enforced from one that was
+    # merely typed. The id is stable over `(agent, kind, target)`, so a retry
+    # re-attaches and the same question comes back answerable. `G-F2`.
+    if gone is not None:
+        cli.con.print(
+            f"[red]✗ {cli._x(req.get('agent'))} gave up {int(gone)}s ago[/] "
+            f"[dim]— its deadline was {int(req['deadline'])}s and it has "
+            f"stopped listening. Nothing was recorded.[/]\n"
+            f"[dim]It will ask again if it retries; the id is stable, so you "
+            f"will get the same question.[/]")
+        raise typer.Exit(1)
     if scope and level != "scoped":
         cli.con.print(f"[red]✗ --scope needs the `scoped` rung; this request "
                   f"came in under `{cli._x(level)}`[/]\n"
@@ -1340,12 +1375,17 @@ def agent_broker(
     is the point: the gate runs inside the agent's own process, so a rung read
     there is one the agent could widen.
 
-    **`auto` is refused rather than offered.** It is a rung of the model — it
-    decides here instead of at a person — but nothing in the package attaches a
-    policy for it to decide with, so it would answer `deny` to everything while
-    this printed `auto` and published nobody as waiting. Refused at the door
-    until a policy exists; `scoped` is what it was reached for.
+    **`auto` is refused unless something is attached to decide with.** It is a
+    rung of the model — it decides here instead of at a person — and with no
+    policy behind it it would answer `deny` to everything while this printed
+    `auto` and published nobody as waiting. So `unattachable` refuses it at the
+    door. `--relay` *is* such a policy, so the two together are accepted: the
+    question goes out for `dg-agent consent` exactly as on the other rungs, and
+    the difference is the record — a verdict given on `auto` is logged `auto`,
+    not `person`, however human the hand that gave it. Choose `scoped` if what
+    you want is your own answer recorded as yours.
     """
+
     from dgraph import broker as _broker
     try:
         proj = project.find()
@@ -1388,6 +1428,11 @@ def agent_broker(
     # before anything binds, because a relay whose channel an agent can write
     # is a broker that hands out its own permissions.
     if relay:
+        short = _broker.unwaitable(wait)
+        if short:
+            cli.con.print(f"[red]✗ {cli._x(short)}[/]\n[dim]nothing is "
+                          f"listening; fix the wait and start again[/]")
+            raise typer.Exit(2)
         unsafe = _broker.unrelayable(proj.root)
         if unsafe:
             cli.con.print(f"[red]✗ {cli._x(unsafe)}[/]\n[dim]nothing is "

@@ -27,6 +27,12 @@
   .chip{border:1px solid var(--line);background:transparent;color:var(--dim);
     border-radius:99px;padding:2px 10px;cursor:pointer;font-size:12px}
   .chip.on{color:var(--ink);border-color:var(--accent);background:#1c2733}
+  /* A claim is not a state of the record, so it is a mark *beside* the box and
+     never a change to how the box itself reads — no restroking, no undashing.
+     A task can be waiting on a premise and claimed at once, and the dashes are
+     the first of those; a rule here that cleared them would hide one reading
+     to show the other. `G-F5`. */
+  .claim-dot{fill:var(--warn,#d8a657)}
   #q{border:1px solid var(--line);background:transparent;color:var(--ink);
     border-radius:99px;padding:3px 12px;font-size:12px;width:24ch;
     font-family:inherit;outline:none}
@@ -725,17 +731,39 @@ function tvisible(x){ return passes("tasks", x.id); }
 /* One node renderer for both stores: same box, same two wrapped title lines,
    so a decision and a task read as the same kind of thing in the joined view
    and only their outline says which. */
+/* What a staged op claims about this record, or null. The panel draws the
+   store — that is the decided reading model, and the tray has its own footer —
+   but silence about a claim is not part of that bargain: a task reading
+   `TODO · ready` while an agent holds a staged `set_status … DOING` sends the
+   supervisor at work already taken. So the reading is untouched and a mark is
+   added beside it. `contested` is the server's index; see there. */
+function claimOn(id){
+  const c = (G && G.contested && G.contested[id])
+         || (T && T.contested && T.contested[id]);
+  return c || null;
+}
+
+function claimNote(c){
+  const who = c.by ? `by ${c.by}` : "by a writer with no name set";
+  const what = c.to ? `${c.op} → ${c.to}` : c.op;
+  return `staged ${what} ${who} — not applied, so the graph above still `
+       + `shows the record. See the tray below.`;
+}
+
 function nodeSvg(id, title, status, area, stroke, dash, dim){
   const p=xyOf(id); if(!p) return "";
   const s=title.length>46?title.slice(0,44)+"…":title;
   const cut = s.length>26 ? (s.lastIndexOf(" ",26)||26) : -1;
   const half = cut<0 ? s : s.slice(0,cut);
   const rest = cut<0 ? "" : s.slice(cut+1);
-  return `<g class="node${dim?" dim":""}" data-id="${esc(id)}" transform="translate(${p.x},${p.y})">
+  const claim = claimOn(id);
+  return `<g class="node${dim?" dim":""}${claim?" claimed":""}" data-id="${esc(id)}" transform="translate(${p.x},${p.y})">
       <rect width="${NW}" height="${NH}" rx="7" fill="${AREA_COLOR[area]||"#888"}22"
             stroke="${stroke}" ${dash}/>
       <text class="vid" x="8" y="15">${esc(id)}</text>
       <text x="34" y="15" fill="${stroke}" font-size="9.5">${esc(status)}</text>
+      ${claim?`<title>${esc(claimNote(claim))}</title>
+      <circle class="claim-dot" cx="${NW-9}" cy="10" r="3.5"/>`:""}
       <text x="8" y="29">${esc(half)}</text><text x="8" y="41">${esc(rest)}</text>
     </g>`;
 }

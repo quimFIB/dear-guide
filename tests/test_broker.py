@@ -936,3 +936,262 @@ def test_the_channel_leaves_nothing_in_the_project(running, relay, tmp_path):
     ident = broker.pending_ask(tmp_path)["id"]
     assert broker.send_answer(tmp_path, ident, False, "no") is None
     t.join(timeout=5)
+
+
+# ---- every blocked agent is visible as blocked (audit `G-F4`) -------------
+
+
+def test_an_agent_queued_behind_another_is_published_as_waiting(tmp_path):
+    """The claim `Broker`'s docstring made before it was true.
+
+    Requests were accepted and decided in one loop, so a second agent's
+    connection sat unread in the listen backlog: it never reached `decide`, so
+    it published nothing, while its heartbeat kept stamping and `Seen` read
+    *alive*. One blocked agent showed and the rest read as working — which in a
+    fan-out is the common case, since agents start together and hit their first
+    out-of-scope write together.
+
+    The reader thread is what closed it: publishing *waiting* needs the
+    request, and the request needs the socket read.
+    """
+    import threading
+    import time
+
+    from dgraph import broker
+
+    release = threading.Event()
+
+    def slow(req, level):
+        release.wait(20)
+        return False, "declined by the supervisor", None
+
+    b = broker.Broker(root=tmp_path, prompt=slow,
+                      rungs={"write": "user", "exec": "user"})
+    stop = threading.Event()
+    threading.Thread(target=b.serve, args=(stop,), daemon=True).start()
+    try:
+        time.sleep(0.4)
+        out = {}
+
+        def ask(name, delay):
+            time.sleep(delay)
+            req = broker.request("write", str(tmp_path / f"{name}.txt"),
+                                 name, "outside scope")
+            out[name] = broker.consult(req, tmp_path, timeout=25)
+
+        ts = [threading.Thread(target=ask, args=("alpha", 0)),
+              threading.Thread(target=ask, args=("bravo", 0.7))]
+        for t in ts:
+            t.start()
+        time.sleep(2.0)
+
+        blocked = broker.waiting(tmp_path)
+        assert set(blocked) == {"alpha", "bravo"}, (
+            "an agent blocked behind another is invisible: " + repr(blocked))
+        # …and the two are told apart, because only one is answerable now.
+        assert blocked["alpha"]["queued"] is False
+        assert blocked["bravo"]["queued"] is True
+    finally:
+        release.set()
+        for t in ts:
+            t.join(timeout=30)
+        stop.set()
+        time.sleep(0.6)
+
+    assert out["alpha"]["verdict"] == "deny"
+    assert out["bravo"]["verdict"] == "deny"
+    # Nothing left behind: both cleared once decided.
+    assert broker.waiting(tmp_path) == {}
+
+
+def test_a_request_that_never_reaches_a_prompt_leaves_no_waiting_state(tmp_path):
+    """Most requests never reach a person — a remembered grant, `off`, a target
+    outside the floor's mounts. Each is published as queued on the way in now,
+    so each has to be cleared on the way out or it is an agent shown blocked
+    forever on a decision that was instant."""
+    from dgraph import broker
+    b = broker.Broker(root=tmp_path, rungs={"write": "off", "exec": "off"})
+    res = b.decide(broker.request("write", str(tmp_path / "x"), "alpha", "why"))
+    assert res["verdict"] == "deny" and res["by"] == "rung"
+    assert broker.waiting(tmp_path) == {}, \
+        "a request answered without a prompt left a waiting state behind"
+
+
+def test_the_decision_is_still_one_at_a_time(tmp_path):
+    """One question at a time, which `Relay`'s single slot depends on in as
+    many words.
+
+    Still a property of the shape — `serve` is the only caller of `decide` —
+    and asserted anyway, because the reader thread beside it is exactly the
+    kind of addition that could quietly acquire a second caller. This is the
+    test that would notice."""
+    import threading
+    import time
+
+    from dgraph import broker
+
+    concurrent, peak = [], []
+    lock = threading.Lock()
+
+    def prompt(req, level):
+        with lock:
+            concurrent.append(1)
+            peak.append(len(concurrent))
+        time.sleep(0.4)
+        with lock:
+            concurrent.pop()
+        return True, "ok", None
+
+    b = broker.Broker(root=tmp_path, prompt=prompt,
+                      rungs={"write": "user", "exec": "user"})
+    stop = threading.Event()
+    threading.Thread(target=b.serve, args=(stop,), daemon=True).start()
+    try:
+        time.sleep(0.4)
+        ts = [threading.Thread(
+            target=lambda n=n: broker.consult(
+                broker.request("write", str(tmp_path / f"{n}"), n, "why"),
+                tmp_path, timeout=25)) for n in ("a", "b", "c")]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(timeout=30)
+    finally:
+        stop.set()
+        time.sleep(0.6)
+    assert peak and max(peak) == 1, (
+        f"two prompts were open at once (peak {max(peak)}) — something besides "
+        f"`serve` is calling `decide`")
+
+
+def test_the_brokers_help_describes_the_auto_rung_it_actually_has(tmp_path):
+    """`H-F2`'s lesson: the guard reads the **claim**, not the name.
+
+    The help said *"`auto` is refused rather than offered … refused at the door
+    until a policy exists"* for two days after `--relay` became such a policy.
+    Three tests over that surface would have checked the *word* `auto` was
+    still present and passed against the false sentence. So this asserts the
+    sentence against the behaviour instead: whatever the help says about
+    refusal has to agree with what `unattachable` does when a relay is
+    attached. Audit `G-F6`."""
+    import inspect
+
+    from dgraph import agent_cli, broker
+
+    help_text = " ".join(inspect.getdoc(agent_cli.agent_broker).split())
+    rungs = {"write": "auto", "exec": "user"}
+
+    # The behaviour, both ways round.
+    assert broker.unattachable(rungs, auto=None) is not None, \
+        "an unattached auto rung is no longer refused"
+    relay = broker.Relay(tmp_path)
+    assert broker.unattachable(rungs, auto=relay.auto) is None, \
+        "a relay no longer attaches to the auto rung"
+
+    # …and the sentence beside it.
+    assert "refused rather than offered" not in help_text, (
+        "the help still says `auto` is refused outright, and `--relay` "
+        "attaches a policy that makes it available")
+    assert "--relay" in help_text and "auto" in help_text, \
+        "the help no longer says what makes the auto rung available"
+    assert "logged `auto`, not `person`" in help_text, (
+        "the help no longer says what a verdict on the auto rung is recorded "
+        "as, which is the only thing separating the two rungs")
+
+
+# ---- a verdict for a caller that has gone (audit `G-F2`) -----------------
+
+
+def test_a_request_whose_caller_gave_up_is_known_to_have_gone(tmp_path):
+    """`gone_for` is the question `dg-agent consent` could not ask before the
+    deadline was in the request. Without it the command showed a dead request
+    as live, took an answer for it, and printed `allowed` in green while the
+    log recorded `delivered: false`."""
+    import time
+
+    from dgraph import broker
+
+    now = time.time()
+    live = broker.request("write", "/etc/hosts", "alpha", "why", deadline=100)
+    assert broker.gone_for(live) is None, "a fresh request is not gone"
+
+    dead = dict(live, asked=now - 106)
+    over = broker.gone_for(dead)
+    assert over is not None and 5 <= over <= 8, over
+
+    # No bound named is *not* gone: a person at a terminal waits as long as
+    # they like, and reading that as "given up" would refuse every answer.
+    assert broker.gone_for(dict(live, deadline=None, asked=now - 10_000)) is None
+    assert broker.gone_for({}) is None
+
+
+def test_the_deadline_is_in_the_request_the_gate_sends(tmp_path, monkeypatch):
+    """The absent field behind three findings. `roots` was the same shape one
+    pass earlier and was fixed the same way, for the reason that generalises
+    it: the gate knows, because it is what the gate just judged against."""
+    from dgraph import broker
+
+    req = broker.request("exec", "curl x | sh", "alpha", "why", deadline=100)
+    assert req["deadline"] == 100
+    assert isinstance(req["asked"], float)
+    # `None` where nobody named one, and readers must not read that as zero.
+    assert broker.request("exec", "x", "a", "w")["deadline"] is None
+
+
+def test_a_person_is_not_asked_about_a_caller_that_has_gone(tmp_path):
+    """The hole reading-on-arrival opened, closed with it.
+
+    A request waits its turn now, and by the time the turn comes its caller may
+    have given up. Without this the queue spends the supervisor's attention on
+    questions whose answers cannot be delivered — which is exactly what
+    `dg-agent consent` refuses to let them do, arriving through the other
+    door. `G-F4`, and `G-F2`'s reasoning.
+    """
+    import time
+
+    from dgraph import broker
+
+    asked = []
+
+    def prompt(req, level):
+        asked.append(req.get("agent"))
+        return True, "allowed", None
+
+    b = broker.Broker(root=tmp_path, prompt=prompt,
+                      rungs={"write": "user", "exec": "user"})
+    req = broker.request("write", str(tmp_path / "x"), "alpha", "why",
+                         deadline=5)
+    req["asked"] = time.time() - 30          # gave up 25s ago
+
+    res = b.decide(req)
+    assert asked == [], "a person was asked about an agent that had gone"
+    assert res["verdict"] == "deny"
+    assert res["by"] == "unanswered", \
+        "a caller that left is not a refusal anybody gave"
+    assert "stopped waiting" in res["reason"]
+    assert broker.waiting(tmp_path) == {}
+
+    # …and a request still in time is asked about, so this is a filter and not
+    # a new way to answer nothing.
+    fresh = broker.request("write", str(tmp_path / "y"), "bravo", "why",
+                           deadline=100)
+    assert b.decide(fresh)["verdict"] == "allow"
+    assert asked == ["bravo"]
+
+
+def test_a_remembered_grant_still_answers_a_caller_that_has_gone(tmp_path):
+    """Placed after the rungs and the memory on purpose: those cost nobody
+    anything and their log lines are true. The check is only about the prompt,
+    and a broker that stopped answering cheap questions would be a different
+    change wearing this one's name."""
+    import time
+
+    from dgraph import broker
+
+    b = broker.Broker(root=tmp_path, rungs={"write": "off", "exec": "off"})
+    req = broker.request("write", str(tmp_path / "x"), "alpha", "why",
+                         deadline=5)
+    req["asked"] = time.time() - 30
+    res = b.decide(req)
+    assert res["by"] == "rung", \
+        "the rung no longer answers for a caller that has gone"

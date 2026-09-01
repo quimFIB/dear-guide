@@ -596,10 +596,15 @@ def _resolved(kind: str, target: str, owner: str | None, reason: str,
         # filled by the only caller — so the broker could not tell a grant it
         # could implement from one the floor would overrule. It is the gate
         # that knows, because it is what the gate just judged against. `P-F11`.
+        # `deadline` travels *in* the request as well as on the socket. On the
+        # socket it bounds this call; in the request it is the one thing the
+        # decider, the relay and whoever answers cannot otherwise know — see
+        # `broker.request`. Same omission `roots` had, same fix. `G-F3`.
         req = broker.request(kind, str(target), owner or "", reason,
                              holding=_holding(owner),
                              roots=(limits.writable_roots(root)
-                                    if kind == "write" else None))
+                                    if kind == "write" else None),
+                             deadline=deadline)
         res = (broker.consult(req, root) if deadline is None
                else broker.consult(req, root, deadline))
     except Exception:
