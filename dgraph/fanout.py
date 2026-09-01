@@ -307,11 +307,12 @@ def plan_env(spec: dict) -> dict[str, str]:
 def plan_fault(plan: Plan) -> str | None:
     """Why this plan could never be launched as it stands — or `None`.
 
-    One combination, and it is the one no invocation can fix: a floor expressed
-    as the runner's own settings, under a runner that does not read them. There
-    is nothing to say at run time about that, because the pair is wrong rather
-    than the command — so it is refused where it is *written*, which is the
-    same place `--decide evidenced` is refused and for the same reason.
+    Two combinations, both of them pairs no invocation can fix: a floor
+    expressed as the runner's own settings under a runner that does not read
+    them, and a write scope of `open` under a floor that seals it anyway. There
+    is nothing to say at run time about either, because the pair is wrong rather
+    than the command — so both are refused where they are *written*, which is
+    the same place `--decide evidenced` is refused and for the same reason.
 
     Derived from `Host.carries` and `confine.configures_runner`, never from a
     host's name. The `== "claude"` this replaces is what let the pair be written
@@ -320,6 +321,19 @@ def plan_fault(plan: Plan) -> str | None:
     from dgraph import confine as _confine
     if plan.confine == "off":
         return None
+    # The second combination, found while writing the presets. A floor seals
+    # `limits.writable_roots`, which never reads `$DG_WRITE` -- so `open` stops
+    # the *gate* asking about a write outside the project while the kernel goes
+    # on refusing it. The agent gets a bare `EACCES` carrying none of the prose
+    # `limits.refuse_write` exists to attach, and the launcher believes it
+    # granted something it did not. Refused where it is written, for the reason
+    # below: the pair is wrong rather than the command.
+    if plan.write == "open":
+        return ("--write open and --confine require contradict: the floor "
+                "seals the same roots the gate judges, so `open` only stops "
+                "the gate asking and the write still fails — as an unexplained "
+                "permission error rather than a question. Use --write launch, "
+                "which the floor already enforces, or --confine off and mean it")
     try:
         if not _confine.configures_runner(plan.floor, None):
             return None
@@ -442,20 +456,174 @@ def propose_exec_allow(proj: project.Project | None = None) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+
+# ---- the curated remits -----------------------------------------------------
+
+#: The policy answers a preset does **not** vary, and why each is a constant
+#: rather than a dial. Applied by every preset, so choosing one answers the
+#: whole policy block rather than part of it — a preset that left three of
+#: seven unanswered would leave the person exactly where they started.
+#:
+#: - `write` — `launch` throughout. `open` cannot be combined with a floor:
+#:   `confine.policy` builds the sealed roots from `limits.writable_roots`,
+#:   which never reads `$DG_WRITE`, so `open` silently stops the *gate* asking
+#:   while the kernel goes on refusing. `plan_fault` refuses that pair now, and
+#:   no preset may emit it.
+#: - `area` — `open` throughout. A scout finding a corner nobody had named is a
+#:   finding, and the similarity guard is what makes that safe. Nothing about
+#:   trusting an agent's judgement changes it.
+#: - `terse` — `on` throughout. It is about whoever reads the panel while
+#:   deciding, not about the agent: a trusted agent writing 800-character
+#:   answers makes the graph just as unreadable.
+#: - `confine` — `require` throughout, degrading to `off` only where no backend
+#:   is usable, which `_with_available_floor` decides from the machine. "I trust
+#:   their judgement" and "I want a shell redirection to escape the gate" are
+#:   different claims, and merging them into one word is how a floor gets turned
+#:   off by somebody who only meant the first.
+#:
+#: The budget is deliberately absent: it varies with the size of the work rather
+#: than with the remit, and the wizard asks it either way.
+PRESET_CONSTANTS = {"write": "launch", "area": "open", "terse": "on"}
+
+#: What an agent may run unasked, as a rule rather than a list -- the list is
+#: per-project and comes from the marker files, so a preset that held one would
+#: hold a guess about somebody else's repository.
+#:
+#: `readers` is `ALWAYS + READERS`: the loop, and the programs that cannot
+#: change anything. Emphatically not the empty list, which reads as the
+#: strictest option and is in fact unusable -- every command escalating means a
+#: person approving `cat`, which spends the supervisor's attention on nothing
+#: and teaches them to approve without looking.
+EXEC_SCOPES = ("readers", "project")
+
+
+@dataclass(frozen=True)
+class Preset:
+    """One curated remit: the policy block, answered in a word.
+
+    The `row` is not decoration. A card reading `Maintainer` that quietly
+    widened `$DG_DECIDE` would be the `DG_DECIDE=nevr` failure wearing a
+    friendlier name -- a rule removed in the direction of more permission by
+    something nobody could read. So the label is a handle and the row is the
+    truth, printed beside it everywhere the name appears: the wizard's cards,
+    `dg-agent presets`, and the table in `agentic/README.md`.
+    """
+
+    name: str
+    row: str
+    decide: str
+    exec_scope: str
+
+    def __post_init__(self) -> None:
+        if self.decide not in _env.POLICIES:
+            raise ValueError(f"{self.name}: decide is {self.decide!r}")
+        if self.exec_scope not in EXEC_SCOPES:
+            raise ValueError(f"{self.name}: exec_scope is {self.exec_scope!r}")
+
+
+#: Three points on a dial the tool already had. They invent no policy: the
+#: middle one is exactly what `Plan()` has always defaulted to, so naming the
+#: presets changed nobody's run.
+#:
+#: Two fields vary, and that is the honest count. The value of a preset is not
+#: that it moves seven knobs -- it is that one answer settles all seven, five of
+#: them by holding a constant somebody would otherwise have to derive from
+#: `agentic/README.md` before they could start.
+PRESETS = {
+    "scout": Preset(
+        "scout", "proposes only · no build tools",
+        decide="never", exec_scope="readers"),
+    "contributor": Preset(
+        "contributor", "settles what evidence backs",
+        decide="evidence", exec_scope="project"),
+    "maintainer": Preset(
+        "maintainer", "settles anything",
+        decide="open", exec_scope="project"),
+}
+
+#: What `dg-agent setup` starts on, and what the wizard preselects. The same
+#: remit `Plan()` already had.
+DEFAULT_PRESET = "contributor"
+
+
+def preset_exec_allow(scope: str, proj: project.Project | None = None) -> list[str]:
+    """The programs a scope names, for this project."""
+    if scope == "readers":
+        return [*ALWAYS, *READERS]
+    return propose_exec_allow(proj)
+
+
+def apply_preset(plan: Plan, name: str,
+                 proj: project.Project | None = None) -> Plan:
+    """`plan` with one preset's whole policy block applied.
+
+    Expanded here and never stored. `env.json` goes on holding the resolved
+    values and no preset name, for the reason it holds no focus ids either: a
+    name recorded beside the values it produced is free to disagree with them
+    the moment somebody edits one, and the file exists to close exactly that
+    gap.
+    """
+    if name not in PRESETS:
+        raise ValueError(f"{name!r} is not one of "
+                         f"{', '.join(PRESETS)} -- see `dg-agent presets`")
+    p = PRESETS[name]
+    return _with_available_floor(replace(
+        plan, decide=p.decide,
+        exec_allow=preset_exec_allow(p.exec_scope, proj),
+        confine="require", **PRESET_CONSTANTS))
+
+
+def preset_of(plan: Plan, proj: project.Project | None = None) -> str | None:
+    """Which preset this plan is still exactly, or `None` once it was edited.
+
+    Used to preselect the wizard's card and to say `(edited)` when nothing
+    matches. Deliberately an equality test against a freshly applied preset
+    rather than a stored field, which is the same argument `apply_preset`
+    makes: the plan is the truth, and a name is only ever a summary of it.
+    """
+    return next((name for name in PRESETS
+                 if apply_preset(plan, name, proj) == _with_available_floor(plan)),
+                None)
+
+
+def preset_rows(proj: project.Project | None = None) -> list[tuple[str, str, str, str]]:
+    """`(name, row, decide, programs)` for each preset, in order.
+
+    One renderer's worth of data, so the wizard's cards, `dg-agent presets` and
+    the guide's table cannot come to disagree about what a name means.
+    """
+    return [(p.name, p.row, p.decide,
+             " ".join(preset_exec_allow(p.exec_scope, proj)))
+            for p in PRESETS.values()]
+
+
+
+def _with_available_floor(plan: Plan) -> Plan:
+    """`plan`, with a floor this machine can actually provide.
+
+    Proposed, then checked. A plan that asked for a floor no backend here can
+    provide is a plan that refuses to launch, and the wizard's job is to hand
+    back something that runs — so it drops to `off` and the reason travels in
+    `dg-agent env`, where a launcher reads it before the first agent starts.
+
+    Shared by `defaults` and `apply_preset` rather than repeated: a preset that
+    asserted `confine=require` on a machine with no backend would write a plan
+    whose prompt promises an agent a floor it has not got.
+    """
+    from dgraph import confine as _confine
+    if _confine.available(plan.floor)[0]:
+        return plan
+    other = next((b for b in _confine.BACKENDS
+                  if _confine.available(b)[0]), None)
+    return replace(plan, floor=other or plan.floor,
+                   confine="require" if other else "off")
+
+
 def defaults(proj: project.Project | None = None) -> Plan:
     """A plan with everything the graph can answer already answered."""
-    from dgraph import confine as _confine
     proj = proj or project.find()
-    plan = replace(Plan(), exec_allow=propose_exec_allow(proj))
-    # Proposed, then checked. A plan that asked for a floor no backend here can
-    # provide is a plan that refuses to launch, and the wizard's job is to hand
-    # back something that runs — so it drops to `off` and the reason travels in
-    # `dg-agent env`, where a launcher reads it before the first agent starts.
-    if not _confine.available(plan.floor)[0]:
-        other = next((b for b in _confine.BACKENDS
-                      if _confine.available(b)[0]), None)
-        plan = replace(plan, floor=other or plan.floor,
-                       confine="require" if other else "off")
+    plan = _with_available_floor(
+        replace(Plan(), exec_allow=propose_exec_allow(proj)))
     try:
         from dgraph.tasks import TaskGraph
         from dgraph import cross

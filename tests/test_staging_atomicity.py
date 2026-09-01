@@ -214,7 +214,7 @@ def test_every_staging_command_is_covered():
         # produces goes near a tray.
         ("setup",),
         # Reports; writes nothing at all.
-        ("env",),
+        ("env",), ("presets",),
         # A server. It answers consent requests and writes only its own log —
         # never an op, never a tray. The grants it hands out are held in memory
         # and die with it, deliberately: the lease file has to stay writable by

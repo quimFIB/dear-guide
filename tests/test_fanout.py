@@ -246,6 +246,11 @@ def test_a_project_with_no_graph_is_refused_with_the_fix(tmp_path, monkeypatch):
 
 
 ANSWERS = [
+    # `customise` rather than a preset, so the answers below are the only thing
+    # setting the policy block. A preset here would make this script assert two
+    # things at once — that the collector asks in this order, and that a preset
+    # fills these fields — and the second has its own tests.
+    "customise",                      # remit
     "settle the search area",          # brief
     "T01",                            # focus
     "spec.md: the criteria", "",      # reads, then blank to finish
@@ -302,10 +307,10 @@ def test_a_bad_budget_is_re_asked_rather_than_swallowed(proj, monkeypatch):
     from dgraph import cli
     monkeypatch.setattr(cli, "_interactive", lambda: True)
     answers = list(ANSWERS)
-    # ANSWERS is brief, focus, reads, blank, findings, agents, host, decide,
-    # write, area, budget — so the budget is index 10, and a rejected one goes
-    # there.
-    answers[10:10] = ["half an hour"]
+    # ANSWERS is remit, brief, focus, reads, blank, findings, agents, host,
+    # decide, write, area, budget — so the budget is index 11, and a rejected
+    # one goes there.
+    answers[11:11] = ["half an hour"]
     res = run(proj, "setup", "--plain", input="\n".join(answers) + "\n")
     assert res.exit_code == 0, res.output
     assert "is not a budget" in res.output
@@ -692,3 +697,168 @@ def test_a_mistyped_floor_is_refused_rather_than_defaulted(proj):
     assert res.exit_code == 2 and "seatbelt" in res.output
     res = run(proj, "setup", "--confine", "required", "--brief", "x")
     assert res.exit_code == 2 and "required" in res.output
+
+
+# ---- the curated remits --------------------------------------------------
+
+
+def test_the_middle_preset_is_what_the_tool_already_defaulted_to(proj):
+    """`contributor` names the dial's existing position rather than moving it.
+
+    The claim the presets rest on: they curate a dial the tool already had, so
+    naming them changed nobody's run. If this fails, either a `Plan` default
+    moved or a preset does — and the two have to move together or the guide's
+    *(default)* is a lie.
+    """
+    plan = fanout.defaults(proj)
+    assert fanout.preset_of(plan, proj) == fanout.DEFAULT_PRESET
+    assert fanout.apply_preset(plan, "contributor", proj) == plan
+
+
+def test_a_preset_answers_the_whole_policy_block(proj):
+    """Every field the remit covers, set by the preset rather than left over.
+
+    The point of a preset is that one answer settles all of them. A field that
+    quietly kept whatever the plan had would be the one a person still has to
+    know about, which is the state the presets exist to end.
+    """
+    edited = fanout.Plan(decide="open", write="open", area="strict",
+                         terse="off", exec_allow=["rm"], confine="off",
+                         floor="bwrap", budget=99)
+    out = fanout.apply_preset(edited, "scout", proj)
+    assert out.decide == "never"
+    assert (out.write, out.area, out.terse) == ("launch", "open", "on")
+    assert out.exec_allow == [*fanout.ALWAYS, *fanout.READERS]
+    # The budget is deliberately untouched: it follows the size of the work
+    # rather than the remit, and the wizard asks it either way.
+    assert out.budget == 99
+
+
+def test_the_strictest_preset_still_lets_an_agent_read(proj):
+    """`scout` is `ALWAYS + READERS`, never the empty list.
+
+    An empty allowlist reads as the strictest option and is in fact unusable:
+    every command escalates, so a person approves `cat`, and a supervisor
+    approving `cat` is a supervisor who stops looking. What `scout` withholds
+    is the build tools, which is where running a command becomes running the
+    project's own code.
+    """
+    out = fanout.apply_preset(fanout.defaults(proj), "scout", proj)
+    for name in ("dg", "dg-agent", "cat", "grep"):
+        assert name in out.exec_allow
+    for name in fanout.MARKERS["pyproject.toml"] + fanout.MARKERS[".git"]:
+        assert name not in out.exec_allow
+
+
+def test_a_preset_is_expanded_and_never_stored(proj):
+    """`env.json` holds the values, and no preset name.
+
+    The same argument that keeps the focus ids out of it: a name recorded
+    beside the values it produced is free to disagree with them the moment
+    somebody edits one, and that file exists to close exactly that gap.
+    """
+    res = run(proj, "setup", "--preset", "scout", "--brief", "x")
+    assert res.exit_code == 0, res.output
+    written = json.loads((proj.root / fanout.OUT_DIR
+                          / fanout.ENV_NAME).read_text(encoding="utf-8"))
+    assert "preset" not in written and "scout" not in json.dumps(written)
+    assert written["decide"] == "never"
+
+
+def test_a_flag_beside_a_preset_overrides_one_field(proj):
+    """`--preset scout --decide open` is "that remit, except for this".
+
+    Which requires the preset to be applied first. Applied after, it would
+    silently undo the flag the launcher was more specific about.
+    """
+    res = run(proj, "setup", "--preset", "scout", "--decide", "open",
+              "--brief", "x")
+    assert res.exit_code == 0, res.output
+    written = json.loads((proj.root / fanout.OUT_DIR
+                          / fanout.ENV_NAME).read_text(encoding="utf-8"))
+    assert written["decide"] == "open"
+    assert written["exec_allow"] == [*fanout.ALWAYS, *fanout.READERS]
+
+
+def test_a_mistyped_preset_is_refused_and_names_the_three(proj):
+    """Refused rather than defaulted, like every other word flag here — and it
+    says what the choices are, since a preset is the one flag whose values a
+    newcomer has not read about yet."""
+    res = run(proj, "setup", "--preset", "scot", "--brief", "x")
+    assert res.exit_code == 2
+    for name in fanout.PRESETS:
+        assert name in res.output
+
+
+def test_open_writes_under_a_floor_are_refused_where_they_are_written(proj):
+    """The pair found while writing the presets, and why `--write launch` is a
+    constant rather than a preference.
+
+    A floor seals `limits.writable_roots`, which never reads `$DG_WRITE`. So
+    `open` under a floor stops the gate asking and the kernel refuses anyway —
+    an unexplained permission error in place of the question the refusal exists
+    to ask. Nothing at run time could put it right, so it is refused where it is
+    written, like the floor-under-the-wrong-runner pair beside it.
+    """
+    res = run(proj, "setup", "--write", "open", "--brief", "x")
+    assert res.exit_code == 2, res.output
+    assert "nothing was written" in res.output
+    assert not (proj.root / fanout.OUT_DIR).exists()
+    # …and the pair is what is wrong, not either half of it.
+    assert run(proj, "setup", "--write", "open", "--confine", "off",
+               "--brief", "x").exit_code == 0
+
+
+def test_the_guide_prints_the_presets_the_code_defines(proj):
+    """The table in `agentic/README.md` against `fanout.PRESETS`.
+
+    A card that named a policy it did not set would be the `DG_DECIDE=nevr`
+    failure wearing a friendlier name — a rule moved toward more permission by
+    something nobody could read. So the wizard's cards, `dg-agent presets` and
+    the guide all render from one dict, and this is what stops the prose half
+    drifting out of it.
+    """
+    guide = (pathlib.Path(__file__).resolve().parent.parent / "agentic"
+             / "README.md").read_text(encoding="utf-8")
+    for preset in fanout.PRESETS.values():
+        assert f"`{preset.name}`" in guide, f"the guide never names {preset.name}"
+        assert preset.row in guide, f"the guide's row for {preset.name} has drifted"
+        assert f"`{preset.decide}`" in guide
+    for field, value in fanout.PRESET_CONSTANTS.items():
+        assert f"$DG_{field.upper()}={value}" in guide, (
+            f"the guide no longer says {field} is constant at {value}")
+
+
+def test_presets_reports_the_same_rows(proj):
+    """`dg-agent presets`, which is where a person reads them without the guide."""
+    res = run(proj, "presets", "--json")
+    assert res.exit_code == 0, res.output
+    got = json.loads(res.stdout)
+    assert got["default"] == fanout.DEFAULT_PRESET
+    assert [p["name"] for p in got["presets"]] == list(fanout.PRESETS)
+    assert got["constant"]["write"] == "launch"
+    res = run(proj, "presets")
+    assert res.exit_code == 0
+    for name in fanout.PRESETS:
+        assert name in res.output
+
+
+def test_setup_json_offers_the_presets_to_an_agent(proj):
+    """The path an agent inside a host actually takes: it cannot drive a form,
+    so the curation has to reach it as data or not at all."""
+    got = json.loads(run(proj, "setup", "--json").stdout)
+    assert [p["name"] for p in got["presets"]] == list(fanout.PRESETS)
+    assert got["default_preset"] == fanout.DEFAULT_PRESET
+
+
+def test_both_wizards_offer_the_remit_first(proj):
+    """Both collectors, like every other field. A preset available only in the
+    form would leave the person without `textual` looking at the twelve
+    questions this exists to spare them."""
+    import inspect
+    from dgraph import wizard
+    assert "preset" in inspect.getsource(wizard._remit)
+    assert "_remit" in inspect.getsource(wizard.ask)
+    tui = (pathlib.Path(wizard.fanout.__file__).with_name("wizard_tui.py")
+           .read_text(encoding="utf-8"))
+    assert 'id="preset"' in tui, "the TUI form has no remit cards"

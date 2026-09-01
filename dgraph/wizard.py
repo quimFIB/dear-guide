@@ -73,6 +73,39 @@ def _reads(existing: list[tuple[str, str]]) -> list[tuple[str, str]]:
         out.append((path.strip(), what.strip() or "(not described)"))
 
 
+def _remit(plan: fanout.Plan, proj) -> fanout.Plan:
+    """The first question, and the one that answers six of the others.
+
+    Asked before anything else because the policy block is what a newcomer
+    cannot answer -- every one of those fields needs a section of
+    `agentic/README.md` behind it -- and because a preset chosen after the fact
+    would silently overwrite answers the person had already given.
+
+    **It prefills; it does not lock.** Every field it sets is asked again below
+    with the preset's value as the default, which is the whole difference
+    between a curated starting point and a mode. `customise` is the same form
+    with the tool's own defaults, and is not a fourth remit.
+    """
+    con.print("\n[bold]What may these agents settle?[/]")
+    con.print("[dim]One answer fills the whole policy block; every field is "
+              "asked again below, with these as the defaults.[/]")
+    for name, row, _, _ in fanout.preset_rows(proj):
+        con.print(f"  [bold]{name}[/]  [dim]{row}[/]")
+    con.print("  [bold]customise[/]  [dim]the tool's own defaults, "
+              "unchanged[/]")
+    choice = Prompt.ask("", choices=[*fanout.PRESETS, "customise"],
+                        default=fanout.preset_of(plan, proj)
+                        or fanout.DEFAULT_PRESET)
+    if choice == "customise":
+        return plan
+    out = fanout.apply_preset(plan, choice, proj)
+    con.print(f"[dim]  $DG_DECIDE={out.decide} · $DG_WRITE={out.write} · "
+              f"$DG_AREA={out.area} · $DG_TERSE={out.terse} · "
+              f"{len(out.exec_allow)} program(s) unasked · "
+              f"floor {out.floor if out.confine != 'off' else 'off'}[/]")
+    return out
+
+
 def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
     """The plain collector: a question at a time, with `rich` and nothing else.
 
@@ -84,6 +117,8 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
     con.print("[dim]Enter accepts the default in brackets. Everything else — "
               "the chain, the areas, what each policy means — is filled from "
               "the graph.[/]")
+
+    plan = _remit(plan, proj)
 
     brief = _para(
         "What is this fan-out for?",

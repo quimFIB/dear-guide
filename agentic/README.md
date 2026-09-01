@@ -101,6 +101,61 @@ convenience over the assignments it replaced: it **validates every value before
 it spawns anything**, where the variables themselves fail open, and it is the
 child's parent, which is what makes the budget real.
 
+### The three curated remits, for when that is five questions too many
+
+Every variable above is worth setting deliberately, and none of them can be
+answered without a section of this page behind it. So `dg-agent setup` asks one
+question first, and a preset fills the whole block:
+
+| preset | what it settles | `$DG_DECIDE` | may run unasked |
+|---|---|---|---|
+| `scout` | proposes only · no build tools | `never` | `dg`, `dg-agent`, and the readers |
+| `contributor` *(default)* | settles what evidence backs | `evidence` | the above · the project's build tools |
+| `maintainer` | settles anything | `open` | the above · the project's build tools |
+
+The same in all three: `$DG_WRITE=launch`, `$DG_AREA=open`, `$DG_TERSE=on`, and
+a confinement floor wherever a backend is available. None of them sets a budget
+— that follows the size of the work rather than the remit, and the wizard asks
+it either way.
+
+```sh
+dg-agent presets                        # this table, from the code
+dg-agent setup --preset scout           # or pick one in the wizard
+dg-agent setup --preset scout --decide open   # the remit, except for this
+```
+
+**Two fields vary, and that is the honest count.** A preset is not worth having
+because it moves seven knobs; it is worth having because one answer settles all
+seven, five of them by holding a constant that otherwise has to be derived from
+this page before anybody can start. Three of those constants are argued above —
+`$DG_AREA=open` because a scout naming a corner nobody had found is a finding,
+`$DG_TERSE=on` because the limit is about whoever reads the panel rather than
+about the agent, and the floor because "I trust their judgement" and "I want a
+shell redirection to escape the gate" are different claims that must not share
+a word.
+
+**`$DG_WRITE=launch` in all three**, and that one is not a preference. A
+confinement floor seals `limits.writable_roots`, which never reads `$DG_WRITE`
+— so `open` under a floor stops the *gate* asking about a write outside the
+project while the kernel goes on refusing it, and the agent gets a bare
+permission error carrying none of the prose the refusal exists to attach.
+`dg-agent setup` now refuses that pair outright, beside the floor-under-the-
+wrong-runner pair it already refused.
+
+**A preset expands and is never stored.** `fanout/env.json` goes on holding the
+resolved values and no preset name, for the same reason it holds no focus ids:
+a name recorded beside the values it produced is free to disagree with them the
+moment somebody edits one, and that file exists to close exactly that gap. The
+wizard reads the name back off the values instead, and shows nothing where a
+plan has been edited away from all three.
+
+**The card carries its row wherever it appears.** A card reading `maintainer`
+that quietly widened `$DG_DECIDE` would be the `DG_DECIDE=nevr` failure of the
+next section wearing a friendlier name — a rule moved toward more permission by
+something nobody could read. The wizard's cards, `dg-agent presets` and the
+table above all render from `fanout.PRESETS`, and a test asserts this page still
+matches it.
+
 ### `dg-agent env`, and why three of these fail open
 
 `$DG_DECIDE`, `$DG_WRITE`, `$DG_TERSE` and `$DG_AREA` all answer *the widest

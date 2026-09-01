@@ -103,6 +103,17 @@ interactive forms need a real terminal and cannot be driven from here, and the
 command says so rather than prompting into EOF:
 
 ```sh
+dg-agent setup --preset contributor --focus T04,T07 --agents 3 --budget 30m \
+  --brief "…" --read "path:what it is" --findings "findings/<id>.md"
+```
+
+**Offer the remit as a word rather than as six policy questions.** `--json`
+lists the presets with what each sets, so ask which of `scout` (proposes only),
+`contributor` (settles what evidence backs) or `maintainer` (settles anything)
+the person wants, and pass `--preset`. Spell the policies out only where they
+want something none of the three is:
+
+```sh
 dg-agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
   --budget 30m --terse on --area-policy open \
   --brief "…" --read "path:what it is" --findings "findings/<id>.md"

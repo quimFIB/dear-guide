@@ -83,7 +83,7 @@ FANOUT = "Setting up a fan-out, and taking it apart again"
 LAYOUT = (
     (NAMES, ("claim", "list", "release", "prune")),
     (ENVIRONMENT, ("env", "run")),
-    (FANOUT, ("setup", "expire")),
+    (FANOUT, ("presets", "setup", "expire")),
 )
 
 app = typer.Typer(
@@ -367,8 +367,63 @@ def agent_prune(
                   "again. `--force` releases them and strands the work[/]")
 
 
+@app.command("presets")
+def agent_presets(
+    as_json: bool = typer.Option(False, "--json", help="the same, machine form"),
+) -> None:
+    """The curated remits, and what each one sets.
+
+    The same rows the wizard's cards carry and the same table
+    `agentic/README.md` prints, rendered from `fanout.preset_rows` so the three
+    cannot come to disagree about what a name means. A preset that had to be
+    looked up in prose to be trusted would be a name hiding a policy, which is
+    the failure it exists to prevent.
+
+    What a preset does *not* touch is as much the point: the budget, which
+    varies with the size of the work rather than with the remit, and the three
+    answers no graph can supply.
+    """
+    proj = project.find()
+    rows = fanout.preset_rows(proj)
+    if as_json:
+        print(json.dumps({
+            "default": fanout.DEFAULT_PRESET,
+            "constant": {**fanout.PRESET_CONSTANTS, "confine": "require"},
+            "presets": [{"name": n, "row": r, "decide": d,
+                         "exec_allow": progs.split()}
+                        for n, r, d, progs in rows],
+        }, ensure_ascii=False))
+        return
+
+    table = Table(box=None, pad_edge=False)
+    for col in ("", "what it settles", "$DG_DECIDE", "may run unasked"):
+        table.add_column(col)
+    for name, row, decide, progs in rows:
+        table.add_row(
+            f"[bold]{name}[/]" + ("  [dim](default)[/]"
+                                  if name == fanout.DEFAULT_PRESET else ""),
+            row, decide,
+            f"{len(progs.split())} programs"
+            + ("  [dim]readers only[/]"
+               if fanout.PRESETS[name].exec_scope == "readers"
+               else "  [dim]+ this project's build tools[/]"))
+    cli.con.print(table)
+    const = ", ".join(f"$DG_{k.upper()}={v}"
+                      for k, v in fanout.PRESET_CONSTANTS.items())
+    cli.con.print(f"\n[dim]The same in all three: {const}, and a confinement "
+              f"floor where one is available. None of them sets a budget — "
+              f"that follows the size of the work, not the remit.[/]")
+    cli.con.print("[dim]`dg-agent setup --preset <name>`, or pick one in the "
+              "wizard; any other flag still overrides one field.[/]")
+
+
 @app.command("setup")
 def agent_setup(
+    preset: str = typer.Option(None, "--preset",
+                               help="a curated remit — scout | contributor | "
+                                    "maintainer. Fills the whole policy block; "
+                                    "any other flag still overrides one field. "
+                                    "`dg-agent presets` prints what each sets"),
     focus: str = typer.Option(None, "--focus",
                               help="comma-separated ids the fan-out is for; "
                                    "their chains are pasted into the prompt"),
@@ -450,11 +505,20 @@ def agent_setup(
             # arriving, rather than by somebody remembering.
             "defaults": {k: v for k, v in asdict(plan).items()
                          if k not in ("brief", "reads", "capture")},
+            # The curated remits, so an agent driving this with flags can
+            # offer the person a word instead of six policy questions it would
+            # have to explain first. Rendered from `fanout.preset_rows`, like
+            # every other place a preset is shown.
+            "presets": [{"name": name, "row": row, "decide": dec,
+                         "exec_allow": progs.split()}
+                        for name, row, dec, progs in fanout.preset_rows(proj)],
+            "default_preset": fanout.DEFAULT_PRESET,
             "asks": ["--brief", "--read PATH:WHAT", "--findings"],
         }, ensure_ascii=False))
         return
 
-    given = {"focus": focus, "agents": n, "host": host, "decide": decide,
+    given = {"preset": preset,
+             "focus": focus, "agents": n, "host": host, "decide": decide,
              "write": write_scope, "area": area, "budget": budget,
              "terse": terse, "brief": brief, "read": read,
              "exec_allow": exec_allow, "confine": confine, "floor": floor,
@@ -519,6 +583,16 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
     #: rather than `--area` because `dg-agent setup --area corpus` would read as
     #: "fan out over the corpus area", which is a focus and not a policy.
     FLAG = {"area": "area-policy"}
+
+    # First, so every other flag reads as an override of it rather than as
+    # something the preset might undo. `--preset scout --decide open` is a
+    # launcher saying "that remit, except for this", and the order is what
+    # makes that sentence true.
+    if given.get("preset") is not None:
+        try:
+            plan = fanout.apply_preset(plan, given["preset"])
+        except ValueError as exc:
+            raise ValueError(str(exc)) from None
 
     def one_of(name, value, allowed):
         if value is None:

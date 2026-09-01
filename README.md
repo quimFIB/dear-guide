@@ -221,7 +221,9 @@ dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
 dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds
 dg repair                                # a store a merge broke: stage the missing propagation
+dg-agent presets                         # the three curated remits, and what each one sets
 dg-agent setup                           # a fan-out's prompt, launcher and remit — asks, or takes flags, or --json
+dg-agent setup --preset scout            # ...with the whole policy block filled from one word
 dg-agent run -- claude -p "…"            # claim a name, compose the environment, run one agent under it
 dg-agent env                             # what every $DG_* actually says — and which one was mistyped
 dg-agent env --check                     # ...exit non-zero if anything set was not understood

@@ -66,6 +66,14 @@ class Wizard(App):
         self.plan = plan
         self.proj = proj
         self.result: fanout.Plan | None = None
+        #: The remit cards, in the order they are shown, so `RadioSet.Changed`
+        #: can name one from its index. The labels carry the row beside the
+        #: name and are not a key.
+        self._presets = list(fanout.PRESETS)
+        #: Which card the incoming plan already *is*, or `None` once it has
+        #: been edited away from all of them. Computed rather than stored, for
+        #: the reason `fanout.preset_of` gives.
+        self._preset = fanout.preset_of(plan, proj)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -74,6 +82,18 @@ class Wizard(App):
             yield Static("Everything below is written into fanout/scout.md and "
                          "fanout/launch.sh. The graph fills the rest.",
                          classes="hint")
+
+            yield Label("What may these agents settle?", classes="q")
+            yield Static("One answer fills the whole policy block below. It "
+                         "prefills rather than locks — every field it sets is "
+                         "still yours to change, and `customise` leaves them "
+                         "at the tool's own defaults.", classes="hint")
+            with RadioSet(id="preset"):
+                for name, row, _, _ in fanout.preset_rows(self.proj):
+                    yield RadioButton(f"{name}  —  {row}",
+                                      value=(name == self._preset))
+                yield RadioButton("customise  —  the tool's own defaults",
+                                  value=(self._preset is None))
 
             yield Label("What is this fan-out for?", classes="q")
             yield Static("One paragraph: the area of the graph being worked, "
@@ -183,8 +203,17 @@ class Wizard(App):
     # ---- collecting ------------------------------------------------------
 
     def _chosen(self, rid: str, fallback: str) -> str:
-        pressed = self.query_one(f"#{rid}", RadioSet).pressed_button
-        return str(pressed.label) if pressed is not None else fallback
+        """Which button of a set is on.
+
+        Read off the buttons, not off `RadioSet.pressed_button`. The set keeps
+        that pointer up to date from the messages its buttons send, and
+        `_prefill` moves them with those messages suppressed — deliberately, for
+        the reason given there — so the pointer can lag behind what is on
+        screen. What is on screen is what the person answered.
+        """
+        on = next((b for b in self.query_one(f"#{rid}", RadioSet).query(RadioButton)
+                   if b.value), None)
+        return str(on.label) if on is not None else fallback
 
     def _plan(self) -> fanout.Plan:
         """Every widget, read once, into a `Plan`. No validation beyond what
@@ -235,6 +264,53 @@ class Wizard(App):
             confine=self._chosen("confine", self.plan.confine),
             floor=self._chosen("floor", self.plan.floor),
         )
+
+    def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
+        """Prefill the policy block from a chosen remit.
+
+        Only this set; the other seven are answers in their own right and
+        setting them below fires this again, which the guard drops.
+
+        It writes into the widgets rather than into `self.plan` so that what
+        the person sees is what will be collected — a preset applied to the
+        plan alone would leave the form showing the old values and `_plan`
+        reading them straight back out.
+        """
+        if event.radio_set.id != "preset":
+            return
+        if event.index >= len(self._presets):        # customise
+            self._preset = None
+            return
+        self._preset = self._presets[event.index]
+        self._prefill(self._preset)
+
+    def _prefill(self, preset: str) -> None:
+        """Write one preset's policy block into the widgets.
+
+        Into the widgets rather than into `self.plan`, so that what the person
+        sees is what will be collected — a preset applied to the plan alone
+        would leave the form showing the old values and `_plan` reading them
+        straight back out.
+
+        **The sets are moved with their own messages suppressed.** A `RadioSet`
+        posts its `Changed` from inside `prevent(RadioButton.Changed)`, and a
+        message carries that suppression into its handler — so a button pressed
+        from here reaches no set, and one asked to switch *off* is switched
+        straight back on by the set defending its invariant. Both leave a set
+        displaying one answer and reporting another. Suppressing deliberately
+        and setting every button of the set is the honest version: nothing is
+        half-delivered, and `_chosen` reads the buttons rather than the set's
+        own idea of which is pressed.
+        """
+        out = fanout.apply_preset(self.plan, preset, self.proj)
+        with self.prevent(RadioButton.Changed, RadioSet.Changed):
+            for rid, value in (("decide", out.decide), ("write", out.write),
+                               ("area", out.area), ("confine", out.confine),
+                               ("floor", out.floor)):
+                for button in self.query_one(f"#{rid}", RadioSet).query(RadioButton):
+                    button.value = str(button.label) == value
+        self.query_one("#terse", Input).value = out.terse
+        self.query_one("#exec_allow", Input).value = " ".join(out.exec_allow)
 
     def action_save(self) -> None:
         self.result = self._plan()

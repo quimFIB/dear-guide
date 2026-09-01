@@ -52,6 +52,23 @@ Everything in §1 and §2 by hand, or one command that writes both artefacts:
 dg-agent setup                    # a TUI, if you are at a terminal
 ```
 
+**It opens on one question, not twelve.** The policy block — what an agent may
+settle, where it may write, what it may run, how long a field may be — is the
+part nobody can answer without having read `agentic/README.md` first, so the
+first question is a curated remit that fills all of it:
+
+```
+( ) scout        proposes only · no build tools
+(•) contributor  settles what evidence backs
+( ) maintainer   settles anything
+( ) customise    the tool's own defaults
+```
+
+It prefills rather than locks: every field it sets is asked again below with
+that value as the default, and `dg-agent presets` prints what each one sets.
+`--preset scout` takes the same three names from the flags, where any other flag
+still overrides one field.
+
 It checks what is ready, asks what it cannot work out, and writes three files:
 `fanout/scout.md` (the prompt, no ⟨…⟩ left in it), `fanout/launch.sh` (one line
 per agent) and `fanout/env.json` (the remit both of those were generated from).
@@ -77,14 +94,19 @@ may read, and where findings go.
 every answer visible at once — worth it, because `never` with a 45-minute
 budget is a different run from `evidence` with fifteen, and you can only see
 that if both are on the screen. Without it, the same eleven questions are asked
-one at a time using nothing the tool did not already depend on. `--plain` picks
-that deliberately.
+one at a time using nothing the tool did not already depend on — the remit
+question included. `--plain` picks that deliberately.
 
 Every answer is also a flag, and this form needs no terminal at all:
 
 ```sh
 dg-agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
   --budget 30m --area-policy open --brief "settle the Search frontier" \
+  --read "bench/README.md:how the sweep is run" --findings "findings/<id>.md"
+
+# ...or the same remit in a word, with the budget still yours
+dg-agent setup --preset contributor --focus T04,T07 --agents 3 --budget 30m \
+  --brief "settle the Search frontier" \
   --read "bench/README.md:how the sweep is run" --findings "findings/<id>.md"
 ```
 
