@@ -507,6 +507,33 @@ def refuse_apply_for(name: str, *trays: list[dict] | None) -> str | None:
     return None
 
 
+def refuse_apply(staged: int = 0, chosen: str | None = None) -> str | None:
+    """Why this caller may not write the store at all — `None` if it may.
+
+    `$DG_APPLY=never`, and the reading it needs is the same one every other
+    remit rule takes: **a caller with no `$DG_AGENT` is never refused**, because
+    that caller *is* the supervisor this policy is holding the ops for.
+
+    Beside `refuse_apply_for` rather than inside it, because the two refuse
+    different things and a caller can meet one and not the other. That one is
+    about *authority* — whose half-composed batch this is. This is about
+    *permission* — whether an agent writes the store at all, or only ever
+    proposes into it. Under `never` an agent is refused its own ops, which is
+    exactly the case `refuse_apply_for` is written to allow.
+
+    One rule, both doors: the CLI renders it with the flags beside it and the
+    browser returns it as a 400, for the reason given on `refuse_apply_for`.
+    """
+    me = owner()
+    if me is None:
+        return None
+    if env.apply_policy(chosen) != "never":
+        return None
+    held = f"{staged} op(s) stay staged" if staged else "nothing was staged"
+    return (f"${env.APPLY_ENV}=never: {me} may not write the store — {held} "
+            f"for a caller with no ${AGENT_ENV} to apply")
+
+
 def _new_ref(taken: set[str]) -> str:
     """An id no op in this tray is using.
 

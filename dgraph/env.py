@@ -68,6 +68,22 @@ POLICIES = ("open", "evidence", "never")
 WRITE_ENV = "DG_WRITE"
 WRITE_POLICIES = ("open", "launch")
 
+#: Whether an agent may write the **store**, or only stage for somebody else to.
+#:
+#: `$DG_DECIDE` guards what an agent may *answer*, and guards nothing about what
+#: it may *add*: an `add` is ungated at both ends, and `dg apply` writes an
+#: owned caller's own ops with nothing consulted. That is a good default for a
+#: fan-out aimed at a frontier somebody chose -- an OPEN question is cheap and
+#: reversible -- and the wrong one where agents find graphs on their own, since
+#: then nobody chose the target and the volume is not bounded by a brief.
+#:
+#: `never` makes the tray an approval queue rather than only an isolation
+#: between writers, which is the thing it was not. Enforceable for exactly the
+#: reason `$DG_DECIDE` is, and stated in the same breath in the guide: every
+#: apply goes through `dg`.
+APPLY_ENV = "DG_APPLY"
+APPLY_POLICIES = ("own", "never")
+
 #: What an agent may run without asking. Space-separated **program names** --
 #: names, not command lines and not subcommands. `dg-agent run` composes it at
 #: launch from the plan, for the reason every other value here is composed
@@ -237,6 +253,16 @@ def write_policy(value: str | None = None) -> str:
     command.
     """
     return _one_of(value, WRITE_ENV, WRITE_POLICIES)
+
+
+def apply_policy(value: str | None = None) -> str:
+    """What `$DG_APPLY` says, defaulting to today's behaviour.
+
+    Fails open, like its neighbours: read on the path of every apply, and a
+    launcher's typo must not take the store away from the supervisor sharing
+    the tray. `dg-agent env` names the fallback as a fallback.
+    """
+    return _one_of(value, APPLY_ENV, APPLY_POLICIES)
 
 
 def area_policy(value: str | None = None) -> str:
@@ -416,6 +442,9 @@ VARS: tuple[Var, ...] = (
     Var(WRITE_ENV, "where it may write without asking",
         write_policy, str, WRITE_POLICIES[0], fails_open=True,
         choices=WRITE_POLICIES),
+    Var(APPLY_ENV, "whether it may write the store, or only stage",
+        apply_policy, str, APPLY_POLICIES[0], fails_open=True,
+        choices=APPLY_POLICIES),
     Var(EXEC_ENV, "what it may run without asking",
         exec_allow, _show_exec_allow, "nothing — every command asks",
         fails_open=False),
@@ -616,6 +645,7 @@ _READERS: dict[str, Callable[[str | None], tuple[object, bool, str]]] = {
     CONFINE_ENV: _read_confine,
     FLOOR_ENV: _read_floor,
     POLICY_ENV: lambda raw: _read_choice(BY_NAME[POLICY_ENV], raw),
+    APPLY_ENV: lambda raw: _read_choice(BY_NAME[APPLY_ENV], raw),
     WRITE_ENV: lambda raw: _read_choice(BY_NAME[WRITE_ENV], raw),
     AREA_ENV: lambda raw: _read_choice(BY_NAME[AREA_ENV], raw),
     BUDGET_ENV: _read_budget,
@@ -623,6 +653,15 @@ _READERS: dict[str, Callable[[str | None], tuple[object, bool, str]]] = {
     SILENT_ENV: _read_silent,
     PROJECT_ENV: _read_project,
 }
+
+
+#: Paired with `VARS` by hand, so the pairing is asserted at import rather than
+#: discovered by a reader. A variable declared with no way to *report* it does
+#: not degrade the report — it raises `KeyError` out of `dg-agent env`, which is
+#: the one command a launcher runs to find out whether anything is wrong.
+assert {v.name for v in VARS} == set(_READERS), (
+    "every declared variable needs a reader: "
+    f"{ {v.name for v in VARS} ^ set(_READERS) }")
 
 
 def reading(name: str, environ: dict | None = None) -> Reading:

@@ -1,9 +1,14 @@
 # Running a fan-out
 
-The shortest path from an empty terminal to several agents proposing into one
-graph. `README.md` beside this file is the *why* — the rule, the ownership
-model, what each mechanism is defending against. This is the *how*, and it
-assumes you have read none of it.
+Every step from an empty terminal to several agents proposing into one graph.
+`README.md` beside this file is the *why* — the rule, the ownership model, what
+each mechanism is defending against. This is the *how*, and it assumes you have
+read none of it.
+
+**If you only want to start a run, read `QUICKSTART.md` instead** — three
+copy-paste recipes, one of them the session-answers-the-broker arrangement, and
+a short list of what to check when a run looks stuck. Come here when a recipe
+is not the shape you need.
 
 Two ways to run one. **Manually**, where you claim the names and spawn the
 agents yourself, and **with an orchestrator**, where one agent does that for

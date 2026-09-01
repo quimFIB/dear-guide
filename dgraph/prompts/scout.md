@@ -106,8 +106,9 @@ right and the prompt is stale. It also names any variable that was mistyped —
 those fail *open*, so a typo does not weaken a rule by a notch, it removes it.
 
 Everything you stage is a **proposal**. A person reads it with
-`dg pending --agent $DG_AGENT` and either takes it or turns it down. Stage
-freely; nothing you stage is written until somebody applies it.
+`dg pending --agent $DG_AGENT` and either takes it or turns it down.
+
+You are running under **`$DG_APPLY=⟨APPLY⟩`**. ⟨APPLY_PROSE⟩
 
 ## What goes in a record, and what goes in a file
 

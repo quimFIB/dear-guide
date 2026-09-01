@@ -8,7 +8,9 @@ reads and applies one writer's proposal at a time. What was left to improvise
 was the procedure around those, which is what this is.
 
 ```
-agentic/README.md    the procedure — sections 1 to 6 below
+agentic/QUICKSTART.md three recipes and what to check — start there to *run* one
+agentic/RUNNING.md   the procedure, step by step
+agentic/README.md    what each rule is for — sections 1 to 6 below
 agentic/bin/dg       OPTIONAL: a capture, for when you want the run itself
 agentic/bin/dg-agent afterwards. Two wrappers because there are two binaries,
                      and most of what a capture of a fan-out is for — the
@@ -107,11 +109,11 @@ Every variable above is worth setting deliberately, and none of them can be
 answered without a section of this page behind it. So `dg-agent setup` asks one
 question first, and a preset fills the whole block:
 
-| preset | what it settles | `$DG_DECIDE` | may run unasked |
-|---|---|---|---|
-| `scout` | proposes only · no build tools | `never` | `dg`, `dg-agent`, and the readers |
-| `contributor` *(default)* | settles what evidence backs | `evidence` | the above · the project's build tools |
-| `maintainer` | settles anything | `open` | the above · the project's build tools |
+| preset | what it settles | `$DG_DECIDE` | `$DG_APPLY` | may run unasked |
+|---|---|---|---|---|
+| `scout` | proposes only · nothing lands unapproved | `never` | `never` | `dg`, `dg-agent`, and the readers |
+| `contributor` *(default)* | settles what evidence backs | `evidence` | `own` | the above · the project's build tools |
+| `maintainer` | settles anything | `open` | `own` | the above · the project's build tools |
 
 The same in all three: `$DG_WRITE=launch`, `$DG_AREA=open`, `$DG_TERSE=on`, and
 a confinement floor wherever a backend is available. None of them sets a budget
@@ -124,7 +126,29 @@ dg-agent setup --preset scout           # or pick one in the wizard
 dg-agent setup --preset scout --decide open   # the remit, except for this
 ```
 
-**Two fields vary, and that is the honest count.** A preset is not worth having
+**`$DG_APPLY` is the one that makes `scout` mean what it says.** `$DG_DECIDE`
+guards what an agent may *answer* and guards nothing about what it may *add* —
+an `add` is ungated at both ends, and `dg apply` writes an owned caller's own
+ops with nothing consulted. So the tray keeps writers apart; it is not, by
+itself, somebody approving them. Under `$DG_APPLY=never` an agent stages and is
+refused the write, the ops stay exactly where they are, and a caller with no
+`$DG_AGENT` applies them — which is what turns the tray into an approval queue.
+
+That default is right where a person aimed the fan-out at a frontier they
+chose: an OPEN question is cheap and reversible, and an agent that cannot read
+its own proposal back as a graph is working half-blind. It is the wrong default
+where **agents discover graphs on their own**, because then nobody chose the
+target and the volume is not bounded by a brief. `scout` is the preset for
+that, and it now delivers what its name always implied.
+
+Enforceable for exactly the reason `$DG_DECIDE` is, and the argument is worth
+repeating rather than referring to: **every apply goes through `dg`**. Both
+doors take it — the CLI and the browser's apply endpoint — because a rule that
+held at one and not the other is the drift the shared helpers in `pending`
+exist to stop. A caller with no `$DG_AGENT` is never refused, since that caller
+is the supervisor the ops are being held for.
+
+**Three fields vary, and that is the honest count.** A preset is not worth having
 because it moves seven knobs; it is worth having because one answer settles all
 seven, five of them by holding a constant that otherwise has to be derived from
 this page before anybody can start. Three of those constants are argued above —
@@ -155,6 +179,153 @@ next section wearing a friendlier name — a rule moved toward more permission b
 something nobody could read. The wizard's cards, `dg-agent presets` and the
 table above all render from `fanout.PRESETS`, and a test asserts this page still
 matches it.
+
+## The broker, and how it differs from the supervisor
+
+Two halves of the person's side, and confusing them is easy, so:
+
+|  | supervisor | broker |
+|---|---|---|
+| what it is | an identity — `$DG_AGENT` unset | a process listening on a socket |
+| when it acts | afterwards, at your leisure | during the run, with an agent stopped |
+| governs | the **record** — what enters the stores | the **machine** — writes and commands |
+| acts by | `dg apply --agent <name>` | `allow` / `deny`, one at a time |
+| if absent | ops wait in the tray; nothing is lost | escalations become refusals nobody chose |
+| touches a tray | yes, that is its whole job | never; it writes only its own log |
+
+**You do not start a supervisor.** `pending.owner()` answers `None` when
+`$DG_AGENT` is unset, and `None` *is* the supervisor — so the terminal you ran
+`launch.sh` from is one, and so is a Claude Code or opencode session opened in
+the project afterwards. `dg-agent run` puts each name in its **child's**
+environment and never exports it, precisely so the launcher does not become an
+agent.
+
+**You do start a broker**, in its own terminal, beside the run:
+
+```sh
+dg-agent broker
+```
+
+The difference that forces them apart is timing. A tray **waits** — a proposal
+read tomorrow is a proposal read. A consent request **cannot**: an agent is
+halted mid-run with a deadline, and `dg gate` is a pure function that can only
+answer `ask`. With no broker listening the gate returns the verdict it always
+did, so a project that never starts one behaves exactly as it did; in a
+headless run that verdict is a refusal.
+
+### Answering from a session, without becoming the one who decided
+
+The terminal front end cannot serve a supervisor who is a Claude Code or
+opencode session rather than a tty. So the front end is swappable — it always
+was, `Broker.prompt` — and `--relay` fills it:
+
+```sh
+dg-agent broker --relay      # publishes each request instead of prompting
+dg-agent consent             # ...what is waiting, and what answering means
+dg-agent consent --allow --why "it is the test suite"
+```
+
+The broker publishes the pending request, `dg-agent consent` writes a verdict,
+and the blocked agent moves. Everything else is the same broker: the same
+rungs, the same memory of grants, the same log, the same one-at-a-time
+answering.
+
+**The relay is transport and never the decider**, and the log is where that
+claim is kept honest. Every verdict now records **what produced it** —
+`person`, `auto`, `grant`, `broker`, or `unanswered` — beside what it was. A
+relayed answer records `person`, because a person answered through it; a
+*model* answering there would write `person` for something no person decided,
+and put a lie in the one artefact a supervisor reads afterwards.
+
+### ...and letting the session answer, on the rung that means that
+
+A model answering consent is legitimate. What it may not be is called `user` —
+that word means a person, the rungs are read once at broker start out of an
+agent's reach, and a model answering under it would write `person` for
+something no person decided. So it answers on the rung that already existed for
+deciding here rather than at a person:
+
+```sh
+dg-agent broker --relay --exec-rung auto     # commands: the session decides
+                                             # writes: still `scoped`, still you
+```
+
+**Nothing else changes.** Same published request, same `dg-agent consent`, same
+wait. The rung decides one thing only — what the answer is *called* — and that
+is the entire difference between the two arrangements:
+
+| rung | who answers | logged as | `dg-agent consent` says |
+|---|---|---|---|
+| `user` · `scoped` | a person, however they reach it | `person` | recorded as a person's; it must be one |
+| `auto` | whatever is attached | `auto` | recorded as `auto`, not as a person |
+
+Both the broker's banner and `dg-agent consent` name the rung before anything
+is answered, so nobody signs as a person by accident.
+
+**Set them per ladder, which is the point of there being two.** `--exec-rung
+auto --write-rung scoped` is the useful shape: commands are frequent, mostly
+dull, and mostly judged against the allowlist and the floor anyway, while a
+write outside the launch scope is rare and worth a person. The reverse would be
+strange, and nothing stops you writing it.
+
+**The tool guarantees the label, not the judgement.** `relay_auto` carries the
+question out and the answer back; whether the thing answering decides well is a
+question about that thing. What cannot happen is a supervisor reading the log
+afterwards and being unable to tell which requests a person actually saw —
+which is what `D37` was for, and what `$DG_CONSENT_*=auto` was already for
+before anything could be attached to it.
+
+
+
+**The channel is not in the project, and that is the whole of its safety.**
+The first version of this put the pending question and its answer beside the
+socket — where every agent may write freely under `$DG_WRITE=launch`, and where
+a confinement floor seals nothing, since it protects only the two stores. An
+agent could therefore write its own `allow`, the blocked agent collected it, and
+the log recorded `by: person` with whatever reason the forgery supplied: the
+exact lie `answered_by` exists to prevent, arriving through the channel meant to
+carry the truth. The rule it now meets is the one the memory-only grants already
+met:
+
+> **The consent channel lives where an agent cannot write without already
+> holding the permission it is asking for.**
+
+So it lives under `$XDG_RUNTIME_DIR`, per project, `0700` — and reaching it now
+requires an out-of-scope write, which requires consent. `dg-agent broker
+--relay` refuses to start if that path would land inside a writable root, a
+third door check beside `unbindable` and `unattachable`.
+
+**And it is a connection, not a pair of files.** Files were *passively*
+forgeable: write the answer, walk away, and the blocked agent collects it. The
+question is handed out and the verdict taken back on one connection to a socket
+beside the channel, so between them there is no artifact anywhere — forging one
+means winning a race against the legitimate answerer. It took the stale-answer
+matching, the `expires` stamp and the phantom-question handling with it, none of
+which a connection needs.
+
+**What none of that is, is a boundary.** The socket is a filesystem object and
+the agent runs as the same user, so it can `connect()` like anything else; what
+actually stops it is the confinement floor, which puts every path outside the
+project beyond reach. So the guarantee holds exactly while a floor is in force,
+and `--relay` does **not** currently check that — a deliberate, recorded risk
+(`D40`, open), taken because racing a socket is a great deal harder than writing
+a file at leisure. If you relay without a floor, know that is what you are
+relying on.
+
+This matters more than the tool's other rules, and the difference is worth being
+plain about. `$DG_AGENT`, `$DG_DECIDE` and `$DG_APPLY` are cooperative by
+design — an agent could unset any of them, at which point it is the supervisor,
+and nothing here pretends otherwise. The **confinement floor is not**
+cooperative; it is the one kernel-enforced boundary in the tool, and the broker
+is its only door. A door whose lock is a file inside the room is not a door.
+
+**Answer inside the caller's deadline.** Both adapters give the gate 100
+seconds and it answers `deny` before that elapses, so a verdict written two
+minutes later is one the agent never receives — the log says
+`delivered: false` rather than pretending otherwise. A relay that nobody
+answers gives up a little after that and denies, recorded as `unanswered`: an
+unreachable decider is not consent, which is the rule `consult` already follows
+from the other side.
 
 ### `dg-agent env`, and why three of these fail open
 

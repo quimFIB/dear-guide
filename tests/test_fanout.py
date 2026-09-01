@@ -256,7 +256,7 @@ ANSWERS = [
     "spec.md: the criteria", "",      # reads, then blank to finish
     "findings/<id>.md",               # findings
     "3", "claude",                    # agents, host
-    "never", "launch", "open",        # decide, write, area
+    "never", "own", "launch", "open", # decide, apply, write, area
     "45m",                            # budget
     "on",                             # terse
     "cargo pytest",                   # exec allowlist
@@ -308,9 +308,9 @@ def test_a_bad_budget_is_re_asked_rather_than_swallowed(proj, monkeypatch):
     monkeypatch.setattr(cli, "_interactive", lambda: True)
     answers = list(ANSWERS)
     # ANSWERS is remit, brief, focus, reads, blank, findings, agents, host,
-    # decide, write, area, budget — so the budget is index 11, and a rejected
-    # one goes there.
-    answers[11:11] = ["half an hour"]
+    # decide, apply, write, area, budget — so the budget is index 12, and a
+    # rejected one goes there.
+    answers[12:12] = ["half an hour"]
     res = run(proj, "setup", "--plain", input="\n".join(answers) + "\n")
     assert res.exit_code == 0, res.output
     assert "is not a budget" in res.output
@@ -593,6 +593,7 @@ def test_every_environment_field_reaches_the_agent(proj):
     #: name check and tell the agent nothing.
     evidence = {
         "decide": "$dg_decide",
+        "apply": "$dg_apply",
         "write": "$dg_write",
         "area": "$dg_area",
         "terse": "$dg_terse",
@@ -862,3 +863,76 @@ def test_both_wizards_offer_the_remit_first(proj):
     tui = (pathlib.Path(wizard.fanout.__file__).with_name("wizard_tui.py")
            .read_text(encoding="utf-8"))
     assert 'id="preset"' in tui, "the TUI form has no remit cards"
+
+
+# ---- the tray as an approval queue ---------------------------------------
+
+
+def test_an_agent_applies_its_own_ops_unless_told_otherwise(proj, monkeypatch):
+    """The catch this policy exists for, pinned so it cannot drift silently.
+
+    `$DG_DECIDE` guards what an agent may *answer*; an `add` is ungated at both
+    ends, and `dg apply` writes an owned caller's own ops with nothing
+    consulted. That is the documented default and a good one for a fan-out
+    aimed at a frontier somebody chose — it is just not approval, which is what
+    it is easily mistaken for.
+    """
+    from dgraph import pending
+    monkeypatch.setenv("DG_AGENT", "brisk-beacon")
+    monkeypatch.delenv("DG_APPLY", raising=False)
+    assert pending.refuse_apply(3) is None
+
+
+def test_never_refuses_the_agent_and_leaves_the_ops_where_they_are(proj,
+                                                                   monkeypatch):
+    from dgraph import pending
+    monkeypatch.setenv("DG_AGENT", "brisk-beacon")
+    monkeypatch.setenv("DG_APPLY", "never")
+    why = pending.refuse_apply(4)
+    assert why is not None
+    assert "brisk-beacon" in why and "4 op(s) stay staged" in why
+
+
+def test_the_supervisor_is_never_refused_by_the_apply_policy(proj, monkeypatch):
+    """The reading every other remit rule takes: a caller with no `$DG_AGENT`
+    *is* the supervisor these ops are being held for, so refusing them would
+    refuse the only person who can clear the queue."""
+    from dgraph import pending
+    monkeypatch.delenv("DG_AGENT", raising=False)
+    monkeypatch.setenv("DG_APPLY", "never")
+    assert pending.refuse_apply(4) is None
+
+
+def test_a_mistyped_apply_policy_widens_and_is_reported(proj, monkeypatch):
+    """Fails open like its neighbours — it is read on the path of every apply,
+    and a launcher's typo must not take the store from the supervisor sharing
+    the tray. What makes that defensible is that `dg-agent env` reports it."""
+    from dgraph import env as _env, pending
+    monkeypatch.setenv("DG_AGENT", "brisk-beacon")
+    monkeypatch.setenv("DG_APPLY", "nevr")
+    assert _env.apply_policy() == "own"
+    assert pending.refuse_apply(1) is None
+    assert any(v.name == _env.APPLY_ENV and v.fails_open for v in _env.VARS)
+
+
+def test_scout_is_the_preset_where_nothing_lands_unapproved(proj):
+    """The name always implied it; until `$DG_APPLY` existed it did not deliver
+    it, because `--decide never` leaves `dg add` entirely ungated."""
+    plans = {n: fanout.apply_preset(fanout.defaults(proj), n, proj)
+             for n in fanout.PRESETS}
+    assert plans["scout"].apply == "never"
+    assert plans["contributor"].apply == "own"
+    assert plans["maintainer"].apply == "own"
+
+
+def test_the_prompt_tells_the_agent_which_of_the_two_trays_it_is_in(proj):
+    """The prompt used to assert *"nothing you stage is written until somebody
+    applies it"* unconditionally, which was simply untrue for an agent that
+    could apply its own. Both halves are now stated from the plan."""
+    from dataclasses import replace as _replace
+    base = _replace(fanout.defaults(proj), brief="x", findings="f/x.md")
+    own = fanout.render_scout(_replace(base, apply="own"), proj)
+    never = fanout.render_scout(_replace(base, apply="never"), proj)
+    assert "$DG_APPLY=own" in own and "your own" in own
+    assert "$DG_APPLY=never" in never and "stage only" in never.lower()
+    assert "approval queue" in never

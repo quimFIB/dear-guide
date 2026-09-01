@@ -152,7 +152,7 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `demo/` | a runnable graph holding one of every record this keeps, and a walkthrough over it |
 | `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md); plus [the design behind `dg find`](docs/query-framework.md) |
 | `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
-| `agentic/` | [running a fan-out against the graph](agentic/README.md) — [`RUNNING.md`](agentic/RUNNING.md) is the procedure end to end, `prompts/` the templates it launches — several agents proposing into one tray and a person deciding. Optionally `agentic/bin/dg` and `agentic/bin/dg-agent`, a capture for when the run itself has to survive |
+| `agentic/` | [running a fan-out against the graph](agentic/README.md) — [`QUICKSTART.md`](agentic/QUICKSTART.md) is three copy-paste recipes (including one where a Claude Code or opencode session answers the broker), [`RUNNING.md`](agentic/RUNNING.md) the procedure end to end, `prompts/` the templates it launches — several agents proposing into one tray and a person deciding. Optionally `agentic/bin/dg` and `agentic/bin/dg-agent`, a capture for when the run itself has to survive |
 | `skills/dear-guide/` | the recording discipline, as a skill both agent hosts load |
 | `commands/` | the slash commands, one set of files for both hosts — `/dg:brief` under Claude Code, `/dg-brief` under opencode |
 | `fanout/` | what `dg-agent setup` writes: `scout.md`, `launch.sh`, and `env.json` — the remit both were generated from, and what `dg-agent env --check --plan` asserts they still agree with. Not scratch: a filled prompt is the thing you read back and reuse |
@@ -227,6 +227,10 @@ dg-agent setup --preset scout            # ...with the whole policy block filled
 dg-agent run -- claude -p "…"            # claim a name, compose the environment, run one agent under it
 dg-agent env                             # what every $DG_* actually says — and which one was mistyped
 dg-agent env --check                     # ...exit non-zero if anything set was not understood
+dg-agent broker                          # answer the consent requests agents block on, at a terminal
+dg-agent broker --relay                  # ...or publish them, for a session to answer
+dg-agent broker --relay --exec-rung auto # ...with commands answered as `auto`, never as a person
+dg-agent consent --allow --why "…"       # ...what is waiting on a relay, and the verdict for it
 dg-agent claim                           # a free name for one writer, printed bare
 dg-agent claim --budget 30m              # ...and how long it may run before its work is handed back
 dg-agent list                            # who holds a name, what they hold, what is staged, time left

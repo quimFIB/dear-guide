@@ -91,6 +91,29 @@ taken, `agentic/bin/` first on `$PATH` puts both wrappers — `dg` and `dg-agent
 front of the real binaries and records every call and both trays. Turn it on
 before the run, not during.
 
+**If you are supervising this run, you can answer its consent requests too.**
+An agent that needs a command outside `$DG_EXEC_ALLOW`, or a write outside the
+launch scope, blocks on the broker. Started with `dg-agent broker --relay`, it
+publishes each request instead of prompting on a terminal you cannot reach:
+
+```sh
+dg-agent consent            # what is waiting, and what answering it would mean
+dg-agent consent --allow --why "…"
+```
+
+**Read the rung before answering — `dg-agent consent` prints it.**
+
+- `user` or `scoped`: the verdict is logged as `person`. Put the request to the
+  person, relay their answer, and do not decide it yourself; answering there
+  would write `person` for something no person chose.
+- `auto`: the verdict is logged as `auto`, and deciding it is what that rung is
+  for. Judge it on what the agent is holding, the reason the gate gave, and
+  whether the target is inside the floor — and say why in `--why`, because that
+  reason is what a supervisor reads afterwards.
+
+Either way, answer within about a minute and a half: the gate gives up at 100
+seconds and the agent never sees a later verdict.
+
 **`dg-agent setup` writes the prompt and the launcher.** Most of what a scout
 prompt needs is already in the graph — the project, the areas, the full chain
 behind each focus id (pasted verbatim, which is the part a fresh context cannot

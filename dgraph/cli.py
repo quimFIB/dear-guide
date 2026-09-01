@@ -2863,6 +2863,16 @@ def apply(
             con.print(f"[red]{' and '.join(chosen)} ask for different "
                       f"scopes — pick one[/]")
             raise typer.Exit(2)
+        # Before the scoping, and before `--agent`'s own refusal: under
+        # `$DG_APPLY=never` this caller writes nothing at all, so which ops it
+        # would have selected is not a question worth asking. The ops stay
+        # exactly where they were.
+        blocked = pending.refuse_apply(len(ops or ()) + len(task_ops or ()))
+        if blocked:
+            con.print(f"[red]✗ {_x(blocked)}[/]\n"
+                      f"[dim]`dg pending --mine` reads them back; nothing was "
+                      f"written and nothing was lost[/]")
+            raise typer.Exit(1)
         if agent and not _may_apply_for(agent, ops, task_ops):
             raise typer.Exit(1)
         scoped = _scope(ops, task_ops, all_=all_, mine=mine, agent=agent)

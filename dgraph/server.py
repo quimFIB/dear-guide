@@ -965,6 +965,13 @@ class Handler(BaseHTTPRequestHandler):
                     if proj.has_tasks else [])
         if not ops and not task_ops:
             return self._json({"error": "nothing staged"}, 400)
+        # The same rule the CLI takes, and before the same narrowing. A policy
+        # that held at one door and not the other is the drift every shared
+        # helper in `pending` exists to stop -- and the browser is the door an
+        # agent reaches when the panel is open in front of it.
+        blocked = pending.refuse_apply(len(ops) + len(task_ops))
+        if blocked is not None:
+            return self._json({"error": blocked}, 400)
         if agent is not None:
             # Judged against the **whole** tray, before narrowing: the roster a
             # refusal names has to be the one the reader is choosing from, and

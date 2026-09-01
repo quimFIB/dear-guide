@@ -89,7 +89,7 @@ def _remit(plan: fanout.Plan, proj) -> fanout.Plan:
     con.print("\n[bold]What may these agents settle?[/]")
     con.print("[dim]One answer fills the whole policy block; every field is "
               "asked again below, with these as the defaults.[/]")
-    for name, row, _, _ in fanout.preset_rows(proj):
+    for name, row, _, _, _ in fanout.preset_rows(proj):
         con.print(f"  [bold]{name}[/]  [dim]{row}[/]")
     con.print("  [bold]customise[/]  [dim]the tool's own defaults, "
               "unchanged[/]")
@@ -99,7 +99,8 @@ def _remit(plan: fanout.Plan, proj) -> fanout.Plan:
     if choice == "customise":
         return plan
     out = fanout.apply_preset(plan, choice, proj)
-    con.print(f"[dim]  $DG_DECIDE={out.decide} · $DG_WRITE={out.write} · "
+    con.print(f"[dim]  $DG_DECIDE={out.decide} · $DG_APPLY={out.apply} · "
+              f"$DG_WRITE={out.write} · "
               f"$DG_AREA={out.area} · $DG_TERSE={out.terse} · "
               f"{len(out.exec_allow)} program(s) unasked · "
               f"floor {out.floor if out.confine != 'off' else 'off'}[/]")
@@ -147,6 +148,13 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
     con.print("[dim]evidence: only a question a finished --evidence-for task "
               "backs · never: nothing · open: anything[/]")
     decide = Prompt.ask("", choices=list(cross.POLICIES), default=plan.decide)
+
+    con.print("\n[bold]May an agent write the store itself?[/]  [dim]$DG_APPLY[/]")
+    con.print("[dim]own: it applies its own staged ops — an added question "
+              "lands without you · never: it only stages, and a caller with no "
+              "$DG_AGENT applies. `never` makes the tray an approval queue, "
+              "which is what it is not by default.[/]")
+    apply_ = Prompt.ask("", choices=list(env.APPLY_POLICIES), default=plan.apply)
 
     con.print("\n[bold]Where may an agent write?[/]  [dim]$DG_WRITE[/]")
     con.print("[dim]launch: this project and /tmp, anywhere else asks the "
@@ -216,7 +224,7 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
     except ValueError:
         n = plan.agents
 
-    out = replace(plan, brief=brief,
+    out = replace(plan, apply=apply_, brief=brief,
                   focus=[s.strip() for s in focus.split(",") if s.strip()],
                   reads=reads, findings=findings or plan.findings, agents=n,
                   host=host, decide=decide, write=write, area=area,
@@ -224,7 +232,8 @@ def ask(plan: fanout.Plan, proj) -> fanout.Plan | None:
                   exec_allow=exec_allow, confine=confine, floor=floor)
 
     con.print(f"\n[bold]{out.agents} agent(s) on {out.host}[/] · "
-              f"$DG_DECIDE={out.decide} · $DG_WRITE={out.write} · "
+              f"$DG_DECIDE={out.decide} · $DG_APPLY={out.apply} · "
+              f"$DG_WRITE={out.write} · "
               f"$DG_AREA={out.area} · $DG_TERSE={out.terse} · "
               f"budget {limits.show_span(out.budget)} · "
               f"{len(out.exec_allow) or 'no'} program(s) unasked · "

@@ -260,3 +260,85 @@ def test_the_capture_is_offered_as_optional_and_not_as_a_step():
     assert "capture" not in body.split("## 1.")[1].lower(), (
         "the numbered procedure mentions the capture; it is meant to stand "
         "without it")
+
+
+# ---- the recipe card, which is only worth having if it runs ---------------
+
+
+def _quickstart():
+    with open(os.path.join(ROOT, "agentic", "QUICKSTART.md"),
+              encoding="utf-8") as f:
+        return f.read()
+
+
+def _cli_names(app, prefix=()):
+    out = set()
+    for c in app.registered_commands:
+        out.add(prefix + (c.name or c.callback.__name__.replace("_", "-"),))
+    for grp in app.registered_groups:
+        out |= _cli_names(grp.typer_instance, prefix + (grp.name,))
+    return out
+
+
+def test_every_command_the_quickstart_types_exists():
+    """A recipe card is worth having only if it runs.
+
+    Prose about *why* can age gracefully; a command line cannot — it is either
+    typed successfully or it is a bug report from somebody following the
+    documentation. So the card's commands are checked against the CLI's own
+    tables rather than proofread.
+    """
+    import re
+    from dgraph.agent_cli import app as agent_app
+    from dgraph.cli import app as dg_app
+
+    text = _quickstart()
+    known = ({" ".join(n) for n in _cli_names(agent_app)}
+             | {" ".join(n) for n in _cli_names(dg_app)})
+    typed = set(re.findall(r"^(?:dg-agent|dg) ([a-z-]+)", text, re.M))
+    # `dg <sub>` and `dg-agent <sub>` share this check: what matters is that
+    # the word after the binary is a command one of them has.
+    unknown = {w for w in typed
+               if w not in known and not any(k.startswith(w) for k in known)}
+    assert not unknown, f"the quickstart types commands that do not exist: {sorted(unknown)}"
+
+
+def test_every_flag_the_quickstart_types_exists():
+    """The same, one level down. `--exec-rung` was renamed once already."""
+    import re
+    from typer.testing import CliRunner
+    from dgraph.agent_cli import app as agent_app
+
+    text = _quickstart()
+    runner = CliRunner()
+    for sub in ("setup", "broker", "consent"):
+        block = re.findall(rf"dg-agent {sub} ([^\n]*)", text)
+        flags = {f for line in block for f in re.findall(r"--[a-z-]+", line)}
+        if not flags:
+            continue
+        helped = runner.invoke(agent_app, [sub, "--help"], env={"COLUMNS": "200"})
+        for flag in flags:
+            assert flag in helped.output, \
+                f"the quickstart passes {flag} to `dg-agent {sub}`, which has no such flag"
+
+
+def test_the_quickstart_carries_the_session_answers_the_broker_recipe():
+    """The arrangement this card was asked for: a Claude Code or opencode
+    session hosting the broker, deciding commands on the `auto` rung and
+    relaying writes to a person. Named here because a recipe that quietly
+    disappeared would leave the README's own index pointing at nothing."""
+    text = _quickstart()
+    assert "--relay" in text and "--exec-rung auto" in text
+    assert "dg-agent consent" in text
+    # The distinction the whole arrangement turns on must be on the card, not
+    # only in the guide: what a rung means is what the verdict is *called*.
+    assert "by: auto" in text and "by: person" in text
+
+
+def test_the_quickstart_is_reachable_from_the_docs_that_replaced_it():
+    """A third file only helps if the two longer ones point at it."""
+    assert "QUICKSTART.md" in _guide()
+    with open(os.path.join(ROOT, "agentic", "RUNNING.md"), encoding="utf-8") as f:
+        assert "QUICKSTART.md" in f.read()
+    with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f:
+        assert "agentic/QUICKSTART.md" in f.read()

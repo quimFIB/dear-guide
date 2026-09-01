@@ -221,6 +221,10 @@ def test_every_staging_command_is_covered():
         # agents because the heartbeat stamps it, so a grant written there would
         # be one an agent could award itself.
         ("broker",),
+        # Writes a verdict for the broker to collect — a file two processes
+        # hand between them, never an op and never a tray. What it answers is
+        # a permission, and permissions are not part of the record.
+        ("consent",),
     }
     #: Commands that DO write a tray but cannot be expressed as a `CASES` entry,
     #: with the test that covers them instead. Separate from `NO_TRAY` because

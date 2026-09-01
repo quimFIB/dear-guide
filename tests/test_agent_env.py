@@ -176,9 +176,10 @@ def test_the_report_covers_the_whole_family_including_the_area_policy(run):
 
     assert names == [v.name for v in env.VARS]
     assert "DG_AREA" in names
-    assert set(names) == {"DG_AGENT", "DG_DECIDE", "DG_WRITE", "DG_EXEC_ALLOW",
-                          "DG_CONFINE", "DG_FLOOR", "DG_AREA", "DG_BUDGET",
-                          "DG_TERSE", "DG_SILENT_AFTER", "DG_PROJECT"}
+    assert set(names) == {"DG_AGENT", "DG_DECIDE", "DG_APPLY", "DG_WRITE",
+                          "DG_EXEC_ALLOW", "DG_CONFINE", "DG_FLOOR", "DG_AREA",
+                          "DG_BUDGET", "DG_TERSE", "DG_SILENT_AFTER",
+                          "DG_PROJECT"}
 
 
 def test_the_budget_is_shown_against_the_lease_not_the_variable(run, proj,

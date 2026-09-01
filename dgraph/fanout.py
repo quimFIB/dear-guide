@@ -62,7 +62,7 @@ ENV_NAME = "env.json"
 #: Everything else in a plan — the focus ids, the host, how many agents, what
 #: they may read — shapes the prompt or the launcher rather than the remit, and
 #: a plan file that carried them would be a second copy of `scout.md`.
-ENV_FIELDS = {"decide": "DG_DECIDE", "write": "DG_WRITE",
+ENV_FIELDS = {"decide": "DG_DECIDE", "apply": "DG_APPLY", "write": "DG_WRITE",
               "area": "DG_AREA", "terse": "DG_TERSE",
               "budget": "DG_BUDGET", "exec_allow": "DG_EXEC_ALLOW",
               "confine": "DG_CONFINE", "floor": "DG_FLOOR"}
@@ -144,6 +144,13 @@ class Plan:
     agents: int = 2
     host: str = "claude"
     decide: str = "evidence"
+    #: `$DG_APPLY`. `own` by default here as in the tool, and unlike `decide`
+    #: and `write` — which are tighter in a fan-out than the tool's own
+    #: defaults — because an agent that cannot apply its own proposals cannot
+    #: read them back as a graph either, and reviewing a frontier somebody
+    #: chose is what a fan-out is *for*. It becomes `never` where nobody chose
+    #: the frontier: see `PRESETS`.
+    apply: str = "own"
     write: str = "launch"
     budget: int | None = 1800
     #: `$DG_TERSE`. On by default here while the tool's own default is off, for
@@ -220,6 +227,7 @@ def read_env_plan(path) -> dict:
                          f"({', '.join(ENV_FIELDS)})")
     from dgraph import confine as _confine
     for key, allowed in (("decide", _env.POLICIES), ("write", _env.WRITE_POLICIES),
+                         ("apply", _env.APPLY_POLICIES),
                          ("area", _env.AREA_POLICIES),
                          ("confine", _confine.CONFINE_MODES),
                          ("floor", _confine.BACKENDS)):
@@ -513,12 +521,17 @@ class Preset:
     row: str
     decide: str
     exec_scope: str
+    #: `$DG_APPLY`. The third field to vary, and the one that decides whether
+    #: the tray is an approval queue or only an isolation between writers.
+    apply: str = "own"
 
     def __post_init__(self) -> None:
         if self.decide not in _env.POLICIES:
             raise ValueError(f"{self.name}: decide is {self.decide!r}")
         if self.exec_scope not in EXEC_SCOPES:
             raise ValueError(f"{self.name}: exec_scope is {self.exec_scope!r}")
+        if self.apply not in _env.APPLY_POLICIES:
+            raise ValueError(f"{self.name}: apply is {self.apply!r}")
 
 
 #: Three points on a dial the tool already had. They invent no policy: the
@@ -531,8 +544,8 @@ class Preset:
 #: `agentic/README.md` before they could start.
 PRESETS = {
     "scout": Preset(
-        "scout", "proposes only · no build tools",
-        decide="never", exec_scope="readers"),
+        "scout", "proposes only · nothing lands unapproved",
+        decide="never", exec_scope="readers", apply="never"),
     "contributor": Preset(
         "contributor", "settles what evidence backs",
         decide="evidence", exec_scope="project"),
@@ -568,7 +581,7 @@ def apply_preset(plan: Plan, name: str,
                          f"{', '.join(PRESETS)} -- see `dg-agent presets`")
     p = PRESETS[name]
     return _with_available_floor(replace(
-        plan, decide=p.decide,
+        plan, decide=p.decide, apply=p.apply,
         exec_allow=preset_exec_allow(p.exec_scope, proj),
         confine="require", **PRESET_CONSTANTS))
 
@@ -587,13 +600,13 @@ def preset_of(plan: Plan, proj: project.Project | None = None) -> str | None:
 
 
 def preset_rows(proj: project.Project | None = None) -> list[tuple[str, str, str, str]]:
-    """`(name, row, decide, programs)` for each preset, in order.
+    """`(name, row, decide, programs, apply)` for each preset, in order.
 
     One renderer's worth of data, so the wizard's cards, `dg-agent presets` and
     the guide's table cannot come to disagree about what a name means.
     """
     return [(p.name, p.row, p.decide,
-             " ".join(preset_exec_allow(p.exec_scope, proj)))
+             " ".join(preset_exec_allow(p.exec_scope, proj)), p.apply)
             for p in PRESETS.values()]
 
 
@@ -665,6 +678,28 @@ def _decide_prose(policy: str) -> str:
                   "measured with `dg task done --outcome` and move on."),
         "open": ("Nothing is enforced, so the rule above is a request rather "
                  "than a refusal. Hold to it anyway."),
+    }[policy]
+
+
+def _apply_prose(policy: str) -> str:
+    """What `$DG_APPLY` means to the agent reading it.
+
+    Both halves are worth saying plainly, because the two are opposite claims
+    about the same tray and the prompt used to assert the second unconditionally
+    — "nothing you stage is written until somebody applies it", which was simply
+    untrue for an agent that could apply its own.
+    """
+    return {
+        "own": ("`dg apply` writes **your own** staged ops and leaves every "
+                "other writer's alone, so what you stage and apply is in the "
+                "store. The tray keeps writers apart; it is not somebody "
+                "approving you. Apply your own work — leaving it staged means "
+                "it exists only in a gitignored file."),
+        "never": ("You **stage only**. `dg apply` is refused for you and the "
+                  "ops stay exactly where they are, for a caller with no "
+                  "`$DG_AGENT` to read and apply. That refusal is the policy "
+                  "and not a broken tool: here the tray *is* an approval "
+                  "queue, so propose freely and leave it staged."),
     }[policy]
 
 
@@ -844,6 +879,8 @@ def render_scout(plan: Plan, proj: project.Project | None = None) -> str:
         "AREAS": _areas(proj),
         "DECIDE": plan.decide,
         "DECIDE_PROSE": _decide_prose(plan.decide),
+        "APPLY": plan.apply,
+        "APPLY_PROSE": _apply_prose(plan.apply),
         "TERSE": plan.terse,
         "TERSE_PROSE": _terse_prose(plan.terse),
         "READS": reads,

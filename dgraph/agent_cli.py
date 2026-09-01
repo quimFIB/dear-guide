@@ -59,6 +59,7 @@ import json
 import os
 import shlex
 import subprocess
+import threading
 import time as _time
 import sys
 from dataclasses import asdict, replace
@@ -82,7 +83,7 @@ FANOUT = "Setting up a fan-out, and taking it apart again"
 #: may do, run under that, and handed back what it was holding.
 LAYOUT = (
     (NAMES, ("claim", "list", "release", "prune")),
-    (ENVIRONMENT, ("env", "run")),
+    (ENVIRONMENT, ("env", "run", "broker", "consent")),
     (FANOUT, ("presets", "setup", "expire")),
 )
 
@@ -390,23 +391,26 @@ def agent_presets(
             "default": fanout.DEFAULT_PRESET,
             "constant": {**fanout.PRESET_CONSTANTS, "confine": "require"},
             "presets": [{"name": n, "row": r, "decide": d,
-                         "exec_allow": progs.split()}
-                        for n, r, d, progs in rows],
+                         "exec_allow": progs.split(), "apply": ap}
+                        for n, r, d, progs, ap in rows],
         }, ensure_ascii=False))
         return
 
     table = Table(box=None, pad_edge=False)
-    for col in ("", "what it settles", "$DG_DECIDE", "may run unasked"):
+    for col in ("", "what it settles", "$DG_DECIDE", "$DG_APPLY",
+                "may run unasked"):
         table.add_column(col)
-    for name, row, decide, progs in rows:
+    for name, row, decide, progs, ap in rows:
         table.add_row(
             f"[bold]{name}[/]" + ("  [dim](default)[/]"
                                   if name == fanout.DEFAULT_PRESET else ""),
             row, decide,
+            ap + ("  [dim]you apply[/]" if ap == "never"
+                  else "  [dim]applies its own[/]"),
             f"{len(progs.split())} programs"
             + ("  [dim]readers only[/]"
                if fanout.PRESETS[name].exec_scope == "readers"
-               else "  [dim]+ this project's build tools[/]"))
+               else "  [dim]+ build tools[/]"))
     cli.con.print(table)
     const = ", ".join(f"$DG_{k.upper()}={v}"
                       for k, v in fanout.PRESET_CONSTANTS.items())
@@ -430,6 +434,10 @@ def agent_setup(
     n: int = typer.Option(None, "--agents", "-n", help="how many to launch"),
     host: str = typer.Option(None, "--host", help="claude | opencode"),
     decide: str = typer.Option(None, "--decide", help="open | evidence | never"),
+    apply_policy: str = typer.Option(
+        None, "--apply",
+        help="own | never — whether an agent writes the store itself, or only "
+             "stages for a caller with no $DG_AGENT to apply"),
     write_scope: str = typer.Option(None, "--write", help="open | launch"),
     area: str = typer.Option(None, "--area-policy",
                              help="open | strict — whether a scout may file "
@@ -510,8 +518,9 @@ def agent_setup(
             # have to explain first. Rendered from `fanout.preset_rows`, like
             # every other place a preset is shown.
             "presets": [{"name": name, "row": row, "decide": dec,
-                         "exec_allow": progs.split()}
-                        for name, row, dec, progs in fanout.preset_rows(proj)],
+                         "exec_allow": progs.split(), "apply": ap}
+                        for name, row, dec, progs, ap
+                        in fanout.preset_rows(proj)],
             "default_preset": fanout.DEFAULT_PRESET,
             "asks": ["--brief", "--read PATH:WHAT", "--findings"],
         }, ensure_ascii=False))
@@ -519,6 +528,7 @@ def agent_setup(
 
     given = {"preset": preset,
              "focus": focus, "agents": n, "host": host, "decide": decide,
+             "apply": apply_policy,
              "write": write_scope, "area": area, "budget": budget,
              "terse": terse, "brief": brief, "read": read,
              "exec_allow": exec_allow, "confine": confine, "floor": floor,
@@ -653,6 +663,7 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
         agents=given["agents"] or plan.agents,
         host=one_of("host", given["host"], set(fanout.HOSTS)),
         decide=one_of("decide", given["decide"], set(cross.POLICIES)),
+        apply=one_of("apply", given["apply"], set(env.APPLY_POLICIES)),
         write=one_of("write", given["write"], set(limits.WRITE_POLICIES)),
         area=one_of("area", given["area"], set(env.AREA_POLICIES)),
         budget=budget,
@@ -834,6 +845,9 @@ def _effect(r: env.Reading, proj: project.Project) -> str:
         return {"open": "may close any question",
                 "evidence": "closes only what finished evidence backs",
                 "never": "every answer goes back to a person"}[value]
+    if name == env.APPLY_ENV:
+        return {"own": "writes its own staged ops itself",
+                "never": "stages only — a caller with no $DG_AGENT applies"}[value]
     if name == env.WRITE_ENV:
         if value == "open":
             return "anywhere"
@@ -1066,6 +1080,7 @@ def _compose(spec: dict | None, given: dict) -> dict[str, str]:
     if spec is not None:
         out.update(fanout.plan_env(spec))
     words = {"decide": (env.POLICY_ENV, env.POLICIES),
+             "apply": (env.APPLY_ENV, env.APPLY_POLICIES),
              "write": (env.WRITE_ENV, env.WRITE_POLICIES),
              "area": (env.AREA_ENV, env.AREA_POLICIES)}
     for flag, (name, allowed) in words.items():
@@ -1187,10 +1202,127 @@ def _hold_back(name: str, why: str) -> list[str]:
     return held
 
 
+@app.command("consent")
+def agent_consent(
+    allow: bool = typer.Option(False, "--allow", help="let this one through"),
+    deny: bool = typer.Option(False, "--deny", help="refuse it"),
+    scope: bool = typer.Option(
+        False, "--scope",
+        help="allow, and stop asking for the rest of that scope — a directory "
+             "for a write, the identical command for an exec. Only on the "
+             "`scoped` rung, which is what publishes one"),
+    why: str = typer.Option(None, "--why", help="the reason, recorded in the log"),
+    as_json: bool = typer.Option(False, "--json", help="the request, machine form"),
+) -> None:
+    """Read the consent request a relaying broker is blocked on, and answer it.
+
+    The supervisor's half of `dg-agent broker --relay`. With no flags it prints
+    what is waiting and what answering it would mean; with `--allow`, `--deny`
+    or `--scope` it writes the verdict and the blocked agent moves.
+
+    **This is transport, not a decision you may hand off.** The verdict is
+    recorded as answered by a person, because the rung that published it means
+    a person — so running this from a session means *you* saying yes, with the
+    session relaying it. A model answering here would put a lie in the one
+    artefact a supervisor reads afterwards; that is a rung of its own, `auto`,
+    and it is not this one.
+
+    **Answer inside the caller's deadline.** Both host adapters give the gate
+    100 seconds and it answers `deny` before that elapses, so a verdict written
+    two minutes later is one the agent never receives — the log says
+    `delivered: false` rather than pretending otherwise.
+    """
+    from dgraph import broker as _broker
+    proj = project.find()
+    req = _broker.pending_ask(proj.root)
+    if req is None:
+        if as_json:
+            print(json.dumps({"pending": None}))
+            return
+        cli.con.print("[dim]nothing is waiting on a relayed answer[/]")
+        # Blocked and *not* relayed is a different state and worth naming: a
+        # terminal broker publishes a waiting agent too, and somebody reading
+        # this would otherwise conclude nothing is stuck.
+        others = _broker.waiting(proj.root)
+        if others:
+            cli.con.print(f"[yellow]![/] {len(others)} agent(s) are blocked on "
+                      f"a broker that is not relaying — answer it where it "
+                      f"is running, or restart it with `--relay`")
+        raise typer.Exit(1)
+
+    level = req.get("level")
+    waited = int(_time.time() - float(req.get("since") or _time.time()))
+    if as_json:
+        print(json.dumps({"pending": req, "waited": waited}, ensure_ascii=False))
+        return
+
+    chosen = [f for f, on in (("--allow", allow), ("--deny", deny),
+                              ("--scope", scope)) if on]
+    if not chosen:
+        holding = req.get("holding") or {}
+        where = ", ".join(x for x in (holding.get("task"),
+                                      holding.get("evidence_for")) if x)
+        verb = "run" if req.get("kind") == "exec" else "write"
+        cli.con.print(f"[bold]{cli._x(req.get('agent'))}[/] wants to {verb}:")
+        cli.con.print(f"  {cli._x(req.get('target'))}")
+        if where:
+            cli.con.print(f"  [dim]({cli._x(where)})[/]")
+        if (req.get("gate") or {}).get("reason"):
+            cli.con.print(f"  [dim]{cli._x(req['gate']['reason'])}[/]")
+        cli.con.print(f"  [dim]waiting {waited}s[/]")
+        # The one thing an answerer has to know before answering: which rung
+        # published this, and therefore what the log will say produced the
+        # verdict. On `user` that word is `person`, and it is only true if a
+        # person gave it.
+        if level == "auto":
+            cli.con.print("  [yellow]rung `auto` — this answer is recorded as "
+                      "`auto`, not as a person[/]")
+        else:
+            cli.con.print(f"  [dim]rung `{cli._x(level)}` — this answer is "
+                      f"recorded as `person`, so it must be a person's[/]")
+        cli.con.print("\n[dim]`dg-agent consent --allow` · `--deny` "
+                  + (f"· `--scope` grants {cli._x(req.get('scope'))} "
+                     if level == "scoped" and req.get("scope") else "")
+                  + "· `--why \"…\"` records a reason[/]")
+        return
+    if len(chosen) > 1:
+        cli.con.print(f"[red]✗ {', '.join(chosen)} — answer one way[/]")
+        raise typer.Exit(2)
+    if scope and level != "scoped":
+        cli.con.print(f"[red]✗ --scope needs the `scoped` rung; this request "
+                  f"came in under `{cli._x(level)}`[/]\n"
+                  f"[dim]`--allow` lets this one through[/]")
+        raise typer.Exit(2)
+
+    grant = None
+    if scope:
+        grant = _broker.Grant(kind=req.get("kind"), value=req.get("scope"))
+    reason = why or ("declined by the supervisor" if deny else
+                     f"scope granted by the supervisor: {req.get('scope')}"
+                     if scope else "allowed once by the supervisor")
+    refused = _broker.send_answer(proj.root, req.get("id"), allow=not deny,
+                                  why=reason, grant=grant)
+    if refused:
+        cli.con.print(f"[red]✗ {cli._x(refused)}[/]")
+        raise typer.Exit(1)
+    cli.con.print(f"[green]{'denied' if deny else 'allowed'}[/] "
+              f"{cli._x(req.get('target'))}"
+              + (f" [dim]· scope {cli._x(req.get('scope'))}[/]" if scope else ""))
+
+
 @app.command("broker")
 def agent_broker(
     write: str = typer.Option(None, "--write-rung", help="off | auto | scoped | user"),
     exec_: str = typer.Option(None, "--exec-rung", help="off | auto | scoped | user"),
+    relay: bool = typer.Option(
+        False, "--relay",
+        help="publish each request for `dg-agent consent` to answer, instead "
+             "of prompting on this terminal — for a supervisor who is a "
+             "Claude Code or opencode session rather than a tty"),
+    wait: float = typer.Option(
+        None, "--relay-wait", metavar="SECONDS",
+        help="how long a relayed request waits before it is denied; the "
+             "default sits just above the deadline both host adapters pass"),
 ) -> None:
     """Answer the consent requests a fan-out's agents block on.
 
@@ -1239,11 +1371,28 @@ def agent_broker(
     # `auto` first, because it is the one that would otherwise *look* like it
     # worked: nothing is attached to decide with, so the rung answers `deny` to
     # everything while the banner below still prints `auto`.
-    unattachable = _broker.unattachable(rungs, auto=None)
+    # The policy that will actually be attached, which is what this check was
+    # written to take: with `--relay` the `auto` rung has a relay to decide
+    # with, so the door opens by itself — exactly as its docstring promised the
+    # day one existed.
+    channel = (_broker.Relay(proj.root, wait=wait or _broker.RELAY_WAIT)
+               if relay else None)
+    auto_policy = channel.auto if channel else None
+    unattachable = _broker.unattachable(rungs, auto=auto_policy)
     if unattachable:
         cli.con.print(f"[red]✗ {cli._x(unattachable)}[/]\n[dim]nothing is "
                       f"listening; fix the rung and start again[/]")
         raise typer.Exit(2)
+
+    # Third door check, and the same shape as the two around it: refused
+    # before anything binds, because a relay whose channel an agent can write
+    # is a broker that hands out its own permissions.
+    if relay:
+        unsafe = _broker.unrelayable(proj.root)
+        if unsafe:
+            cli.con.print(f"[red]✗ {cli._x(unsafe)}[/]\n[dim]nothing is "
+                      f"listening; fix the channel and start again[/]")
+            raise typer.Exit(2)
 
     # A deep checkout gets a sentence rather than a traceback out of
     # `socket.bind`. `P-F9`.
@@ -1256,17 +1405,47 @@ def agent_broker(
     # class's "read once at construction" to one read. Re-deriving it in
     # `__post_init__` worked only because the loop above had already put
     # the values in `os.environ`, which is a second source for one rule.
-    b = _broker.Broker(root=proj.root, prompt=_broker.terminal_prompt,
+    # The front end is the only thing `--relay` changes. Everything else —
+    # the rungs, the memory of grants, the log, the serial answering — is the
+    # same broker, because a relay is a way of *asking* and not a policy.
+    front = channel.prompt if channel else _broker.terminal_prompt
+    b = _broker.Broker(root=proj.root, prompt=front, auto=auto_policy,
                        rungs=rungs)
+    # The relay's own listener, beside the broker's. Started before `serve`
+    # blocks, stopped with it.
+    relay_stop = threading.Event()
+    if channel is not None:
+        threading.Thread(target=channel.serve, args=(relay_stop,),
+                         daemon=True).start()
     cli.con.print(
         f"[green]listening[/] on {cli._x(_broker.SOCKET_NAME)} "
         f"[dim]write={rungs['write']} exec={rungs['exec']} · "
         f"answers go to {cli._x(_broker.LOG_NAME)} · Ctrl-C to stop[/]")
+    if relay:
+        cli.con.print(
+            f"[dim]relaying on {cli._x(_broker.RELAY_SOCK_NAME)}: each request "
+            f"waits {int(wait or _broker.RELAY_WAIT)}s for `dg-agent consent`, "
+            f"and is handed over a connection rather than left in a file. "
+            f"Nobody answering is a deny — an unreachable decider is not "
+            f"consent.[/]")
+        # Which rung a request came in on decides what its answer is *called*,
+        # and that is the whole of `D36`. Printed at the door so a launcher
+        # knows before the first request which of the two they have set up.
+        for kind, level in sorted(rungs.items()):
+            if level in ("user", "scoped"):
+                cli.con.print(f"[dim]  {kind}: `{level}` — answers are "
+                          f"recorded [b]person[/b], so a person must give "
+                          f"them[/]")
+            elif level == "auto":
+                cli.con.print(f"[yellow]  {kind}: `auto` — whatever answers is "
+                          f"recorded [b]auto[/b], not as a person[/]")
     try:
         b.serve()
     except KeyboardInterrupt:
         cli.con.print("\n[dim]stopped — agents now get the gate's own verdict, "
                       "which in a headless run is a refusal[/]")
+    finally:
+        relay_stop.set()
 
 
 @app.command("run", context_settings={"allow_interspersed_args": False})
@@ -1278,6 +1457,9 @@ def agent_run(
         None, "--plan", metavar="PATH",
         help=f"a {fanout.ENV_NAME} written by `dg-agent setup`"),
     decide: str = typer.Option(None, "--decide", help="open | evidence | never"),
+    apply_policy: str = typer.Option(
+        None, "--apply", help="own | never — whether it writes the store "
+                              "itself, or only stages"),
     write_scope: str = typer.Option(None, "--write", help="open | launch"),
     area: str = typer.Option(None, "--area-policy", help="open | strict"),
     terse: str = typer.Option(None, "--terse",
@@ -1343,7 +1525,8 @@ def agent_run(
             cli.con.print(f"[red]✗ {cli._x(exc)}[/]")
             raise typer.Exit(2) from None
     try:
-        composed = _compose(spec, {"decide": decide, "write": write_scope,
+        composed = _compose(spec, {"decide": decide, "apply": apply_policy,
+                                   "write": write_scope,
                                    "area": area, "terse": terse,
                                    "budget": budget, "exec_allow": exec_allow})
     except (ValueError, env.BadSpan) as exc:

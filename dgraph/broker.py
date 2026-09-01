@@ -64,6 +64,86 @@ LOG_NAME = ".dgraph-consent.jsonl"
 #: the column only when there is a broker to have filled it.
 WAITING_NAME = ".dgraph-consent.waiting.json"
 
+#: The relay's two files: the question, and the answer to it.
+#:
+#: Two rather than one field in one file, because they have **two different
+#: writers** — the broker publishes the ask, and whoever is relaying writes the
+#: answer — and a single file rewritten whole by both is a lost answer the
+#: first time they overlap. Serial by construction: `decide` handles one
+#: request at a time, so there is never a second ask outstanding and neither
+#: file needs a queue.
+#: **They do not live in the project, and that is the whole of their safety.**
+#: The first version put them beside the socket, where every agent may write
+#: freely under `$DG_WRITE=launch` and where a confinement floor seals nothing
+#: -- so an agent wrote its own `allow`, the blocked agent collected it, and the
+#: log recorded `by: person` with whatever reason the forgery supplied. That is
+#: the lie `answered_by` exists to prevent, arriving through the channel meant
+#: to carry the truth.
+#:
+#: The rule they now meet is the one the memory-only grants already met:
+#:
+#: > **The consent channel lives where an agent cannot write without already
+#: > holding the permission it is asking for.**
+#:
+#: It matters more than the tool's other rules because those are cooperative by
+#: design and the floor is not. The broker is the one door through a kernel
+#: boundary, and a self-serve door is not a door.
+RELAY_SOCK_NAME = "consent.sock"
+
+
+def channel_dir(root: Path | None = None) -> Path:
+    """Where the relay's two files live: outside every writable root.
+
+    `$XDG_RUNTIME_DIR` where there is one -- per-user, `0700`, and cleared at
+    logout, which is right for something that means nothing once the run is
+    over -- else a `0700` directory under the user's cache. Per project, so two
+    fan-outs never answer each other's questions.
+
+    Deliberately **not** configurable by the environment. A path an agent could
+    name is a path an agent could point back into its own scope, which is this
+    hole reopened as a flag.
+    """
+    import hashlib
+    root = root if root is not None else project.find().root
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    parent = (Path(base) if base else Path.home() / ".cache") / "dear-guide"
+    ident = hashlib.sha256(str(limits._real(root)).encode()).hexdigest()[:16]
+    out = parent / "consent" / ident
+    out.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return out
+
+
+def unrelayable(root: Path | None = None) -> str | None:
+    """Why relaying would not be safe here -- or `None`.
+
+    Checked at the door, like `unbindable` and `unattachable` beside it, and
+    against `limits.writable_roots` rather than a list of its own: the question
+    is exactly *could an agent write this*, and that function is what answers
+    it everywhere else in the tool.
+    """
+    root = root if root is not None else project.find().root
+    sock = channel_dir(root) / RELAY_SOCK_NAME
+    where = limits._real(channel_dir(root))
+    for allowed in limits.writable_roots(root):
+        if limits._within(where, allowed):
+            return (f"the consent channel would sit at {where}, inside "
+                    f"{allowed} — which every agent may write under "
+                    f"$DG_WRITE=launch, so an agent could reach it without "
+                    f"needing the very permission it is asking for. "
+                    f"Set $XDG_RUNTIME_DIR to a directory outside the project")
+    return _too_long(sock)
+
+#: How long a relay front end waits before answering for nobody.
+#:
+#: Just over the 100s both host adapters pass as `--deadline`, and that
+#: relation is the whole of the number: a relay that waited `USER_WAIT` would
+#: hold the broker — which answers **serially** — for fifteen minutes on a
+#: request whose caller gave up after one and a half, with every other agent
+#: queued behind a person who is no longer being useful. Waiting slightly
+#: longer than the caller does means the person's answer is never thrown away
+#: by the front end before the caller has stopped listening for it.
+RELAY_WAIT = 120
+
 #: The rungs, per kind. `$DG_CONSENT_EXEC` sits one stricter than
 #: `$DG_CONSENT_WRITE` by default because writing a file inside a known tree is
 #: routine and running a program is the thing that can do anything at all.
@@ -94,6 +174,21 @@ SUN_PATH_MAX = 100
 
 def socket_path(root: Path | None = None) -> Path:
     return (root or project.find().root) / SOCKET_NAME
+
+
+def _too_long(path: Path) -> str | None:
+    """Why this socket path will not bind — or `None`. The kernel's cap.
+
+    Shared by the broker's socket and the relay's, because the limit is the
+    kernel's and not either socket's, and a second copy would be a second
+    number to keep at 100.
+    """
+    room = len(str(path).encode()) + len(f".{2**22}")
+    if room <= SUN_PATH_MAX:
+        return None
+    return (f"a unix socket path is capped at {SUN_PATH_MAX} bytes and this "
+            f"one needs {room}:\n  {path}\nNothing here can raise that — it "
+            f"is the kernel's limit.")
 
 
 def unbindable(root: Path | None = None) -> str | None:
@@ -174,6 +269,20 @@ def rung(kind: str, environ: dict | None = None) -> str:
     if raw not in RUNGS:
         raise ValueError(f"${name}={raw} is not one of {', '.join(RUNGS)}")
     return raw
+
+
+class NoAnswer(Exception):
+    """A front end that was asked and got nothing back.
+
+    Distinct from a front end that answered `deny`, and the distinction is the
+    whole of `answered_by`: a person declining and nobody being there produce
+    the same verdict for the agent — a refusal — and must not produce the same
+    *record*, because only one of them is consent somebody withheld. The first
+    version of the relay logged an unanswered timeout as `person`, which is
+    exactly the lie `D37`'s falsifier watches for.
+
+    Raised by a front end, caught in `decide`, answered `unanswered`.
+    """
 
 
 @dataclass
@@ -258,7 +367,7 @@ class Broker:
         held = self.granted(agent, kind, target)
         if held is not None:
             return _answer(req, "allow", f"already granted: {held.value}",
-                           grant=None, remembered=True)
+                           grant=None, remembered=True, by="grant")
 
         unmountable = self._unmountable(req)
         if unmountable:
@@ -275,26 +384,44 @@ class Broker:
         if level == "off":
             return _answer(req, "deny",
                            f"${LADDERS[kind][0]}=off — this broker answers "
-                           f"nothing; the gate's own verdict stands")
+                           f"nothing; the gate's own verdict stands", by="rung")
+        if level not in ("auto", "scoped", "user"):
+            return _answer(req, "deny", f"unhandled rung {level!r}")
         if level == "auto":
-            allow, why, grant = self._auto(req)
-            return self._settle(req, agent, allow, why, grant)
-        if level == "scoped" or level == "user":
+            ask, by = (lambda: self._auto(req)), "auto"
+        else:
             if self.prompt is None:
                 return _answer(req, "deny", "no way to ask — broker has no "
-                                            "front end attached")
-            # Published around the wait, not inside it. `D24` gave a blocked
-            # agent a heartbeat so `expire` would stop parking work that was
-            # only waiting — which cost the other half of `Seen`: a blocked
-            # agent now looks *alive*, which is the same ambiguity from the
-            # other side. This is what tells them apart. `P-F7`.
-            self._waiting(agent, req)
-            try:
-                allow, why, grant = self.prompt(req, level)
-            finally:
-                self._waiting(agent, None)
-            return self._settle(req, agent, allow, why, grant)
-        return _answer(req, "deny", f"unhandled rung {level!r}")
+                                            "front end attached",
+                               by="unanswered")
+            ask, by = (lambda: self.prompt(req, level)), "person"
+
+        # Published around the wait, not inside it. `D24` gave a blocked agent
+        # a heartbeat so `expire` would stop parking work that was only
+        # waiting — which cost the other half of `Seen`: a blocked agent now
+        # looks *alive*, which is the same ambiguity from the other side. This
+        # is what tells them apart. `P-F7`.
+        #
+        # **Around `auto` too, and that is not the belt-and-braces it looks
+        # like.** An auto policy used to be assumed instantaneous — a function
+        # of the request, deciding here — and one that *waits* (a relay on the
+        # `auto` rung, answered by a session elsewhere) blocks the agent
+        # exactly as a person does. `unattachable` describes an unattached
+        # `auto` as a run that reports itself healthy while nothing is in
+        # force, and a blocked-but-invisible agent is the same reading arriving
+        # by another road.
+        self._waiting(agent, req)
+        try:
+            allow, why, grant = ask()
+        except NoAnswer as exc:
+            # A refusal for the agent, and not a decision in the log. Every
+            # seam raises it: a terminal at EOF, and either relay nobody
+            # answered — the same event through different doors.
+            return _answer(req, "deny", str(exc) or "nobody answered",
+                           by="unanswered")
+        finally:
+            self._waiting(agent, None)
+        return self._settle(req, agent, allow, why, grant, by=by)
 
     def _waiting(self, agent: str, req: dict | None) -> None:
         """Publish, or clear, what `agent` is blocked on.
@@ -351,11 +478,11 @@ class Broker:
             return False, "no auto policy is attached to this broker", None
         return self.auto(req)
 
-    def _settle(self, req, agent, allow, why, grant) -> dict:
+    def _settle(self, req, agent, allow, why, grant, *, by: str) -> dict:
         if allow and grant is not None:
             self.grants.setdefault(agent, []).append(grant)
         return _answer(req, "allow" if allow else "deny", why,
-                       grant=grant)
+                       grant=grant, by=by)
 
     # ---- the socket ------------------------------------------------------
 
@@ -414,7 +541,8 @@ class Broker:
         try:
             res = self.decide(req)
         except Exception as exc:  # never raise at a blocked agent
-            res = _answer(req, "deny", f"the broker could not decide ({exc!r})")
+            res = _answer(req, "deny", f"the broker could not decide ({exc!r})",
+                          by="broker")
         # Written first, then recorded, because whether it *arrived* is part of
         # what happened. A person can spend two minutes on a prompt, and the
         # gate that asked may be gone by the time they answer.
@@ -435,6 +563,10 @@ class Broker:
         entry = {"agent": req.get("agent"), "kind": req.get("kind"),
                  "target": req.get("target"), "task": (req.get("holding") or {}).get("task"),
                  "verdict": res.get("verdict"), "reason": res.get("reason"),
+                 # What decided, beside what was decided. Without it an `auto`
+                 # verdict and a person's read identically afterwards, and the
+                 # rung split records none of the accountability it claims.
+                 "by": res.get("by", "broker"),
                  "grant": res.get("grant"), "remembered": res.get("remembered", False),
                  "delivered": delivered}
         with contextlib.suppress(Exception):
@@ -442,9 +574,30 @@ class Broker:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
+#: What produced a verdict, for the log. The vocabulary is closed and small on
+#: purpose: it is read by a person asking *who actually decided this*, and a
+#: field with room for prose would answer that with prose.
+#:
+#: `person` is the only one that means somebody was asked. A relay front end
+#: records `person` too — deliberately, because a relay is transport and the
+#: human at the other end of it is the decider — which is exactly the claim
+#: `D37`'s falsifier watches: a relay that answered *by itself* and still wrote
+#: `person` would make this field a lie in the one artefact a supervisor reads
+#: afterwards.
+ANSWERED_BY = ("person", "auto", "grant", "rung", "broker", "unanswered")
+
+
 def _answer(req: dict, verdict: str, reason: str, *, grant: Grant | None = None,
-            remembered: bool = False) -> dict:
-    out = {"v": 1, "id": req.get("id"), "verdict": verdict, "reason": reason}
+            remembered: bool = False, by: str = "broker") -> dict:
+    """One verdict, and what produced it.
+
+    `by` defaults to `broker` — the structural refusals, which no rung and no
+    person had any part in: an unknown kind, an unsigned request, a target
+    outside the floor's mounts. A default of `person` would have been the
+    dangerous way round.
+    """
+    out = {"v": 1, "id": req.get("id"), "verdict": verdict, "reason": reason,
+           "by": by if by in ANSWERED_BY else "broker"}
     if grant is not None:
         out["grant"] = {"kind": grant.kind, "value": grant.value, "until": "lease"}
     if remembered:
@@ -510,7 +663,8 @@ def terminal_prompt(req: dict, level: str) -> tuple[bool, str, Grant | None]:
             answer = input(f"  {choices}: ").strip().lower()[:1]
         except (EOFError, KeyboardInterrupt):
             print()
-            return False, "no answer from the supervisor", None
+            raise NoAnswer("no answer from the supervisor — the terminal "
+                           "closed or the prompt was interrupted") from None
         if answer == "a":
             return True, "allowed once by the supervisor", None
         if answer == "d":
@@ -518,6 +672,206 @@ def terminal_prompt(req: dict, level: str) -> tuple[bool, str, Grant | None]:
         if answer == "s" and level == "scoped":
             return (True, f"scope granted by the supervisor: {scope.value}",
                     scope)
+
+
+class Relay:
+    """The relay channel: one question out, one verdict back, on a connection.
+
+    The file version this replaces published the pending question and collected
+    the answer as two files. Both were **passively forgeable** — write the
+    answer and walk away, and the blocked agent collects it — which is how an
+    agent came to grant itself `curl … | sh` with the log recording `by:
+    person`. Moving them outside every writable root fixed the easy case; a
+    connection removes the artifact altogether. There is nothing lying about
+    between the question and its answer, so forging one means winning a race
+    against the legitimate answerer rather than leaving a file where it will be
+    picked up.
+
+    **What this is not is a boundary.** The socket is a filesystem object and
+    the agent runs as the same user, so it can `connect()` like anything else.
+    What actually stops it is the confinement floor, which keeps every write —
+    and every socket — outside the project out of reach. That is a deliberate,
+    recorded risk: see `D40`, which is open, and which is why this docstring
+    says so rather than implying more.
+
+    Serial by construction, like the broker it serves: `decide` handles one
+    request at a time, so there is exactly one question outstanding and the
+    slot below needs no queue.
+    """
+
+    def __init__(self, root: Path | None = None, wait: float = RELAY_WAIT):
+        self.root = root if root is not None else project.find().root
+        self.wait = wait
+        self._lock = threading.Lock()
+        self._pending: dict | None = None
+        self._answered = threading.Event()
+        self._verdict: tuple[bool, str, Grant | None] | None = None
+
+    # ---- the two seams ---------------------------------------------------
+
+    def prompt(self, req: dict, level: str) -> tuple[bool, str, Grant | None]:
+        """The `user`/`scoped` front end. Recorded `person`."""
+        return self._await(req, level)
+
+    def auto(self, req: dict) -> tuple[bool, str, Grant | None]:
+        """The `auto` policy. Recorded `auto`.
+
+        The same body as `prompt`, and that is the point: they differ in
+        nothing but the rung they are attached to, so what a verdict is
+        *called* is the only thing that separates them. Two implementations
+        would be two chances for that to drift.
+        """
+        return self._await(req, "auto")
+
+    def _await(self, req: dict, level: str) -> tuple[bool, str, Grant | None]:
+        published = dict(req)
+        published["level"] = level
+        published["since"] = time.time()
+        published["scope"] = _scope_for(req).value if level == "scoped" else None
+        with self._lock:
+            self._pending = published
+            self._verdict = None
+            self._answered.clear()
+        try:
+            if not self._answered.wait(self.wait):
+                raise NoAnswer(
+                    f"nobody answered the relay within {int(self.wait)}s — the "
+                    f"caller's own deadline had already passed")
+            with self._lock:
+                got = self._verdict
+            if got is None:                       # answered, then withdrawn
+                raise NoAnswer("the relay was answered and the verdict was lost")
+            return got
+        finally:
+            with self._lock:
+                self._pending = None
+
+    # ---- the socket ------------------------------------------------------
+
+    def path(self) -> Path:
+        return channel_dir(self.root) / RELAY_SOCK_NAME
+
+    def peek(self) -> dict | None:
+        """The question outstanding right now, or `None`."""
+        with self._lock:
+            return dict(self._pending) if self._pending else None
+
+    def answer(self, ident: str, allow: bool, why: str,
+               grant: Grant | None = None) -> str | None:
+        """Deliver a verdict. The reason it was refused, or `None` if taken.
+
+        Matched on the id, so a verdict for a question that has already timed
+        out is refused rather than applied to whatever is being asked now —
+        ids are stable over `(agent, kind, target)`, which is exactly what
+        makes a late answer dangerous.
+        """
+        with self._lock:
+            if self._pending is None:
+                return "nothing is waiting on a relayed answer"
+            if self._pending.get("id") != ident:
+                return (f"that verdict is for {ident}, and the question "
+                        f"outstanding is {self._pending.get('id')}")
+            self._verdict = (bool(allow), why, grant)
+            self._answered.set()
+        return None
+
+    def serve(self, stop: threading.Event | None = None) -> None:
+        """Listen for `peek` and `answer`, until `stop`.
+
+        Its own socket rather than the broker's, and its own directory: the
+        broker's lives in the project because that is where agents must reach
+        it, and this one must be somewhere they cannot.
+        """
+        path = self.path()
+        why = _too_long(path)
+        if why is not None:
+            raise OSError(why)
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            srv.bind(str(path))
+            path.chmod(0o600)
+            srv.listen(8)
+            srv.settimeout(0.2)
+            while stop is None or not stop.is_set():
+                try:
+                    conn, _ = srv.accept()
+                except socket.timeout:
+                    continue
+                with conn:
+                    with contextlib.suppress(Exception):
+                        self._handle(conn)
+        finally:
+            srv.close()
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+
+    def _handle(self, conn: socket.socket) -> None:
+        raw = _read_line(conn)
+        try:
+            msg = json.loads(raw) if raw else {}
+        except ValueError:
+            _write_line(conn, {"error": "not JSON"})
+            return
+        op = msg.get("op")
+        if op == "peek":
+            _write_line(conn, {"pending": self.peek()})
+            return
+        if op == "answer":
+            grant = None
+            if msg.get("grant"):
+                grant = Grant(kind=msg["grant"]["kind"],
+                              value=msg["grant"]["value"])
+            why = self.answer(msg.get("id"), bool(msg.get("allow")),
+                              str(msg.get("why") or ""), grant)
+            _write_line(conn, {"ok": why is None, "error": why})
+            return
+        _write_line(conn, {"error": f"unknown op {op!r}"})
+
+
+def _relay_call(root: Path | None, msg: dict) -> dict | None:
+    """One request to a relay, or `None` where none is listening."""
+    root = root if root is not None else project.find().root
+    path = channel_dir(root) / RELAY_SOCK_NAME
+    if not path.exists():
+        return None
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(5)
+            s.connect(str(path))
+            s.sendall((json.dumps(msg, ensure_ascii=False) + "\n").encode())
+            raw = _read_line(s)
+        return json.loads(raw) if raw else None
+    except (OSError, ValueError):
+        return None
+
+
+def relaying(root: Path | None = None) -> bool:
+    """Whether a relay is listening — as opposed to nothing being asked."""
+    return _relay_call(root, {"op": "peek"}) is not None
+
+
+def pending_ask(root: Path | None = None) -> dict | None:
+    """The request waiting on a relayed answer, or `None`.
+
+    What `dg-agent consent` reads. `None` means nothing is blocked *on a
+    relay* — never that nothing is blocked, which is `waiting()`'s question.
+    """
+    got = _relay_call(root, {"op": "peek"})
+    return (got or {}).get("pending")
+
+
+def send_answer(root: Path | None, ident: str, allow: bool, why: str,
+                grant: Grant | None = None) -> str | None:
+    """Deliver a verdict to the relay. The refusal, or `None` if it was taken."""
+    msg = {"op": "answer", "id": ident, "allow": bool(allow), "why": why}
+    if grant is not None:
+        msg["grant"] = {"kind": grant.kind, "value": grant.value}
+    got = _relay_call(root, msg)
+    if got is None:
+        return "no relay is listening — is the broker running with `--relay`?"
+    return None if got.get("ok") else (got.get("error") or "refused")
 
 
 def _verb(req: dict) -> str:

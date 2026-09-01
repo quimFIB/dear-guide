@@ -89,7 +89,7 @@ class Wizard(App):
                          "still yours to change, and `customise` leaves them "
                          "at the tool's own defaults.", classes="hint")
             with RadioSet(id="preset"):
-                for name, row, _, _ in fanout.preset_rows(self.proj):
+                for name, row, _, _, _ in fanout.preset_rows(self.proj):
                     yield RadioButton(f"{name}  —  {row}",
                                       value=(name == self._preset))
                 yield RadioButton("customise  —  the tool's own defaults",
@@ -130,6 +130,16 @@ class Wizard(App):
             with RadioSet(id="decide"):
                 for p in cross.POLICIES:
                     yield RadioButton(p, value=(p == self.plan.decide))
+
+            yield Label("May an agent write the store itself?  $DG_APPLY",
+                        classes="q")
+            yield Static("own: it applies its own staged ops, so an added "
+                         "question lands without you · never: it only stages, "
+                         "and a caller with no $DG_AGENT applies.",
+                         classes="hint")
+            with RadioSet(id="apply"):
+                for p_ in env.APPLY_POLICIES:
+                    yield RadioButton(p_, value=(p_ == self.plan.apply))
 
             yield Label("Where may an agent write?  $DG_WRITE", classes="q")
             yield Static("launch: this project and /tmp; anywhere else asks "
@@ -254,6 +264,7 @@ class Wizard(App):
             agents=n,
             host=self._chosen("host", self.plan.host),
             decide=self._chosen("decide", self.plan.decide),
+            apply=self._chosen("apply", self.plan.apply),
             write=self._chosen("write", self.plan.write),
             area=self._chosen("area", self.plan.area),
             budget=budget,
@@ -304,7 +315,8 @@ class Wizard(App):
         """
         out = fanout.apply_preset(self.plan, preset, self.proj)
         with self.prevent(RadioButton.Changed, RadioSet.Changed):
-            for rid, value in (("decide", out.decide), ("write", out.write),
+            for rid, value in (("decide", out.decide), ("apply", out.apply),
+                           ("write", out.write),
                                ("area", out.area), ("confine", out.confine),
                                ("floor", out.floor)):
                 for button in self.query_one(f"#{rid}", RadioSet).query(RadioButton):
