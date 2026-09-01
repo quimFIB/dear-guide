@@ -1294,3 +1294,57 @@ def test_the_adapters_tell_the_gate_what_they_will_wait():
     ts = (ROOT / "opencode" / "dear-guide.ts").read_text()
     assert ts.count('"--deadline", DEADLINE') == 2, \
         "both the write gate and the command gate name the bound"
+
+
+# ---- every module has to survive being the first one imported (`G-F8`) ----
+
+
+def test_every_module_can_be_the_first_one_imported():
+    """A cycle is invisible to a suite that always imports in the same order.
+
+    `dg` and `dg-agent` reach `cli`/`agent_cli` first, which pull the tree in an
+    order that happens to work, and `conftest` does the same — so 2255 tests
+    passed against a `dgraph.confine` that could not be imported on its own.
+    `wizard` and `wizard_tui` went with it, since they import `confine` first.
+
+    The cycle came in with `P12`'s fix: `env.VARS` stopped copying
+    `confine.CONFINE_MODES` and started reading it. `_confine_modes` defers its
+    import and its docstring says why — and `VARS` *calls* it at module level,
+    so the lazy import resolves eagerly and the deferral bought nothing. The
+    mitigation was right and its own caller defeated it.
+
+    Each import runs in its own interpreter, because the point is the *first*
+    import and a shared process only has one.
+    """
+    import subprocess
+    import sys
+
+    mods = sorted(p.stem for p in (ROOT / "dgraph").glob("*.py")
+                  if p.stem != "__init__")
+    assert len(mods) > 20, "the module list came back suspiciously short"
+
+    broken = []
+    for name in mods:
+        r = subprocess.run([sys.executable, "-c", f"from dgraph import {name}"],
+                           capture_output=True, text=True, cwd=str(ROOT))
+        if r.returncode != 0:
+            broken.append(f"{name}: {r.stderr.strip().splitlines()[-1]}")
+    assert not broken, "modules that cannot be imported first:\n  " + \
+        "\n  ".join(broken)
+
+
+def test_the_confinement_vocabulary_is_bound_before_its_own_imports():
+    """The property the fix rests on, stated where a reader will meet it.
+
+    `env` reads these two tuples while `confine` is still initialising, so they
+    have to be bound before `confine` imports anything that can reach back.
+    Asserted on source order rather than on behaviour, because the behaviour is
+    already covered above and this is the *reason* — a later edit that moves
+    `import limits` back to the top would pass a behaviour test on whichever
+    import order it happened to run in.
+    """
+    src = (ROOT / "dgraph" / "confine.py").read_text(encoding="utf-8")
+    for name in ("BACKENDS", "CONFINE_MODES"):
+        assert src.index(f"\n{name} = ") < src.index("\nfrom dgraph import limits"), (
+            f"{name} is bound after `import limits`, which reaches `env`, "
+            f"which reads {name} — importing `confine` first will raise")

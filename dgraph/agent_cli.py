@@ -513,9 +513,13 @@ def agent_setup(
 
     if as_json:
         print(json.dumps({
-            "ready": all(c.ok for c in checks),
-            "checks": [{"ok": c.ok, "label": c.label, "fix": c.fix}
-                       for c in checks],
+            # Barring checks only. The two advisory ones — nothing ready to
+            # claim, and no broker listening — describe runs that are unusual
+            # and legitimate, and an agent reading `ready: false` for either
+            # would refuse to set up a fan-out somebody meant. `G-F7`.
+            "ready": all(c.ok for c in checks if c.bars),
+            "checks": [{"ok": c.ok, "label": c.label, "fix": c.fix,
+                        "bars": c.bars} for c in checks],
             # Every field, from the plan itself. Listed by hand, this reported
             # eight of eleven — and the three it left out were the three an
             # agent calling back with flags could not have known about
@@ -586,9 +590,24 @@ def agent_setup(
     written = fanout.write(plan, proj)
     for p in written:
         cli.con.print(f"[green]wrote[/] {p.relative_to(proj.root)}")
+    # **The broker comes before the launcher, and this line used to say
+    # otherwise.** Naming `./launch.sh` as the next step is what taught people
+    # to skip the step `agentic/QUICKSTART.md` calls the one people skip: with
+    # nothing listening, `dg gate` answers `ask`, the host turns that into a
+    # permission prompt, and a headless run has nobody to answer it. Said here
+    # as well as in `readiness()` because this is the last line on the screen
+    # and the checks scroll off. Audit `G-F7`.
+    from dgraph import broker as _broker
+    try:
+        up = _broker.listening(proj.root)
+    except Exception:
+        up = False
+    nxt = (f"Then `./{written[1].relative_to(proj.root)}`" if up else
+           f"Then start a broker — `dg-agent broker`, or `--relay` to answer "
+           f"from a session — and `./{written[1].relative_to(proj.root)}`")
     cli.con.print(f"[dim]read {written[0].relative_to(proj.root)} before launching "
-              f"— the three answers only you can give are near the top. Then "
-              f"`./{written[1].relative_to(proj.root)}`[/]")
+              f"— the three answers only you can give are near the top. "
+              f"{nxt}[/]")
 
 
 def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:

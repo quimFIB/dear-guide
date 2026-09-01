@@ -983,3 +983,92 @@ def test_the_prompt_tells_the_agent_which_of_the_two_trays_it_is_in(proj):
     assert "$DG_APPLY=own" in own and "your own" in own
     assert "$DG_APPLY=never" in never and "stage only" in never.lower()
     assert "approval queue" in never
+
+
+# ---- the step people skip (audit `G-F7`) ---------------------------------
+
+
+def test_readiness_says_when_nothing_will_answer_an_escalation(proj):
+    """Four green ticks and a launch command, for a run where every escalation
+    is a refusal nobody chose.
+
+    `dg gate` answers `ask` where it cannot decide; with no broker listening
+    that `ask` reaches the host as a permission prompt, and a headless
+    `claude -p` has nobody to answer it. Every check beside this one is about
+    the *graph* — which is why this was missing rather than argued away."""
+    checks = fanout.readiness(proj)
+    broker_check = [c for c in checks if "broker" in c.label]
+    assert broker_check, "readiness says nothing about the broker"
+    assert not broker_check[0].ok
+    assert "refused, not asked" in broker_check[0].label
+    assert "dg-agent broker" in broker_check[0].fix
+
+
+def test_the_broker_check_clears_when_one_is_listening(proj, monkeypatch):
+    """A warning that never clears is one people learn to read past."""
+    from dgraph import broker as _broker
+    monkeypatch.setattr(_broker, "listening", lambda root=None: True)
+    ok = [c for c in fanout.readiness(proj) if "broker" in c.label]
+    assert ok and ok[0].ok and "is listening" in ok[0].label
+
+
+def test_readiness_never_raises_over_the_broker(proj, monkeypatch):
+    """Read-only and never raises is `readiness`'s own contract — it is the
+    first thing both modes show, and a wizard that fell over while reporting
+    something missing would be reporting it the hard way."""
+    from dgraph import broker as _broker
+
+    def boom(root=None):
+        raise OSError("no socket here")
+
+    monkeypatch.setattr(_broker, "listening", boom)
+    checks = fanout.readiness(proj)          # must not raise
+    assert [c for c in checks if "broker" in c.label][0].ok is False
+
+
+def test_setup_names_the_broker_before_the_launcher(proj):
+    """The last line on the screen, and the one that used to point past the
+    step it depends on. `readiness` scrolls off; this does not."""
+    res = run(proj, "setup", "--preset", "contributor", "--brief", "x",
+              "--confine", "off")
+    assert res.exit_code == 0, res.output
+    tail = res.output
+    assert "start a broker" in tail, \
+        "setup names ./launch.sh as the next step with nothing listening"
+    # …and the order is the point: the broker is named before the launcher.
+    assert tail.index("start a broker") < tail.index("launch.sh`"), \
+        "the launcher is offered before the thing it depends on"
+
+
+def test_an_advisory_check_does_not_bar_the_run(proj):
+    """`ready` is computed from the checks that *bar*, and the distinction is a
+    field rather than a comment.
+
+    It was a comment: the ready-tasks check said "a warning rather than a bar"
+    and `--json` computed `ready` from every check, so the warning barred and
+    the sentence saying otherwise was read by nobody. Found because the broker
+    check landed beside it and turned `ready` false for a run that was fine.
+    `G-F7`.
+    """
+    checks = fanout.readiness(proj)
+    advisory = [c for c in checks if not c.bars]
+    assert {"broker", "ready to claim"} <= {
+        w for c in advisory for w in ("broker", "ready to claim")
+        if w in c.label}, "the two advisory checks are not marked advisory"
+    # No broker is listening in this fixture, so an advisory check is failing…
+    assert any(not c.ok for c in advisory)
+    # …and the run is still ready, which is the whole claim.
+    got = json.loads(run(proj, "setup", "--json").stdout)
+    assert got["ready"] is True
+    assert any(c["bars"] is False for c in got["checks"]), \
+        "an agent reading this door cannot tell a warning from a refusal"
+
+
+def test_a_missing_store_still_bars(proj):
+    """The other half — `bars` defaults to True, so a new prerequisite refuses
+    until somebody argues it should not."""
+    (proj.root / "tasks.json").unlink()
+    checks = fanout.readiness(proj)
+    tasks = [c for c in checks if "tasks.json" in c.label][0]
+    assert tasks.bars and not tasks.ok
+    assert json.loads(run(proj, "setup", "--json").stdout)["ready"] is False

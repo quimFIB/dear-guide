@@ -34,7 +34,21 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dgraph import limits
+# ---- the vocabulary, bound before anything is imported -------------------
+#
+# **Above `import limits`, and that placement is the whole of `G-F8`.** This
+# module reads `limits`, which reads `env`, whose `VARS` table reads the two
+# tuples below — so importing `confine` *first* re-entered it while these were
+# still unbound and raised `AttributeError` on a partially initialised module.
+#
+# `env` already knew: `_confine_modes` defers its import and says why. What
+# defeated that is `VARS` **calling** it at module level, so the lazy import
+# resolves eagerly after all. Binding the data before the cycle can re-enter
+# closes it from this side, whichever module a caller reaches for first.
+#
+# They are plain tuples with no dependencies, so nothing is lost by hoisting
+# them; what is gained is that `from dgraph import confine` works on its own,
+# which it did not.
 
 #: The backends, and what each costs.
 #:
@@ -60,6 +74,8 @@ CONFINE_MODES = ("off", "require")
 
 #: `$DG_FLOOR`. Which backend, when one is required.
 FLOOR_ENV = "DG_FLOOR"
+
+from dgraph import limits  # noqa: E402  — see the note above
 
 
 @dataclass(frozen=True)

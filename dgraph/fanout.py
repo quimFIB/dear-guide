@@ -126,10 +126,22 @@ def templates() -> Path:
 
 @dataclass
 class Check:
-    """One prerequisite, and how to satisfy it if it is not met."""
+    """One prerequisite, and how to satisfy it if it is not met.
+
+    `bars` is the difference between *this cannot run* and *this can run and
+    you should know*. It was a **comment** until `G-F7`: the check below the
+    ready-tasks one said "a warning rather than a bar" and `--json` computed
+    `ready` from `all(c.ok …)`, so the warning barred and the sentence saying
+    otherwise was read by nobody. A distinction with two severities and one
+    field is a distinction that is not made.
+    """
     ok: bool
     label: str
     fix: str = ""
+    #: `False` for a check that reports rather than refuses. Default `True`,
+    #: which is the safe way round: a new prerequisite bars until somebody
+    #: argues it should not.
+    bars: bool = True
 
 
 @dataclass
@@ -398,10 +410,37 @@ def readiness(proj: project.Project | None = None) -> list[Check]:
     out.append(Check(bool(ready),
                      f"{len(ready)} task(s) ready to claim"
                      + (f": {', '.join(ready[:5])}" if ready else ""),
-                     "dg task add, and settle what blocks the rest"))
+                     "dg task add, and settle what blocks the rest",
+                     bars=False))
     # A warning rather than a bar: a fan-out against a graph with nothing open
     # is legitimate if the agents are meant to propose questions, and refusing
     # it would refuse the one thing fan-out is best at.
+
+    # **The step people skip, and the one nothing checked.** Every check above
+    # is about the *graph*; this is the first about the *run*, which is why it
+    # was missing rather than argued away. `dg gate` answers `ask` where it
+    # cannot decide, and with no broker listening that `ask` reaches the host
+    # as a permission prompt — in a headless `claude -p` there is nobody to
+    # answer it, so every escalation for the whole run is a refusal nobody
+    # chose. That is the failure the broker exists for, met by a launcher who
+    # had just been shown four green ticks. Audit `G-F7`.
+    #
+    # A warning like the one above it, and for a comparable reason: a broker is
+    # genuinely optional — its own docstring says a project that never starts
+    # one behaves exactly as it did before — and a run whose allowlist covers
+    # everything it needs will never escalate. Refusing that would refuse a
+    # legitimate run; saying nothing is what produced the finding.
+    try:
+        from dgraph import broker as _broker
+        up = _broker.listening(proj.root)
+    except Exception:
+        up = False
+    out.append(Check(
+        up,
+        "a consent broker is listening" if up else
+        "no consent broker — an escalation will be refused, not asked",
+        "dg-agent broker (a terminal), or `--relay` to answer from a session",
+        bars=False))
     return out
 
 
