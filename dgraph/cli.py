@@ -289,7 +289,28 @@ STATUS_STYLE = {
 UNREADABLE = (OSError, ValueError, TypeError)
 
 
-def _say_sealed(exc: "project.Sealed") -> bool:
+def _broker_apply() -> dict | None:
+    """Ask the broker to land what this writer may land unattended. D17, D43.
+
+    `None` where there is nothing to ask — an unowned caller is the supervisor
+    and needs no hands, and a run with no broker is `consult`'s own `None`.
+
+    The verdict is returned rather than acted on, because a refusal is worth
+    saying: the reason names which op disqualified the batch, and a writer told
+    *why* it may not land something is a writer that stops retrying it.
+    """
+    who = pending.owner()
+    if not who:
+        return None
+    from dgraph import broker
+    return broker.consult(
+        broker.request(broker.APPLY_KIND, project.TASKS_NAME, who,
+                       "the record is sealed by this run's confinement floor",
+                       deadline=broker.APPLY_WAIT),
+        timeout=broker.APPLY_WAIT)
+
+
+def _say_sealed(exc: "project.Sealed", res: dict | None = None) -> bool:
     """The one rendering of a store a confinement floor refused.
 
     Written once and called from both apply doors rather than repeated in each,
@@ -303,7 +324,9 @@ def _say_sealed(exc: "project.Sealed") -> bool:
     for a supervisor — has already happened.
     """
     con.print(f"[yellow]· not applied — the record is sealed[/]\n{_x(exc)}\n"
-              f"[dim]nothing was lost: the ops are still staged, and "
+              + (f"[dim]the broker would not land it either: "
+                 f"{res.get('reason')}[/]\n" if res else "")
+              + f"[dim]nothing was lost: the ops are still staged, and "
               f"`dg pending` is what the supervisor reads[/]")
     return False
 
@@ -3163,7 +3186,17 @@ def _apply_tasks(ops: list[dict], dry_run: bool) -> bool:
                   f"unstage[/]")
         return False
     except project.Sealed as exc:
-        return _say_sealed(exc)
+        # The one door where a sealed store is not the end. D15 names the ops a
+        # writer may land unattended and D43 says `own` means the same under a
+        # floor as off it; the broker is outside the floor and has the hands.
+        # Decisions have no such door on purpose — `$DG_DECIDE` is the rule
+        # there, and no op in that store is a fact about the run.
+        res = _broker_apply()
+        if res and res.get("verdict") == "allow":
+            con.print(f"[green]✓[/] {res.get('reason')} → {project.TASKS_NAME}, "
+                      f"through the broker; the record is sealed to this run")
+            return True
+        return _say_sealed(exc, res)
     except UNREADABLE as exc:
         con.print(f"[red]✗ nothing written — {project.TASKS_NAME} could not "
                   f"be read[/]\n{_x(exc)}\n"

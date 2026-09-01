@@ -239,6 +239,79 @@ def protected_paths(root: Path | None) -> list[str]:
     return [_real(root / project.STORE_NAME), _real(root / project.TASKS_NAME)]
 
 
+#: The statuses a writer may move its own work *into* without a supervisor.
+#: `DONE` is deliberately absent -- see `mechanical` below.
+_MECHANICAL_STATUS = ("DOING", "PARKED")
+
+
+def mechanical(op: dict, agent: str) -> str | None:
+    """Why `agent` may not have the broker apply this staged op — or `None`.
+
+    The judgement behind the broker's mechanical apply, here rather than in
+    `dgraph/broker.py` because the broker holds no rule of its own: the
+    division this module opens with is that the launcher declares, this module
+    judges, and the enforcer relays. A broker that acts is still a broker that
+    consults, so the list lives beside `protected_paths`, which is the other
+    half of the same confinement policy.
+
+    **The rule, not a list.** An op qualifies when it moves the writer's own
+    work through the run: filing it, claiming it, putting it down. Today that
+    is `add_task` and a `set_status` into `DOING` or `PARKED`, and a fourth
+    would need its own decision rather than a line here.
+
+    **`DONE` is excluded, and that is the whole boundary.** Finishing asserts
+    the criteria were met, which is a judgement about the record rather than a
+    fact about the run — so it stays in the tray for whoever is supervising.
+    Where a supervisor wants closing to happen unattended the judgement is
+    delegated to a decider on the `auto` rung, named as itself; it is never
+    reached by letting a writer certify its own work.
+
+    **Its own, by the name the tray already carries.** Every staged op is
+    stamped with its writer, so ownership is read from the op rather than
+    recomputed — an op some other agent staged is refused here even when the
+    task it names is one the caller holds, because two writers sharing a tray
+    is precisely the case the ownership stamp exists for.
+
+    Nothing about the *store* is judged here: whether the op applies at all is
+    `task_pending.vet`'s question and it is asked again under the lock. This
+    answers only whether it is the kind of op a writer may land unattended.
+    """
+    if not agent:
+        # A supervisor does not come through here: it applies its own tray with
+        # `dg apply` and needs nobody's hands. An unsigned request is a bug or
+        # a forgery, and neither is an authority to act on.
+        return "no writer named"
+    by = (op.get("by") or "").strip()
+    if by != agent:
+        return f"staged by {by or 'nobody'}, not by {agent}"
+    kind = op.get("op")
+    if kind == "add_task":
+        return None
+    if kind == "set_link":
+        # Filing work includes saying what it is for, and `add_task` already
+        # carries `because` and `evidence_for` inline -- so refusing the link
+        # only when it arrives as its own op would treat one assertion two ways
+        # according to which command spelled it. D44.
+        #
+        # **Adding only.** `clear` is `dg task unlink`, which retracts a premise
+        # rather than stating one, and a retraction is not filing: it takes back
+        # a claim the record already carries, which is the shape of a judgement
+        # about the record and belongs with `done`.
+        if op.get("clear"):
+            return ("unlinking retracts a premise the record already carries "
+                    "— that is the supervisor's, like finishing")
+        return None
+    if kind != "set_status":
+        return f"{kind!r} is not an op a writer may land unattended"
+    status = op.get("status")
+    if status in _MECHANICAL_STATUS:
+        return None
+    if status == "DONE":
+        return ("finishing asserts the criteria were met — that is the "
+                "supervisor's, or an `auto` decider's, and never the writer's")
+    return f"status {status!r} is not one a writer may land unattended"
+
+
 #: What makes a command line something this cannot judge.
 #:
 #: Not a denylist of dangerous things -- that is the shape `TRIGGERS` has, and

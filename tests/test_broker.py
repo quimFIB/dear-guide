@@ -1195,3 +1195,264 @@ def test_a_remembered_grant_still_answers_a_caller_that_has_gone(tmp_path):
     res = b.decide(req)
     assert res["by"] == "rung", \
         "the rung no longer answers for a caller that has gone"
+
+
+# ---- the mechanical apply: D15, D17, D43 ---------------------------------
+#
+# The broker's one action. Everything above answers a question; these pin the
+# request that asks it to *do* something, and the boundary that keeps that from
+# becoming a way for a writer to approve its own work.
+
+
+def test_mechanical_admits_filing_claiming_and_parking():
+    """D15 as re-decided: the ops that move a writer's own work through a run."""
+    for op in ({"op": "add_task", "id": "T9", "by": "a"},
+               {"op": "set_status", "task": "T9", "status": "DOING", "by": "a"},
+               {"op": "set_status", "task": "T9", "status": "PARKED", "by": "a"}):
+        assert limits.mechanical(op, "a") is None, op
+
+
+def test_mechanical_refuses_done_because_it_is_a_judgement():
+    """The boundary the whole list exists to draw. Not a capability question:
+    finishing asserts the criteria were met, and a writer saying that about its
+    own work is the one thing the tray is for."""
+    why = limits.mechanical(
+        {"op": "set_status", "task": "T9", "status": "DONE", "by": "a"}, "a")
+    assert why and "criteria" in why
+
+
+def test_mechanical_refuses_another_writers_op():
+    """Ownership is read off the tray's stamp, not from the task. Two writers
+    share one tray, which is what the stamp is for."""
+    op = {"op": "add_task", "id": "T9", "by": "b"}
+    assert limits.mechanical(op, "a") == "staged by b, not by a"
+
+
+def test_mechanical_refuses_an_unsigned_request():
+    """A supervisor never comes through here — it applies its own tray and
+    needs nobody's hands — so an unsigned one is a bug or a forgery."""
+    assert limits.mechanical({"op": "add_task", "id": "T9"}, "") == "no writer named"
+
+
+def test_apply_is_not_on_the_ladders():
+    """`LADDERS` maps a kind to the rung that answers it, and there is no rung
+    here: nobody is asked. Keeping it out is what lets the rung readings go on
+    describing exactly the questions a person can be put."""
+    assert broker.APPLY_KIND not in broker.LADDERS
+
+
+def _project(tmp_path, ops):
+    (tmp_path / "tasks.json").write_text(json.dumps(
+        {"areas": ["x"], "tasks": [], "edges": []}), encoding="utf-8")
+    (tmp_path / ".dgraph-task-pending.json").write_text(
+        json.dumps(ops), encoding="utf-8")
+
+
+def test_broker_lands_a_writers_own_claim(tmp_path, monkeypatch):
+    """The whole point: an agent that cannot write the sealed store has its
+    filing and its claim in `tasks.json` anyway, through hands outside it."""
+    monkeypatch.chdir(tmp_path)
+    _project(tmp_path, [
+        {"op": "add_task", "id": "T9", "title": "Work", "area": "x", "by": "a"},
+        {"op": "set_status", "task": "T9", "status": "DOING", "by": "a"},
+    ])
+    b = broker.Broker(root=tmp_path)
+    res = b._decide(broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed"))
+    assert res["verdict"] == "allow", res
+    stored = json.loads((tmp_path / "tasks.json").read_text())
+    assert [t["id"] for t in stored["tasks"]] == ["T9"]
+    assert stored["tasks"][0]["status"] == "DOING"
+
+
+def test_broker_leaves_done_in_the_tray(tmp_path, monkeypatch):
+    """The claim lands and the outcome does not, in one batch. This is the
+    split D15 draws, seen from the tray a supervisor then reads."""
+    monkeypatch.chdir(tmp_path)
+    _project(tmp_path, [
+        {"op": "add_task", "id": "T9", "title": "Work", "area": "x", "by": "a"},
+        {"op": "set_status", "task": "T9", "status": "DOING", "by": "a"},
+        {"op": "set_status", "task": "T9", "status": "DONE",
+         "outcome": "did it", "by": "a"},
+    ])
+    b = broker.Broker(root=tmp_path)
+    assert b._decide(broker.request(
+        broker.APPLY_KIND, "tasks.json", "a", "sealed"))["verdict"] == "allow"
+    left = json.loads((tmp_path / ".dgraph-task-pending.json").read_text())
+    assert [o["status"] for o in left] == ["DONE"]
+    assert json.loads((tmp_path / "tasks.json").read_text())["tasks"][0][
+        "status"] == "DOING"
+
+
+def test_broker_will_not_land_another_writers_work(tmp_path, monkeypatch):
+    """`b`'s ops stay staged while `a` asks. A shared tray is the case the
+    ownership stamp exists for, and the hands must not launder it."""
+    monkeypatch.chdir(tmp_path)
+    _project(tmp_path, [
+        {"op": "add_task", "id": "T9", "title": "Mine", "area": "x", "by": "a"},
+        {"op": "add_task", "id": "T8", "title": "Theirs", "area": "x", "by": "b"},
+    ])
+    b = broker.Broker(root=tmp_path)
+    assert b._decide(broker.request(
+        broker.APPLY_KIND, "tasks.json", "a", "sealed"))["verdict"] == "allow"
+    assert [t["id"] for t in json.loads(
+        (tmp_path / "tasks.json").read_text())["tasks"]] == ["T9"]
+    left = json.loads((tmp_path / ".dgraph-task-pending.json").read_text())
+    assert [o["id"] for o in left] == ["T8"]
+
+
+def test_broker_says_why_when_nothing_qualifies(tmp_path, monkeypatch):
+    """A writer told *why* it may not land something stops retrying it, which
+    is the difference between this and a bare deny."""
+    monkeypatch.chdir(tmp_path)
+    _project(tmp_path, [
+        {"op": "set_status", "task": "T9", "status": "DONE", "by": "a"}])
+    b = broker.Broker(root=tmp_path)
+    res = b._decide(broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed"))
+    assert res["verdict"] == "deny"
+    assert "criteria" in res["reason"]
+
+
+def test_broker_refuses_an_unsigned_apply(tmp_path):
+    b = broker.Broker(root=tmp_path)
+    req = broker.request(broker.APPLY_KIND, "tasks.json", "", "sealed")
+    assert b._decide(req)["verdict"] == "deny"
+
+
+def test_broker_refuses_a_project_it_was_not_started_for(tmp_path, monkeypatch):
+    """The worst failure this module could have: a store written in a project
+    nobody implicated. The apply stack finds a project by walking up from the
+    working directory, so a broker rooted elsewhere must refuse rather than
+    write whatever it happens to be standing in."""
+    other = tmp_path / "other"
+    other.mkdir()
+    _project(other, [{"op": "add_task", "id": "T9", "title": "W",
+                      "area": "x", "by": "a"}])
+    monkeypatch.chdir(other)
+    b = broker.Broker(root=tmp_path)          # rooted at the parent, not `other`
+    res = b._decide(broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed"))
+    assert res["verdict"] == "deny"
+    assert "was not started for" in res["reason"]
+    assert json.loads((other / "tasks.json").read_text())["tasks"] == []
+
+
+def test_serve_stands_the_broker_in_its_project(tmp_path, monkeypatch):
+    """`serve` chdirs, which is what makes the check above pass in a real run
+    rather than merely refuse. Pinned because it is a side effect nothing else
+    would notice going missing."""
+    monkeypatch.chdir(tmp_path.parent)
+    (tmp_path / "decisions.json").write_text(
+        json.dumps({"areas": [], "vertices": [], "edges": []}), encoding="utf-8")
+    b = broker.Broker(root=tmp_path)
+    stop = threading.Event()
+    t = threading.Thread(target=b.serve, kwargs={"stop": stop}, daemon=True)
+    t.start()
+    for _ in range(200):
+        if broker.listening(tmp_path):
+            break
+        time.sleep(0.01)
+    try:
+        assert pathlib.Path.cwd().resolve() == tmp_path.resolve()
+    finally:
+        stop.set()
+        t.join(timeout=5)
+
+
+def test_mechanical_admits_a_link_but_not_an_unlink():
+    """D44. Filing includes saying what work is for, and `add_task` already
+    carries the same fields inline — but `clear` is `dg task unlink`, which
+    takes a premise back out, and a retraction is a judgement about the record."""
+    assert limits.mechanical(
+        {"op": "set_link", "task": "T9", "evidence_for": "D2", "by": "a"}, "a") is None
+    why = limits.mechanical(
+        {"op": "set_link", "task": "T9", "clear": ["because"], "by": "a"}, "a")
+    assert why and "retracts" in why
+
+
+# ---- end to end, over the socket -----------------------------------------
+#
+# Everything above drives `_decide` directly, which skips the half of this that
+# is a *channel*: framing, the accept loop, the serial decider, and the chdir
+# `serve` does so the apply stack finds the right project. A confined agent
+# reaches the broker only through that channel.
+
+
+def _serving(tmp_path):
+    b = broker.Broker(root=tmp_path)
+    stop = threading.Event()
+    t = threading.Thread(target=b.serve, kwargs={"stop": stop}, daemon=True)
+    t.start()
+    for _ in range(300):
+        if broker.listening(tmp_path):
+            return b, stop, t
+        time.sleep(0.01)
+    stop.set()
+    raise AssertionError("the broker never started listening")
+
+
+def test_a_claim_lands_over_the_socket(tmp_path, monkeypatch):
+    """The whole path a confined writer actually takes: no direct call, no
+    shared object — a request down a unix socket and a store on the far side."""
+    monkeypatch.chdir(tmp_path)
+    _project(tmp_path, [
+        {"op": "add_task", "id": "T9", "title": "Work", "area": "x", "by": "a"},
+        {"op": "set_link", "task": "T9", "evidence_for": "D2", "by": "a"},
+        {"op": "set_status", "task": "T9", "status": "DOING", "by": "a"},
+        {"op": "set_status", "task": "T9", "status": "DONE",
+         "outcome": "done it", "by": "a"},
+    ])
+    b, stop, t = _serving(tmp_path)
+    try:
+        res = broker.consult(
+            broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed"),
+            root=tmp_path, timeout=10)
+    finally:
+        stop.set(); t.join(timeout=5)
+    assert res and res["verdict"] == "allow", res
+    stored = json.loads((tmp_path / "tasks.json").read_text())["tasks"][0]
+    assert stored["status"] == "DOING"          # the claim landed
+    assert stored["evidence_for"] == "D2"       # and the link with it, D44
+    left = json.loads((tmp_path / ".dgraph-task-pending.json").read_text())
+    assert [o["status"] for o in left] == ["DONE"]   # the judgement did not
+
+
+def test_the_client_seam_asks_and_reports(tmp_path, monkeypatch):
+    """`cli._broker_apply` is what `dg apply` reaches for where it used to give
+    up. Driven with `$DG_AGENT` set, because an unowned caller is the supervisor
+    and has no business asking for hands."""
+    from dgraph import cli
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DG_AGENT", "a")
+    _project(tmp_path, [
+        {"op": "add_task", "id": "T9", "title": "Work", "area": "x", "by": "a"}])
+    b, stop, t = _serving(tmp_path)
+    try:
+        res = cli._broker_apply()
+    finally:
+        stop.set(); t.join(timeout=5)
+    assert res and res["verdict"] == "allow", res
+    assert [x["id"] for x in json.loads(
+        (tmp_path / "tasks.json").read_text())["tasks"]] == ["T9"]
+
+
+def test_the_client_seam_is_silent_for_a_supervisor(tmp_path, monkeypatch):
+    """No `$DG_AGENT` is not a lesser identity, it is the person — who applies
+    their own tray and needs nobody's hands."""
+    from dgraph import cli
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DG_AGENT", raising=False)
+    _project(tmp_path, [])
+    assert cli._broker_apply() is None
+
+
+def test_no_broker_is_no_broker(tmp_path, monkeypatch):
+    """The property the module opens with, reaching the new request too: with
+    nothing listening the writer is told nothing landed, rather than proceeding
+    as though it had."""
+    from dgraph import cli
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DG_AGENT", "a")
+    _project(tmp_path, [
+        {"op": "add_task", "id": "T9", "title": "W", "area": "x", "by": "a"}])
+    res = cli._broker_apply()
+    assert res is None or res.get("verdict") == "deny"
+    assert json.loads((tmp_path / "tasks.json").read_text())["tasks"] == []

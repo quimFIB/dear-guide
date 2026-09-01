@@ -17,6 +17,27 @@ of every agent at once.
 **Never `ask`.** Resolving is the whole job; an adapter that received `ask`
 from here would be back where it started.
 
+**It also acts, for one closed class of ops, and still holds no policy.** Under
+a confinement floor the two stores are read-only to everything inside it, `dg
+apply` cannot write and the agent's own claim on its own work reaches nothing
+-- so D17 and D43 put the write here, on the outside, where the hands are. That
+makes this the only process that writes a sealed store during a run, which
+looks like the paragraph above being retracted and is not: `limits.mechanical`
+says which ops qualify and `task_pending.vet` says whether they apply at all.
+This composes neither. The claim was never that the broker does not act; it is
+that the broker holds no rule of its own, and an actor that consults for every
+judgement keeps it.
+
+    gate (agent-side)  ──unix socket──►  broker (supervisor-side)
+                       ◄── allow/deny
+    dg apply (sealed)  ──unix socket──►  broker  ──►  tasks.json
+                       ◄── applied/deny
+
+`add_task`, a claim, a park and a link go through it; `dg task done` does not,
+because finishing asserts the criteria were met and that is a judgement about
+the record rather than a fact about the run. D15 draws that line and D44 puts
+the link on the near side of it.
+
 Two rungs decide who answers, and they are read *here* rather than by the gate,
 which runs inside the agent's own process -- see `LADDERS`.
 
@@ -158,6 +179,20 @@ RELAY_MARGIN = 20
 #: routine and running a program is the thing that can do anything at all.
 LADDERS = {"write": ("DG_CONSENT_WRITE", "scoped"),
            "exec": ("DG_CONSENT_EXEC", "user")}
+
+#: The one request that is not a consent question. `LADDERS` is a map from a
+#: kind to the rung that answers it, and there is no rung here: `limits.
+#: mechanical` decides, mechanically, and no person is ever asked. Kept out of
+#: `LADDERS` rather than given a fourth rung so that `unattachable` and the
+#: rung readings go on describing exactly the questions a person can be asked.
+APPLY_KIND = "apply"
+
+#: How long a writer waits for its own ops to land. Nobody is being asked, so
+#: this bounds a queue rather than a person: the broker decides serially, and a
+#: mechanical apply can arrive behind an `exec` question somebody is thinking
+#: about. Short on purpose -- giving up leaves the ops staged, which is exactly
+#: where a refusal leaves them, and a supervisor applies them at the end anyway.
+APPLY_WAIT = 60.0
 
 RUNGS = ("off", "auto", "scoped", "user")
 
@@ -425,10 +460,75 @@ class Broker:
             with contextlib.suppress(Exception):
                 self._waiting((req.get("agent") or "").strip(), None)
 
+    def _apply(self, req: dict) -> dict:
+        """Land the requester's own mechanically-appliable ops. D17, D43, D15.
+
+        **The broker acts here, and still holds no rule.** `limits.mechanical`
+        says which ops qualify and `task_pending.vet` says whether they apply
+        at all; this composes neither. That is the same division the module
+        header states for a verdict, reaching one act.
+
+        **Whole or nothing.** The eligible ops go in tray order, per D42, and a
+        batch that will not apply leaves everything staged rather than landing
+        a prefix -- `apply_tasks` validates against a copy before it writes,
+        and the trays are held across the read so a stage arriving mid-apply
+        waits rather than being lost.
+
+        Imported here rather than at the top: this module is deliberately thin
+        on imports because it holds no policy, and pulling the apply stack into
+        its import graph would say otherwise. `project._sealed` does the same.
+        """
+        from dgraph import applying, limits, pending, task_pending
+
+        agent = (req.get("agent") or "").strip()
+        if not agent:
+            return _answer(req, "deny", "no agent named in the request")
+        # The apply stack finds its project by walking up from the working
+        # directory. `serve` stands this process in `self.root` so that answer
+        # is this project, but a `Broker` constructed and driven directly never
+        # ran that -- and a write to *another* project's store would be this
+        # module's worst possible failure: silent, and in a file nobody
+        # implicated. Refused rather than guessed at.
+        try:
+            found = project.find().root
+        except Exception as exc:                       # noqa: BLE001
+            return _answer(req, "deny", f"no project to apply into: {exc}")
+        if os.path.realpath(found) != os.path.realpath(self.root):
+            return _answer(req, "deny",
+                           f"this broker serves {self.root}, but the working "
+                           f"directory resolves to {found} — refusing to write "
+                           f"a store it was not started for")
+        try:
+            with applying.trays():
+                tray = pending.load(task_pending.path())
+                mine = [op for op in tray
+                        if limits.mechanical(op, agent) is None]
+                if not mine:
+                    refused = {limits.mechanical(op, agent) for op in tray
+                               if (op.get("by") or "").strip() == agent}
+                    return _answer(req, "deny",
+                                   "nothing staged that a writer may land "
+                                   "unattended" + (f": {'; '.join(sorted(r for r in refused if r))}"
+                                                   if refused else ""))
+                applying.apply_tasks(mine)
+        except Exception as exc:                       # noqa: BLE001
+            # Every failure is the same answer to the caller: nothing landed
+            # and the ops are still staged, which is exactly where a refused
+            # apply leaves them anyway. The reason travels so the agent can
+            # say something truthful rather than retry blindly.
+            return _answer(req, "deny", f"apply refused: {exc}")
+        return _answer(req, "allow", f"applied {len(mine)} op(s) for {agent}")
+
     def _decide(self, req: dict) -> dict:
         agent = (req.get("agent") or "").strip()
         kind = req.get("kind")
         target = req.get("target") or ""
+        if kind == APPLY_KIND:
+            # Before the ladder, like `_unmountable` and for its reason: there
+            # is no rung on which this is a person's answer. D17 and D43 put
+            # the write here because nothing inside a floor can write a sealed
+            # store, and D15 says which ops -- neither is a verdict to compose.
+            return self._apply(req)
         if kind not in LADDERS:
             return _answer(req, "deny", f"unknown request kind {kind!r}")
         if not agent:
@@ -597,6 +697,18 @@ class Broker:
         already the unit a gate blocks on: a gate that died mid-wait leaves a
         closed socket and nothing to reap.
         """
+        # **The project this serves is where it stands.** Since `_apply` the
+        # broker writes a store, and the apply stack finds a project by walking
+        # up from the working directory -- `applying.apply_tasks`,
+        # `task_pending.path` and `cross.guard_tasks` all do, in three modules.
+        # Threading a project through every one of them would widen a shared
+        # API used by two hosts for the sake of this caller; standing in the
+        # right place answers all three at once, and is true anyway: a broker
+        # is started for one project and serves it until it stops. `_apply`
+        # checks rather than trusts, for the embedded caller that never gets
+        # here.
+        with contextlib.suppress(OSError):
+            os.chdir(self.root)
         why = unbindable(self.root)
         if why is not None:
             raise OSError(why)
