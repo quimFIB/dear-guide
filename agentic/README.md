@@ -61,6 +61,16 @@ What follows from it: **a reading taken in the browser is of the record, not of
 the record plus what is proposed.** To see a proposal as a graph, take it —
 `dg apply --agent <name>` — or read it in the footer and in `dg pending`.
 
+**And one thing the panel is not: covered by the floor.** A confinement floor
+mounts `decisions.json` and `tasks.json` read-only, so an agent under one
+cannot write them whatever its `$DG_APPLY` says — that is the tool's single
+non-cooperative boundary. `dg serve` is a separate process outside that floor,
+it writes both stores, and its token is served to anything that asks for the
+page. So a panel left open beside a confined run is a writer the floor does not
+cover. Nothing here stops that, deliberately: it is recorded rather than fixed,
+like the relay's own exposure in `D40`. If a run needs the floor's guarantee to
+be unconditional, do not leave a panel open beside it.
+
 ### ...and the real reason, which is narrower than "agents judge badly"
 
 The graph has two exits from a decision and both are wrong for a premature one.

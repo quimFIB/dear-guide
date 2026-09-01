@@ -124,6 +124,11 @@ For agents exploring a graph nobody aimed them at. `scout` is the preset: it
 proposes and settles nothing, runs no build tools, and — the part that matters —
 **writes nothing to the store at all**.
 
+With one exception worth knowing before you rely on it: `dg serve` runs outside
+the confinement floor and writes both stores, and any process that can reach it
+on localhost can ask it to. A panel open beside a confined run is a writer the
+floor does not cover — see *"one thing the panel is not"* in `README.md`.
+
 ```sh
 dg-agent setup --preset scout --brief "…" --findings "findings/<task-id>.md"
 dg-agent broker --relay --write-rung scoped --exec-rung scoped
