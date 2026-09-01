@@ -477,6 +477,10 @@ def agent_setup(
     capture: bool = typer.Option(False, "--capture",
                                  help="record every `dg` call of the run"),
     out: str = typer.Option(None, "--out", help=f"output dir (default {fanout.OUT_DIR}/)"),
+    force: bool = typer.Option(
+        False, "--force",
+        help="regenerate over artefacts you have edited by hand, losing those "
+             "edits — refused without this"),
     plain: bool = typer.Option(False, "--plain",
                                help="ask a question at a time, never the "
                                     "full-screen form"),
@@ -587,6 +591,28 @@ def agent_setup(
         print(fanout.render_launch(plan, proj))
         cli.con.print("[dim]--dry-run: nothing written[/]")
         return
+    # **Refused rather than overwritten.** Both artefacts a launcher is told to
+    # edit — `scout.md`, and `env.json`'s allowlist, which `MARKERS` says is a
+    # proposal to cut down — were regenerated in silence by a re-run, and
+    # re-running is what this tool recommends when the graph has moved on. A
+    # launcher who had removed `cargo` got it back and was told nothing.
+    #
+    # At the door, before anything is written, like every other refusal here:
+    # a partial regeneration is worse than none, since the three files are read
+    # against each other. Audit `G-F9`.
+    changed = fanout.edited(proj, plan)
+    if changed and not force:
+        cli.con.print(f"[red]✗ nothing written[/] — you have edited "
+                      f"{'these' if len(changed) > 1 else 'this'} since "
+                      f"`dg-agent setup` generated "
+                      f"{'them' if len(changed) > 1 else 'it'}:")
+        for rel in changed:
+            cli.con.print(f"    {cli._x(rel)}")
+        cli.con.print("[dim]regenerating would lose those edits. Move them "
+                      "aside and re-run, or `--force` and mean it. The run "
+                      "you already have still launches: `./"
+                      f"{plan.out}/launch.sh`[/]")
+        raise typer.Exit(1)
     written = fanout.write(plan, proj)
     for p in written:
         cli.con.print(f"[green]wrote[/] {p.relative_to(proj.root)}")

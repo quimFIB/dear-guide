@@ -201,6 +201,88 @@ class Plan:
         return proj.root / self.out
 
 
+#: What the last `dg-agent setup` wrote, by relative path and digest.
+#:
+#: **The artefacts are meant to be edited, and were overwritten without a
+#: word.** `agentic/README.md` expects a launcher to edit `scout.md`, and
+#: `MARKERS` says in as many words that the proposed allowlist goes into
+#: `env.json` "where it can be read back, **cut down**, and diffed next time".
+#: Re-running `setup` — which is the right move when the graph has moved on,
+#: and which this tool recommends — silently restored both. A launcher who had
+#: removed `cargo` from the allowlist got it back and was told nothing. Audit
+#: `G-F9`.
+#:
+#: A digest rather than a copy, because the question is only *was this
+#: changed*, and a copy would be a second artefact to keep true.
+#:
+#: **The lock question, answered rather than left** (shapes 17, 18): nothing
+#: holds this and nothing needs to. It is written by `dg-agent setup`, which a
+#: person runs at a terminal one at a time, and read by the next run of the
+#: same command. Two concurrent setups in one checkout would already be racing
+#: on the three artefacts themselves, which no lock here would fix. It is in
+#: `test_write_lock_matrix.UNGUARDED` with that reason beside the others.
+#:
+#: `.dgraph-*`, so the `.gitignore` `dg init` writes covers it the day it
+#: first appears — it is scratch about a generated directory, and a digest
+#: that travelled between clones would describe files this checkout never
+#: wrote.
+DIGEST_NAME = ".dgraph-fanout.json"
+
+
+def _digest(text: str) -> str:
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def record_written(proj: project.Project, written: list[Path]) -> None:
+    """Remember what `setup` just generated, so the next run can tell an edit
+    from its own output. Best-effort: a setup must not fail because scratch
+    could not be written, and the cost of losing this is a warning that does
+    not fire."""
+    out = {}
+    for p in written:
+        try:
+            out[str(p.relative_to(proj.root))] = _digest(
+                p.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+    with __import__("contextlib").suppress(OSError):
+        project.write_atomic(proj.root / DIGEST_NAME,
+                             json.dumps(out, indent=2, ensure_ascii=False) + "\n")
+
+
+def edited(proj: project.Project, plan: Plan) -> list[str]:
+    """Which of this plan's artefacts a person has changed since they were
+    generated — the files a re-run would destroy.
+
+    Empty where the directory does not exist yet, where every file is exactly
+    as `setup` left it, and where there is no record to compare against. That
+    last case is the one worth stating: **a missing digest reads as "not
+    edited"**, so a `fanout/` written before this existed is overwritten as it
+    always was rather than refusing on a suspicion. Failing closed here would
+    make every launcher's first run after upgrading a refusal they could not
+    explain.
+    """
+    try:
+        known = json.loads((proj.root / DIGEST_NAME)
+                           .read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return []
+    out = []
+    for name in ("scout.md", "launch.sh", ENV_NAME):
+        rel = f"{plan.out}/{name}"
+        was = known.get(rel)
+        if not was:
+            continue
+        try:
+            now = _digest((proj.root / rel).read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if now != was:
+            out.append(rel)
+    return out
+
+
 def env_plan(plan: Plan) -> dict:
     """The `Plan`'s environment, as the object `env.json` holds.
 
@@ -1064,4 +1146,8 @@ def write(plan: Plan, proj: project.Project | None = None) -> list[Path]:
     project.write_atomic(spec, json.dumps(env_plan(plan), indent=2,
                                           ensure_ascii=False) + "\n")
     launch.chmod(0o755)
-    return [scout, launch, spec]
+    written = [scout, launch, spec]
+    # Last, and after `chmod`, so what is recorded is the file as it will be
+    # read back. See `DIGEST_NAME`.
+    record_written(proj, written)
+    return written

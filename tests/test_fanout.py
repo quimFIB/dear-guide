@@ -1072,3 +1072,76 @@ def test_a_missing_store_still_bars(proj):
     tasks = [c for c in checks if "tasks.json" in c.label][0]
     assert tasks.bars and not tasks.ok
     assert json.loads(run(proj, "setup", "--json").stdout)["ready"] is False
+
+
+# ---- regenerating over an edit (audit `G-F9`) ----------------------------
+
+
+def test_a_rerun_refuses_to_destroy_what_a_launcher_edited(proj):
+    """Both artefacts a person is *told* to edit were regenerated in silence.
+
+    `agentic/README.md` expects `scout.md` to be edited, and `MARKERS` says the
+    proposed allowlist goes into `env.json` "where it can be read back, cut
+    down, and diffed next time" — while re-running `setup` is what this tool
+    recommends when the graph has moved on. A launcher who had removed `cargo`
+    got it back and was told nothing.
+    """
+    assert run(proj, "setup", "--preset", "scout").exit_code == 0
+    scout = proj.root / fanout.OUT_DIR / "scout.md"
+    spec = proj.root / fanout.OUT_DIR / fanout.ENV_NAME
+
+    scout.write_text(scout.read_text(encoding="utf-8") + "\nMINE\n",
+                     encoding="utf-8")
+    cut = json.loads(spec.read_text(encoding="utf-8"))
+    cut["exec_allow"] = [n for n in cut["exec_allow"] if n != "grep"]
+    spec.write_text(json.dumps(cut, indent=2) + "\n", encoding="utf-8")
+
+    res = run(proj, "setup", "--preset", "scout")
+    assert res.exit_code == 1, res.output
+    assert "nothing written" in res.output
+    # Both are named, not just the first one found.
+    assert "scout.md" in res.output and fanout.ENV_NAME in res.output
+    assert "MINE" in scout.read_text(encoding="utf-8")
+    assert "grep" not in json.loads(spec.read_text(encoding="utf-8"))["exec_allow"]
+    # …and the refusal says the run they have still works, since a launcher who
+    # just wanted to relaunch does not need to regenerate at all.
+    assert "launch.sh" in res.output
+
+
+def test_an_unedited_rerun_still_regenerates(proj):
+    """The common case has to stay free. Re-running to refresh the chain after
+    the graph has moved is the act this tool recommends, and a refusal there
+    would be the guard costing more than it saves."""
+    assert run(proj, "setup", "--preset", "scout").exit_code == 0
+    res = run(proj, "setup", "--preset", "contributor")
+    assert res.exit_code == 0, res.output
+    assert "wrote" in res.output
+    spec = json.loads((proj.root / fanout.OUT_DIR / fanout.ENV_NAME)
+                      .read_text(encoding="utf-8"))
+    assert spec["decide"] == "evidence", "the second plan did not land"
+
+
+def test_force_regenerates_over_an_edit(proj):
+    """The way out, which a refusal must always name."""
+    assert run(proj, "setup", "--preset", "scout").exit_code == 0
+    scout = proj.root / fanout.OUT_DIR / "scout.md"
+    scout.write_text(scout.read_text(encoding="utf-8") + "\nMINE\n",
+                     encoding="utf-8")
+    res = run(proj, "setup", "--preset", "scout", "--force")
+    assert res.exit_code == 0, res.output
+    assert "MINE" not in scout.read_text(encoding="utf-8")
+
+
+def test_a_fanout_generated_before_the_digest_existed_is_not_refused(proj):
+    """A missing record reads as *not edited*.
+
+    Failing closed would make the first run after upgrading a refusal nobody
+    could explain, over files the tool itself wrote. The digest is evidence of
+    an edit, and its absence is evidence of nothing."""
+    assert run(proj, "setup", "--preset", "scout").exit_code == 0
+    (proj.root / fanout.DIGEST_NAME).unlink()
+    scout = proj.root / fanout.OUT_DIR / "scout.md"
+    scout.write_text(scout.read_text(encoding="utf-8") + "\nMINE\n",
+                     encoding="utf-8")
+    assert fanout.edited(proj, fanout.defaults(proj)) == []
+    assert run(proj, "setup", "--preset", "scout").exit_code == 0

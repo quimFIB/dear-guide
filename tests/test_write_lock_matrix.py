@@ -28,7 +28,7 @@ import subprocess
 
 import pytest
 
-from dgraph import agents, project
+from dgraph import agents, fanout, project
 from tests.conftest import FIXTURE, TASK_FIXTURE
 
 #: The files a second writer in this clone can lose work in: both stores, both
@@ -45,8 +45,14 @@ GUARDED_NAMES = (agents.AGENTS_NAME,)
 #: lock in `editor.py`, because a person is typing in it and waiting is not
 #: the right answer; the detached server's run record is one process's note
 #: about itself.
+#: …and the fan-out digest, which records what `dg-agent setup` last generated
+#: so the next run can tell an edit from its own output (`G-F9`). Written and
+#: read by one command that a person runs at a terminal, one at a time; two
+#: concurrent setups would already be racing on the three artefacts themselves,
+#: which no lock here would fix.
 UNGUARDED = (project.VIEW_NAME, project.TASK_VIEW_NAME, project.EDIT_NAME,
-             ".dgraph-serve.json", ".dgraph-serve.log")
+             ".dgraph-serve.json", ".dgraph-serve.log",
+             fanout.DIGEST_NAME)
 
 
 @pytest.fixture
