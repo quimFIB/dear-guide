@@ -1406,11 +1406,17 @@ def test_the_drop_confirmation_describes_an_op_as_the_listing_does(run):
     run("add", "--id", "D07", "--title", "Seventh", "--area", "Alpha",
         "--after", "D05")
     rows = run("pending").output
-    for i, op in enumerate(pending.load()):
-        summary = run("drop", "0").output          # always the head, in order
+    staged = pending.load()
+    # `--group`, because `--after` stages the vertex and its edge as one act
+    # and `drop` refuses to take one member out (`G-F11`). The claim is
+    # unchanged and now covers more: every line of an act-wide drop has to
+    # describe its op the way the listing did.
+    summary = run("drop", "0", "--group").output
+    for op in staged:
         subject = op.get("vertex") or op.get("from") or op.get("id")
         assert subject in summary and subject in rows
         assert (op.get("op") or "?") in summary
+    assert pending.load() == []
 
 
 def test_dropping_an_unrecognised_op_still_confirms(run, store):

@@ -2408,7 +2408,14 @@ function fieldsOf(o){ return Object.keys(o).filter(k=>!OP_KEYS.has(k)); }
    Two batches, side by side and labelled, because `apply` treats them as two:
    a task batch that will not apply cannot stop a decision batch that would,
    and a tray that merged them would imply otherwise. */
-function opRow(o, i, kind){
+/* `act` is the ops staged alongside this one, **passed in and never looked
+   up**. The marker needs the row's siblings, and reaching for `PEND`/`groupOf`
+   from here made this function uncuttable: `test_doors` runs the real `opRow`
+   under node by slicing it out of the page, which is the right instinct
+   (`R-F9`) and works only while the slice depends on nothing outside it. So
+   the caller resolves the act and this renders it. Defaults to `[o]` — a
+   group of one, which is what an op with no group is. */
+function opRow(o, i, kind, act){
   const det = o.op==="close"?esc((o.answer||"").slice(0,90))
     : o.op==="reopen"?esc(o.why||"")
     : o.op==="set_status"?`→ ${esc(o.status)}`
@@ -2444,8 +2451,22 @@ function opRow(o, i, kind){
      the same rule the panel's "Compose in" button follows. */
   const editable = kind==="d" && ED && ED.available &&
                    ["close","reopen","add_vertex"].includes(o.op) && o.ref;
+  /* **Take this one act.** The finest grain the tray can offer: one op where
+     one op is the whole judgement, and all of it where it is not. Before
+     groups the accept half was per *writer* at best while the reject half was
+     per op, so a reviewer with three proposals from one agent took all three
+     or none. `G-F11`.
+
+     Offered on the first row of each act only — a second button on the second
+     member would be the same act twice. */
+  act = act && act.length ? act : [o];
+  const head = act[0].ref===o.ref;
+  const take = o.ref && head
+    ? `<button class="x" style="color:var(--ok,#8ec07c)" data-take="${esc(o.ref)}"
+         title="Apply ${act.length>1?`all ${act.length} ops of this act`:"this op"}, and leave the rest staged">✓</button>`
+    : "";
   return `<tr><td>${i}</td><td>${esc(o.op)}</td><td>${esc(node)}</td>
-    <td>${det}${mark}</td><td style="white-space:nowrap">${
+    <td>${det}${mark}${act.length>1?` <span class="muted">· 1 of ${act.length} in one act</span>`:""}</td><td style="white-space:nowrap">${take}${
       editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" title="Revise this op in ${esc(ED.editor||"the editor")}">✎</button>`:""
     }<button class="x" data-i="${i}" data-k="${kind}">✕</button></td></tr>`;
 }
@@ -2453,9 +2474,11 @@ function opRow(o, i, kind){
 /* Rows carry the index they had in the **unfiltered** tray. `opRow` writes it
    into `data-i` and the ✕ handler reads `PEND[i]` back out of it, so a narrowed
    table renumbered from zero would delete somebody else's op. */
-function trayTable(rows, kind){
+function trayTable(rows, kind, list){
+  /* The act each row belongs to, resolved here so `opRow` stays a function of
+     its arguments — see there. */
   return `<table><tr><th>#</th><th>op</th><th>node</th><th>detail</th><th></th></tr>`
-    + rows.map(r=>opRow(r.o,r.i,kind)).join("") + `</table>`;
+    + rows.map(r=>opRow(r.o,r.i,kind,groupOf(r.o,list))).join("") + `</table>`;
 }
 
 /* The writer the tray is narrowed to, or null for everybody. Page state, not
@@ -2524,8 +2547,8 @@ function tray(){
      point of being able to read one proposal at a time. */
   const clearBtn = (n,k) =>
     `<button class="chip" data-clear="${k}" style="margin-left:8px">clear ${n}${TRAYWHO?` by ${esc(TRAYWHO)}`:""}</button>`;
-  if(dRows.length) h+=`<div><h3>decisions (${dRows.length})${clearBtn(dRows.length,"d")}</h3>${trayTable(dRows,"d")}</div>`;
-  if(tRows.length) h+=`<div><h3>tasks (${tRows.length})${clearBtn(tRows.length,"t")}</h3>${trayTable(tRows,"t")}</div>`;
+  if(dRows.length) h+=`<div><h3>decisions (${dRows.length})${clearBtn(dRows.length,"d")}</h3>${trayTable(dRows,"d",PEND)}</div>`;
+  if(tRows.length) h+=`<div><h3>tasks (${tRows.length})${clearBtn(tRows.length,"t")}</h3>${trayTable(tRows,"t",TPEND)}</div>`;
   h+=`</div>`;
   $("#tray").innerHTML=h;
   $("#tray").querySelectorAll("button[data-who]").forEach(b=>b.onclick=()=>{
@@ -2544,7 +2567,27 @@ function tray(){
        shifts every position past what it removed, so a position can address a
        different op by the time it arrives. An id does not move. Audit F29. */
     const ref = (gone && gone.ref) || b.dataset.i;
-    await api((task?"/api/task-pending/":"/api/pending/")+encodeURIComponent(ref),{method:"DELETE"});
+    const base = (task?"/api/task-pending/":"/api/pending/")+encodeURIComponent(ref);
+    /* A group member cannot be dropped alone — staging it was one act, and
+       removing one op would leave the rest to be applied as though they meant
+       something they do not. The server refuses with the reason; the page has
+       to carry the way out, because a remedy that exists only as a CLI flag is
+       a dead end in a browser. `G-F11`. */
+    try{
+      await api(base,{method:"DELETE"});
+    }catch(err){
+      const act = groupOf(gone, list);
+      if(act.length<2) { say(err.message,"bad"); return; }
+      const rows = act.map(o=>`<li>${esc(opLine(o,task?"t":"d"))}</li>`).join("");
+      $("#side").innerHTML=`<h2>Drop the whole act?</h2>
+        <p class="muted">${esc(err.message.split("\n")[0])}</p>
+        <ul class="muted">${rows}</ul>
+        <p class="muted">Dropping the act turns this proposal down. Leaving it
+          whole keeps it reviewable — apply it, or clear this writer's work.</p>
+        <button class="x" id="dropAct" data-ref="${esc(ref)}"
+                data-k="${task?"t":"d"}">Drop all ${act.length}</button>`;
+      return;
+    }
     if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
     tray();
     /* "Staged …" is no longer true of a node whose op was just dropped. */
@@ -2553,6 +2596,52 @@ function tray(){
     if(node && node===cur()) cur()===sel?panel():taskPanel();
   });
 }
+
+/* Every op staged in the same act as `op`. `[op]` where it carries no group,
+   which is both a single-op command and every tray staged before groups
+   existed — `pending.group_of`'s twin, and the two must agree. */
+function groupOf(op, list){
+  if(!op) return [];
+  return op.group ? (list||[]).filter(o=>o.group===op.group) : [op];
+}
+
+/* One line describing an op, for a list that is not the tray table. */
+function opLine(o, kind){
+  const subject = o.vertex||o.task||o.id||o.from||"";
+  return `${o.ref||""}  ${o.op||"?"}  ${subject}`;
+}
+
+/* Apply one act, leaving everything else staged. The accept half at the same
+   grain as the reject half — see `opRow`. */
+addEventListener("click", async e=>{
+  const b=e.target.closest("[data-take]"); if(!b) return;
+  try{
+    const r = await api("/api/apply",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({group:b.dataset.take})});
+    Object.keys(NOTES).forEach(k=>delete NOTES[k]);
+    sel=null; tsel=null; await boot(); draw();
+    const bits=[];
+    if(r.applied) bits.push(`${r.applied} decision op(s)`);
+    if(r.applied_tasks) bits.push(`${r.applied_tasks} task op(s)`);
+    $("#side").innerHTML=`<p class="muted">Applied ${bits.join(" and ")} — one
+      act. Everything else is still staged.</p>`;
+  }catch(err){ say(err.message,"bad"); }
+});
+
+/* The act-wide drop the refusal offers. */
+addEventListener("click", async e=>{
+  const b=e.target.closest("#dropAct"); if(!b) return;
+  const task = b.dataset.k==="t";
+  try{
+    await api((task?"/api/task-pending/":"/api/pending/")
+              +encodeURIComponent(b.dataset.ref)+"?group=1",{method:"DELETE"});
+    if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
+    tray();
+    $("#side").innerHTML=`<p class="muted">The act was dropped. Nothing it
+      staged is left.</p>`;
+  }catch(err){ say(err.message,"bad"); }
+});
 
 $("#applyBtn").onclick=async()=>{
   try{

@@ -764,3 +764,96 @@ def test_a_removal_is_derived_after_the_ops_that_name_what_it_removes(g):
     kinds = [o["op"] for o in ops]
     assert kinds.index("remove_vertex") == len(kinds) - 1
     assert kinds.index("add_vertex") < kinds.index("add_edge")
+
+
+# ---- the enumeration, and what reads it (audit `G-F12`) -------------------
+
+
+def test_every_op_kind_is_contestable_or_argued_not_to_be():
+    """The half an enumeration cannot have on its own.
+
+    `_contest_*` spells its cases out one by one, which is right — the comment
+    above it argues that contested-ness cannot be derived from a refusal. What
+    that leaves is a list whose completeness nothing reads, under a report line
+    that asserts completeness: *"nothing contested — every op applies and the
+    result is valid"*. `set_status` sat outside the list for five statuses and
+    no reader could have told.
+
+    So every op kind either has a rule or is named in `CANNOT_CONFLICT` with
+    the reason two writers doing it to one record is not two judgements. A new
+    kind fails here on the day it is added.
+    """
+    ruled = {"close", "set_fields", "set_status"}
+    every = pending.OPS | task_pending.OPS
+    unjudged = every - ruled - set(integrate.CANNOT_CONFLICT)
+    assert not unjudged, (
+        "op kind(s) with no contest rule and no argument for having none: "
+        + ", ".join(sorted(unjudged)))
+
+    stale = set(integrate.CANNOT_CONFLICT) - every
+    assert not stale, (
+        "CANNOT_CONFLICT names op kind(s) neither store accepts: "
+        + ", ".join(sorted(stale)))
+
+    # A reason, not a placeholder — the table's value is the argument, and an
+    # empty string would pass a membership test while saying nothing.
+    for kind, why in integrate.CANNOT_CONFLICT.items():
+        assert len(why.split()) >= 4, f"{kind} is listed without a reason"
+
+
+def test_two_writers_moving_one_status_apart_is_contested(tg):
+    """The rule `_contest`'s docstring states, applied to the field every count
+    is derived from.
+
+    One writer finishes the work and records an outcome; the other abandons it.
+    Before this, `0 contested` and the arriving drop landed silently, leaving a
+    record that read DROPPED with the measured result printed underneath and
+    `dg check` reporting all invariants holding.
+    """
+    tid = sorted(tg.tasks)[0]
+    # Both sides stated, not inherited from the fixture's ordering: the rule is
+    # about a *move* from the base, so a base that already held the status
+    # under test would make this pass for the wrong reason.
+    base = copy.deepcopy(tg)
+    base.tasks[tid] = replace(base.tasks[tid], status="TODO")
+    mine = copy.deepcopy(tg)
+    mine.tasks[tid] = replace(mine.tasks[tid], status="DONE")
+
+    op = {"op": "set_status", "task": tid, "status": "DROPPED"}
+    got = integrate._contest_task(mine, base, op)
+    assert got is not None, "a drop over a completion is not contested"
+    assert "status differs" in got[1]
+    assert "DONE" in got[1] and "DROPPED" in got[1]
+
+
+def test_a_status_this_clone_never_moved_is_not_contested(tg):
+    """The other half of the rule, and the reason it is a rule rather than a
+    comparison: an op says *make it this*, so comparing what it writes against
+    what is here reports every op as contested. Measured against the base."""
+    tid = sorted(tg.tasks)[0]
+    base = copy.deepcopy(tg)
+    base.tasks[tid] = replace(base.tasks[tid], status="TODO")
+    mine = copy.deepcopy(base)                 # this clone never touched it
+
+    op = {"op": "set_status", "task": tid, "status": "DROPPED"}
+    assert integrate._contest_task(mine, base, op) is None
+
+    # …and two writers making the same edit is not a conflict either.
+    mine.tasks[tid] = replace(mine.tasks[tid], status="DROPPED")
+    assert integrate._contest_task(mine, base, op) is None
+
+
+def test_doing_is_not_exempt(tg):
+    """Decided rather than inherited: `DOING` is a claim about a run and not a
+    judgement about the work, which is an argument for exempting it. It is not
+    exempt — if somebody here is working on the task and a contribution says it
+    was dropped, that is what a reviewer should see."""
+    tid = sorted(tg.tasks)[0]
+    base = copy.deepcopy(tg)
+    base.tasks[tid] = replace(base.tasks[tid], status="TODO")
+    mine = copy.deepcopy(tg)
+    mine.tasks[tid] = replace(mine.tasks[tid], status="DOING")
+
+    got = integrate._contest_task(
+        mine, base, {"op": "set_status", "task": tid, "status": "DROPPED"})
+    assert got is not None and "DOING" in got[1]

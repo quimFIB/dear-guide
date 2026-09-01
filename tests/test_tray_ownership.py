@@ -1017,3 +1017,65 @@ def test_every_other_name_is_untouched(proj, run, monkeypatch):
         pending.clear(proj.pending)
         pending.stage_all([D07], proj.pending)
         assert owners(proj.pending) == [name], name
+
+
+# ---- narrowing by writer cannot cut an act (audit `G-F11`) ----------------
+
+
+def test_narrowing_by_writer_never_splits_an_act(proj, monkeypatch):
+    """A group is one writer's **by construction**, so `mine` cannot cut one.
+
+    `_with_refs` stamps `by` once per `stage_all` call and the group ref in the
+    same pass, so every member of an act carries the same name. That made
+    `apply --agent` safe without a line of code — which is exactly why it wants
+    a test: it was incidental before groups existed and is load-bearing after,
+    and nothing else would notice if a later change stamped `by` per op.
+    """
+    path = task_pending.path()
+    as_agent(monkeypatch, "a")
+    pending.stage_all([
+        {"op": "add_task", "id": "T80", "title": "second", "area": "Alpha"},
+        {"op": "add_dep", "from": "T01", "to": ["T80"], "kind": "precedes"},
+    ], path)
+    as_agent(monkeypatch, "b")
+    pending.stage_all([{"op": "add_task", "id": "T81", "title": "theirs",
+                        "area": "Alpha"}], path)
+
+    tray = pending.load(path)
+    acts = {}
+    for op in tray:
+        acts.setdefault(op.get("group") or op["ref"], []).append(op)
+    assert any(len(v) > 1 for v in acts.values()), "no multi-op act was staged"
+
+    # Every act is one writer's — the property the safety rests on.
+    for members in acts.values():
+        assert len({o.get("by") for o in members}) == 1
+
+    # …so every narrowing takes whole acts, whoever is asked for.
+    for who in ("a", "b"):
+        got, _ = pending.mine(tray, who)
+        for op in got:
+            whole = pending.group_of(tray, op)
+            assert all(o in got for o in whole), (
+                f"narrowing to {who} took part of an act")
+
+
+def test_clearing_one_writer_never_splits_an_act(proj, monkeypatch):
+    """`clear_agent`'s half of the same argument, and the reason it needs no
+    group logic of its own: it removes everything one writer staged, and an act
+    is one writer's."""
+    path = task_pending.path()
+    as_agent(monkeypatch, "a")
+    pending.stage_all([
+        {"op": "add_task", "id": "T80", "title": "second", "area": "Alpha"},
+        {"op": "add_dep", "from": "T01", "to": ["T80"], "kind": "precedes"},
+    ], path)
+    as_agent(monkeypatch, "b")
+    pending.stage_all([{"op": "add_task", "id": "T81", "title": "theirs",
+                        "area": "Alpha"}], path)
+
+    pending.clear_agent("a", path)
+    left = pending.load(path)
+    assert [o["id"] for o in left] == ["T81"], "a clear left half an act"
+    assert not any(o.get("group") for o in left), \
+        "the surviving op is a lone one and should carry no group"

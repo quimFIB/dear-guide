@@ -46,7 +46,15 @@ FIXTURE = {
 #: `dg edit` address it by, and `by` is who staged it. A test comparing a staged
 #: op against the dict it wrote is otherwise comparing against the tray's own
 #: bookkeeping.
-TRAY_KEYS = ("saw", "ref", "by")
+#: The tray's own bookkeeping, stripped before two doors' output is compared.
+#:
+#: `group` joins them with `G-F11`: it records which ops were staged in one
+#: act, and its value is a fresh ref per call — so two doors staging the same
+#: intent produce the same ops under different group ids, and a comparison that
+#: kept it would report a difference that is not one. What the doors must agree
+#: on is the *partition*, which `test_both_doors_group_the_same_way` asserts
+#: separately rather than by string equality here.
+TRAY_KEYS = ("saw", "ref", "by", "group")
 
 
 def bare(ops):

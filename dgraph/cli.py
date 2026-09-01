@@ -2775,7 +2775,11 @@ def export(
 
 @app.command(rich_help_panel=STAGE)
 def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
-                                   help="the op's id, or its position")) -> None:
+                                   help="the op's id, or its position"),
+         group: bool = typer.Option(
+             False, "--group",
+             help="drop every op staged in the same act, not just this one"),
+         ) -> None:
     """Unstage one op, by its id or its position, and say which one it was.
 
     **Quote the id when anything else may be writing.** The tray is shared —
@@ -2790,12 +2794,19 @@ def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
     reasons about. The two can never be confused — an id is letters only.
     """
     try:
-        gone = pending.drop(ref)
+        gone = ([pending.drop(ref)] if not group
+                else pending.drop_group(ref))
     except LookupError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    con.print(f"[green]dropped[/] {_x(ref)}: "
-              f"{_op_summary(gone, _PENDING_DETAIL, 'vertex')}")
+    except pending.ApplyError as exc:
+        # A group, and this took one member of it. `G-F11`.
+        con.print(f"[red]✗ nothing dropped[/]\n{_x(exc)}")
+        con.print(f"[dim]`dg drop {_x(ref)} --group` removes the whole act[/]")
+        raise typer.Exit(1) from None
+    for one in gone:
+        con.print(f"[green]dropped[/] {_x(one.get('ref', ref))}: "
+                  f"{_op_summary(one, _PENDING_DETAIL, 'vertex')}")
 
 
 @app.command(rich_help_panel=STAGE)
@@ -2816,6 +2827,39 @@ def clear(
                 other=task_pending.path(), other_cmd="dg task clear")
 
 
+def _scope_group(ops, task_ops, ref: str):
+    """Both trays narrowed to the one act `ref` names, or `None` with a reason.
+
+    Looks in both, because a `ref` is unique across the tool and a reviewer
+    reading `dg pending` should not have to know which store an id came from.
+    An id that is in neither is a typo, and the refusal says so with the count
+    of what is staged rather than silently applying nothing — the empty-scope
+    failure `refuse_apply_for` already argues about for names.
+    """
+    found = None
+    for tray in (ops or (), task_ops or ()):
+        for op in tray:
+            if op.get("ref") == ref:
+                found = op
+                break
+        if found:
+            break
+    if found is None:
+        con.print(f"[red]✗ nothing staged with id {_x(ref)}[/]\n"
+                  f"[dim]`dg pending` and `dg task pending` list what is "
+                  f"there; --group takes an op's id, and applies the act it "
+                  f"was staged in[/]")
+        return None
+    keep = {o.get("ref") for o in pending.group_of(
+        list(ops or ()) + list(task_ops or ()), found)}
+    mine_d = [o for o in (ops or ()) if o.get("ref") in keep]
+    mine_t = [o for o in (task_ops or ()) if o.get("ref") in keep]
+    rest = (len(ops or ()) + len(task_ops or ())) - len(mine_d) - len(mine_t)
+    left = (f"{rest} op(s) left staged — `dg pending` to read them"
+            if rest else "")
+    return mine_d, mine_t, left
+
+
 @app.command(rich_help_panel=STAGE)
 def apply(
     dry_run: bool = typer.Option(False, "--dry-run", "-n"),
@@ -2826,6 +2870,9 @@ def apply(
     agent: str = typer.Option(None, "--agent", metavar="NAME",
                               help="apply what ONE writer staged, by the name "
                                    "`dg pending` lists"),
+    group: str = typer.Option(None, "--group", metavar="REF",
+                              help="apply ONE act — the op with this id and "
+                                   "everything staged alongside it"),
 ) -> None:
     """Validate everything staged and write it.
 
@@ -2858,7 +2905,8 @@ def apply(
             con.print("[dim]nothing staged[/]")
             return
         chosen = [f for f, on in (("--all", all_), ("--mine", mine),
-                                  ("--agent", bool(agent))) if on]
+                                  ("--agent", bool(agent)),
+                                  ("--group", bool(group))) if on]
         if len(chosen) > 1:
             con.print(f"[red]{' and '.join(chosen)} ask for different "
                       f"scopes — pick one[/]")
@@ -2875,10 +2923,23 @@ def apply(
             raise typer.Exit(1)
         if agent and not _may_apply_for(agent, ops, task_ops):
             raise typer.Exit(1)
-        scoped = _scope(ops, task_ops, all_=all_, mine=mine, agent=agent)
-        if scoped is None:
-            raise typer.Exit(1)
-        ops, task_ops, left = scoped
+        if group:
+            # **The finest grain there is, and it is the act rather than the
+            # op.** `dg apply` was per-writer at best, so a reviewer with three
+            # proposals from one agent had to take all three or none — and the
+            # answer to "can I apply them one at a time?" was no, because the
+            # tray could not say which ops belonged together. Now it can, and
+            # the unit of approval is the unit of judgement: one op where one
+            # op is the whole act, and all of it where it is not. `G-F11`.
+            scoped = _scope_group(ops, task_ops, group)
+            if scoped is None:
+                raise typer.Exit(1)
+            ops, task_ops, left = scoped
+        else:
+            scoped = _scope(ops, task_ops, all_=all_, mine=mine, agent=agent)
+            if scoped is None:
+                raise typer.Exit(1)
+            ops, task_ops, left = scoped
         if not ops and not task_ops and not (ops is None or task_ops is None):
             whose = f"staged by {_x(agent)}" if agent else "of yours staged"
             con.print(f"[dim]nothing {whose} — {left}[/]")
@@ -4402,15 +4463,25 @@ _TASK_DETAIL = {
 def task_drop_op(
     ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
                               help="the op's id, or its position"),
+    group: bool = typer.Option(
+        False, "--group",
+        help="drop every op staged in the same act, not just this one"),
 ) -> None:
     """Unstage one staged task op, by id or position. See `dg drop`."""
     try:
-        gone = pending.drop(ref, task_pending.path())
+        gone = ([pending.drop(ref, task_pending.path())] if not group
+                else pending.drop_group(ref, task_pending.path()))
     except LookupError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    con.print(f"[green]dropped[/] task op {_x(ref)}: "
-              f"{_op_summary(gone, _TASK_DETAIL, 'task')}")
+    except pending.ApplyError as exc:
+        con.print(f"[red]✗ nothing dropped[/]\n{_x(exc)}")
+        con.print(f"[dim]`dg task drop-op {_x(ref)} --group` removes the "
+                  f"whole act[/]")
+        raise typer.Exit(1) from None
+    for one in gone:
+        con.print(f"[green]dropped[/] task op {_x(one.get('ref', ref))}: "
+                  f"{_op_summary(one, _TASK_DETAIL, 'task')}")
 
 
 @task_app.command("clear", rich_help_panel=T_STAGE)

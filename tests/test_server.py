@@ -1369,3 +1369,91 @@ def test_the_marker_never_restyles_the_record(srv, store):
     assert ".node.claimed rect" not in page, (
         "a rule restyles the record's own box on a claim — the mark must sit "
         "beside the reading, not alter it")
+
+
+# ---- the browser is the other door onto an act (audit `G-F11`) ------------
+
+
+def test_the_browser_cannot_drop_one_op_of_an_act(srv, dual):
+    """The rule is in `pending.drop`, which is the one door — so the browser
+    inherits it. What it does not inherit is a decent way to obey it, and a
+    refusal that arrives as a 500 is not one."""
+    from dgraph import task_pending
+    code, res = jreq(srv, "/api/task-pending", "POST",
+                     [{"op": "add_task", "id": "T09", "title": "second",
+                       "area": "Alpha"},
+                      {"op": "add_dep", "from": "T01", "to": ["T09"],
+                       "kind": "precedes"}])
+    assert code == 200, res
+    tray = pending.load(task_pending.path())
+    assert len({o["group"] for o in tray}) == 1, "the post was not one act"
+
+    member = tray[1]["ref"]
+    code, res = req(srv, f"/api/task-pending/{member}", "DELETE")
+    assert code == 400, f"a group member dropped alone answered {code}"
+    body = json.loads(res)
+    assert "one act" in body["error"] and body.get("group") is True
+    assert len(pending.load(task_pending.path())) == 2, "the tray moved"
+
+
+def test_the_browser_can_drop_the_whole_act(srv, dual):
+    """The way out the refusal names. A remedy that exists only as a CLI flag
+    is a dead end in a browser."""
+    from dgraph import task_pending
+    assert jreq(srv, "/api/task-pending", "POST",
+                [{"op": "add_task", "id": "T09", "title": "second",
+                  "area": "Alpha"},
+                 {"op": "add_dep", "from": "T01", "to": ["T09"],
+                  "kind": "precedes"}])[0] == 200
+    ref = pending.load(task_pending.path())[1]["ref"]
+    code, _ = req(srv, f"/api/task-pending/{ref}?group=1", "DELETE")
+    assert code == 200
+    assert pending.load(task_pending.path()) == []
+
+
+def test_the_browser_applies_one_act_and_leaves_the_rest(srv, dual):
+    """The accept half at the same grain as the reject half — and the answer to
+    *can I apply ops one at a time?*: one op where one op is the whole act."""
+    from dgraph import task_pending
+    assert jreq(srv, "/api/task-pending", "POST",
+                [{"op": "add_task", "id": "T09", "title": "second",
+                  "area": "Alpha"},
+                 {"op": "add_dep", "from": "T01", "to": ["T09"],
+                  "kind": "precedes"}])[0] == 200
+    assert jreq(srv, "/api/task-pending", "POST",
+                {"op": "add_task", "id": "T10", "title": "unrelated",
+                 "area": "Alpha"})[0] == 200
+
+    head = pending.load(task_pending.path())[0]["ref"]
+    code, got = jreq(srv, "/api/apply", "POST", {"group": head})
+    assert code == 200, got
+    assert got["applied_tasks"] == 2, "the act was split"
+    left = pending.load(task_pending.path())
+    assert [o["op"] for o in left] == ["add_task"], "the unrelated op went too"
+
+    from dgraph import project as _project
+    from dgraph.tasks import TaskGraph
+    tg = TaskGraph.load(_project.find().tasks)
+    assert tg.prerequisites("T09") == ["T01"]
+
+
+def test_an_unknown_group_ref_is_a_refusal_not_an_empty_apply(srv, dual):
+    """The empty-scope failure `refuse_apply_for` already argues about for
+    names: a selection that matches nothing reports as a legitimate one."""
+    assert jreq(srv, "/api/task-pending", "POST",
+                {"op": "add_task", "id": "T09", "title": "x",
+                 "area": "Alpha"})[0] == 200
+    code, got = jreq(srv, "/api/apply", "POST", {"group": "nosuch"})
+    assert code == 400 and "nothing staged with id" in got["error"]
+
+
+def test_the_page_binds_both_new_controls(srv, store):
+    """`B-F1`: a control drawn and never bound looks exactly like one that is.
+    Three were added here — the act-wide drop, the per-act apply, and the row
+    marker that says which is which."""
+    page = _page()
+    for drawn, listener in ((' id="dropAct"', 'closest("#dropAct")'),
+                            ('data-take="', 'closest("[data-take]")')):
+        assert drawn in page, f"{drawn} is not drawn"
+        assert listener in page, f"{drawn} is drawn and nothing listens for it"
+    assert "in one act" in page, "a row no longer says it is part of an act"

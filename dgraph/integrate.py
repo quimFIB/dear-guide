@@ -385,6 +385,54 @@ class Finding:
 #: the outcome. It is found by asking what the op asserts and what this graph
 #: already says — which is why these are spelled out one by one rather than
 #: derived from a refusal.
+#: Op kinds that **cannot** carry a disagreement, with the reason each cannot.
+#:
+#: The other half of an enumeration. `_contest_*` spells its cases out one by
+#: one — deliberately, for the reason above — which leaves a list whose
+#: completeness nothing reads, under a report line that asserts completeness
+#: (*"nothing contested"*). `set_status` sat outside it for five statuses and
+#: nobody could tell, because there was nothing to tell them with. `G-F12`.
+#:
+#: So every op either has a rule or is named here. A new op kind fails
+#: `test_every_op_kind_is_contestable_or_argued_not_to_be` on the day it is
+#: added, rather than the day somebody loses a judgement to it.
+#:
+#: The reasons are not decoration: each says why *two* writers doing this to
+#: one record is not two judgements in conflict.
+CANNOT_CONFLICT = {
+    # Creation. A taken id is caught by the `add_*` rules above, and an
+    # untaken one is a record this clone has never had an opinion about.
+    "add_vertex": "an id nobody here has used is not a record to disagree over",
+    "add_task": "the same, for work",
+    # Edges. Both stores treat a link as accumulating rather than as a
+    # judgement about state: two writers adding the same edge converge, and
+    # adding different ones is two facts, not two answers. A removal that no
+    # longer applies is *inapplicable*, which is a different report.
+    "add_edge": "an edge accumulates; two writers adding edges is two facts",
+    "remove_edge": "a removal that no longer applies is inapplicable, not contested",
+    "add_dep": "an edge accumulates; two writers adding edges is two facts",
+    "remove_dep": "a removal that no longer applies is inapplicable, not contested",
+    # Removals. The record is gone, so there is nothing here to hold the other
+    # opinion — `_contest_*` returns early on an id this clone does not have,
+    # and a removal of something still present is caught by `_walk`'s refusal.
+    "remove_vertex": "a removal is refused or lands; there is no second opinion to hold",
+    "remove_task": "the same, for work",
+    # Provenance, not state. `reject` files that an answer was offered and not
+    # taken, and `read_evidence` records that a reading happened; neither
+    # asserts anything a second writer could assert differently.
+    "reject": "an offered-and-declined answer is a record of provenance",
+    "read_evidence": "a reading is a fact about what was looked at",
+    # `set_link` carries the cross-store edge, which is `add_dep`'s argument
+    # again: a task pointing at a decision is a fact, not a verdict.
+    "set_link": "a cross-store link is a fact, not a verdict",
+    # `reopen` is the one that looks like it should be here and is not obvious.
+    # It moves status, and the `set_status` rule above catches the disagreement
+    # it causes — a reopen arriving at a vertex this clone moved elsewhere is
+    # contested through the status it writes, not through the op.
+    "reopen": "the status it writes is judged by the set_status rule",
+}
+
+
 def _contest(g, base, op: dict, store: str) -> tuple[str | None, str] | None:
     """Whether this op arrives at a graph that disagrees with what it asserts.
 
@@ -418,6 +466,16 @@ def _contest_decision(g: Graph, base: Graph, op: dict):
             f = moved[0]
             return vid, (f"{vid} {f} differs — here {getattr(mine, f)!r}, "
                          f"arriving {op[f]!r}")
+    if kind == "set_status":
+        # The same rule, on the store that had none for this op. A `reopen`
+        # propagates `set_status … PROVISIONAL` to decided descendants, so two
+        # writers can move one vertex's status apart exactly as they can a
+        # task's. `close` below is the answer-bearing op and is checked on its
+        # answer; this is the rest. Audit `G-F12`.
+        if (mine.status != was.status
+                and mine.status != op.get("status")):
+            return vid, (f"{vid} status differs — here {mine.status}, "
+                         f"arriving {op.get('status')}")
     if kind == "close":
         e, e_was = g.active_edge(vid), base.active_edge(vid)
         mine_answer = e.answer if e is not None and e.decided else None
@@ -445,11 +503,34 @@ def _contest_task(tg: TaskGraph, base: TaskGraph, op: dict):
             f = moved[0]
             return tid, (f"{tid} {f} differs — here {getattr(mine, f)!r}, "
                          f"arriving {op[f]!r}")
-    if (kind == "set_status" and op.get("status") == "DONE"
-            and len(mine.completions) > len(was.completions)):
-        return tid, (f"{tid} was finished here too ({mine.done}, "
-                     f"{_clip(mine.outcome)!r}) — arriving "
-                     f"{_clip(op.get('outcome'))!r}")
+    if kind == "set_status":
+        # **The same three lines `set_fields` uses, on the field that matters
+        # most.** `_contest`'s docstring gives the rule — *two writers changing
+        # one record is contested* — and this asked one question instead: was
+        # it finished here too. `STATUSES` has five members, so one arriving ×
+        # local pair out of many was checked, and drop-over-done,
+        # drop-over-parked and done-over-dropped all landed silently with the
+        # report printing "nothing contested". Audit `G-F12`.
+        #
+        # `DOING` is **not** exempt, deliberately. It is a claim about a run
+        # rather than a judgement about the work (`agents.holdings`), so an
+        # argument exists for letting an arriving status take it — but if
+        # somebody here is working on T04 and a contribution says it was
+        # dropped, that is exactly what a reviewer should see, and taking it
+        # silently is how two people do the same work twice.
+        if mine.status != was.status and mine.status != op.get("status"):
+            return tid, (f"{tid} status differs — here {mine.status}, "
+                         f"arriving {op.get('status')}")
+        # Kept **beside** the rule above and not folded into it: this is the
+        # case the rule cannot see. Two writers who both finish a task end at
+        # the *same* status with different outcomes, so nothing "moved
+        # differently" — and it is the closest thing the task store has to
+        # `close` × `close`, which is the decision store's whole conflict test.
+        if (op.get("status") == "DONE"
+                and len(mine.completions) > len(was.completions)):
+            return tid, (f"{tid} was finished here too ({mine.done}, "
+                         f"{_clip(mine.outcome)!r}) — arriving "
+                         f"{_clip(op.get('outcome'))!r}")
     return None
 
 

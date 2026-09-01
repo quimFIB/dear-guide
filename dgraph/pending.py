@@ -567,10 +567,30 @@ def _with_refs(ops: list[dict], current: list[dict]) -> list[dict]:
             f"`{UNOWNED}` is reserved — it is how this tool names ops nobody "
             f"signed, so a writer cannot also be called that. Set "
             f"{_identity_source()} to something else.")
+    # **One call, one group** — and a group only where there is one to have.
+    #
+    # `stage_all` is the act boundary and its docstring already says so: it
+    # exists because a reopen and the statuses it propagates, or an
+    # `add_vertex` and the edges that attach it, "only make sense together".
+    # That made *staging* atomic. Nothing carried the fact forward, so
+    # `dg drop-op` could take one member out and `dg apply` write the rest —
+    # leaving, in the docstring's own example, a task that "reads as startable
+    # to everything that asks". Audit `G-F11`.
+    #
+    # Stamped only for a real group, and that is not an optimisation. A single
+    # op is a group of one whether it says so or not, and an **absent** group
+    # already has to read as one — for the trays staged before this existed.
+    # Giving a lone op a ref would create a distinction nothing acts on while
+    # changing the shape of every tray in the tool.
+    group = _new_ref(taken) if len(ops) > 1 else None
+    if group is not None:
+        taken = taken | {group}
     out = []
     for op in ops:
         if not op.get("ref") or op["ref"] in taken:
             op = {**op, "ref": _new_ref(taken)}
+        if group is not None and not op.get("group"):
+            op = {**op, "group": group}
         # `by` joins `ref` and `saw`: tray bookkeeping, and of `saw`'s family
         # rather than a derived field — a record of who staged this, which
         # nothing can later make untrue. Set **once**, here, and never
@@ -755,6 +775,42 @@ def stage_all(ops: list[dict], path: Path | None = None, *,
         return current
 
 
+def group_of(ops: list[dict], op: dict) -> list[dict]:
+    """Every op staged in the same act as `op`, `op` included.
+
+    `[op]` where it carries no group, which is both a single-op command and
+    every tray staged before groups existed — see `_with_refs` for why those
+    two read the same.
+    """
+    gid = op.get("group")
+    return [o for o in ops if o.get("group") == gid] if gid else [op]
+
+
+def refuse_split(ops: list[dict], op: dict, *, kind: str = "op") -> str | None:
+    """Why this op may not be removed on its own — or `None`.
+
+    The other half of `stage_all`'s atomicity. Staging a group as one write
+    stops a *reader* seeing half of one; nothing stopped a **writer** taking a
+    member out and applying the rest, which is how `dg task add --after T01`
+    came to land the task without its edge, reading as startable to everything
+    that asks. Audit `G-F11`.
+
+    A refusal rather than a silent cascade, because the group is somebody's
+    judgement and the two ways out mean different things: dropping the whole
+    act turns their proposal down, and keeping it whole leaves it to be applied
+    or cleared as one. Choosing between those is not this function's to do.
+    """
+    rest = [o for o in group_of(ops, op) if o.get("ref") != op.get("ref")]
+    if not rest:
+        return None
+    shown = ", ".join(f"{o.get('ref')} {o.get('op')}" for o in rest)
+    return (f"{op.get('ref')} was staged together with {len(rest)} other "
+            f"{kind}(s), as one act: {shown}\n"
+            f"Removing it alone would leave the rest to be applied as though "
+            f"they meant something they do not. Drop the whole act, or leave "
+            f"it whole and turn it down with `clear`.")
+
+
 def drop(ref: str | int, path: Path | None = None) -> dict:
     """Unstage op `i`, and return **the op that was removed**.
 
@@ -772,8 +828,30 @@ def drop(ref: str | int, path: Path | None = None) -> dict:
     """
     with held(path):
         ops = load(path)
-        gone = ops.pop(resolve(ops, ref))
+        i = resolve(ops, ref)
+        # Under the lock, against the tray as it is: another writer may have
+        # applied or cleared since this call started, and a group judged
+        # against a stale reading is the check answering about ops that are no
+        # longer there.
+        why = refuse_split(ops, ops[i])
+        if why is not None:
+            raise ApplyError(why)
+        gone = ops.pop(i)
         save(ops, path)
+        return gone
+
+
+def drop_group(ref: str | int, path: Path | None = None) -> list[dict]:
+    """Unstage the whole act `ref` belongs to, and return what went.
+
+    `drop`'s plural, and the way out its refusal names. A group of one is an
+    ordinary drop, so a caller never has to know which it had.
+    """
+    with held(path):
+        ops = load(path)
+        going = {o.get("ref") for o in group_of(ops, ops[resolve(ops, ref)])}
+        gone = [o for o in ops if o.get("ref") in going]
+        save([o for o in ops if o.get("ref") not in going], path)
         return gone
 
 

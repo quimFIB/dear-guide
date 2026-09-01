@@ -1039,11 +1039,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
         elif self.path == "/api/apply":
-            self._apply(self._body().get("agent") or None)
+            body = self._body()
+            self._apply(body.get("agent") or None,
+                        group=body.get("group") or None)
         else:
             self._json({"error": "not found"}, 404)
 
-    def _apply(self, agent: str | None = None) -> None:
+    def _apply(self, agent: str | None = None,
+               group: str | None = None) -> None:
         """Apply both trays, exactly as `dg apply` does.
 
         Two independent batches: a task batch that will not apply must never
@@ -1068,9 +1071,10 @@ class Handler(BaseHTTPRequestHandler):
         # one, and watch it land. Audit W-F2. The span reaches `discard`, which
         # is inside `applying.apply_*`, so it wraps the whole loop below.
         with applying.trays(proj):
-            return self._apply_held(proj, agent)
+            return self._apply_held(proj, agent, group)
 
-    def _apply_held(self, proj, agent: str | None = None) -> None:
+    def _apply_held(self, proj, agent: str | None = None,
+                    group: str | None = None) -> None:
         """The body of `_apply`, with both trays already held."""
         ops = pending.load(proj.pending) if proj.has_decisions else []
         task_ops = (pending.load(task_pending.path())
@@ -1094,6 +1098,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": why}, 400)
             ops, _ = pending.mine(ops, pending.addressed(agent))
             task_ops, _ = pending.mine(task_ops, pending.addressed(agent))
+
+        if group is not None:
+            # `dg apply --group`'s twin: one **act**, which is the finest grain
+            # there is now that the tray records which ops were staged
+            # together. The panel could turn one proposal down per op and take
+            # them only per writer; this is the accept half at the same grain
+            # as the reject half. `G-F11`.
+            found = next((o for o in list(ops) + list(task_ops)
+                          if o.get("ref") == group), None)
+            if found is None:
+                return self._json(
+                    {"error": f"nothing staged with id {group}"}, 400)
+            keep = {o.get("ref") for o in
+                    pending.group_of(list(ops) + list(task_ops), found)}
+            ops = [o for o in ops if o.get("ref") in keep]
+            task_ops = [o for o in task_ops if o.get("ref") in keep]
 
         out: dict = {"applied": 0, "applied_tasks": 0, "errors": [],
                      # What moved under the batch while it sat in the tray.
@@ -1567,18 +1587,34 @@ class Handler(BaseHTTPRequestHandler):
                 if route == "/api/task-pending":
                     return self._json({"cleared": _clear(task_pending.path(),
                                                          agent)})
+                # `?group=1` is the way out `refuse_split` names, and the
+                # page has to have one: a refusal whose remedy exists only as
+                # a CLI flag is a dead end in a browser. `G-F11`.
+                whole = parse_qs(urlparse(self.path).query).get("group")
                 if self.path.startswith("/api/task-pending/"):
+                    ref = urlparse(self.path).path.rsplit("/", 1)[1]
                     try:
-                        pending.drop(self.path.rsplit("/", 1)[1],
-                                     task_pending.path())
+                        (pending.drop_group if whole else pending.drop)(
+                            ref, task_pending.path())
                     except LookupError as exc:
                         return self._json({"error": str(exc)}, 400)
+                    except pending.ApplyError as exc:
+                        # A group, and this took one member. A **400**, not the
+                        # 500 an uncaught `ApplyError` becomes: it is a refusal
+                        # the caller can act on, and the page needs the text to
+                        # offer the act-wide drop.
+                        return self._json({"error": str(exc), "group": True},
+                                          400)
                     self._json(pending.load(task_pending.path()))
                 elif self.path.startswith("/api/pending/"):
+                    ref = urlparse(self.path).path.rsplit("/", 1)[1]
                     try:
-                        pending.drop(self.path.rsplit("/", 1)[1])
+                        (pending.drop_group if whole else pending.drop)(ref)
                     except LookupError as exc:
                         return self._json({"error": str(exc)}, 400)
+                    except pending.ApplyError as exc:
+                        return self._json({"error": str(exc), "group": True},
+                                          400)
                     self._json(pending.load())
                 else:
                     self._json({"error": "not found"}, 404)
