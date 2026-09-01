@@ -1977,7 +1977,7 @@ def add(
     if missing:
         con.print(f"[red]missing option(s): {', '.join(missing)}[/]\n"
                   f"[dim]give them as flags, or use `dg add --edit`[/]"
-                  + (_next_hint(lambda: editor.next_id(eff))
+                  + (_next_hint(lambda: editor.next_offer())
                      if not vid else ""))
         raise typer.Exit(2)
     # Every graph-facing rule, and the op list itself, is `pending.compose_add`
@@ -3290,7 +3290,7 @@ def _next_hint(offer) -> str:
     """
     try:
         return f"\n[dim]next unused: {offer()}[/]"
-    except ranges.RangeError as exc:
+    except (ranges.RangeError, pending.ApplyError) as exc:
         # Said rather than swallowed. A hint that simply vanishes leaves the
         # writer with "missing --id" and no id, and no way to tell a clone that
         # is out of ids from a message that never offered one.
@@ -3471,7 +3471,7 @@ def task_add(
     if missing:
         con.print(f"[red]missing option(s): {', '.join(missing)}[/]\n"
                   f"[dim]give them as flags, or use `dg task add --edit`[/]"
-                  + (_next_hint(lambda: task_editor.next_id(tg))
+                  + (_next_hint(lambda: task_editor.next_offer())
                      if not tid else ""))
         raise typer.Exit(2)
     # Every rule, and the op list itself, is `task_pending.compose_add` —
@@ -5105,15 +5105,18 @@ def range_cmd(
         if g.issued is not None:
             line += f"  issued to [bold]{prefix}{g.issued:02d}[/]"
         con.print(line)
-        # The next id, from the store this clone actually has — the grant alone
-        # cannot say it, because an id inside the range may already be in the
-        # store from an integration.
-        loader = ((_g, editor.next_id) if prefix == "D"
-                  else (_tg, task_editor.next_id))
+        # The next id, from the store this clone actually has *and its tray* —
+        # the grant alone cannot say it, because an id inside the range may
+        # already be in the store from an integration, or staged by another
+        # writer sharing this checkout. `next_offer` is the one place that
+        # composes those, so this report and the id `dg add` actually offers
+        # cannot disagree. Audit `G-F5`.
+        offer = (editor.next_offer if prefix == "D"
+                 else task_editor.next_offer)
         if (proj.has_decisions if prefix == "D" else proj.has_tasks):
             try:
-                con.print(f"   next  {loader[1](loader[0]())}")
-            except ranges.RangeError as exc:
+                con.print(f"   next  {offer()}")
+            except (ranges.RangeError, pending.ApplyError) as exc:
                 con.print(f"   [red]{_x(exc)}[/]")
 
 

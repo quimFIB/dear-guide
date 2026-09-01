@@ -296,7 +296,7 @@ dg task park T07 --why "agent stopped at the rate limit, probe half-run"
 
 ```sh
 dg pending --agent brisk-beacon   # read one alone
-dg serve                          # ...or as a graph, with staging applied
+dg serve                          # ...or as a graph, with the tray beside it
 dg apply --agent brisk-beacon     # take it
 dg clear --agent agile-azimuth    # turn it down — the others are untouched
 ```

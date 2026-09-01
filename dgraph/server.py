@@ -165,9 +165,16 @@ def graph_payload(g: Graph) -> dict:
     d["frontier"] = g.frontier()
     # What the new-decision form prefills. Sent rather than computed in the
     # page, because `dg add --edit` prefills the same thing from the same
-    # function (`editor.next_id`) and two doors offering different "next" ids
-    # is the disagreement this codebase spends its comments preventing.
-    d["next_id"], d["next_id_fault"] = _next("D", lambda: editor.next_id(g))
+    # function and two doors offering different "next" ids is the disagreement
+    # this codebase spends its comments preventing.
+    #
+    # **`next_offer`, not `next_id`.** This route sends the store — that is the
+    # panel's whole reading model, the tray being its own footer — but an *id
+    # to offer* is not a reading of the store: it is a claim about what
+    # staging will accept, and staging vets against the tray. From the store
+    # alone the form prefilled an id another writer had already staged, and
+    # `stage` then refused the post it had just invited. Audit `G-F5`.
+    d["next_id"], d["next_id_fault"] = _next("D", lambda: editor.next_offer(g))
     return d
 
 
@@ -185,6 +192,14 @@ def _next(prefix: str, offer):
         return offer(), None
     except ranges.RangeError as exc:
         return None, str(exc)
+    except pending.ApplyError as exc:
+        # The second way the offer can fail, and it arrived with `next_offer`:
+        # the id is read off the store *plus the tray*, so a tray that no
+        # longer applies has no id to give. Reported like a used-up grant
+        # rather than raised, for the reason above — every other reading on
+        # this page still holds, and the form is the only thing that cannot be
+        # filled.
+        return None, f"the staged ops no longer apply cleanly: {exc}"
 
 
 def task_depth(tg: TaskGraph) -> dict[str, int]:
@@ -260,7 +275,7 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
     # `graph_payload`'s twin: what the new-task form prefills, from the same
     # function `dg task add --edit` prefills it with.
     d["next_id"], d["next_id_fault"] = _next(
-        "T", lambda: task_editor.next_id(tg))
+        "T", lambda: task_editor.next_offer(tg))
     return d
 
 
@@ -723,6 +738,56 @@ def _released_note(tg: TaskGraph, g: Graph | None, ops: list[dict]) -> list[str]
     return [f"{t} becomes startable" for t in task_pending.releases(tg, g, ops)]
 
 
+#: The four files a reading of this project is computed from: both stores and
+#: both trays. Named here rather than derived from `project.IGNORE`, which is
+#: about what git must not see and holds locks and temp files that change
+#: without any reading changing with them.
+#:
+#: The **trays are in it and that is the point**. A supervisor watching a
+#: fan-out sees nothing move in the stores under a confinement floor or under
+#: `$DG_APPLY=never` — an agent there cannot apply at all — so a token that
+#: watched only the stores would report a busy run as a quiet one.
+WATCHED = ("store", "pending", "tasks", "task_pending")
+
+
+def stat_payload() -> dict:
+    """A cheap token that moves when any reading of this project would.
+
+    **It answers one question and draws nothing.** The page polls this and uses
+    it only to say *there is something to refresh* — the redraw is the reader's
+    click, because the canvas holds a pan, a zoom and an open inspector that a
+    poll must not move under them. That is the same argument that keeps the
+    graph routes reading the store while the tray keeps its own panel.
+
+    `(mtime_ns, size)` per file rather than a hash of the contents: this is
+    polled every few seconds for as long as a browser is open, and the question
+    is *has anything changed*, which `stat` answers without reading a byte. A
+    file that is absent contributes `None` and is therefore distinguishable
+    from an empty one — `dg task init` in another terminal moves the token.
+
+    The staged counts travel beside it so the badge can say *how many* without
+    a second request. They are the one thing a reader wants before deciding
+    whether the refresh is worth taking.
+    """
+    proj = project.find()
+    token = {}
+    for name in WATCHED:
+        p = getattr(proj, name)
+        try:
+            st = p.stat()
+            token[name] = [st.st_mtime_ns, st.st_size]
+        except OSError:
+            token[name] = None
+    staged = 0
+    for tray in (None, task_pending.path()):
+        try:
+            staged += len(pending.load(tray) if tray is not None
+                          else pending.load())
+        except Exception:
+            pass
+    return {"token": token, "staged": staged}
+
+
 def _stores() -> tuple[Graph | None, TaskGraph | None]:
     """Both stores, each `None` when the project does not have it.
 
@@ -804,6 +869,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self._page(), "text/html; charset=utf-8")
             elif self.path == "/api/graph":
                 self._json(graph_payload(Graph.load()))
+            elif self.path == "/api/stat":
+                # Deliberately not in `GUARDED_READS`: it reads no content and
+                # runs no caller-supplied work, so it is the one route whose
+                # cost a caller cannot choose. The token still travels, because
+                # `api()` sends it on every request.
+                self._json(stat_payload())
             elif self.path == "/api/pending":
                 self._json(pending.load())
             elif self.path == "/api/tasks":

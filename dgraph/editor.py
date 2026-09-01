@@ -294,6 +294,37 @@ def next_id(g: Graph) -> str:
     return f"D{n:02d}"
 
 
+def next_offer(stored: Graph | None = None) -> str:
+    """The id a **form** should prefill: `next_id` over the store *and the tray*.
+
+    `next_id` stays a function of a graph, because plenty of callers already
+    hold the effective one. This is the different question — *what may I offer
+    somebody who is about to stage* — and every door that prefills has it.
+
+    It is composed here for the same reason the grant is read in `next_id`
+    rather than in each door, and the docstring there already says it: a door
+    that has to remember something is a door that will not. Three doors ask
+    this (`dg add`'s refusal, `dg range`'s report, the browser's new-decision
+    form) and the browser asked it of the store alone — so it offered an id
+    another writer had already staged, which `stage` then refused, since that
+    vets against exactly the preview this reads. Audit `G-F5`.
+
+    **`render_add` is the fourth site that prefills and must not call this.**
+    It is already handed the effective graph by both of its doors — `cli.add`
+    passes `eff`, `/api/compose` passes `pending.preview(g)` — so previewing
+    again would apply the tray twice. That is the reason for the parameter's
+    name: what this takes is the **stored** graph, and a caller holding an
+    effective one already has its answer.
+
+    Raises `ranges.RangeError` on a used-up grant, like `next_id`, and
+    `pending.ApplyError` where the tray no longer applies — both are things the
+    caller must say rather than swallow, and both are already handled by the
+    three doors' existing report helpers.
+    """
+    return next_id(pending.preview(
+        Graph.load() if stored is None else stored))
+
+
 def render_add(g: Graph, seed: dict | None = None) -> str:
     seed = seed or {}
     nxt = next_id(g)

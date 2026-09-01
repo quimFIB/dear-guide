@@ -7,6 +7,7 @@ over the single compose buffer.
 """
 
 import json
+import pathlib
 import threading
 import urllib.error
 import urllib.request
@@ -1045,3 +1046,267 @@ def test_the_payload_sends_the_key_for_every_vertex(store, g):
     from dgraph.server import graph_payload
     d = graph_payload(g)["derived"]
     assert all("provisional_because" in d[vid] for vid in g.vertices)
+
+
+# ---- staying current: `/api/stat` and the refresh it feeds ----------------
+#
+# The page was a snapshot from the moment it loaded. It refetched only on the
+# viewer's own staging or apply, so another writer's work — which in a fan-out
+# is most of it — never arrived, and nothing said so. `/api/stat` is the cheap
+# question that lets it say so, and the whole of the design is that answering
+# it draws nothing: the canvas holds a pan, a zoom and an open inspector, and
+# the reader decides when those may move.
+
+
+def _page():
+    return (pathlib.Path(server.__file__).parent / "static"
+            / "app.html").read_text(encoding="utf-8")
+
+
+def test_the_token_moves_when_a_tray_appears(srv, store):
+    """A tray is in the token, and that is the half a store-only token misses.
+
+    Under a confinement floor or `$DG_APPLY=never` an agent cannot apply at
+    all, so the stores do not move for the whole run — a supervisor watching a
+    busy fan-out would be told nothing had happened."""
+    code, first = jreq(srv, "/api/stat")
+    assert code == 200
+    assert first["token"]["pending"] is None and first["staged"] == 0
+
+    code, res = jreq(srv, "/api/pending", "POST",
+                     dict(CLOSE, answer="a", source="s", falsifier="f", to=[]))
+    assert code == 200, res
+
+    code, second = jreq(srv, "/api/stat")
+    assert second["token"] != first["token"], "a staged op moved nothing"
+    assert second["token"]["pending"] is not None
+    # The op count, not the command count: a close propagates, so one post is
+    # several ops. Asserted against the tray rather than a literal, because
+    # what the badge promises is "ops this page has not read".
+    assert second["staged"] == len(pending.load()) > 0
+
+
+def test_the_token_tells_an_absent_store_from_an_empty_one(srv, store):
+    """`None` for a file that is not there, a pair for one that is. `dg task
+    init` in another terminal is a change this page must notice, and a token
+    that reported both as "nothing" could not."""
+    code, got = jreq(srv, "/api/stat")
+    assert code == 200
+    assert got["token"]["store"] is not None, "the store this ran against"
+    assert got["token"]["tasks"] is None, "no tasks.json in this fixture"
+    assert set(got["token"]) == set(server.WATCHED)
+
+
+def test_the_staged_count_spans_both_trays(srv, dual):
+    """The badge says how many, and a supervisor prices the refresh on it. A
+    count from one tray would understate every run that touches work."""
+    from dgraph import task_pending
+    assert jreq(srv, "/api/stat")[1]["staged"] == 0
+    assert jreq(srv, "/api/pending", "POST",
+                dict(CLOSE, answer="a", source="s", falsifier="f",
+                     to=[]))[0] == 200
+    decisions_only = jreq(srv, "/api/stat")[1]["staged"]
+    assert decisions_only == len(pending.load()) > 0
+
+    assert jreq(srv, "/api/task-pending", "POST",
+                {"op": "set_status", "task": "T01", "status": "DOING"})[0] == 200
+    both = jreq(srv, "/api/stat")[1]["staged"]
+    assert both == decisions_only + 1, "the task tray is not in the count"
+    assert both == len(pending.load()) + len(pending.load(task_pending.path()))
+
+
+def test_every_watched_name_is_a_path_this_project_has(store):
+    """`WATCHED` is four attribute names read off `Project`. A typo would make
+    `stat_payload` raise on every poll, which the page swallows — so the run
+    would silently stop noticing anything."""
+    from dgraph import project
+    proj = project.find()
+    for name in server.WATCHED:
+        assert hasattr(proj, name), f"Project has no {name}"
+
+
+def test_the_refresh_control_is_bound(srv, store):
+    """`B-F1`: a control drawn and never bound looks exactly like one that is.
+
+    Checks the id is emitted **and** that something reads it — the pair, since
+    either alone is the finding."""
+    page = _page()
+    assert 'id="refreshBtn"' in page, "the control is gone"
+    assert '$("#refreshBtn").onclick=refresh' in page, \
+        "the refresh button is drawn and nothing listens for it"
+
+
+def test_the_poll_draws_nothing(srv, store):
+    """The design's one restraint, stated as a property rather than trusted.
+
+    A poll that redrew would move the canvas under somebody mid-read, which is
+    the same objection that keeps the graph routes reading the store while the
+    tray keeps its own panel. So `pollStat` may set the badge and nothing else:
+    the redraw is the reader's click."""
+    body = _page().split("async function pollStat(){")[1].split("\n}")[0]
+    for banned in ("boot(", "draw(", "select(", "layout(", "fit("):
+        assert banned not in body, \
+            f"pollStat calls {banned} — the poll is redrawing the page"
+
+
+def test_refresh_drops_the_selection_before_it_reboots(srv, store):
+    """The ordering that broke it, stated as the property.
+
+    `boot()` ends by calling `draw()`, and `drawDecisions` reads
+    `G.derived[sel].depends`. So a `sel` naming a record the refresh is about
+    to remove throws *inside* `boot`, before any of the code that would have
+    cleared it — and the button then cleared its own badge and left the panel
+    drawing a record that is gone. Verified in a browser: with the clear after
+    the reboot, removing the selected node left the inspector showing it.
+
+    The discard path has always done this and never said why, which is how the
+    second caller came to be written without it."""
+    import re as _re
+    body = _page().split("async function refresh(){")[1].split("\n}\n")[0]
+    # Comments stripped first: this one *quotes* the ordering it is about, so
+    # an index into the raw body finds the prose before the code.
+    body = _re.sub(r"/\*.*?\*/", "", body, flags=_re.S)
+    cleared, rebooted = body.index("sel = null"), body.index("await boot()")
+    assert cleared < rebooted, \
+        "refresh reboots with a stale selection — boot's own draw() will throw"
+    assert "keep = cur()" in body[:cleared], \
+        "the selection is dropped without being remembered"
+
+
+def test_refresh_keeps_the_viewport(srv, store):
+    """`fit()` resets the pan and zoom. Every other caller of `boot()` passes
+    it deliberately — the graph may have changed shape after an Apply — and
+    this one must not, because somebody is looking at one corner of it. That
+    promise is in the button's own tooltip, so it is a claim and not a
+    preference."""
+    body = _page().split("async function refresh(){")[1].split("\n}\n")[0]
+    assert "fit()" not in body, "refresh resets the viewport it promises to keep"
+    assert "pan, zoom and the open inspector are kept" in _page(), \
+        "the tooltip no longer makes the promise this test pins"
+
+
+# ---- the id a form may offer (audit `G-F5`) -------------------------------
+#
+# The panel reads the store and the tray keeps its own footer — that is the
+# decided reading model. An *id to offer* is not a reading of the store
+# though: it is a claim about what staging will accept, and staging vets
+# against the tray. Three doors ask it and the browser asked the store.
+
+
+def test_the_browser_never_offers_an_id_another_writer_has_staged(srv, store):
+    """The form prefilled `D02` while `D02` sat in the tray, and `stage` — which
+    vets against `pending.preview` — then refused the post it had just invited.
+    """
+    from dgraph import editor
+    code, first = jreq(srv, "/api/graph")
+    assert code == 200
+    offered = first["next_id"]
+    assert offered and first["next_id_fault"] is None
+
+    pending.stage({"op": "add_vertex", "id": offered, "title": "claimed",
+                   "area": "Alpha", "status": "OPEN"})
+
+    code, second = jreq(srv, "/api/graph")
+    assert second["next_id"] != offered, (
+        f"the form still offers {offered}, which is already staged")
+    assert second["next_id"] == editor.next_offer()
+
+
+def test_every_door_that_prefills_an_id_offers_the_same_one(srv, store,
+                                                            task_store):
+    """Three doors, one question. `dg add`'s refusal, `dg range`'s report and
+    the browser's form all go through `next_offer`, so a fourth cannot answer
+    it differently by forgetting to preview."""
+    from dgraph import editor, task_editor
+    pending.stage({"op": "add_vertex", "id": editor.next_offer(),
+                   "title": "claimed", "area": "Alpha", "status": "OPEN"})
+    assert jreq(srv, "/api/graph")[1]["next_id"] == editor.next_offer()
+    got = jreq(srv, "/api/tasks")[1]
+    if got:
+        assert got["next_id"] == task_editor.next_offer()
+
+
+def test_a_tray_that_no_longer_applies_is_a_fault_and_not_a_500(srv, store):
+    """`next_offer` reads the tray, which is a second way the offer can fail.
+
+    Reported beside the id like a used-up grant, for the reason `_next` already
+    gives: every other reading on the page still holds, and only the form
+    cannot be filled. A 500 here would take the whole panel down at exactly the
+    moment somebody needs it to see what is wrong."""
+    pending.stage({"op": "close", "vertex": "D99", "answer": "a",
+                   "source": "s", "falsifier": "f", "to": []})
+    code, got = jreq(srv, "/api/graph")
+    assert code == 200, "a broken tray took the payload down"
+    assert got["next_id"] is None
+    assert "no longer apply cleanly" in (got["next_id_fault"] or "")
+
+
+def test_the_guide_does_not_say_the_panel_applies_staging(srv, store):
+    """The claim, not the vocabulary — `H-F2`'s lesson.
+
+    `agentic/README.md` said `dg serve` "renders the graph **with the staged
+    ops applied**", and both procedures repeated it at the review step. It was
+    never true: `/api/graph` and `/api/tasks` have read the store since the
+    routes were written, and `boot()` does no client-side merge. A guard that
+    only checked `dg serve` was still *named* in the guide would have passed
+    against that for as long as it stood.
+
+    So this reads the sentence against the code: if a payload route ever does
+    preview the tray, this test is what says the prose may claim it again."""
+    import re as _re
+    root = pathlib.Path(server.__file__).resolve().parent.parent
+    src = pathlib.Path(server.__file__).read_text(encoding="utf-8")
+
+    def route_body(name):
+        return src.split(f"def {name}(")[1].split("\ndef ")[0]
+
+    previews = any("pending.preview" in route_body(n)
+                   for n in ("graph_payload", "task_payload"))
+    said = [f"{p.name}:{i}" for p in (root / "agentic").glob("*.md")
+            for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+            if _re.search(r"staged ops\s*$|staging applied|with the staged", line)]
+    if previews:
+        assert said, ("the payload routes now preview the tray and no guide "
+                      "says so — the panel gained a reading nobody documented")
+    else:
+        assert not said, (
+            "the guide says `dg serve` applies staging and the payload routes "
+            f"read the store: {', '.join(said)}")
+
+
+def test_the_guide_says_which_readings_preview_the_tray(srv, store):
+    """The positive half. The CLI readers *do* preview (`ad7d06c`), and a guide
+    silent about the difference sends a supervisor between two surfaces without
+    telling them the two answer differently."""
+    # Whitespace collapsed: these are sentences in wrapped Markdown, and a
+    # claim that moved across a line break is the same claim.
+    guide = " ".join((pathlib.Path(server.__file__).resolve().parent.parent
+                      / "agentic" / "README.md")
+                     .read_text(encoding="utf-8").split())
+    assert "with the tray previewed" in guide, \
+        "the guide no longer says the CLI readers preview the tray"
+    assert "the store as it stands" in guide, \
+        "the guide no longer says what the panel draws"
+
+
+def test_the_editor_buffer_is_handed_the_effective_graph_not_the_store(srv, store):
+    """The fourth site that prefills an id, and the one that must **not** call
+    `next_offer`.
+
+    `render_add` reads `next_id(g)` off whatever it is given, and both of its
+    doors already give it the effective graph — so it is correct today and
+    calling `next_offer` there would apply the tray twice. Pinned because the
+    obvious follow-up to `G-F5` is to route every prefilling site through one
+    function, and this is the site where that is the wrong move."""
+    import inspect
+    from dgraph import editor
+    src = inspect.getsource(editor.render_add)
+    assert "next_id(g)" in src, "render_add no longer prefills from its argument"
+    assert "next_offer" not in src, (
+        "render_add previews the tray, and both its callers already hand it "
+        "the effective graph — the tray is now applied twice")
+    # …and the claim about the callers, which is what makes the above safe.
+    assert "pending.preview(g), kind," in \
+        (pathlib.Path(server.__file__).read_text(encoding="utf-8")), \
+        "/api/compose no longer hands the editor the effective graph"
+

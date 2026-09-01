@@ -96,6 +96,13 @@ def next_id(tg: TaskGraph) -> str:
     return f"T{n:02d}"
 
 
+def next_offer(stored: TaskGraph | None = None) -> str:
+    """`editor.next_offer`'s twin — see there. The store and the task tray."""
+    from dgraph import task_pending
+    return next_id(task_pending.preview(
+        TaskGraph.load() if stored is None else stored))
+
+
 def _decision_line(g: Graph | None, did: str | None) -> str:
     """A `D`-id as the other store knows it, or as much as can be said."""
     if not did:

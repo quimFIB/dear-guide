@@ -164,6 +164,7 @@
     <button class="chip" id="soundBtn" style="display:none"></button>
     <button class="chip" id="areasBtn" title="Counts by area and status, one block per store">areas</button>
     <button class="chip" id="frontierOnly">frontier only</button>
+    <button class="chip" id="refreshBtn" title="Re-read both stores and both trays. Pan, zoom and the open inspector are kept.">&#8635; refresh</button>
     <input id="q" placeholder="find…" title="Same query language as `dg find`: a bare word searches prose, field:value matches one field, is:name asks a derived question, under:D04 scopes to a subgraph. `-` negates, `or` alternates.">
     <span class="muted" id="qnote"></span>
     <span class="grow"></span>
@@ -187,6 +188,22 @@ let G=null, PEND=[], sel=null, ED=null;
    with no tasks.json — which is not the same as a project whose backlog is
    empty, and the tab says which. */
 let T=null, TPEND=[], JOIN=null, tsel=null;
+
+/* What the four watched files looked like when this page last read them, and
+   whether they have moved since. The poll writes STALE and nothing else: it
+   never redraws.
+
+   That restraint is the whole design and not caution. The canvas holds a pan,
+   a zoom and an open inspector, and a poll that redrew would move all three
+   under somebody mid-read — which is the same argument that keeps the graph
+   routes reading the store while the tray keeps its own panel. So the page
+   says *there is something to take* and the reader takes it.
+
+   The alternative it replaces is worse than either: before this the page was
+   a snapshot from the moment it loaded, refreshed only by the viewer's own
+   staging, with nothing to say another writer had moved underneath it. */
+let STAT=null, STALE=0, POLL=null, BOOTING=false;
+const POLL_EVERY = 4000;
 let tab="decisions";
 const TASK_COLOR = {TODO:"var(--warn)", DOING:"var(--accent)",
                     /* outstanding, so not dimmed like DROPPED; put down, so
@@ -257,7 +274,15 @@ async function boot(){
   const pend = await api("/api/pending");
   const tpend = t ? await api("/api/task-pending").catch(()=>[]) : [];
   ED = ED || await api("/api/editor").catch(()=>({available:false}));
+  /* Read *with* the payloads, not after them: a token taken later would
+     describe a store this page never drew, and the first poll after it would
+     call the page current while it was already behind. Every existing caller
+     of `boot()` — Apply, a staged op, a discard — therefore clears the badge
+     without knowing this exists, which is the point of putting it here rather
+     than in the click handler. */
+  const st = await api("/api/stat").catch(()=>null);
   G = g; T = t; JOIN = join; PEND = pend; TPEND = tpend;
+  if(st){ STAT = st; STALE = 0; }
   /* One palette across both stores, so an area is the same colour whichever
      graph you are looking at — that is most of what makes the joined view
      readable. Task-only areas are appended rather than recoloured. */
@@ -271,6 +296,92 @@ async function boot(){
   tabs(); chips(); legend(); draw(); tray();
 }
 let ALL_AREAS=[];
+
+/* ---- staying current ---- */
+
+/* What the button says. `STALE` is a count of ops rather than a flag because
+   "3 ops staged" and "something changed" are different invitations, and the
+   first is the one a supervisor can price before clicking. A change with no
+   ops behind it — somebody applied a batch, another writer's `dg decide`
+   landed — has no number, and gets the dot alone rather than `0`. */
+function refreshBadge(){
+  const b=$("#refreshBtn"); if(!b) return;
+  const moved = STALE !== 0;
+  b.classList.toggle("on", moved);
+  b.textContent = !moved ? "\u21bb refresh"
+    : STALE > 0 ? `\u21bb refresh \u25cf${STALE}` : "\u21bb refresh \u25cf";
+  b.title = !moved
+    ? "Re-read both stores and both trays. Pan, zoom and the open inspector are kept."
+    : (STALE > 0
+        ? `${STALE} op(s) are staged that this page has not read. Click to take them; pan, zoom and the open inspector are kept.`
+        : "Both stores or a tray moved since this page read them. Click to take it; pan, zoom and the open inspector are kept.");
+}
+
+/* Has anything a reading of this project depends on moved? One small request,
+   answered by `stat` on four files, reading no content — so this can run for
+   as long as a browser is open without being the reason the machine is busy.
+
+   It draws nothing. See `STAT` above for why that is the design and not
+   timidity. */
+async function pollStat(){
+  if(BOOTING || document.hidden) return;
+  let now; try{ now = await api("/api/stat"); }catch(err){ return; }
+  const before = STAT ? JSON.stringify(STAT.token) : null;
+  if(before === null){ STAT = now; return; }
+  if(JSON.stringify(now.token) === before) return;
+  /* The **difference** in staged ops, not the total. A tray holding twelve
+     ops this page has already drawn is not news; three arriving since is. A
+     negative difference — somebody applied or discarded — is a change with no
+     number to offer, so it reports the dot alone rather than a count that
+     would read as newly staged work. */
+  const gained = (now.staged||0) - (STAT.staged||0);
+  STALE = gained > 0 ? gained : -1;
+  refreshBadge();
+}
+
+/* Take what the poll found. The three things kept are the three the reader
+   would otherwise have to rebuild by hand, and losing any of them is what
+   makes people stop pressing a refresh button.
+
+   `fit()` is deliberately **not** called — it resets the viewport, which is
+   right after Apply (the graph may have changed shape) and wrong here, where
+   somebody is looking at one corner of it. The existing callers pass their
+   own `fit()`; this one does not, which is why `boot()` never called it. */
+async function refresh(){
+  if(BOOTING) return;
+  BOOTING = true;
+  /* **Dropped before `boot()`, restored after it**, and the order is the whole
+     of it. `boot()` ends by calling `draw()`, and `drawDecisions` reads
+     `G.derived[sel].depends` to dim what the selection is unrelated to — so a
+     `sel` naming a record this refresh is about to *remove* throws inside
+     `boot`, before anything below runs. The button then cleared its own badge
+     in `finally` and left the panel drawing the vanished record: the exact
+     staleness it exists to end, arriving through it.
+
+     The discard path already does this (`sel=null; tsel=null; await boot()`)
+     and its reason was never written down, so this one was written without it.
+     Reading a node out of the graph is not a case a caller may opt into
+     handling — every caller of `boot()` that can drop a node has to clear
+     first. */
+  const keep = cur();
+  sel = null; tsel = null;
+  try{
+    await boot();
+    /* Reselect only if it survived. A node another writer dropped cannot be
+       re-shown, and `select()` redraws and repaints the panel, so the kept
+       inspector costs nothing extra. */
+    const here = keep && ((G && G.vertices.some(v=>v.id===keep))
+                       || (T && T.tasks.some(x=>x.id===keep)));
+    if(here) select(keep);
+    else {
+      draw();
+      if(keep) $("#side").innerHTML=`<p class="muted">${esc(keep)} is no longer
+        in the graph — another writer removed it, or a staged op that added it
+        was discarded or applied away.</p>`;
+    }
+  }catch(err){ say(err.message,"bad"); }
+  finally{ BOOTING = false; refreshBadge(); }
+}
 
 let QTIMER=null;
 function bindQuery(){
@@ -2504,8 +2615,18 @@ async function reviseOp(ref){
 $("#newBtn").onclick=newNode;
 $("#soundBtn").onclick=soundPanel;
 $("#areasBtn").onclick=showAreas;
+$("#refreshBtn").onclick=refresh;
 
-boot().then(()=>{ fit(); draw(); });
+/* Stopped while the tab is hidden and asked once on the way back, so a laptop
+   left open overnight does not spend the night asking, and the answer is
+   current the moment somebody looks again. `pollStat` checks `document.hidden`
+   too — a timer can fire between the event and the clear. */
+addEventListener("visibilitychange",()=>{ if(!document.hidden) pollStat(); });
+
+boot().then(()=>{
+  fit(); draw(); refreshBadge();
+  POLL = setInterval(pollStat, POLL_EVERY);
+});
 </script>
 </body>
 </html>

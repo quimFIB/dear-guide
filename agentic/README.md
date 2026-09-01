@@ -42,8 +42,24 @@ retract — `dg undep` works only on a bare edge, so reversing a hasty answer
 means a `reopen` that files a reversal nobody made.
 
 The tray is what makes the search safe: nothing an agent stages exists until
-somebody applies it, and `dg serve` renders the graph **with the staged ops
-applied**, so a proposal can be read as a graph before it is one.
+somebody applies it. `dg show`, `dg task` and `dg brief` read the store **with
+the tray previewed**, so the frontier a second agent sees already accounts for
+what the first has claimed. `dg serve` shows the two apart — the graph is the
+store as it stands, and the footer is every staged op with the writer who
+proposed it.
+
+**That split is deliberate, and the reason is the canvas.** A terminal reading
+reprints from scratch every time, so folding the tray into it costs nothing. A
+panel holds a pan, a zoom and an open inspector, and a node appearing under a
+merge moves all three while somebody is reading one of them — so the browser
+puts the proposals where they can be read *as* proposals, beside the record
+rather than inside it, which is also what lets it name the writer. The
+`↻ refresh` button says when either has moved and redraws only when clicked,
+for the same reason.
+
+What follows from it: **a reading taken in the browser is of the record, not of
+the record plus what is proposed.** To see a proposal as a graph, take it —
+`dg apply --agent <name>` — or read it in the footer and in `dg pending`.
 
 ### ...and the real reason, which is narrower than "agents judge badly"
 
@@ -794,7 +810,7 @@ Each prompt should carry six things:
 ```sh
 dg pending                       # the roster: who proposed what, across both trays
 dg pending --agent brisk-beacon   # one agent's proposal, alone
-dg serve                         # ...or as a graph, with staging applied
+dg serve                         # ...or as a graph, with the tray beside it
 dg apply --agent brisk-beacon     # take this one
 dg clear --agent agile-azimuth   # turn that one down — the others are untouched
 ```
