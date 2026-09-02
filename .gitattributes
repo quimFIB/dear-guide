@@ -1,0 +1,4 @@
+# The cookbook page is built by quick-start-demo/build.py from the transcripts
+# in out/; it is 5 MB of generated HTML and would otherwise be most of the repo
+# in GitHub's language bar.
+quick-start-demo/index.html linguist-generated=true
