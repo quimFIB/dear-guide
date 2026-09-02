@@ -80,6 +80,23 @@ def test_demo_holds_one_of_every_record(demo):
         "TODO", "DOING", "PARKED", "DONE", "DROPPED"}
 
 
+def test_demo_holds_a_reading(demo):
+    """Late evidence that was read against its answer, and held.
+
+    `dg confirm --against` is the third exit from `evidence_after_deciding`,
+    and the common one; the store has to hold a reading so the panel and
+    `dg node` have one to show, and so the finding on D02 reads as the case
+    where nobody has taken an exit yet rather than the only shape late
+    evidence can have.
+    """
+    tg = TaskGraph.load(demo / "tasks.json")
+    read = [t for t in tg.tasks.values() if getattr(t, "readings", None)]
+    assert read, "no task in the demo carries a reading"
+    t = read[0]
+    assert t.status == "DONE" and t.evidence_for == t.readings[-1].against
+    assert t.readings[-1].note
+
+
 def test_demo_holds_work_finished_more_than_once(demo):
     """The record `F-F5` exists for, in the store a reader actually opens.
 

@@ -149,7 +149,9 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG` |
 | `.dgraph-capture/` | a fan-out's recording, if one is running — scratch, and gitignored with the rest |
-| `demo/` | a runnable graph holding one of every record this keeps, and a walkthrough over it |
+| `quick-start-demo/` | **start here** — [the cookbook](quick-start-demo/index.html): seventeen worked examples of *how do I do that with dear-guide?*, every line a real transcript, with the graph drawn beside each step |
+| `demo/` | a runnable graph holding one of every record this keeps, served in the web app, and a walkthrough over it |
+| `demo-agentic/` | three agents and a day's work on one graph, as seven scenes — what several writers cost, and what the tool does about it |
 | `docs/` | [how it works](docs/how-it-works.md), then quick starts: the [CLI](docs/quickstart-cli.md), the [web app](docs/quickstart-web.md), the [agent plugin](docs/quickstart-agents.md) and [a whole session with it](docs/session-walkthrough.md); plus [the design behind `dg find`](docs/query-framework.md) |
 | `.dgraph-serve.json` · `.dgraph-serve.log` | a detached `dg serve` |
 | `agentic/` | [running a fan-out against the graph](agentic/README.md) — [`QUICKSTART.md`](agentic/QUICKSTART.md) is three copy-paste recipes (including one where a Claude Code or opencode session answers the broker), [`RUNNING.md`](agentic/RUNNING.md) the procedure end to end, `prompts/` the templates it launches — several agents proposing into one tray and a person deciding. Optionally `agentic/bin/dg` and `agentic/bin/dg-agent`, a capture for when the run itself has to survive |
@@ -815,9 +817,9 @@ that the skill's command table only names commands that exist.
   is a day's work on one graph with three agents on it, driven by the *task*
   side: the queue says what is ready, an agent picks it up, doing it produces
   evidence, and evidence settles a question. The concurrency problems arrive out
-  of joining that work up rather than as the subject. `./demo-agentic/demo.sh`. Four of the six close with the tool doing something;
-  the fifth is the stale premise, which no locking discipline reaches and which
-  the falsifier is there for.
+  of joining that work up rather than as the subject. `./demo-agentic/demo.sh`. Six of the seven scenes close with the tool doing
+  something; the seventh is the stale premise, which no locking discipline
+  reaches and which the falsifier is there for.
 
   One class of collision is now off the table, though, and it is worth naming
   because it was the worst-behaved: two clones of one graph both computed the

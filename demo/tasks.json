@@ -67,7 +67,20 @@
      "stops": [
        {"why": "the batch box is committed to the re-index until March",
         "date": "2026-02-27"}
-     ]}
+     ]},
+
+    {"id": "T11", "title": "Recompute the oracle top-100 for encoder v3",
+     "area": "Eval", "status": "DONE",
+     "note": "D06 says the oracle is recomputed whenever the encoder changes. Encoder v3 changed it.",
+     "completions": [
+       {"date": "2026-03-04",
+        "outcome": "eval/oracle-v3.parquet -- 5k queries, 41 min on the batch box; 0.3% of the top-100 sets changed"}
+     ],
+     "readings": [
+       {"date": "2026-03-05", "against": "D06",
+        "note": "0.3% churn in the oracle sets is noise against a 0.95 gate; the oracle definition holds"}
+     ],
+     "evidence_for": "D06"}
   ],
   "edges": [
     {"from": "T01", "to": ["T03", "T06"], "kind": "precedes"},

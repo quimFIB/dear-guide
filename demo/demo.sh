@@ -34,7 +34,7 @@ cat <<TXT
 
   Open http://127.0.0.1:$port
 
-  Seven decisions and ten tasks from an imaginary nearest-neighbour search
+  Seven decisions and eleven tasks from an imaginary nearest-neighbour search
   service, arranged so that every kind of record this tool keeps is in it:
 
     D04  the open one — red and dashed. This is the one to decide.
@@ -43,7 +43,8 @@ cat <<TXT
     D07  provisional: decided, then D03 went back under review
     T03  the spike D04 is waiting on;  T04 waits on D05, which is not settled
     T07  dropped, after being parked;  T10 parked;  T09 evidence that arrived
-         after the answer it was meant to inform
+         after the answer it was meant to inform;  T11 the same, read against
+         D06, and it held — the reading is on the record
 
   A soundness chip sits in the header, because four findings stand. Each has
   its exits in the panel, and the same ones in the terminal:

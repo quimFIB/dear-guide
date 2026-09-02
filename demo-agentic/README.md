@@ -8,6 +8,11 @@ This one has three software agents and a maintainer. It exists because the
 useful question about agents is not whether they *may* share a graph, but what
 happens to the work when they do.
 
+Three demos, three jobs: [`quick-start-demo/`](../quick-start-demo/) is the
+cookbook — *how do I do that?*, one worked example at a time; `demo/` is one
+graph holding every kind of record, to click around; this is the story of
+several writers meeting, and the one failure none of the mechanisms reach.
+
 **The work is what drives it.** The task graph says what is ready, an agent
 picks it up, doing it produces evidence, and evidence is what settles a
 question. Nobody here invents an answer — every answer cites the task whose
@@ -313,6 +318,19 @@ cannot, and instead they collide on ids and produce merges git cannot do.
 *Isolation moves the race; it does not remove it.*
 
 ## What this demo does not show, and why
+
+**The launch tooling.** The agents here are named by hand — `DG_AGENT=A` in
+the scene's environment — and run under the widest policy there is: no
+`$DG_DECIDE`, no budget, no broker, no confinement floor. That is deliberate,
+and it is also older than the tooling that replaced it. `dg-agent claim` hands
+out names the tray cannot conflate; `dg-agent run` is an agent's parent and
+makes a budget and a write scope real; `dg-agent setup` writes the prompt and
+launcher from a one-word remit; a broker answers what the gate escalates. None
+of that changes what these seven scenes show, which is what `dg` does with
+several writers once they exist — but a reader who wants the day *launched*
+rather than scripted should read [`agentic/README.md`](../agentic/README.md),
+and the agents part of the [cookbook](../quick-start-demo/index.html) shows
+each of those mechanisms with its real output.
 
 **The commit gate under a fan-out.** `docs/quickstart-agents.md` records that on
 opencode the gate does not see subagent shell calls

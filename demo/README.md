@@ -9,6 +9,12 @@ It is small enough to read in a minute and arranged so that nothing in it is
 decoration: every vertex, every edge and all four standing findings are there
 because some capability has nowhere else to show itself.
 
+Three demos, three jobs: [`quick-start-demo/`](../quick-start-demo/) is the
+cookbook — *how do I do that?*, one worked example at a time; this is the one
+graph with every kind of record in it, served so you can click around; and
+[`demo-agentic/`](../demo-agentic/) is three agents and a day's work, for what
+several writers cost.
+
 ## Run it
 
 ```sh
@@ -20,7 +26,7 @@ do here can be a mistake.
 
 ## What is in it
 
-Seven decisions and ten tasks from an imaginary nearest-neighbour search
+Seven decisions and eleven tasks from an imaginary nearest-neighbour search
 service.
 
 ```
@@ -40,6 +46,7 @@ T05 recall harness         because D06        DONE
 T01 build the index        because D02        DONE
 T02 normalise at write     because D07        DONE
 T09 measure resident size  evidence for D02   DONE     ← reported after the answer
+T11 recompute the oracle   evidence for D06   DONE     ← reported after, read, and it held
 T03 sweep efSearch         evidence for D04   DOING    ← D04 is waiting on this
 T06 CI gate on recall      because D02        TODO     ← startable
 T08 assert unit norm       because D07        TODO     ← startable, premise shaky
@@ -132,6 +139,13 @@ The note is required, for the reason a drop's reason is: without it the record
 says somebody clicked a button, not what they found. And a reading is per
 result and per date, so work that finishes *later* brings the finding back
 rather than being permanently silenced.
+
+**D06 is the same situation after the exit was taken.** T11 recomputed the
+oracle for encoder v3 on 03-04, two weeks after D06 was settled, and the
+reading is on the store: `dg node D06` shows *read 2026-03-05 — 0.3% churn in
+the oracle sets is noise against a 0.95 gate* under the evidence, and the panel
+lists T11 as what informed it. No finding stands on D06, and the reading is
+dated, so a result that lands *after* 03-05 would bring one back.
 
 > **What the falsifier was for.** It was written on 02-14, before anyone had a
 > number. Had T09 come back with 74G, the same evidence would have tripped it
@@ -273,6 +287,7 @@ cd /tmp/dg-demo
 dg                     # the frontier: D03, D04, D05
 dg brief               # ...plus provisional work, staging, and the check
 dg node D02            # one decision in full, reversals and all
+dg node D06            # ...and one whose late evidence was read, and held
 dg why D04             # the chain of premises underneath it
 dg context T08         # D01 → D03! → D07! → T08 — across both stores
 dg path D01 D05        # the single line of reasoning between two decisions
