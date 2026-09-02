@@ -1,0 +1,80 @@
+# Removal keeps nothing, so it needs git to have the record instead.
+$ dg add --id D09 --area sync --title 'Which files does sync ignore?' --after D08
+staged add D09
+$ dg apply
+✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg rm D09 -y
+refused — decisions.json has uncommitted changes, so `git log -p` would not recover what is 
+removed
+commit the store first; git is the only record of what a removal takes away
+[exit 1]
+$ git commit -qam 'file D09'
+$ dg rm D09 -y
+remove D09 (sever)
+  Which files does sync ignore?    OPEN
+  rests on   D08
+  opens      —
+staged remove D09
+$ dg pending
+STAGED  1 op(s)
+  0  wygh  remove_vertex  D09  ✗ removed (sever)
+`dg apply` to write, `dg drop <id>` to unstage
+  `dg pending --full` for the table, nothing clipped
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+# Three shapes: sever (the default), splice, and into.
+$ dg add --id D09 --area storage --title 'Is corruption detected on open or on query?' --after D04
+staged add D09
+$ dg add --id D10 --area storage --title 'What does the rebuild command print?' --after D09
+staged add D10
+$ dg apply
+✓ applied 4 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ git commit -qam 'file D09, D10'
+$ dg tree D04
+decision graph
+└── D04 Where does the index live? DECIDED
+    ├── D06 What happens when the index is corrupted? OPEN
+    └── D09 Is corruption detected on open or on query? OPEN
+        └── D10 What does the rebuild command print? OPEN
+$ dg rm D09 --splice -y
+remove D09 (splice)
+  Is corruption detected on open or on query?    OPEN
+  rests on   D04
+  opens      D10
+  asserts D04 → D10
+  D04 opens  D06, D09 → D06
+  D04 opens  D06, D09 → D06, D09, D10
+staged remove D09
+note: D04 is decided, and its `opens` becomes D06, D09, D10 was D06, D09 — targets are the 
+graph's, not the answer's (D57). This note is temporary.
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg tree D04
+decision graph
+└── D04 Where does the index live? DECIDED
+    ├── D06 What happens when the index is corrupted? OPEN
+    └── D10 What does the rebuild command print? OPEN
+# A decision that work names cannot go until the work points elsewhere.
+$ dg rm D06 -y
+2 task(s) name D06: T04, T09
+point them elsewhere first — `dg task link <T> --because <D>`, or `dg task unlink <T> --because 
+D06`
+[exit 1]
+# And a duplicate task folds into the one it duplicates, edge kind by edge kind.
+$ dg task add --id T12 --area storage --title 'Check the index for corruption when opening' --after T01
+staged add T12
+staged T12 after T01
+$ dg apply
+✓ applied 2 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ git commit -qam 'file T12'
+$ dg task rm T12 --into T04 -y
+remove T12 (into)
+  Check the index for corruption when opening    TODO
+  after       T01  → —
+staged remove T12
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg check
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+✓ 9 vertices, 6 edges; 11 tasks, all invariants hold, 1 warning(s)

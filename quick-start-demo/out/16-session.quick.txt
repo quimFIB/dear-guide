@@ -1,0 +1,25 @@
+# Injected at the start of every session, and again after a compaction.
+$ dg brief
+DECISION GRAPH  /tmp/dg-quick-start/notelit  8 decisions: DECIDED 4, OPEN 4
+Record what gets settled with `dg` -- see the dear-guide skill.
+
+FRONTIER (4) -- not settled
+  D03  OPEN  Which embedding model backs semantic search?  [search]
+       waiting on evidence from T06
+  D06  OPEN  What happens when the index is corrupted?  [storage]
+       waiting on evidence from T04
+  D07  OPEN  How is ranking tuned once embeddings exist?  [search]
+       waiting on D03
+  D08  OPEN  How do two machines share one notes folder?  [sync]
+       decidable now
+       note: D01's falsifier already names this case.
+
+RESTING ON A PREMISE UNDER REVIEW (0)
+
+STAGED BUT NOT APPLIED: 0 decision, 0 task
+
+TASKS  11: DOING 1, DONE 2, DROPPED 1, PARKED 1, TODO 6   (3 ready, 2 blocked)
+CHECK: clean
+# And a commit that would leave the graph contradicting itself is refused at the door.
+$ dg gate --command 'git commit -m "settle D06"'
+allow

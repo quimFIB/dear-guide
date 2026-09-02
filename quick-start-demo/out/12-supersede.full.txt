@@ -1,0 +1,124 @@
+# D04's falsifier was written in June. It just came true.
+$ dg node D04
+╭──────────────────────────────────────────── D04 ─────────────────────────────────────────────╮
+│ Where does the index live?                                                                   │
+│                                                                                              │
+│ status      DECIDED                                                                          │
+│ area        storage                                                                          │
+│ depends on  D02                                                                              │
+│ opens       D06                                                                              │
+│                                                                                              │
+│ falsifier   users sync the notes folder and the index file causes conflicts                  │
+│ source      discussion   (2026-06-15)                                                        │
+│                                                                                              │
+│ Answer                                                                                       │
+│ Beside the notes, in .notelit/index.db. Rebuilt on demand, never synced.                     │
+│ implemented by T03 (DROPPED)                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+$ dg reopen D04 --why 'three users who sync the folder report index.db conflict copies every day — the falsifier' -y
+╭───────────────────────────────────────── reopen D04 ─────────────────────────────────────────╮
+│ Where does the index live?                                                                   │
+│                                                                                              │
+│ Its answer becomes superseded; its dependencies stay.                                        │
+│                                                                                              │
+│ 0 decided descendant(s) rest on it and become PROVISIONAL:                                   │
+│   none                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s)
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg
+FRONTIER  5 not settled of 8   DECIDED 3  OPEN 4  REOPENED 1
+  D03  OPEN      Which embedding model backs semantic se…  ·  evidence T06 · search
+  D04  REOPENED  Where does the index live?                ·  decidable now · storage
+  D06  OPEN      What happens when the index is corrupte…  ·  waits D04 · evidence T04 · storage
+  D07  OPEN      How is ranking tuned once embeddings ex…  ·  waits D03 · search
+  D08  OPEN      How do two machines share one notes fol…  ·  decidable now · sync
+  `dg show --full` for the table, nothing clipped
+$ dg check
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+✓ 8 vertices, 7 edges; 11 tasks, all invariants hold, 1 warning(s)
+# The old answer is superseded, not deleted: it is still searchable, and its reasoning with it.
+$ dg find 'beside the notes'
+
+DECISIONS  1 match of 8
+  D04  REOPENED  Where does the index live?  ·  superseded answer: Beside the notes, in .noteli…
+
+TASKS  0 match of 11
+  nothing matches here
+  `dg find … --full` for the table, nothing clipped
+$ dg decide D04 --answer 'In the user'\''s cache directory, keyed by a hash of the notes folder'\''s path. Never inside the synced folder.' --summary 'cache dir, keyed by path hash' --source issues/52 --falsifier 'a user needs the index to travel with the notes, as on a USB stick' --opens D06
+╭──────────────────────────────────────────── D04 ─────────────────────────────────────────────╮
+│ Where does the index live?                                                                   │
+│                                                                                              │
+│ depends on D02                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg check
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+✓ 8 vertices, 7 edges; 11 tasks, all invariants hold, 1 warning(s)
+$ dg node D04
+╭──────────────────────────────────────────── D04 ─────────────────────────────────────────────╮
+│ Where does the index live?                                                                   │
+│                                                                                              │
+│ status      DECIDED                                                                          │
+│ area        storage                                                                          │
+│ depends on  D02                                                                              │
+│ opens       D06                                                                              │
+│                                                                                              │
+│ falsifier   a user needs the index to travel with the notes, as on a USB stick               │
+│ source      issues/52   (2026-09-02)                                                         │
+│                                                                                              │
+│ Answer                                                                                       │
+│ In the user's cache directory, keyed by a hash of the notes folder's path. Never inside the  │
+│ synced folder.                                                                               │
+│ implemented by T03 (DROPPED)                                                                 │
+│                                                                                              │
+│ Superseded                                                                                   │
+│                                                                                              │
+│   “Beside the notes, in .notelit/index.db. Rebuilt on demand, …” → cache dir, keyed by path  │
+│ hash   2026-06-15                                                                            │
+│     why         three users who sync the folder report index.db conflict copies every day —  │
+│ the falsifier                                                                                │
+│     opened      D06                                                                          │
+│     falsifier   users sync the notes folder and the index file causes conflicts              │
+│     source      discussion                                                                   │
+│                                                                                              │
+│     archived answer                                                                          │
+│     Beside the notes, in .notelit/index.db. Rebuilt on demand, never synced.                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+# What rests on it reads the new answer from now on.
+$ dg why D06 --full
+D06  OPEN  What happens when the index is corrupted?  [storage]
+  rests on D04
+
+RESTS ON (3) — nearest premise last
+  D01  DECIDED     What is the note store format?
+       Plain markdown files on disk, one note per file. The folder is the
+       database.
+       falsifier:
+         a user needs attachments larger than 10 MB inside a note, or one
+         note is edited from two machines at once
+       source: discussion  ·  2026-05-04
+       also opened: D02, D05, D08
+  D02  DECIDED     How are notes indexed for search?
+       SQLite FTS5 with a trigram tokenizer, one table for every notebook.
+       falsifier:
+         p95 over 200 ms at 100k notes
+       source: bench/fts5-trigram.md  ·  2026-07-10
+       also opened: D03, D04
+  D04  DECIDED     Where does the index live?
+       In the user's cache directory, keyed by a hash of the notes folder's
+       path. Never inside the synced folder.
+       falsifier:
+         a user needs the index to travel with the notes, as on a USB stick
+       source: issues/52  ·  2026-09-02
+
+WORK
+  because of this: T09
+  evidence for it: T04*
+  (* not finished yet)

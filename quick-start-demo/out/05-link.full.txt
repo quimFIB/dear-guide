@@ -1,0 +1,76 @@
+# Decisions: a premise added later. D04 is decided, and adding a target to its answer is allowed.
+$ dg dep D08 --after D04
+staged D08 rests on D04
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg node D04
+╭──────────────────────────────────────────── D04 ─────────────────────────────────────────────╮
+│ Where does the index live?                                                                   │
+│                                                                                              │
+│ status      DECIDED                                                                          │
+│ area        storage                                                                          │
+│ depends on  D02                                                                              │
+│ opens       D06, D08                                                                         │
+│                                                                                              │
+│ falsifier   users sync the notes folder and the index file causes conflicts                  │
+│ source      discussion   (2026-06-15)                                                        │
+│                                                                                              │
+│ Answer                                                                                       │
+│ Beside the notes, in .notelit/index.db. Rebuilt on demand, never synced.                     │
+│ implemented by T03 (DROPPED)                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+# And undone the same way. The answer's targets follow the graph.
+$ dg undep D08 --after D04
+staged D08 no longer rests on D04
+note: D04 is decided, and its `opens` becomes D06 was D06, D08 — targets are the graph's, not 
+the answer's (D57). This note is temporary.
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+# Tasks: a premise, a prerequisite, a provenance — each after the fact.
+$ dg task link T11 --because D05
+staged T11 linked
+$ dg task dep T11 --after T07
+staged T11 after T07
+$ dg task dep T05 --discovered-during T02
+staged T05 discovered during T02
+$ dg apply
+✓ applied 3 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task node T11
+╭──────────────────────────────────────────── T11 ─────────────────────────────────────────────╮
+│ Resolve wikilinks in search output                                                           │
+│                                                                                              │
+│ status      TODO  (blocked)                                                                  │
+│ area        ux                                                                               │
+│ waiting on  T07                                                                              │
+│ unblocks    —                                                                                │
+│ because     D05                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+$ dg task node T05
+╭──────────────────────────────────────────── T05 ─────────────────────────────────────────────╮
+│ Fix path escaping noticed while writing the loader                                           │
+│                                                                                              │
+│ status      TODO  (ready)                                                                    │
+│ area        storage                                                                          │
+│ waiting on  —                                                                                │
+│ unblocks    —                                                                                │
+│ found doing T01, T02                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+# Undoing a prerequisite releases the task if that was all it waited on.
+$ dg task undep T09 --after T04
+staged T09 no longer after T04
+$ dg task unlink T11 --because D05
+staged T11 unlinked from D05
+$ dg apply
+✓ applied 2 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task
+TASKS  8 outstanding of 11   DOING 1  DONE 2  DROPPED 1  PARKED 1  TODO 6
+  T04  TODO    Detect a corrupted index on open            ·  evidence for D06
+  T05  TODO    Fix path escaping noticed while writing t…  ·  startable
+  T06  DOING   Compare three embedding models on the 50k…  ·  unblocks T07 · evidence for D03
+  T07  TODO    Add --json to every search command          ·  waits T06 · unblocks T11 · because D05
+  T08  TODO    Write the sync section of the README        ·  waits D08 (undecided) · because D08
+  T09  TODO    Rebuild the index automatically when it i…  ·  waits D06 (undecided) · because D06
+  T10  PARKED  Run the benchmark in CI on every merge      ·  parked: the CI minutes budget is spent until Q4 · because D02
+  T11  TODO    Resolve wikilinks in search output          ·  waits T07
+ready T04, T05
+  `dg task --full` for the table, nothing clipped

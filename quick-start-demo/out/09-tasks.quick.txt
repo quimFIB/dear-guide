@@ -1,0 +1,31 @@
+$ dg task
+TASKS  8 outstanding of 11   DOING 1  DONE 2  DROPPED 1  PARKED 1  TODO 6
+  T04  TODO    Detect a corrupted index on open            ·  unblocks T09 · evidence for D06
+  T05  TODO    Fix path escaping noticed while writing t…  ·  startable
+  T06  DOING   Compare three embedding models on the 50k…  ·  unblocks T07 · evidence for D03
+  T07  TODO    Add --json to every search command          ·  waits T06 · because D05
+  T08  TODO    Write the sync section of the README        ·  waits D08 (undecided) · because D08
+  T09  TODO    Rebuild the index automatically when it i…  ·  waits T04, D06 (undecided) · because D06
+  T10  PARKED  Run the benchmark in CI on every merge      ·  parked: the CI minutes budget is spent until Q4 · because D02
+  T11  TODO    Resolve wikilinks in search output          ·  startable
+ready T04, T05, T11
+  `dg task --full` for the table, nothing clipped
+$ dg task start T04
+staged T04 → DOING
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task done T04 --outcome 'src/index/open.py — a checksum in the header, PR #40'
+staged T04 → DONE
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task
+TASKS  7 outstanding of 11   DOING 1  DONE 3  DROPPED 1  PARKED 1  TODO 5
+  T05  TODO    Fix path escaping noticed while writing t…  ·  startable
+  T06  DOING   Compare three embedding models on the 50k…  ·  unblocks T07 · evidence for D03
+  T07  TODO    Add --json to every search command          ·  waits T06 · because D05
+  T08  TODO    Write the sync section of the README        ·  waits D08 (undecided) · because D08
+  T09  TODO    Rebuild the index automatically when it i…  ·  waits D06 (undecided) · because D06
+  T10  PARKED  Run the benchmark in CI on every merge      ·  parked: the CI minutes budget is spent until Q4 · because D02
+  T11  TODO    Resolve wikilinks in search output          ·  startable
+ready T05, T11
+  `dg task --full` for the table, nothing clipped

@@ -1,0 +1,97 @@
+$ name=$(dg-agent claim --budget 30m)
+agile-azimuth
+# What the environment actually says, fallbacks named as fallbacks.
+agile-azimuth ▸ $ DG_DECIDE=evidence DG_WRITE=launch dg-agent env
+variable         set to         effective                     read as                           
+DG_AGENT         agile-azimuth  agile-azimuth                 agent — refusals apply            
+DG_TASK          —              —                             nothing is assigned; read the     
+                                                              frontier                          
+DG_DECIDE        evidence       evidence                      closes only what finished evidence
+                                                              backs                             
+DG_WRITE         launch         launch                        /tmp, /tmp/dg-quick-start/notelit 
+DG_APPLY         —              own                           writes its own staged ops itself  
+DG_EXEC_ALLOW    —              nothing — every command asks  every command asks                
+DG_CONFINE       —              off                           no floor — the gate and the broker
+                                                              are all that judge                
+DG_FLOOR         —              host                          host — usable here                
+DG_AREA          —              open                          any area; a new one is checked    
+                                                              against the ones in use           
+DG_BUDGET        —              infinite                      30m left on this lease            
+DG_TERSE         —              no limit                      no limit on a field               
+DG_SILENT_AFTER  —              15m                           default                           
+DG_PROJECT       —              /tmp/dg-quick-start/notelit   nearest ancestor                  
+every variable set here was understood
+# The policy is a refusal, not a habit: no finished evidence, no answer.
+agile-azimuth ▸ $ DG_DECIDE=evidence dg decide D03 --answer 'The small local model; the hosted one costs more than the notes are worth.' --source discussion --falsifier 'recall under 0.8 on the 50k set'
+✗ nothing staged — $DG_DECIDE=evidence: D03's evidence has not finished (T06), so the 
+measurement it would be recording does not exist yet
+[exit 1]
+# Writes outside the launch scope stop and ask; inside it they pass; reads are never judged.
+agile-azimuth ▸ $ DG_WRITE=launch dg gate --write ./notes/todo.md
+allow
+agile-azimuth ▸ $ DG_WRITE=launch dg gate --write /etc/hosts
+ask: $DG_WRITE=launch: agile-azimuth may write under /tmp, /tmp/dg-quick-start/notelit, and this is outside all of them (/etc/hosts). Reading anywhere is fine; writing here is the person's call. Approve it, or point the write somewhere in scope
+# A budget is real when the launcher is the agent's parent. This agent takes T05 and never finishes.
+$ cat agent.sh
+#!/usr/bin/env bash
+echo "I am $DG_AGENT"
+dg task start T05 && dg apply --mine
+sleep 30
+$ dg-agent run --budget 2 -- ./agent.sh
+running as agile-bearing DG_BUDGET=2s · 2s
+I am agile-bearing
+staged T05 → DOING
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+staged park of T05 as agile-bearing — `dg pending --agent agile-bearing` to read it
+agile-bearing was stopped at its budget
+agile-bearing stays claimed — it may be holding a proposal somebody has to read. `dg-agent 
+list`, then `dg-agent release agile-bearing`
+[exit 124]
+$ dg-agent list
+                               Names held                                
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━┓
+┃ Name          ┃ Since      ┃ Staged ┃ Holding ┃ Budget         ┃ Seen ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━┩
+│ agile-azimuth │ 2026-09-02 │ 0      │ —       │ 30m (29m left) │ 5s   │
+│ agile-bearing │ 2026-09-02 │ 1      │ —       │ SPENT +1s      │ 3s   │
+└───────────────┴────────────┴────────┴─────────┴────────────────┴──────┘
+`dg-agent expire` hands back what the spent ones hold
+7002 of 7004 names free
+$ dg task
+TASKS  8 outstanding of 11   DOING 1  DONE 2  DROPPED 1  PARKED 2  TODO 5
+  T04  TODO    Detect a corrupted index on open            ·  unblocks T09 · evidence for D06
+  T05  PARKED  Fix path escaping noticed while writing t…  ·  parked: budget spent: agile-bearing was given 2s and was stopped at it · staged
+  T06  DOING   Compare three embedding models on the 50k…  ·  unblocks T07 · evidence for D03
+  T07  TODO    Add --json to every search command          ·  waits T06 · because D05
+  T08  TODO    Write the sync section of the README        ·  waits D08 (undecided) · because D08
+  T09  TODO    Rebuild the index automatically when it i…  ·  waits T04, D06 (undecided) · because D06
+  T10  PARKED  Run the benchmark in CI on every merge      ·  parked: the CI minutes budget is spent until Q4 · because D02
+  T11  TODO    Resolve wikilinks in search output          ·  startable
+ready T04, T11
+  `dg task --full` for the table, nothing clipped
+# The park is staged under the agent's own name, for the supervisor to read and land.
+$ dg pending --agent agile-bearing
+nothing staged by agile-bearing
+staged by  agile-bearing 1
+$ dg apply --agent agile-bearing
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task node T05
+╭──────────────────────────────────────────── T05 ─────────────────────────────────────────────╮
+│ Fix path escaping noticed while writing the loader                                           │
+│                                                                                              │
+│ status      PARKED  (parked)                                                                 │
+│ area        storage                                                                          │
+│ waiting on  —                                                                                │
+│ unblocks    —                                                                                │
+│ found doing T01                                                                              │
+│                                                                                              │
+│ Stopped                                                                                      │
+│   2026-09-02  budget spent: agile-bearing was given 2s and was stopped at it  (still parked) │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+# For an agent nobody was watching, expire is the backstop; then prune the idle names.
+$ dg-agent expire
+agile-bearing is 4s over budget and holds nothing
+$ dg-agent prune
+released 2: agile-azimuth, agile-bearing
+$ dg-agent list
+no names claimed

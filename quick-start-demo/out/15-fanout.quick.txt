@@ -1,0 +1,45 @@
+$ a=$(dg-agent claim)
+agile-azimuth
+$ b=$(dg-agent claim)
+agile-bearing
+agile-azimuth ▸ $ dg task start T04
+staged T04 → DOING
+agile-azimuth ▸ $ dg apply --mine
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+agile-bearing ▸ $ dg add --id D09 --area sync --title 'Which files does sync ignore?' --after D08
+staged add D09
+agile-bearing ▸ $ dg task add --id T12 --area sync --title 'List the files sync must ignore' --because D08 --after T08
+staged add T12
+staged T12 after T08
+$ dg pending
+STAGED  2 op(s)
+  0  sghk  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
+  1  canm  add_edge    D08  → D09                                   ·  by agile-bearing
+staged by  agile-bearing 4
+  `dg pending --agent <name>` for one writer alone
+`dg apply` to write, `dg drop <id>` to unstage
+  `dg pending --full` for the table, nothing clipped
+$ dg apply
+✗ nothing written — 4 staged op(s) belong to agile-bearing
+`dg apply --all` writes theirs too, `dg apply --mine` only yours, `dg apply --agent <name>` one 
+of them; `dg pending` shows who staged what
+[exit 1]
+$ dg pending --agent agile-bearing
+STAGED  2 op(s)
+  0  sghk  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
+  1  canm  add_edge    D08  → D09                                   ·  by agile-bearing
+staged by  agile-bearing 4  — showing agile-bearing
+`dg apply` to write, `dg drop <id>` to unstage
+  `dg pending --full` for the table, nothing clipped
+$ dg apply --agent agile-bearing
+✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+✓ applied 2 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg-agent list
+                           Names held                            
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━┓
+┃ Name          ┃ Since      ┃ Staged ┃ Holding ┃ Budget ┃ Seen ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━┩
+│ agile-azimuth │ 2026-09-02 │ 0      │ T04     │ —      │ 4s   │
+│ agile-bearing │ 2026-09-02 │ 0      │ —       │ —      │ 3s   │
+└───────────────┴────────────┴────────┴─────────┴────────┴──────┘
+7002 of 7004 names free

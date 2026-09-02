@@ -1,0 +1,71 @@
+$ dg reopen D02 --why 'a user imported 100k notes: p95 is 260 ms, which is the falsifier' -y
+╭───────────────────────────────────────── reopen D02 ─────────────────────────────────────────╮
+│ How are notes indexed for search?                                                            │
+│                                                                                              │
+│ Its answer becomes superseded; its dependencies stay.                                        │
+│                                                                                              │
+│ 1 decided descendant(s) rest on it and become PROVISIONAL:                                   │
+│   D04                                                                                        │
+│                                                                                              │
+│ 1 unfinished task(s) rest on a premise under review:                                         │
+│   T10                                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 2 op(s)
+$ dg apply
+✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg decide D02 --answer 'SQLite FTS5 with a trigram tokenizer, sharded into one table per 20k notes.' --summary 'FTS5, trigram, sharded' --source bench/fts5-shards.md --falsifier 'p95 over 200 ms at 500k notes' --opens D03,D04
+╭──────────────────────────────────────────── D02 ─────────────────────────────────────────────╮
+│ How are notes indexed for search?                                                            │
+│                                                                                              │
+│ depends on D01                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg check
+! [stale_provisional] (warning) D04 is PROVISIONAL but every premise it rests on is settled 
+again — re-examine it, then `dg confirm D04`
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+✓ 8 vertices, 7 edges; 11 tasks, all invariants hold, 2 warning(s)
+$ dg confirm D04
+staged 1 op(s) — D04 back to DECIDED, review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg node D02
+╭──────────────────────────────────────────── D02 ─────────────────────────────────────────────╮
+│ How are notes indexed for search?                                                            │
+│                                                                                              │
+│ status      DECIDED                                                                          │
+│ area        search                                                                           │
+│ depends on  D01                                                                              │
+│ opens       D03, D04                                                                         │
+│                                                                                              │
+│ falsifier   p95 over 200 ms at 500k notes                                                    │
+│ source      bench/fts5-shards.md   (2026-09-02)                                              │
+│                                                                                              │
+│ Answer                                                                                       │
+│ SQLite FTS5 with a trigram tokenizer, sharded into one table per 20k notes.                  │
+│ implemented by T10 (PARKED)                                                                  │
+│ evidence from T02 (DONE) — bench/fts5.md — p95 41 ms at 50k notes, one table per notebook    │
+│                                                                                              │
+│ Superseded                                                                                   │
+│                                                                                              │
+│   “SQLite FTS5, one virtual table per notebook.” → FTS5, trigram tokenizer, one table        │
+│ 2026-06-03                                                                                   │
+│     why         p95 hit 340 ms once the synthetic set had ten notebooks: one table each      │
+│ meant ten scans a query                                                                      │
+│     opened      D03, D04                                                                     │
+│     falsifier   p95 query latency over 200 ms at 50k notes                                   │
+│     source      bench/fts5.md                                                                │
+│                                                                                              │
+│   “SQLite FTS5 with a trigram tokenizer, one table for every n…” → FTS5, trigram, sharded    │
+│ 2026-07-10                                                                                   │
+│     why         a user imported 100k notes: p95 is 260 ms, which is the falsifier            │
+│     opened      D03, D04                                                                     │
+│     falsifier   p95 over 200 ms at 100k notes                                                │
+│     source      bench/fts5-trigram.md                                                        │
+│                                                                                              │
+│     archived answer                                                                          │
+│     SQLite FTS5 with a trigram tokenizer, one table for every notebook.                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯

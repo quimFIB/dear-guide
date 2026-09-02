@@ -1,0 +1,28 @@
+$ dg why D06
+D06  OPEN  What happens when the index is corrupted?  [storage]
+  rests on D04
+
+CHAIN  D01 → D02 → D04 → D06
+  D01  DECIDED  What is the note store fo…  ·  Plain markdown files on disk, on…
+  D02  DECIDED  How are notes indexed for…  ·  SQLite FTS5 with a trigram token…
+  D04  DECIDED  Where does the index live?  ·  Beside the notes, in .notelit/in…
+
+WORK  because of this: T09 · evidence for it: T04* (* outstanding)
+
+→ this is OPEN; nothing below it is in doubt
+  `dg context D06 --full` for each answer, its evidence and its falsifier
+$ dg why T09
+T09  TODO  Rebuild the index automatically when it is corrupt  [storage]
+  after T04 · waiting on T04
+
+CHAIN  D01 → D02 → D04 → D06! → T09    ! = not settled
+  D01  DECIDED  What is the note store fo…  ·  Plain markdown files on disk, on…
+  D02  DECIDED  How are notes indexed for…  ·  SQLite FTS5 with a trigram token…
+  D04  DECIDED  Where does the index live?  ·  Beside the notes, in .notelit/in…
+
+BECAUSE  D06  OPEN  What happens when the index is corrupted?
+         not settled
+
+→ this work waits on D06 (OPEN) — the premise is not settled, so starting it now
+  is a bet on the answer
+  `dg context T09 --full` for each answer, its evidence and its falsifier

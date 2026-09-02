@@ -1,0 +1,18 @@
+$ dg dep D08 --after D04
+staged D08 rests on D04
+$ dg task link T11 --because D05
+staged T11 linked
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg why T11
+T11  TODO  Resolve wikilinks in search output  [ux]
+
+CHAIN  D01 → D05 → T11
+  D01  DECIDED  What is the note store fo…  ·  Plain markdown files on disk, on…
+
+BECAUSE  D05  DECIDED  Does the CLI ship a TUI?
+         No. One command per question, plain text out; pipes are the interface.
+
+→ the reasoning behind this work is settled all the way down
+  `dg context T11 --full` for each answer, its evidence and its falsifier

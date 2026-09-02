@@ -1,0 +1,29 @@
+# A store you already have is the input format — there is no conversion step.
+$ cat prepared.json
+{"areas": ["storage"],
+ "vertices": [{"id": "D01", "title": "What is the note store format?",
+               "area": "storage", "status": "OPEN", "owner": "me"}],
+ "edges": []}
+$ dg import prepared.json
+✗ not imported
+prepared.json: decision D01 has "owner", which a decision does not have. The fields are: id, 
+title, area, status (required), note, format.
+[exit 1]
+$ dg import prepared.json
+! [no_orphans] (warning) D01 is connected to nothing
+✓ imported 1 vertices, 0 edges → /tmp/dg-quick-start/notelit/decisions.json; run `dg render` for
+decision-graph.md
+added to .gitignore: .dgraph-*, *.dg-tmp, decisions.json.lock, tasks.json.lock
+$ dg
+FRONTIER  1 not settled of 1   OPEN 1
+  D01  OPEN  What is the note store format?  ·  decidable now · storage
+  `dg show --full` for the table, nothing clipped
+$ cat .gitignore
+# dear-guide: staging, locks and temp files
+.dgraph-*
+*.dg-tmp
+decisions.json.lock
+tasks.json.lock
+# And the other direction: the export round-trips, derived blocks and all.
+$ dg export
+{"areas": ["storage"], "vertices": [{"id": "D01", "title": "What is the note store format?", "area": "storage", "status": "OPEN"}], "edges": [], "derived": {"D01": {"depends": [], "provisional_because": [], "depth": 0, "children": [], "history": [], "rival_answers": null, "declined": []}}, "frontier": ["D01"], "next_id": "D02", "next_id_fault": null, "contested": {}}

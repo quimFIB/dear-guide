@@ -1,0 +1,93 @@
+# An answer that opens further questions must name them, and needs a falsifier.
+$ dg add --id D09 --area storage --title 'How is a rebuild reported to the user?' --after D06
+staged add D09
+$ dg apply
+✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg decide D06 --answer 'Refuse to open it. Print the rebuild command and exit 3.' --source discussion --opens D09
+╭──────────────────────────────────────────── D06 ─────────────────────────────────────────────╮
+│ What happens when the index is corrupted?                                                    │
+│                                                                                              │
+│ depends on D04                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+missing --falsifier/-f
+Falsifier (what evidence would reopen this? 'ANALYTIC — …' if none)
+not a terminal, so it cannot be prompted for
+[exit 2]
+$ dg decide D06 --answer 'Refuse to open it. Print the rebuild command and exit 3.' --source discussion --falsifier 'a corrupted index is seen in the wild more than once a month' --opens D09
+╭──────────────────────────────────────────── D06 ─────────────────────────────────────────────╮
+│ What happens when the index is corrupted?                                                    │
+│                                                                                              │
+│ depends on D04                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+note: D06 is being settled while T04 is still outstanding — that is a legitimate call, but read 
+the result against this answer when it lands. `dg check` goes on saying so until the work 
+finishes before the answer, the link goes, or the decision is reopened.
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg
+FRONTIER  4 not settled of 9   DECIDED 5  OPEN 4
+  D03  OPEN  Which embedding model backs semantic search?  ·  evidence T06 · search
+  D07  OPEN  How is ranking tuned once embeddings exist?   ·  waits D03 · search
+  D08  OPEN  How do two machines share one notes folder?   ·  decidable now · sync
+  D09  OPEN  How is a rebuild reported to the user?        ·  decidable now · storage
+  `dg show --full` for the table, nothing clipped
+# The note above is the other order: an answer first, its evidence later. D04 was settled in June; measure it now.
+$ dg task add --id T12 --area storage --title 'Measure index.db size on the 50k folder' --evidence-for D04
+staged add T12
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task start T12
+staged T12 → DOING
+$ dg task done T12 --outcome 'bench/index-size.md — 38 MB beside 400 MB of notes'
+staged T12 → DONE
+$ dg apply
+✓ applied 2 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg check
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+! [stale_task_view] (warning) tasks.md does not match tasks.json. It is generated — run `dg task
+render` rather than editing it.
+! [evidence_after_deciding] (warning) D04 (Where does the index live?) is DECIDED, settled 
+2026-06-15, but the work meant to inform it reported afterwards (T12 finished 2026-09-02 — 
+bench/index-size.md — 38 MB beside 400 MB of notes) — read it against the answer, then `dg 
+confirm D04 --against T12` if it still holds, `dg reopen D04` if it does not, or `dg task unlink
+T12 --evidence-for` if the answer never needed it
+! [evidence_after_deciding] (warning) D06 (What happens when the index is corrupted?) is 
+DECIDED, settled 2026-09-02, but the work meant to inform it has not reported yet (T04 is todo) 
+— read it against the answer, then `dg confirm D06 --against T04` if it still holds, `dg reopen 
+D06` if it does not, or `dg task unlink T04 --evidence-for` if the answer never needed it
+✓ 9 vertices, 7 edges; 12 tasks, all invariants hold, 4 warning(s)
+$ dg confirm D04 --against T12 --note 'Under a tenth of the notes themselves; beside them is fine.'
+staged D04 read against T12 — a *task* op, so `dg task pending` to review
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg check
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+! [stale_task_view] (warning) tasks.md does not match tasks.json. It is generated — run `dg task
+render` rather than editing it.
+! [evidence_after_deciding] (warning) D06 (What happens when the index is corrupted?) is 
+DECIDED, settled 2026-09-02, but the work meant to inform it has not reported yet (T04 is todo) 
+— read it against the answer, then `dg confirm D06 --against T04` if it still holds, `dg reopen 
+D06` if it does not, or `dg task unlink T04 --evidence-for` if the answer never needed it
+✓ 9 vertices, 7 edges; 12 tasks, all invariants hold, 3 warning(s)
+$ dg node D04
+╭──────────────────────────────────────────── D04 ─────────────────────────────────────────────╮
+│ Where does the index live?                                                                   │
+│                                                                                              │
+│ status      DECIDED                                                                          │
+│ area        storage                                                                          │
+│ depends on  D02                                                                              │
+│ opens       D06                                                                              │
+│                                                                                              │
+│ falsifier   users sync the notes folder and the index file causes conflicts                  │
+│ source      discussion   (2026-06-15)                                                        │
+│                                                                                              │
+│ Answer                                                                                       │
+│ Beside the notes, in .notelit/index.db. Rebuilt on demand, never synced.                     │
+│ implemented by T03 (DROPPED)                                                                 │
+│ evidence from T12 (DONE) — bench/index-size.md — 38 MB beside 400 MB of notes                │
+│                 read 2026-09-02 — Under a tenth of the notes themselves; beside them is      │
+│ fine.                                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯

@@ -1,0 +1,128 @@
+{
+ "areas": [
+  "storage",
+  "search",
+  "ux",
+  "sync"
+ ],
+ "vertices": [
+  {
+   "id": "D01",
+   "title": "What is the note store format?",
+   "area": "storage",
+   "status": "DECIDED"
+  },
+  {
+   "id": "D04",
+   "title": "Where does the index live?",
+   "area": "storage",
+   "status": "DECIDED"
+  },
+  {
+   "id": "D06",
+   "title": "What happens when the index is corrupted?",
+   "area": "storage",
+   "status": "OPEN"
+  },
+  {
+   "id": "D02",
+   "title": "How are notes indexed for search?",
+   "area": "search",
+   "status": "DECIDED"
+  },
+  {
+   "id": "D03",
+   "title": "Which embedding model backs semantic search?",
+   "area": "search",
+   "status": "OPEN"
+  },
+  {
+   "id": "D07",
+   "title": "How is ranking tuned once embeddings exist?",
+   "area": "search",
+   "status": "OPEN"
+  },
+  {
+   "id": "D05",
+   "title": "Does the CLI ship a TUI?",
+   "area": "ux",
+   "status": "DECIDED"
+  },
+  {
+   "id": "D08",
+   "title": "How do two machines share one notes folder?",
+   "area": "sync",
+   "status": "OPEN",
+   "note": "D01's falsifier already names this case."
+  }
+ ],
+ "edges": [
+  {
+   "from": "D01",
+   "to": [
+    "D02",
+    "D05",
+    "D08"
+   ],
+   "active": true,
+   "answer": "Plain markdown files on disk, one note per file. The folder is the database.",
+   "falsifier": "a user needs attachments larger than 10 MB inside a note, or one note is edited from two machines at once",
+   "source": "discussion",
+   "date": "2026-05-04"
+  },
+  {
+   "from": "D02",
+   "to": [
+    "D03",
+    "D04"
+   ],
+   "active": true,
+   "answer": "SQLite FTS5 with a trigram tokenizer, one table for every notebook.",
+   "falsifier": "p95 over 200 ms at 100k notes",
+   "source": "bench/fts5-trigram.md",
+   "date": "2026-07-10"
+  },
+  {
+   "from": "D02",
+   "to": [
+    "D03",
+    "D04"
+   ],
+   "active": false,
+   "answer": "SQLite FTS5, one virtual table per notebook.",
+   "falsifier": "p95 query latency over 200 ms at 50k notes",
+   "source": "bench/fts5.md",
+   "date": "2026-06-03",
+   "summary": "SQLite FTS5, one virtual table per notebook.",
+   "replaced_by": "FTS5, trigram tokenizer, one table",
+   "why": "p95 hit 340 ms once the synthetic set had ten notebooks: one table each meant ten scans a query"
+  },
+  {
+   "from": "D03",
+   "to": [
+    "D07"
+   ],
+   "active": true
+  },
+  {
+   "from": "D04",
+   "to": [
+    "D06"
+   ],
+   "active": true,
+   "answer": "Beside the notes, in .notelit/index.db. Rebuilt on demand, never synced.",
+   "falsifier": "users sync the notes folder and the index file causes conflicts",
+   "source": "discussion",
+   "date": "2026-06-15"
+  },
+  {
+   "from": "D05",
+   "to": [],
+   "active": true,
+   "answer": "No. One command per question, plain text out; pipes are the interface.",
+   "falsifier": "a second interactive prompt appears in the codebase",
+   "source": "discussion",
+   "date": "2026-05-20"
+  }
+ ]
+}

@@ -1,0 +1,88 @@
+# Nothing is written until apply. The tray is where you look before that.
+$ dg add --id D09 --area sync --title 'Which files does sync ignore?' --after D08
+staged add D09
+$ dg add --id D10 --area sync --title 'Is the index file one of them?' --after D09,D04
+staged add D10
+$ dg pending
+STAGED  5 op(s)
+  0  tvag  add_vertex  D09  Which files does sync ignore? [sync]
+  1  gncr  add_edge    D08  → D09
+  2  bnaa  add_vertex  D10  Is the index file one of them? [sync]
+  3  pcmn  add_edge    D09  → D10
+  4  anew  add_edge    D04  → D10
+`dg apply` to write, `dg drop <id>` to unstage
+  `dg pending --full` for the table, nothing clipped
+$ dg pending --full
+                                  Staged                                  
+┏━━━┳━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ # ┃ id   ┃ Op         ┃ Vertex ┃ Area ┃ Detail                         ┃
+┡━━━╇━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 0 │ tvag │ add_vertex │ D09    │ sync │ Which files does sync ignore?  │
+│ 1 │ gncr │ add_edge   │ D08    │      │ → D09                          │
+│ 2 │ bnaa │ add_vertex │ D10    │ sync │ Is the index file one of them? │
+│ 3 │ pcmn │ add_edge   │ D09    │      │ → D10                          │
+│ 4 │ anew │ add_edge   │ D04    │      │ → D10                          │
+└───┴──────┴────────────┴────────┴──────┴────────────────────────────────┘
+`dg apply` to write, `dg drop <id>` to unstage
+# Position or short id both address a staged op. Drop the second question.
+$ dg drop 2
+✗ nothing dropped
+bnaa was staged together with 2 other op(s), as one act: pcmn add_edge, anew add_edge
+Removing it alone would leave the rest to be applied as though they meant something they do not.
+Drop the whole act, or leave it whole and turn it down with `clear`.
+`dg drop 2 --group` removes the whole act
+[exit 1]
+$ dg drop 2 --group
+dropped bnaa: add_vertex D10  Is the index file one of them?
+dropped pcmn: add_edge D09  → D10
+dropped anew: add_edge D04  → D10
+$ dg pending
+STAGED  2 op(s)
+  0  tvag  add_vertex  D09  Which files does sync ignore? [sync]
+  1  gncr  add_edge    D08  → D09
+`dg apply` to write, `dg drop <id>` to unstage
+  `dg pending --full` for the table, nothing clipped
+$ dg clear
+cleared
+$ dg pending
+nothing staged
+# Areas accumulate — but a near-miss of one in use is refused as a typo.
+$ dg add --id D09 --area storge --title 'Which files does sync ignore?' --after D08
+area 'storge' is new, and close to areas already in use:
+    storage  (3 in this store, 5 in the other)
+If it is genuinely a different area, restage with --new-area. Areas accumulate: nothing has to 
+be declared first.
+[exit 1]
+$ dg add --id D09 --area sync --title 'Which files does sync ignore?' --after D08
+staged add D09
+$ dg apply
+✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+# A question with no premise is filed, and then flagged: an unconnected decision is a smell.
+$ dg add --id D10 --area ux --title 'Should search results be paginated?'
+staged add D10
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg check
+! [no_orphans] (warning) D10 is connected to nothing
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+✓ 10 vertices, 7 edges; 11 tasks, all invariants hold, 2 warning(s)
+$ dg areas
+             Decisions              
+┏━━━━━━━━━┳━━━━━━━━━┳━━━━━━┳━━━━━━━┓
+┃ Area    ┃ DECIDED ┃ OPEN ┃ Total ┃
+┡━━━━━━━━━╇━━━━━━━━━╇━━━━━━╇━━━━━━━┩
+│ storage │       2 │    1 │     3 │
+│ search  │       1 │    2 │     3 │
+│ ux      │       1 │    1 │     2 │
+│ sync    │       0 │    2 │     2 │
+└─────────┴─────────┴──────┴───────┘
+                           Tasks                            
+┏━━━━━━━━━┳━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━┳━━━━━━━┓
+┃ Area    ┃ DOING ┃ DONE ┃ DROPPED ┃ PARKED ┃ TODO ┃ Total ┃
+┡━━━━━━━━━╇━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━╇━━━━━━━┩
+│ storage │     0 │    1 │       1 │      0 │    3 │     5 │
+│ search  │     1 │    1 │       0 │      1 │    0 │     3 │
+│ ux      │     0 │    0 │       0 │      0 │    2 │     2 │
+│ sync    │     0 │    0 │       0 │      0 │    1 │     1 │
+└─────────┴───────┴──────┴─────────┴────────┴──────┴───────┘

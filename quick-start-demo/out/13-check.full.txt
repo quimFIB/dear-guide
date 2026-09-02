@@ -1,0 +1,62 @@
+# Evidence landed and nobody wrote down what it meant. The check says so until somebody does.
+$ dg task done T04 --outcome 'src/index/open.py — a checksum in the header, PR #40'
+staged T04 → DONE
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg check
+! [stale_task_view] (warning) tasks.md does not match tasks.json. It is generated — run `dg task
+render` rather than editing it.
+! [evidence_unharvested] (warning) T04 is DONE and was to inform D06 (What happens when the 
+index is corrupted?), which is still unsettled — record what it showed with `dg decide D06`, or 
+drop the link
+✓ 8 vertices, 6 edges; 11 tasks, all invariants hold, 2 warning(s)
+$ dg decide D06 --answer 'Refuse to open it. Print the rebuild command and exit 3.' --source T04 --falsifier 'a corrupted index is seen in the wild more than once a month'
+╭──────────────────────────────────────────── D06 ─────────────────────────────────────────────╮
+│ What happens when the index is corrupted?                                                    │
+│                                                                                              │
+│ depends on D04                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg render
+✓ wrote /tmp/dg-quick-start/notelit/decision-graph.md
+$ dg task render
+✓ wrote /tmp/dg-quick-start/notelit/tasks.md
+$ dg check
+✓ 8 vertices, 7 edges; 11 tasks, all invariants hold
+# A store a merge broke: D02 reopened by hand, and nothing propagated.
+$ dg check
+✗ [propagation] D04 is DECIDED but rests on D02 (REOPENED) — `dg repair` marks it PROVISIONAL, 
+or settle the premise with `dg decide D02`
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+! [evidence_unharvested] (warning) T02 is DONE and was to inform D02 (How are notes indexed for 
+search?), which is still unsettled — record what it showed with `dg decide D02`, or drop the 
+link
+! [link_premise_under_review] (warning) T10 is PARKED and exists because of D02, which is 
+REOPENED — the reason for this work is under review; re-check it before carrying on
+[exit 1]
+$ dg gate --command 'git commit -m "wip"'
+deny: The decision graph is not valid, so this commit would record a contradiction:
+  [propagation] D04 is DECIDED but rests on D02 (REOPENED) — `dg repair` marks it PROVISIONAL, or settle the premise with `dg decide D02`
+Fix it first: `dg check` names every rule that broke.
+$ dg repair
+  D04  Where does the index live?
+      DECIDED → PROVISIONAL, resting on D02 (REOPENED)
+  D06  What happens when the index is corrupted?
+      DECIDED → PROVISIONAL, resting on D02 (REOPENED)
+staged 2 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg check
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+! [evidence_unharvested] (warning) T02 is DONE and was to inform D02 (How are notes indexed for 
+search?), which is still unsettled — record what it showed with `dg decide D02`, or drop the 
+link
+! [link_premise_under_review] (warning) T09 is TODO and exists because of D06, which is 
+PROVISIONAL — the reason for this work is under review; re-check it before carrying on
+! [link_premise_under_review] (warning) T10 is PARKED and exists because of D02, which is 
+REOPENED — the reason for this work is under review; re-check it before carrying on
+✓ 8 vertices, 8 edges; 11 tasks, all invariants hold, 4 warning(s)

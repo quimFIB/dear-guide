@@ -1,0 +1,67 @@
+# Three links, three different claims. --because: this work exists because of that answer.
+$ dg task add --id T12 --area sync --title 'Write the conflict-file naming rule' --because D08 --after T08
+staged add T12
+staged T12 after T08
+# --evidence-for: this work's outcome will settle that question.
+$ dg task add --id T13 --area sync --title 'Measure how often two machines edit the same note' --evidence-for D08
+staged add T13
+# --discovered-during: doing that task turned this one up. Provenance blocks nothing.
+$ dg task add --id T14 --area search --title 'Embedding cache is never invalidated' --discovered-during T06
+staged add T14
+staged T14 discovered during T06
+$ dg apply
+✓ applied 5 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task
+TASKS  11 outstanding of 14   DOING 1  DONE 2  DROPPED 1  PARKED 1  TODO 9
+  T04  TODO    Detect a corrupted index on open            ·  unblocks T09 · evidence for D06
+  T05  TODO    Fix path escaping noticed while writing t…  ·  startable
+  T06  DOING   Compare three embedding models on the 50k…  ·  unblocks T07 · evidence for D03
+  T07  TODO    Add --json to every search command          ·  waits T06 · because D05
+  T08  TODO    Write the sync section of the README        ·  waits D08 (undecided) · unblocks T12 · because D08
+  T09  TODO    Rebuild the index automatically when it i…  ·  waits T04, D06 (undecided) · because D06
+  T10  PARKED  Run the benchmark in CI on every merge      ·  parked: the CI minutes budget is spent until Q4 · because D02
+  T11  TODO    Resolve wikilinks in search output          ·  startable
+  T12  TODO    Write the conflict-file naming rule         ·  waits T08, D08 (undecided) · because D08
+  T13  TODO    Measure how often two machines edit the s…  ·  evidence for D08
+  T14  TODO    Embedding cache is never invalidated        ·  startable
+ready T04, T05, T11, T13, T14
+  `dg task --full` for the table, nothing clipped
+$ dg task tree
+task graph
+├── T01 Write the file-store loader DONE
+│   ├── T02 Benchmark FTS5 on 50k synthetic notes DONE
+│   │   └── T06 Compare three embedding models on the 50k set DOING
+│   │       ├── T07 Add --json to every search command TODO
+│   │       └── T14 Embedding cache is never invalidated TODO — turned up doing it
+│   ├── T03 Wire a file watcher for incremental reindex DROPPED
+│   ├── T04 Detect a corrupted index on open TODO
+│   │   └── T09 Rebuild the index automatically when it is corrupt TODO
+│   └── T05 Fix path escaping noticed while writing the loader TODO — turned up doing it
+├── T08 Write the sync section of the README TODO
+│   └── T12 Write the conflict-file naming rule TODO
+├── T10 Run the benchmark in CI on every merge PARKED
+├── T11 Resolve wikilinks in search output TODO
+└── T13 Measure how often two machines edit the same note TODO
+$ dg task node T14
+╭──────────────────────────────────────────── T14 ─────────────────────────────────────────────╮
+│ Embedding cache is never invalidated                                                         │
+│                                                                                              │
+│ status      TODO  (ready)                                                                    │
+│ area        search                                                                           │
+│ waiting on  —                                                                                │
+│ unblocks    —                                                                                │
+│ found doing T06                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+$ dg why T12
+T12  TODO  Write the conflict-file naming rule  [sync]
+  after T08 · waiting on T08
+
+CHAIN  D01 → D08! → T12    ! = not settled
+  D01  DECIDED  What is the note store fo…  ·  Plain markdown files on disk, on…
+
+BECAUSE  D08  OPEN  How do two machines share one notes folder?
+         not settled
+
+→ this work waits on D08 (OPEN) — the premise is not settled, so starting it now
+  is a bet on the answer
+  `dg context T12 --full` for each answer, its evidence and its falsifier

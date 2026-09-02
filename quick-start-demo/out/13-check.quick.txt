@@ -1,0 +1,13 @@
+$ dg check
+✓ 8 vertices, 6 edges; 11 tasks, all invariants hold
+$ dg task done T04 --outcome 'src/index/open.py — a checksum in the header, PR #40'
+staged T04 → DONE
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg check
+! [stale_task_view] (warning) tasks.md does not match tasks.json. It is generated — run `dg task
+render` rather than editing it.
+! [evidence_unharvested] (warning) T04 is DONE and was to inform D06 (What happens when the 
+index is corrupted?), which is still unsettled — record what it showed with `dg decide D06`, or 
+drop the link
+✓ 8 vertices, 6 edges; 11 tasks, all invariants hold, 2 warning(s)

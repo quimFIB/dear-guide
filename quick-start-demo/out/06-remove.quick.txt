@@ -1,0 +1,26 @@
+$ dg task add --id T12 --area storage --title 'Check the index for corruption when opening' --after T01
+staged add T12
+staged T12 after T01
+$ dg apply
+✓ applied 2 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ git commit -qam 'file T12'
+$ dg task rm T12 --into T04 -y
+remove T12 (into)
+  Check the index for corruption when opening    TODO
+  after       T01  → —
+staged remove T12
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task tree
+task graph
+├── T01 Write the file-store loader DONE
+│   ├── T02 Benchmark FTS5 on 50k synthetic notes DONE
+│   │   └── T06 Compare three embedding models on the 50k set DOING
+│   │       └── T07 Add --json to every search command TODO
+│   ├── T03 Wire a file watcher for incremental reindex DROPPED
+│   ├── T04 Detect a corrupted index on open TODO
+│   │   └── T09 Rebuild the index automatically when it is corrupt TODO
+│   └── T05 Fix path escaping noticed while writing the loader TODO — turned up doing it
+├── T08 Write the sync section of the README TODO
+├── T10 Run the benchmark in CI on every merge PARKED
+└── T11 Resolve wikilinks in search output TODO

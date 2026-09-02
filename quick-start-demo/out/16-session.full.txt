@@ -1,0 +1,32 @@
+$ cat /home/feynman/workspace/random/tools/dear-guide/commands/brief.md
+---
+description: The development graph right now — the frontier, work under review, what is staged
+allowed-tools: Bash(dg brief:*)
+---
+
+The project's development graph:
+
+!`dg brief`
+
+$ARGUMENTS
+# The commit gate. Break the store by hand — D02 reopened, nothing propagated — and try to commit.
+$ dg gate --command 'git commit -m "wip"'
+deny: The decision graph is not valid, so this commit would record a contradiction:
+  [propagation] D04 is DECIDED but rests on D02 (REOPENED) — `dg repair` marks it PROVISIONAL, or settle the premise with `dg decide D02`
+Fix it first: `dg check` names every rule that broke.
+$ dg repair
+  D04  Where does the index live?
+      DECIDED → PROVISIONAL, resting on D02 (REOPENED)
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg gate --command 'git commit -m "wip"'
+allow
+$ dg render
+✓ wrote /tmp/dg-quick-start/notelit/decision-graph.md
+$ dg gate --command 'git commit -m "wip"'
+allow
+# The words a host watches for, read from the tool rather than copied.
+$ dg gate --triggers
+commit
+rm

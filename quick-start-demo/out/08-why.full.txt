@@ -1,0 +1,114 @@
+# --full prints every premise's answer, its evidence and its falsifier: the form to paste into a prompt.
+$ dg why D06 --full
+D06  OPEN  What happens when the index is corrupted?  [storage]
+  rests on D04
+
+RESTS ON (3) — nearest premise last
+  D01  DECIDED     What is the note store format?
+       Plain markdown files on disk, one note per file. The folder is the
+       database.
+       falsifier:
+         a user needs attachments larger than 10 MB inside a note, or one
+         note is edited from two machines at once
+       source: discussion  ·  2026-05-04
+       also opened: D02, D05, D08
+  D02  DECIDED     How are notes indexed for search?
+       SQLite FTS5 with a trigram tokenizer, one table for every notebook.
+       falsifier:
+         p95 over 200 ms at 100k notes
+       source: bench/fts5-trigram.md  ·  2026-07-10
+       also opened: D03, D04
+  D04  DECIDED     Where does the index live?
+       Beside the notes, in .notelit/index.db. Rebuilt on demand, never
+       synced.
+       falsifier:
+         users sync the notes folder and the index file causes conflicts
+       source: discussion  ·  2026-06-15
+
+WORK
+  because of this: T09
+  evidence for it: T04*
+  (* not finished yet)
+# One decision in full, reversals included. D02 was answered twice.
+$ dg node D02
+╭──────────────────────────────────────────── D02 ─────────────────────────────────────────────╮
+│ How are notes indexed for search?                                                            │
+│                                                                                              │
+│ status      DECIDED                                                                          │
+│ area        search                                                                           │
+│ depends on  D01                                                                              │
+│ opens       D03, D04                                                                         │
+│                                                                                              │
+│ falsifier   p95 over 200 ms at 100k notes                                                    │
+│ source      bench/fts5-trigram.md   (2026-07-10)                                             │
+│                                                                                              │
+│ Answer                                                                                       │
+│ SQLite FTS5 with a trigram tokenizer, one table for every notebook.                          │
+│ implemented by T10 (PARKED)                                                                  │
+│ evidence from T02 (DONE) — bench/fts5.md — p95 41 ms at 50k notes, one table per notebook    │
+│                                                                                              │
+│ Superseded                                                                                   │
+│                                                                                              │
+│   “SQLite FTS5, one virtual table per notebook.” → FTS5, trigram tokenizer, one table        │
+│ 2026-06-03                                                                                   │
+│     why         p95 hit 340 ms once the synthetic set had ten notebooks: one table each      │
+│ meant ten scans a query                                                                      │
+│     opened      D03, D04                                                                     │
+│     falsifier   p95 query latency over 200 ms at 50k notes                                   │
+│     source      bench/fts5.md                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+# The chain of evidence between two decisions.
+$ dg path D01 D07
+D01 What is the note store format? DECIDED
+  │ Plain markdown files on disk, one note per file. The folder is the database.
+  ▼
+D02 How are notes indexed for search? DECIDED
+  │ SQLite FTS5 with a trigram tokenizer, one table for every notebook.
+  ▼
+D03 Which embedding model backs semantic search? OPEN
+  │ 
+  ▼
+D07 How is ranking tuned once embeddings exist? OPEN
+# Work that rests on a question nobody has answered yet.
+$ dg why T07
+T07  TODO  Add --json to every search command  [ux]
+  after T06 · waiting on T06
+
+CHAIN  D01 → D05 → T07
+  D01  DECIDED  What is the note store fo…  ·  Plain markdown files on disk, on…
+
+BECAUSE  D05  DECIDED  Does the CLI ship a TUI?
+         No. One command per question, plain text out; pipes are the interface.
+
+→ blocked on T06; the reasoning behind it is settled
+  `dg context T07 --full` for each answer, its evidence and its falsifier
+$ dg why T09 --full
+T09  TODO  Rebuild the index automatically when it is corrupt  [storage]
+  after T04
+  waiting on T04
+
+BECAUSE  D06  OPEN  What happens when the index is corrupted?
+
+WHICH RESTS ON (3) — nearest premise last
+  D01  DECIDED     What is the note store format?
+       Plain markdown files on disk, one note per file. The folder is the
+       database.
+       falsifier:
+         a user needs attachments larger than 10 MB inside a note, or one
+         note is edited from two machines at once
+       source: discussion  ·  2026-05-04
+       also opened: D02, D05, D08
+  D02  DECIDED     How are notes indexed for search?
+       SQLite FTS5 with a trigram tokenizer, one table for every notebook.
+       falsifier:
+         p95 over 200 ms at 100k notes
+       source: bench/fts5-trigram.md  ·  2026-07-10
+       also opened: D03, D04
+  D04  DECIDED     Where does the index live?
+       Beside the notes, in .notelit/index.db. Rebuilt on demand, never
+       synced.
+       falsifier:
+         users sync the notes folder and the index file causes conflicts
+       source: discussion  ·  2026-06-15
+
+→ this work waits on D06 (OPEN) — the premise is not settled, so starting it now is a bet on the answer

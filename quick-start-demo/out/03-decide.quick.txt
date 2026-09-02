@@ -1,0 +1,25 @@
+$ dg decide D08 --answer 'The notes folder is synced by whatever the user already uses; notelit never syncs.' --source discussion --falsifier 'a user asks for notelit to resolve a conflict it did not cause'
+╭──────────────────────────────────────────── D08 ─────────────────────────────────────────────╮
+│ How do two machines share one notes folder?                                                  │
+│                                                                                              │
+│ depends on D01                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg node D08
+╭──────────────────────────────────────────── D08 ─────────────────────────────────────────────╮
+│ How do two machines share one notes folder?                                                  │
+│                                                                                              │
+│ status      DECIDED                                                                          │
+│ area        sync                                                                             │
+│ depends on  D01                                                                              │
+│ opens       TERMINAL                                                                         │
+│                                                                                              │
+│ falsifier   a user asks for notelit to resolve a conflict it did not cause                   │
+│ source      discussion   (2026-09-02)                                                        │
+│                                                                                              │
+│ Answer                                                                                       │
+│ The notes folder is synced by whatever the user already uses; notelit never syncs.           │
+│ implemented by T08 (TODO)                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯

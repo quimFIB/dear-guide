@@ -1,0 +1,160 @@
+{
+ "areas": [
+  "storage",
+  "search",
+  "ux",
+  "sync"
+ ],
+ "tasks": [
+  {
+   "id": "T01",
+   "title": "Write the file-store loader",
+   "area": "storage",
+   "status": "DONE",
+   "completions": [
+    {
+     "date": "2026-05-12",
+     "outcome": "src/store/files.py, PR #12"
+    }
+   ],
+   "because": [
+    "D01"
+   ]
+  },
+  {
+   "id": "T03",
+   "title": "Wire a file watcher for incremental reindex",
+   "area": "storage",
+   "status": "DROPPED",
+   "stops": [
+    {
+     "why": "polling every 2 s is enough, and the watcher crashed on network mounts (upstream #88)",
+     "date": "2026-07-01"
+    }
+   ],
+   "because": [
+    "D04"
+   ]
+  },
+  {
+   "id": "T04",
+   "title": "Detect a corrupted index on open",
+   "area": "storage",
+   "status": "TODO",
+   "evidence_for": "D06"
+  },
+  {
+   "id": "T05",
+   "title": "Fix path escaping noticed while writing the loader",
+   "area": "storage",
+   "status": "TODO"
+  },
+  {
+   "id": "T09",
+   "title": "Rebuild the index automatically when it is corrupt",
+   "area": "storage",
+   "status": "TODO",
+   "because": [
+    "D06"
+   ]
+  },
+  {
+   "id": "T02",
+   "title": "Benchmark FTS5 on 50k synthetic notes",
+   "area": "search",
+   "status": "DONE",
+   "completions": [
+    {
+     "date": "2026-06-02",
+     "outcome": "bench/fts5.md \u2014 p95 41 ms at 50k notes, one table per notebook"
+    }
+   ],
+   "evidence_for": "D02"
+  },
+  {
+   "id": "T06",
+   "title": "Compare three embedding models on the 50k set",
+   "area": "search",
+   "status": "DOING",
+   "evidence_for": "D03"
+  },
+  {
+   "id": "T10",
+   "title": "Run the benchmark in CI on every merge",
+   "area": "search",
+   "status": "PARKED",
+   "stops": [
+    {
+     "why": "the CI minutes budget is spent until Q4",
+     "date": "2026-08-20"
+    }
+   ],
+   "because": [
+    "D02"
+   ]
+  },
+  {
+   "id": "T07",
+   "title": "Add --json to every search command",
+   "area": "ux",
+   "status": "TODO",
+   "because": [
+    "D05"
+   ]
+  },
+  {
+   "id": "T11",
+   "title": "Resolve wikilinks in search output",
+   "area": "ux",
+   "status": "TODO"
+  },
+  {
+   "id": "T08",
+   "title": "Write the sync section of the README",
+   "area": "sync",
+   "status": "TODO",
+   "because": [
+    "D08"
+   ]
+  }
+ ],
+ "edges": [
+  {
+   "from": "T01",
+   "to": [
+    "T02",
+    "T03",
+    "T04"
+   ],
+   "kind": "precedes"
+  },
+  {
+   "from": "T01",
+   "to": [
+    "T05"
+   ],
+   "kind": "prompted"
+  },
+  {
+   "from": "T02",
+   "to": [
+    "T06"
+   ],
+   "kind": "precedes"
+  },
+  {
+   "from": "T04",
+   "to": [
+    "T09"
+   ],
+   "kind": "precedes"
+  },
+  {
+   "from": "T06",
+   "to": [
+    "T07"
+   ],
+   "kind": "precedes"
+  }
+ ]
+}

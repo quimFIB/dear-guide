@@ -1,0 +1,31 @@
+# Both clones answer D08, differently.
+$ dg decide D08 --answer 'A per-machine journal, merged on open.' --source findings/T08.md --falsifier 'the journal needs a migration'
+╭──────────────────────────────────────────── D08 ─────────────────────────────────────────────╮
+│ How do two machines share one notes folder?                                                  │
+│                                                                                              │
+│ depends on D01                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ git commit -qam 'settle D08 here'
+$ dg integrate colleague/master
+1 op(s) from colleague/master against 4533a49a0573 — 0 clean, 1 contested, 0 blocking
+
+contested — it applies, but this graph says otherwise. Only a person can say which is right.
+  d0  D08 was answered here too — 'A per-machine journal, merged on open.' against "notelit 
+syncs nothing; the folder is the user's…"
+      D08 already has a decided edge — reopen it first
+
+touched 1 record(s): D08
+quarantined in .dgraph-incoming.json — nothing is staged and nothing is written
+$ dg incoming
+1 op(s) from colleague/master against 4533a49a0573
+  open  d0  D08 was answered here too — 'A per-machine journal, merged on open.' against 
+"notelit syncs nothing; the folder is the user's…"
+        D08 already has a decided edge — reopen it first
+    d0  close  notelit syncs nothing; the folder is the user's problem.
+
+`dg incoming --take <ref>` for the arriving answer, `--keep <ref>` for this store's, or `--split
+<ref> --as <id>` where the two answers turn out to be to different questions; then `--adopt`. 
+`--discard` refuses the whole contribution.

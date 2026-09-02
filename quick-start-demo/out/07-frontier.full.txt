@@ -1,0 +1,47 @@
+# The same frontier, three ways: the table, the ids for a pipe, and the whole tree.
+$ dg show --full
+                                            Frontier                                            
+┏━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┓
+┃ ID  ┃ Decision                                    ┃ Status ┃ Waiting on ┃ Unblocks ┃ Area    ┃
+┡━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━┩
+│ D03 │ Which embedding model backs semantic        │ OPEN   │ —          │ —        │ search  │
+│     │ search?                                     │        │            │          │         │
+│ D06 │ What happens when the index is corrupted?   │ OPEN   │ —          │ —        │ storage │
+│ D07 │ How is ranking tuned once embeddings exist? │ OPEN   │ D03        │ —        │ search  │
+│ D08 │ How do two machines share one notes folder? │ OPEN   │ —          │ —        │ sync    │
+└─────┴─────────────────────────────────────────────┴────────┴────────────┴──────────┴─────────┘
+DECIDED 4  OPEN 4
+$ dg find is:decidable --ids
+D08
+$ dg tree
+decision graph
+└── D01 What is the note store format? DECIDED
+    ├── D02 How are notes indexed for search? DECIDED
+    │   ├── D03 Which embedding model backs semantic search? OPEN
+    │   │   └── D07 How is ranking tuned once embeddings exist? OPEN
+    │   └── D04 Where does the index live? DECIDED
+    │       └── D06 What happens when the index is corrupted? OPEN
+    ├── D05 Does the CLI ship a TUI? DECIDED
+    └── D08 How do two machines share one notes folder? OPEN
+# And what an agent is handed at the start of a session: the frontier, plus what rests on a premise under review, plus what is staged.
+$ dg brief
+DECISION GRAPH  /tmp/dg-quick-start/notelit  8 decisions: DECIDED 4, OPEN 4
+Record what gets settled with `dg` -- see the dear-guide skill.
+
+FRONTIER (4) -- not settled
+  D03  OPEN  Which embedding model backs semantic search?  [search]
+       waiting on evidence from T06
+  D06  OPEN  What happens when the index is corrupted?  [storage]
+       waiting on evidence from T04
+  D07  OPEN  How is ranking tuned once embeddings exist?  [search]
+       waiting on D03
+  D08  OPEN  How do two machines share one notes folder?  [sync]
+       decidable now
+       note: D01's falsifier already names this case.
+
+RESTING ON A PREMISE UNDER REVIEW (0)
+
+STAGED BUT NOT APPLIED: 0 decision, 0 task
+
+TASKS  11: DOING 1, DONE 2, DROPPED 1, PARKED 1, TODO 6   (3 ready, 2 blocked)
+CHECK: clean

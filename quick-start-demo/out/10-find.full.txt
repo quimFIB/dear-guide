@@ -1,0 +1,68 @@
+# Walk the graph: everything still open below D02.
+$ dg find 'under:D02 is:unsettled'
+
+DECISIONS  3 match of 8
+  D03  OPEN  Which embedding model backs semantic search?  ·  unblocks D07 · search
+  D06  OPEN  What happens when the index is corrupted?     ·  storage
+  D07  OPEN  How is ranking tuned once embeddings exist?   ·  waits D03 · search
+  `dg find … --full` for the table, nothing clipped
+# A superseded answer is still searchable — a reversal's reasoning is often the only place a rejected approach is written down.
+$ dg find 'per notebook'
+
+DECISIONS  1 match of 8
+  D02  DECIDED  How are notes indexed for sea…  ·  superseded answer: SQLite FTS5, one virtual…
+
+TASKS  1 match of 11
+  T02  DONE  Benchmark FTS5 on 50k syntheti…  ·  outcome: bench/fts5.md — p95 41 ms at 50k note…
+  `dg find … --full` for the table, nothing clipped
+$ dg find 'per notebook' --active
+
+DECISIONS  1 match of 8
+  D02  DECIDED  How are notes indexed for sea…  ·  summary: SQLite FTS5, one virtual table per…
+
+TASKS  1 match of 11
+  T02  DONE  Benchmark FTS5 on 50k syntheti…  ·  outcome: bench/fts5.md — p95 41 ms at 50k note…
+  `dg find … --full` for the table, nothing clipped
+# Fields, negation, alternation.
+$ dg find 'status:PARKED or status:DROPPED'
+
+DECISIONS  0 match of 8
+  nothing matches here
+
+TASKS  2 match of 11
+  T03  DROPPED  Wire a file watcher for incre…  ·  status: DROPPED · storage
+  T10  PARKED   Run the benchmark in CI on ev…  ·  status: PARKED · search
+  `dg find … --full` for the table, nothing clipped
+$ dg find 'area:storage -status:DONE' --tasks
+
+TASKS  4 match of 11
+  T03  DROPPED  Wire a file watcher for incre…  ·  area: storage · storage
+  T04  TODO     Detect a corrupted index on o…  ·  area: storage · storage
+  T05  TODO     Fix path escaping noticed whi…  ·  area: storage · storage
+  T09  TODO     Rebuild the index automatical…  ·  area: storage · storage
+  `dg find … --full` for the table, nothing clipped
+$ dg find 'falsifier:"200 ms"'
+
+DECISIONS  1 match of 8
+  D02  DECIDED  How are notes indexed for sea…  ·  falsifier: p95 over 200 ms at 100k notes · s…
+  `dg find … --full` for the table, nothing clipped
+# Ids alone, for a pipe.
+$ dg find is:decidable --ids
+D08
+# Exit 1 is a fact worth trusting: nothing in the store says that. Exit 2 is a question the tool could not answer as asked.
+$ dg find zebra
+
+DECISIONS  0 match of 8
+  nothing matches here
+
+TASKS  0 match of 11
+  nothing matches here
+  `dg find … --full` for the table, nothing clipped
+[exit 1]
+$ dg find is:nonsense
+no predicate `is:nonsense` — try awaiting-evidence, blocked, decidable, gated, implemented, 
+orphaned, outstanding, parked, provisional, ready, resolved, settled, shaky, superseded, 
+terminal, unharvested, unsettled
+  is:nonsense
+  ^
+[exit 2]

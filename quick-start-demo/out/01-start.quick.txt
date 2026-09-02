@@ -1,0 +1,13 @@
+$ dg init
+✓ created /tmp/dg-quick-start/notelit/decisions.json; run `dg render` for decision-graph.md
+added to .gitignore: .dgraph-*, *.dg-tmp, decisions.json.lock, tasks.json.lock
+$ dg task init
+✓ created /tmp/dg-quick-start/notelit/tasks.json; run `dg task render` for tasks.md
+$ dg add --id D01 --area storage --title 'What is the note store format?' --note 'Plain files, or a database the CLI owns. Everything else rests on this.'
+staged add D01
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg
+FRONTIER  1 not settled of 1   OPEN 1
+  D01  OPEN  What is the note store format?  ·  decidable now · storage
+  `dg show --full` for the table, nothing clipped

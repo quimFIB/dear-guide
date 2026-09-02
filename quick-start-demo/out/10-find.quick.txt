@@ -1,0 +1,16 @@
+$ dg find corrupt
+
+DECISIONS  1 match of 8
+  D06  OPEN  What happens when the index is corrupted?  ·  storage
+
+TASKS  2 match of 11
+  T04  TODO  Detect a corrupted index on open                    ·  storage
+  T09  TODO  Rebuild the index automatically when it is corrupt  ·  storage
+  `dg find … --full` for the table, nothing clipped
+$ dg find is:ready
+
+TASKS  3 match of 11
+  T04  TODO  Detect a corrupted index on open                    ·  storage
+  T05  TODO  Fix path escaping noticed while writing the loader  ·  storage
+  T11  TODO  Resolve wikilinks in search output                  ·  ux
+  `dg find … --full` for the table, nothing clipped

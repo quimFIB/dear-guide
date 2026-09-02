@@ -1,0 +1,3 @@
+# snapshots exported after every command: 4 MB of JSON that ./run.sh regenerates
+out/*/
+__pycache__/

@@ -1,0 +1,131 @@
+# Reopen the root, and everything decided on top of it is under review at once.
+$ dg reopen D01 --why 'three users report the same note edited on two machines in one day; two-machine edits are the common case' -y
+╭───────────────────────────────────────── reopen D01 ─────────────────────────────────────────╮
+│ What is the note store format?                                                               │
+│                                                                                              │
+│ Its answer becomes superseded; its dependencies stay.                                        │
+│                                                                                              │
+│ 3 decided descendant(s) rest on it and become PROVISIONAL:                                   │
+│   D02, D04, D05                                                                              │
+│                                                                                              │
+│ 2 unfinished task(s) rest on a premise under review:                                         │
+│   T07, T10                                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 4 op(s)
+$ dg apply
+✓ applied 4 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg
+FRONTIER  5 not settled of 8   OPEN 4  PROVISIONAL 3  REOPENED 1
+  D01  REOPENED  What is the note store format?                ·  decidable now · storage
+  D03  OPEN      Which embedding model backs semantic search?  ·  evidence T06 · search
+  D06  OPEN      What happens when the index is corrupted?     ·  evidence T04 · storage
+  D07  OPEN      How is ranking tuned once embeddings exist?   ·  waits D03 · search
+  D08  OPEN      How do two machines share one notes folder?   ·  waits D01 · sync
+
+RESTING ON A PREMISE UNDER REVIEW  3
+  D02  PROVISIONAL  How are notes indexed for search?  ·  D01 · search
+  D04  PROVISIONAL  Where does the index live?         ·  D01 · storage
+  D05  PROVISIONAL  Does the CLI ship a TUI?           ·  D01 · ux
+  `dg show --full` for the table, nothing clipped
+$ dg brief
+DECISION GRAPH  /tmp/dg-quick-start/notelit  8 decisions: OPEN 4, PROVISIONAL 3, REOPENED 1
+Record what gets settled with `dg` -- see the dear-guide skill.
+
+FRONTIER (5) -- not settled
+  D01  REOPENED  What is the note store format?  [storage]
+       decidable now
+       note: three users report the same note edited on two machines in one day; two…
+  D03  OPEN      Which embedding model backs semantic search?  [search]
+       waiting on evidence from T06
+  D06  OPEN      What happens when the index is corrupted?  [storage]
+       waiting on evidence from T04
+  D07  OPEN      How is ranking tuned once embeddings exist?  [search]
+       waiting on D03
+  D08  OPEN      How do two machines share one notes folder?  [sync]
+       waiting on D01
+       note: D01's falsifier already names this case.
+
+RESTING ON A PREMISE UNDER REVIEW (3) -- PROVISIONAL, so not in the frontier
+  D02  How are notes indexed for search?  [search]  rests on D01
+  D04  Where does the index live?  [storage]  rests on D01
+  D05  Does the CLI ship a TUI?  [ux]  rests on D01
+
+STAGED BUT NOT APPLIED: 0 decision, 0 task
+
+TASKS  11: DOING 1, DONE 2, DROPPED 1, PARKED 1, TODO 6   (3 ready, 2 blocked)
+  premise under review (2) -- work resting on a decision being re-examined
+    T07  Add --json to every search command  <- because D05, PROVISIONAL
+    T10  Run the benchmark in CI on every merge  <- because D02, PROVISIONAL
+CHECK: clean, 3 warning(s) -- `dg check`
+# PROVISIONAL has two exits, and neither is available until the premise is settled again.
+$ dg confirm D04
+D04 still rests on D01
+settle the premise first — until then PROVISIONAL is the accurate status
+[exit 1]
+$ dg decide D01 --answer 'Still plain markdown files, one per note — plus a per-machine journal beside them for conflicts.' --source 'issues/41, 44, 45' --falsifier 'the journal needs a schema migration, or a note needs more than one file' --opens D02,D05,D08
+╭──────────────────────────────────────────── D01 ─────────────────────────────────────────────╮
+│ What is the note store format?                                                               │
+│                                                                                              │
+│ depends on —                                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg check
+! [stale_provisional] (warning) D04 is PROVISIONAL but every premise it rests on is settled 
+again — re-examine it, then `dg confirm D04`
+! [stale_provisional] (warning) D02 is PROVISIONAL but every premise it rests on is settled 
+again — re-examine it, then `dg confirm D02`
+! [stale_provisional] (warning) D05 is PROVISIONAL but every premise it rests on is settled 
+again — re-examine it, then `dg confirm D05`
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+! [link_premise_under_review] (warning) T07 is TODO and exists because of D05, which is 
+PROVISIONAL — the reason for this work is under review; re-check it before carrying on
+! [link_premise_under_review] (warning) T10 is PARKED and exists because of D02, which is 
+PROVISIONAL — the reason for this work is under review; re-check it before carrying on
+✓ 8 vertices, 7 edges; 11 tasks, all invariants hold, 6 warning(s)
+# Re-examined, each one still holds. Confirm says so without inventing a reversal that never happened.
+$ dg confirm D02
+staged 1 op(s) — D02 back to DECIDED, review with `dg pending`, then `dg apply`
+$ dg confirm D04
+staged 1 op(s) — D04 back to DECIDED, review with `dg pending`, then `dg apply`
+$ dg confirm D05
+staged 1 op(s) — D05 back to DECIDED, review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 3 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg check
+! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
+`dg render` rather than editing it.
+✓ 8 vertices, 7 edges; 11 tasks, all invariants hold, 1 warning(s)
+$ dg node D01
+╭──────────────────────────────────────────── D01 ─────────────────────────────────────────────╮
+│ What is the note store format?                                                               │
+│                                                                                              │
+│ status      DECIDED                                                                          │
+│ area        storage                                                                          │
+│ depends on  —                                                                                │
+│ opens       D02, D05, D08                                                                    │
+│                                                                                              │
+│ falsifier   the journal needs a schema migration, or a note needs more than one file         │
+│ source      issues/41, 44, 45   (2026-09-02)                                                 │
+│                                                                                              │
+│ Answer                                                                                       │
+│ Still plain markdown files, one per note — plus a per-machine journal beside them for        │
+│ conflicts.                                                                                   │
+│ implemented by T01 (DONE)                                                                    │
+│                                                                                              │
+│ Superseded                                                                                   │
+│                                                                                              │
+│   “Plain markdown files on disk, one note per file. The folder…” → Still plain markdown      │
+│ files, one per note — plus a per-machi…   2026-05-04                                         │
+│     why         three users report the same note edited on two machines in one day;          │
+│ two-machine edits are the common case                                                        │
+│     opened      D02, D05, D08                                                                │
+│     falsifier   a user needs attachments larger than 10 MB inside a note, or one note is     │
+│ edited from two machines at once                                                             │
+│     source      discussion                                                                   │
+│                                                                                              │
+│     archived answer                                                                          │
+│     Plain markdown files on disk, one note per file. The folder is the database.             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯

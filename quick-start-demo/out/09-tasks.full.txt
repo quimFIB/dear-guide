@@ -1,0 +1,90 @@
+$ dg task tree
+task graph
+├── T01 Write the file-store loader DONE
+│   ├── T02 Benchmark FTS5 on 50k synthetic notes DONE
+│   │   └── T06 Compare three embedding models on the 50k set DOING
+│   │       └── T07 Add --json to every search command TODO
+│   ├── T03 Wire a file watcher for incremental reindex DROPPED
+│   ├── T04 Detect a corrupted index on open TODO
+│   │   └── T09 Rebuild the index automatically when it is corrupt TODO
+│   └── T05 Fix path escaping noticed while writing the loader TODO — turned up doing it
+├── T08 Write the sync section of the README TODO
+├── T10 Run the benchmark in CI on every merge PARKED
+└── T11 Resolve wikilinks in search output TODO
+# Two ways to stop. Parking keeps everything downstream waiting.
+$ dg task park T08 --why 'no second machine to test on until the laptop is back'
+staged T08 → PARKED
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task
+TASKS  8 outstanding of 11   DOING 1  DONE 2  DROPPED 1  PARKED 2  TODO 5
+  T04  TODO    Detect a corrupted index on open            ·  unblocks T09 · evidence for D06
+  T05  TODO    Fix path escaping noticed while writing t…  ·  startable
+  T06  DOING   Compare three embedding models on the 50k…  ·  unblocks T07 · evidence for D03
+  T07  TODO    Add --json to every search command          ·  waits T06 · because D05
+  T08  PARKED  Write the sync section of the README        ·  parked: no second machine to test on until the laptop is back · waits D08 (undecided) · because D08
+  T09  TODO    Rebuild the index automatically when it i…  ·  waits T04, D06 (undecided) · because D06
+  T10  PARKED  Run the benchmark in CI on every merge      ·  parked: the CI minutes budget is spent until Q4 · because D02
+  T11  TODO    Resolve wikilinks in search output          ·  startable
+ready T04, T05, T11
+  `dg task --full` for the table, nothing clipped
+$ dg task start T08
+staged T08 → DOING
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+# Dropping releases what waited — and asks for a verdict on each piece, now, while the reason is in mind.
+$ dg task drop T06 --why 'the hosting budget fixes the model; comparing three is moot'
+1 task(s) need a verdict before T06 can be dropped
+  T07  Add --json to every search command
+      released — waited only on T06
+re-run naming each one: --keep A,B and/or --drop-too C,D
+[exit 2]
+$ dg task drop T06 --why 'the hosting budget fixes the model; comparing three is moot' --keep T07
+staged T06 → DROPPED
+kept: T07 — still worth doing without T06
+`dg check` asks again until each one starts, drops the dead prerequisite, or records what it 
+stands on
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg check
+! [released_by_drop] (warning) T07 became startable only because T06 was abandoned — check the 
+work is still possible without what it would have produced, then `dg task start T07` or `dg task
+undep T07 --after T06`; or drop it too
+! [stale_task_view] (warning) tasks.md does not match tasks.json. It is generated — run `dg task
+render` rather than editing it.
+! [evidence_dropped] (warning) D03 (Which embedding model backs semantic search?) is OPEN and 
+every task meant to inform it was abandoned (T06) — no evidence is coming. Settle it on what is 
+already known with `dg decide D03`, plan new evidence, or drop the link
+✓ 8 vertices, 6 edges; 11 tasks, all invariants hold, 3 warning(s)
+$ dg task start T07
+staged T07 → DOING
+note: T07 waited on T06, which was abandoned rather than finished — check the work is still 
+possible without what it would have produced
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ dg task node T06
+╭──────────────────────────────────────────── T06 ─────────────────────────────────────────────╮
+│ Compare three embedding models on the 50k set                                                │
+│                                                                                              │
+│ status      DROPPED  (dropped)                                                               │
+│ area        search                                                                           │
+│ waiting on  —                                                                                │
+│ unblocks    T07                                                                              │
+│ informs     D03                                                                              │
+│                                                                                              │
+│ Stopped                                                                                      │
+│   2026-09-02  the hosting budget fixes the model; comparing three is moot  (abandoned here)  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+$ dg task node T08
+╭──────────────────────────────────────────── T08 ─────────────────────────────────────────────╮
+│ Write the sync section of the README                                                         │
+│                                                                                              │
+│ status      DOING  (waiting on a decision)                                                   │
+│ area        sync                                                                             │
+│ waiting on  —                                                                                │
+│ unblocks    —                                                                                │
+│ because     D08  (undecided)                                                                 │
+│                                                                                              │
+│ Stopped                                                                                      │
+│   2026-09-02  no second machine to test on until the laptop is back                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
