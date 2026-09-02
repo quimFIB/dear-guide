@@ -134,14 +134,24 @@ opencode only `--mode process` has guaranteed behaviour. A roster in this mode
 reaches the agents through the session that passed it — in the spawn
 instructions, since nothing sets `$DG_TASK` for a subagent (`D61`).
 
-**`--roster` is the exception, and `--agents` is the rule.** By default a
-fan-out launches N interchangeable agents that read the frontier and take what
-they find, and that is what lets a run absorb a queue which moves while it runs:
-an agent finishing early takes the next thing instead of idling, and work made
-ready by another agent's finish is picked up without anybody rewriting the
-launcher. A roster gives that up on purpose. Reach for it when you have a reason
-to say *this* agent does *this* — two pieces of work that must not be opened at
-the same moment, or a re-run aimed at exactly what a previous one dropped.
+**Every agent starts on an assigned task, and by default the graph picks
+them.** Two ready tasks never block each other, but they can meet at the seam:
+one is evidence for a decision the other names, and two agents sent there
+collide at the tray — the second `close` is refused — or turn each other's
+finished work PROVISIONAL (`D45`). So `dg-agent setup` computes a maximal set
+of ready tasks no two of which collide, greedily in id order so the same stores
+give the same answer, and assigns one per agent. Fewer independent tasks than
+agents asked for launches that many, and the report names the pair holding
+each task out; nothing ready launches N agents that read the frontier, the run
+this tool always had. The set is maximal and not maximum: that no larger one
+exists is not something a person can check by reading, and the cost of a
+missed set is one idle slot until the next setup. An assigned agent still
+reads the frontier when its task is done, so what assignment gives up against
+pure self-selection is only the first pick, and what it buys is that no two
+agents open work that will collide. `--roster` names the tasks yourself
+instead. Reach for it when you have a reason to say *this* agent does *this* —
+a re-run aimed at exactly what a previous one dropped — and read the report:
+a pair that may collide is said, with the decision it meets on, and obeyed.
 
 It sets `--agents` rather than sitting beside it, so the two cannot disagree,
 and passing both is refused. The ids are checked against the task store before
@@ -203,7 +213,7 @@ them, `dg` reads them, and `dg-agent env` says what is actually in force:
 | | |
 |---|---|
 | `DG_AGENT` | the writer's name, from `dg-agent claim` — or from `dg-agent run`, which claims one and sets it for the child. Never invent one: `claim` refuses a name that is held or that has ops in a tray, so two agents cannot conflate their work. **Never export it**: an exported name makes the launcher an agent, and its own policy then refuses it. |
-| `DG_TASK` | the task this agent was launched for, where a fan-out named one — set by `dg-agent run --task`, for the child only, like `DG_AGENT` and never exported. Unset is the ordinary case and means *nothing is assigned to you*. It is a starting point rather than a fence: the agent works it first, then reads the frontier as any other would. Not part of `env.json`, which holds the remit every agent in a run **shares** — an assignment differs per agent by construction. |
+| `DG_TASK` | the task this agent was launched for, where a fan-out named one — set by `dg-agent run --task`, for the child only, like `DG_AGENT` and never exported. Unset means *nothing is assigned to you*, which is a run with nothing ready or a launcher written by hand. It is a starting point rather than a fence: the agent works it first, then reads the frontier as any other would. Not part of `env.json`, which holds the remit every agent in a run **shares** — an assignment differs per agent by construction. |
 | `DG_DECIDE` | `evidence` — may close a question only where a **finished** `--evidence-for` task backs it · `never` — may not close at all · unset — may close anything. |
 | `DG_WRITE` | `launch` — may write in the project and `/tmp`; anywhere else stops and asks the person · unset/`open` — anywhere, which is what the tool has always done. Reads are never judged. |
 | `DG_AREA` | `strict` — may file only under an area already in use, and a new one goes back to a person · unset/`open` — any area, with a near-miss of one in use refused by the similarity guard and `--new-area` as the override. |

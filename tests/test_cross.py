@@ -1511,3 +1511,81 @@ def test_the_joined_payload_matches_the_per_decision_helpers(both):
         assert by[did]["evidence"] == cross.evidence(tg, did), did
         assert by[did]["pending_evidence"] == cross.pending_evidence(tg, did), did
         assert by[did]["late_evidence"] == cross.late_evidence(tg, g, did), did
+
+
+# ---- what may run side by side ---------------------------------------------
+#
+# `D45`: two tasks collide when one writes a decision the other writes or
+# reads. `cross.independent` is the fan-out's default roster, and
+# `cross.maximal_independent` is the algorithm under it, kept apart so the
+# algorithm can be swapped without the relation moving.
+
+
+def _stores(both):
+    return (TaskGraph.load(both / "tasks.json"),
+            Graph.load(both / "decisions.json"))
+
+
+def test_collision_is_a_write_meeting_a_name_and_not_a_shared_premise(both):
+    tg, _ = _stores(both)
+    tg.tasks["T02"].evidence_for = "D02"
+    tg.tasks["T03"].because = ["D02"]
+    tg.tasks["T04"].because = ["D02"]
+    # evidence for D02 against a task resting on D02: a collision, on D02,
+    # whichever way round it is asked
+    assert cross.collision(tg, "T02", "T03") == "D02"
+    assert cross.collision(tg, "T03", "T02") == "D02"
+    # two tasks resting on D02 and moving nothing: not a collision
+    assert cross.collision(tg, "T03", "T04") is None
+    # two pieces of evidence for one decision: the tray refuses the second close
+    tg.tasks["T04"].because = []
+    tg.tasks["T04"].evidence_for = "D02"
+    assert cross.collision(tg, "T02", "T04") == "D02"
+    assert cross.seam(tg, "T02") == {"D01", "D02"}, "the fixture's premise, and the write"
+    assert cross.seam(tg, "T01") == {"D01"}, "a premise alone is a seam, not a write"
+
+
+def test_maximal_independent_is_greedy_in_order_sound_and_maximal():
+    """The contract a replacement algorithm has to keep: nothing chosen
+    collides, and every candidate left out names the member it collides with
+    and the witness — a proof of maximality a person checks pair by pair."""
+    edges = {frozenset(p): d for p, d in
+             [(("a", "b"), "D1"), (("b", "c"), "D2"), (("c", "d"), "D3")]}
+    collide = lambda x, y: edges.get(frozenset((x, y)))
+    got = cross.maximal_independent(["a", "b", "c", "d"], collide)
+    assert got.chosen == ["a", "c"]
+    assert got.held == [("b", "a", "D1"), ("d", "c", "D3")]
+    # order is the caller's, and a different order is a different (still
+    # maximal) set: b then d is the other maximal set of this path
+    assert cross.maximal_independent(["b", "d", "a", "c"], collide).chosen == ["b", "d"]
+    for c in got.chosen:
+        for m in got.chosen:
+            assert c == m or collide(c, m) is None
+    for t, m, d in got.held:
+        assert m in got.chosen and collide(t, m) == d
+
+
+def test_independent_offers_only_ready_tasks_in_id_order(both):
+    tg, g = _stores(both)
+    tg.tasks["T02"].evidence_for = "D02"          # ready, writes D02
+    tg.tasks["T04"].status = "TODO"
+    tg.tasks["T04"].because = ["D02"]             # ready, rests on D02
+    tg.tasks["T03"].evidence_for = "D03"          # would be independent, but waits on T02
+    got = cross.independent(tg, g)
+    assert got.chosen == ["T02"]
+    assert got.held == [("T04", "T02", "D02")]
+
+
+def test_dg_task_independent_prints_the_set_and_the_pairs(run_cli, both):
+    """The entry point for a person: the set `dg-agent setup` would assign,
+    and for every task left out, the member and the decision that hold it."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D02"
+    tg.tasks["T04"].status = "TODO"
+    tg.tasks["T04"].because = ["D02"]
+    tg.save(both / "tasks.json")
+    res = run_cli("task", "independent")
+    assert res.exit_code == 0, res.output
+    assert "INDEPENDENT  1 of 2 ready can run side by side" in res.output
+    assert "T02  Second, now startable" in res.output
+    assert "T04 cannot join: shares D02 with T02" in res.output

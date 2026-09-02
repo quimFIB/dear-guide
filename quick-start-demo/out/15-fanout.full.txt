@@ -14,13 +14,22 @@ where one is available. None of them sets a budget — that follows the size of 
 remit.
 `dg-agent setup --preset <name>`, or pick one in the wizard; any other flag still overrides one 
 field.
+# What can be worked on at once: the set setup will assign, one task per agent.
+$ dg task independent
+INDEPENDENT  3 of 3 ready can run side by side
+  T04  Detect a corrupted index on open
+  T05  Fix path escaping noticed while writing the loader
+  T11  Resolve wikilinks in search output
 $ dg-agent setup --preset contributor --focus D06 --agents 2 --budget 20m --brief 'Settle what happens when the index is corrupted, on evidence rather than opinion.' --read 'docs/index-format.md:how the index file is laid out' --findings 'findings/<task-id>.md'
 ✓ decisions.json exists
 ✓ tasks.json exists
 ✓ 7004 agent names free
 ✓ 3 task(s) ready to claim: T04, T05, T11
+✓ 3 of those can run side by side: T04, T05, T11
 ! no consent broker — an escalation will be refused, not asked  dg-agent broker (a terminal), or
 `--relay --plan fanout/env.json` to answer from a session
+· assigned T04, T05 — one agent each; no two name a decision the other would move
+· 1 more could run beside these: T11
 wrote fanout/scout.md
 wrote fanout/launch.sh
 wrote fanout/env.json
@@ -127,8 +136,12 @@ dg-agent env --check --plan fanout/env.json
 # people skip, and until now only prose said so. `D53`.
 dg-agent broker --check || true
 
-for i in $(seq 1 2); do
-  dg-agent run --floor-applied --plan fanout/env.json \
+# One agent per task, named. `$DG_TASK` reaches the agent through
+# `dg-agent run`, which sets it for the child only -- the same
+# rule as `$DG_AGENT`, and for the same reason: an exported
+# assignment would make this launcher an agent holding work.
+for t in T04 T05; do
+  dg-agent run --floor-applied --plan fanout/env.json --task "$t" \
     -- claude --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"allowUnsandboxedCommands":false,"filesystem":{"allowWrite":["/tmp","/tmp/dg-quick-start/notelit"],"denyWrite":["/tmp/dg-quick-start/notelit/decisions.json","/tmp/dg-quick-start/notelit/tasks.json"]}}}' -p "$(cat fanout/scout.md)" &
 done
 
@@ -157,31 +170,44 @@ DG_TERSE         —       no limit                      no limit on a field
 DG_SILENT_AFTER  —       15m                           default                                  
 DG_PROJECT       —       /tmp/dg-quick-start/notelit   nearest ancestor                         
 every variable set here was understood
+# A roster written by hand is obeyed as written; a pair that may collide is said, not refused.
+$ dg task add --id T13 --area storage --title 'Measure how often an index corrupts in practice' --evidence-for D06
+staged add T13
+$ dg-agent setup --preset contributor --roster T04,T13 --budget 20m --brief 'Settle what happens when the index is corrupted, on evidence rather than opinion.' --findings 'findings/<task-id>.md' --dry-run
+✓ decisions.json exists
+✓ tasks.json exists
+✓ 7004 agent names free
+✓ 4 task(s) ready to claim: T04, T05, T11, T13
+✓ 3 of those can run side by side: T04, T05, T11
+! no consent broker — an escalation will be refused, not asked  dg-agent broker (a terminal), or
+`--relay --plan fanout/env.json` to answer from a session
+! T04 and T13 may collide: both name D06, and each would move it
+… 230 more line(s)
 # The other flow: the session spawns the agents itself. Same prompt; the rules become advisory, and setup says which.
 $ dg-agent setup --mode session --preset contributor --focus D06 --agents 2 --budget 20m --brief 'Settle what happens when the index is corrupted, on evidence rather than opinion.' --findings 'findings/<task-id>.md' --dry-run
 ✓ decisions.json exists
 ✓ tasks.json exists
 ✓ 7004 agent names free
-✓ 3 task(s) ready to claim: T04, T05, T11
+✓ 4 task(s) ready to claim: T04, T05, T11, T13
+✓ 3 of those can run side by side: T04, T05, T11
 ! no consent broker — an escalation will be refused, not asked  dg-agent broker (a terminal), or
 `--relay --plan fanout/env.json` to answer from a session
+· assigned T04, T05 — one agent each; no two name a decision the other would move
+· 1 more could run beside these: T11
 ! mode session: the agents are spawned by the session, so these are advisory here
     · $DG_AGENT — a subagent shares the session's environment, so without a `DG_AGENT=<name>` 
 prefix on every call it reads as the supervisor (D32)
     · the confinement floor — no `dg-agent run` parent to prepend it (D33)
     · the budget — the same; `$DG_BUDGET` is advisory and `dg-agent expire` the only backstop 
 (D33)
-    · $DG_TASK — not lost but relocated: the session passed --roster, so it hands each agent its
-task in the spawn instructions instead (D61)
+    · $DG_TASK — not lost but relocated: the setup report prints the roster, so the session 
+hands each agent its task in the spawn instructions instead (D61)
     · a relayed verdict's claim to `person` — the channel cannot prove a person wrote it with no
 floor (D40)
+    roster T04, T05 — one agent per task, in this order: name each agent's task in its spawn 
+instructions; there is no `$DG_TASK` here
     this mode is the plugin's workflow (`/dg:fanout`); from a terminal nothing refuses it, but 
-outside Claude Code or opencode only `--mode process` has guaranteed behaviour
-— fanout/scout.md —
-You are one of several agents working on notelit through a shared decision
-graph. Other agents are working at the same time, in the same checkout, staging
-into the same tray. Your name is in `$DG_AGENT`; every op you stage is stamped
-… 233 more line(s)
+… 261 more line(s)
 # Turning a proposal down leaves the others where they are.
 $ b=$(dg-agent claim)
 agile-azimuth
@@ -189,8 +215,8 @@ agile-azimuth ▸ $ dg add --id D09 --area ux --title 'Should search paginate?' 
 staged add D09
 $ dg pending
 STAGED  2 op(s)
-  0  ayku  add_vertex  D09  Should search paginate? [ux]   ·  by agile-azimuth
-  1  hbne  add_edge    D05  → D09                           ·  by agile-azimuth
+  0  uffp  add_vertex  D09  Should search paginate? [ux]   ·  by agile-azimuth
+  1  ypye  add_edge    D05  → D09                           ·  by agile-azimuth
 staged by  agile-azimuth 2
   `dg pending --agent <name>` for one writer alone
 `dg apply` to write, `dg drop <id>` to unstage

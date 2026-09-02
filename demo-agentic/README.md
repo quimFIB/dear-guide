@@ -325,8 +325,11 @@ the scene's environment — and run under the widest policy there is: no
 and it is also older than the tooling that replaced it. `dg-agent claim` hands
 out names the tray cannot conflate; `dg-agent run` is an agent's parent and
 makes a budget and a write scope real; `dg-agent setup` writes the prompt and
-launcher from a one-word remit; a broker answers what the gate escalates. None
-of that changes what these seven scenes show, which is what `dg` does with
+launcher from a one-word remit, and assigns each agent a first task from a
+maximal set of ready tasks no two of which collide at the seam — here that set
+is `T01` alone, which is what scene 1 reads off the queue by hand; a broker
+answers what the gate escalates. None of that changes what these seven scenes
+show, which is what `dg` does with
 several writers once they exist — but a reader who wants the day *launched*
 rather than scripted should read [`agentic/README.md`](../agentic/README.md),
 and the agents part of the [cookbook](../quick-start-demo/index.html) shows

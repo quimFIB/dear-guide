@@ -347,6 +347,7 @@ dg task                                  # outstanding work, and what is startab
 dg task --full                           # ...as a table, with nothing clipped
 dg task node T02                         # one task in full, with its premise
 dg task tree                             # the order of the work, from what can start
+dg task independent                      # the ready tasks that can be worked at once, and why the rest wait
 dg task start T02                        # ...pick it up
 dg task park T02 --why "stuck on the upstream bug"   # put down, not given up on
                                          # ...both keep the reason; only drop releases

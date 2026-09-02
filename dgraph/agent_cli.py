@@ -450,9 +450,12 @@ def agent_setup(
     roster: str = typer.Option(
         None, "--roster", metavar="IDS",
         help="comma-separated task ids to launch one agent each for, in this "
-             "order. Sets --agents; omit for the default, where "
-             "interchangeable agents read the frontier and take what they find"),
-    n: int = typer.Option(None, "--agents", "-n", help="how many to launch"),
+             "order, obeyed as written. Sets --agents; omit for the default, "
+             "where each agent is assigned a ready task no other agent's "
+             "task collides with"),
+    n: int = typer.Option(None, "--agents", "-n",
+                          help="how many to launch; fewer where fewer "
+                               "independent tasks are ready"),
     host: str = typer.Option(None, "--host", help="claude | opencode"),
     decide: str = typer.Option(None, "--decide", help="open | evidence | never"),
     apply_policy: str = typer.Option(
@@ -595,6 +598,12 @@ def agent_setup(
         cli.con.print(f"[red]✗ {cli._x(fault)}[/]\n"
                       f"[dim]nothing was written[/]")
         raise typer.Exit(2)
+    # The default assignment, after every flag and refusal and before anything
+    # reads the roster: a hand-written one passes through untouched, an empty
+    # one is filled from the graph, and the lines say which happened.
+    plan, assigned = fanout.assign(plan, proj)
+    for line in assigned:
+        cli.con.print(f"[green]·[/] {cli._x(line)}")
     # **`D52`'s second site, and the one a launcher meets.** The mode is
     # declared rather than enforced, so the declaring has to happen somewhere a
     # person is standing — which is here, at the moment they chose it, not in a

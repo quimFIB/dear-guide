@@ -363,7 +363,9 @@ def test_all_three_collectors_produce_identical_files(proj, monkeypatch):
             await pilot.pause()
 
     asyncio.run(drive())
-    from_tui = fanout.render_scout(app_.result, proj)
+    # The collectors collect; assignment is the step `setup` runs after
+    # every one of them, so the TUI's plan gets it here before the render.
+    from_tui = fanout.render_scout(fanout.assign(app_.result, proj)[0], proj)
 
     res = run(proj, "setup", "--focus", "T01", "--agents", "3",
               "--brief", "settle the search area", "--budget", "45m",
@@ -1151,21 +1153,22 @@ def test_a_fanout_generated_before_the_digest_existed_is_not_refused(proj):
 
 # ---- the roster ----------------------------------------------------------
 #
-# One agent per named task, for a launcher who wants to say which. The
-# property under all of it is that **the default is untouched**: a plan with
-# no roster renders the artefacts it always did, byte for byte, because
-# self-selection is what lets a fan-out absorb a queue that moves while it
-# runs and a roster gives that up on purpose.
+# One agent per task. By default the tasks are chosen from the graph — a
+# maximal set of ready tasks no two of which collide (`cross.independent`,
+# `D45`, `D46`) — and `--roster` is the exception, for a launcher who wants to
+# say which. The property under all of it is that **an empty roster is
+# untouched**: a plan with nothing assigned renders the artefacts it always
+# did, byte for byte, which is what a run with nothing ready still gets.
 
 
-def test_no_roster_renders_exactly_what_it_always_did(proj):
+def test_an_empty_roster_renders_exactly_what_it_always_did(proj):
     """The regression that would matter most, and the cheapest to miss.
 
-    A roster is an addition, so the plans that do not use one must be
-    unchanged — not "equivalent", identical. Both artefacts, because the
-    prompt and the launcher grew a branch each."""
+    Assignment happens in `setup`, not in `defaults`, so a plan built here has
+    no roster and must render unchanged — not "equivalent", identical. Both
+    artefacts, because the prompt and the launcher grew a branch each."""
     plan = fanout.defaults(proj)
-    assert plan.roster == [], "self-selection stays the default"
+    assert plan.roster == [], "defaults does not assign; setup does"
     launch = fanout.render_launch(plan, proj)
     scout = fanout.render_scout(plan, proj)
 
@@ -1210,6 +1213,77 @@ def test_a_rostered_prompt_names_the_task_and_still_ends_open(proj):
     assert '`$DG_TASK` is yours' in scout
     assert 'dg task start "$DG_TASK"' in scout
     assert "Do not stop after one task." in scout, "the open loop survives"
+
+
+def _ready(proj, **tasks):
+    """Add TODO tasks with the given seam fields, so the fixture has more than
+    one ready task. T02 is the fixture's only ready one; everything here is
+    unconnected and startable."""
+    store = proj.root / "tasks.json"
+    data = json.loads(store.read_text())
+    for tid, fields in tasks.items():
+        data["tasks"].append({"id": tid, "title": tid, "area": "x",
+                              "status": "TODO", **fields})
+    store.write_text(json.dumps(data, indent=2))
+
+
+def test_the_default_roster_is_an_independent_set_one_task_per_agent(proj):
+    """With no `--roster`, each agent is assigned a ready task no other
+    agent's task collides with, and the report says so. T05 writes D02 and
+    T06 rests on it, so only one of them is offered; the pair is named."""
+    _ready(proj, T05={"evidence_for": "D02"}, T06={"because": ["D02"]},
+           T07={"because": ["D01"]})
+    res = run(proj, "setup", "--agents", "2", "--brief", "x")
+    assert res.exit_code == 0, res.stdout
+    assert "3 of those can run side by side: T02, T05, T07" in res.stdout
+    assert "assigned T02, T05 — one agent each" in res.stdout
+    assert "1 more could run beside these: T07" in res.stdout
+    launch = (proj.root / "fanout" / "launch.sh").read_text()
+    assert "for t in T02 T05; do" in launch and "seq" not in launch
+    scout = (proj.root / "fanout" / "scout.md").read_text()
+    assert '`$DG_TASK` is yours' in scout
+    # every assigned task's chain is in the shared prompt (D47)
+    assert "T05  TODO" in scout
+
+
+def test_fewer_independent_tasks_than_agents_launches_fewer_and_says_which_pair(proj):
+    """K < N: the run is K agents. An unassigned N−K would read the frontier
+    and take exactly the held tasks, which is the collision the set was
+    computed to avoid — so the shortfall is reported with the pair to break."""
+    _ready(proj, T05={"evidence_for": "D02"}, T06={"because": ["D02"]})
+    res = run(proj, "setup", "--agents", "4", "--brief", "x")
+    assert res.exit_code == 0, res.stdout
+    assert "4 agents asked for, 2 independent task(s) ready: launching 2" in res.stdout
+    assert "T06 cannot join: shares D02 with T05" in res.stdout
+    assert "for t in T02 T05; do" in (proj.root / "fanout" / "launch.sh").read_text()
+
+
+def test_nothing_ready_keeps_the_self_selecting_run(proj):
+    """K = 0 is not a shortfall: N agents reading the frontier is the right
+    run against a graph whose work is all questions, and the artefacts are the
+    ones this tool has always written."""
+    store = proj.root / "tasks.json"
+    data = json.loads(store.read_text())
+    for t in data["tasks"]:
+        if t["id"] in ("T02", "T03"):    # T03 is ready once T02 is done
+            t["status"] = "DONE"
+    store.write_text(json.dumps(data))
+    res = run(proj, "setup", "--agents", "3", "--brief", "x")
+    assert res.exit_code == 0, res.stdout
+    assert "assigned" not in res.stdout
+    assert "for i in $(seq 1 3); do" in (proj.root / "fanout" / "launch.sh").read_text()
+    assert "Nothing is assigned to you." in (proj.root / "fanout" / "scout.md").read_text()
+
+
+def test_a_hand_roster_is_obeyed_and_a_colliding_pair_is_named(proj):
+    """Written by hand, so obeyed as written — and the pair that may collide
+    is said, with the decision it meets on and which task would move it."""
+    _ready(proj, T05={"evidence_for": "D02"}, T06={"because": ["D02"]})
+    res = run(proj, "setup", "--roster", "T05,T06", "--brief", "x")
+    assert res.exit_code == 0, res.stdout
+    assert "T05 and T06 may collide: both name D02, and T05 would move it" in res.stdout
+    assert "assigned" not in res.stdout, "a hand roster is not rewritten"
+    assert "for t in T05 T06; do" in (proj.root / "fanout" / "launch.sh").read_text()
 
 
 def test_a_roster_sets_the_agent_count_and_a_second_number_is_refused(proj):

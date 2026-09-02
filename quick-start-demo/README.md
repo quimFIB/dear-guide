@@ -17,7 +17,7 @@ into the same project; open it only where you want more.
 |---|---|
 | **Build** | start a graph · add a question · settle it · add work · link what exists · remove a record made in error |
 | **Ask** | the frontier · why a decision is where it is · the backlog and moving work · find by what it says · a fact arrives · changing an answer · keeping it honest |
-| **Agents** | one agent works the frontier · several agents, one tray · what a session gets from the plugin |
+| **Agents** | one agent works the frontier · which tasks can run at once, and several agents in one tray · what a session gets from the plugin |
 | **Beyond** | bringing a colleague's clone in |
 
 ## Everything on the page ran

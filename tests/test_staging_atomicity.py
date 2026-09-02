@@ -194,7 +194,7 @@ def test_every_staging_command_is_covered():
         # to review.
         ("areas", "prune"),
         ("task", "init"), ("task", "pending"), ("task", "render"),
-        ("task", "node"), ("task", "tree"), ("task", "drop-op"),
+        ("task", "node"), ("task", "tree"), ("task", "independent"), ("task", "drop-op"),
         ("task", "clear"), ("task", "import"), ("task", "export"),
     }
 

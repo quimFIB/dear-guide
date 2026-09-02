@@ -22,6 +22,7 @@ supposed to be readable stays readable.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from dgraph import env
 from dgraph.model import Graph
@@ -183,6 +184,112 @@ def gated_by(tg: TaskGraph, g: Graph, tid: str) -> str | None:
 def ready(tg: TaskGraph, g: Graph, tid: str) -> bool:
     """Startable for real: prerequisites resolved *and* premise settled."""
     return tg.ready(tid) and gated_by(tg, g, tid) is None
+
+
+# ---- what a fan-out may run side by side ----------------------------------
+#
+# The ready set is already an antichain under `precedes`: a ready task has no
+# unresolved prerequisite, so no ready task precedes another. What two ready
+# tasks can still do is meet at the seam — both of them naming one decision in
+# the other store — and that is the relation `D45` settled, here because it is
+# the one place allowed to say what `because` and `evidence_for` mean.
+
+
+def seam(tg: TaskGraph, tid: str) -> set[str]:
+    """The decisions a task names, across the seam: its premises and the one
+    it is evidence for. `LINK_FIELDS`, as a set of ids."""
+    t = tg.tasks[tid]
+    out = set(t.because)
+    if t.evidence_for:
+        out.add(t.evidence_for)
+    return out
+
+
+def collision(tg: TaskGraph, a: str, b: str) -> str | None:
+    """The decision two tasks would collide on, or `None`. `D45`.
+
+    Two tasks collide when one *writes* a decision the other writes or reads —
+    when the decision one is evidence for is a decision the other names at all.
+    Finishing evidence closes or reopens its decision, and the other task is
+    either about to close the same one (the tray refuses the second `close`, and
+    a paid-for run is discarded) or stands on it (its finished work turns
+    PROVISIONAL under it). Sharing a `because` premise alone is not a collision:
+    two tasks resting on one settled decision read it and move nothing.
+
+    Symmetric, and a single id rather than the set: a caller asking "may these
+    two run together?" needs one witness a person can check by reading two
+    records, which is the bar `docs/query-framework.md` sets.
+    """
+    ta, tb = tg.tasks[a], tg.tasks[b]
+    if ta.evidence_for and ta.evidence_for in seam(tg, b):
+        return ta.evidence_for
+    if tb.evidence_for and tb.evidence_for in seam(tg, a):
+        return tb.evidence_for
+    return None
+
+
+@dataclass(frozen=True)
+class Independent:
+    """A set of tasks no two of which collide, and why the rest could not join.
+
+    `held` is one row per candidate left out: `(task, member, decision)` — the
+    task, the chosen member it collides with, and the decision they meet on.
+    Together the two lists are a proof a person can check by reading pairs:
+    that `chosen` is independent, and that nothing outside it can be added.
+    They do not claim that no *larger* independent set exists; see
+    `maximal_independent`.
+    """
+    chosen: list[str]
+    held: list[tuple[str, str, str]]
+
+
+def maximal_independent(candidates: list[str],
+                        collide: Callable[[str, str], str | None]) -> Independent:
+    """A maximal set of candidates no two of which collide. Greedy, in order.
+
+    **This is the function to replace when the selection should get smarter.**
+    It knows nothing about tasks: it takes ids in the order the caller wants
+    them tried and a predicate returning the witness that two collide, and
+    returns a set plus the reason each other candidate stayed out. A better
+    algorithm keeps that contract — every candidate not chosen collides with a
+    named member — and callers need not change.
+
+    Maximal, not maximum. The largest independent set is set packing, which is
+    NP-hard, and more to the point is not checkable by hand: that a set is
+    independent is confirmed by reading its members, and that no larger one
+    exists is confirmed by reading nothing. Only one error direction costs
+    anything here — a set that is not independent wastes an agent run, while
+    a set that could have been larger idles one slot until the next setup. So
+    what is guaranteed is soundness and maximality, both of which `held`
+    demonstrates row by row.
+
+    Greedy in the caller's order rather than by degree, so that the same
+    stores produce the same set every time: a supervisor comparing two setups
+    has to be able to tell a real change from a reshuffle.
+    """
+    chosen: list[str] = []
+    held: list[tuple[str, str, str]] = []
+    for c in candidates:
+        for m in chosen:
+            d = collide(c, m)
+            if d is not None:
+                held.append((c, m, d))
+                break
+        else:
+            chosen.append(c)
+    return Independent(chosen, held)
+
+
+def independent(tg: TaskGraph, g: Graph) -> Independent:
+    """The ready tasks a fan-out may hand out at once, and why the rest wait.
+
+    Candidates are the ready set in id order — `ready`, so a task whose premise
+    is unsettled or whose prerequisite is unfinished is not offered, and sorted,
+    so the answer depends on the stores and not on the order rows sit in the
+    files. The relation is `collision`; the algorithm is `maximal_independent`.
+    """
+    cands = [t for t in sorted(tg.tasks) if ready(tg, g, t)]
+    return maximal_independent(cands, lambda a, b: collision(tg, a, b))
 
 
 def task_link(tg: TaskGraph, g: Graph, tid: str) -> dict:

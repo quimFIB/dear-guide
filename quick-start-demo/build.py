@@ -246,20 +246,33 @@ RECIPES: dict[str, dict] = {
                  (r"T05\s+PARKED.*budget spent", None)],
     ),
     "15-fanout": dict(
-        read_quick="One tray, several writers, each op stamped with its name. A bare apply refuses "
-                   "while the tray holds somebody else's work, and that refusal is the review step.",
+        read_quick="Two ready tasks never block each other, but they can collide at the seam: both are "
+                   "evidence for one decision, or one would move a decision the other rests on. "
+                   "<code>dg task independent</code> is the ready tasks with no such pair, and "
+                   "<code>dg-agent setup</code> assigns one per agent from it. Then one tray, several "
+                   "writers, each op stamped with its name: a bare apply refuses while the tray holds "
+                   "somebody else's work, and that refusal is the review step.",
         read_full="<code>dg-agent setup</code> writes the prompt, the launcher and the remit they were "
-                  "both generated from. Most of the prompt is the graph: the chain behind each focus "
-                  "id, pasted verbatim, which a fresh context could not reconstruct. Only three "
-                  "answers are yours.",
-        hl_quick=[(r"by agile-bearing", "every op says who staged it"),
+                  "both generated from. Each agent is assigned a first task, chosen so that no two "
+                  "agents' tasks collide at the seam. Most of the prompt is the graph: the chain behind "
+                  "each focus id, pasted verbatim, which a fresh context could not reconstruct. Only "
+                  "three answers are yours.",
+        hl_quick=[(r"^INDEPENDENT  3 of 4 ready can run side by side", "the set a fan-out hands out"),
+                  (r"^  T13 cannot join: shares D06 with T04", "the pair, and the decision they meet on"),
+                  (r"^· assigned T04, T05, T11 — one agent each", "one task per agent"),
+                  (r"^· 4 agents asked for, 3 independent task\(s\) ready: launching 3", "fewer agents, not a collision"),
+                  (r"by agile-bearing", "every op says who staged it"),
                   (r"^✗ nothing written — 4 staged op\(s\) belong to", "the refusal is the review"),
                   (r"^\$ dg apply --agent", "take one proposal, leave the rest")],
         hl_full=[(r"^contributor", "one word for six policies"),
+                 (r"^INDEPENDENT  3 of 3 ready can run side by side", "no two of these move a decision the other names"),
+                 (r"^· assigned T04, T05 — one agent each", "one task per agent, from that set"),
+                 (r"^for t in T04 T05; do", "the launcher: one child per assigned task"),
                  (r"^wrote fanout/scout.md", None),
                  (r"^## Why this work exists", "pasted from the graph"),
                  (r'"decide": "evidence"', "the remit, as data"),
                  (r"dg-agent run --floor-applied --plan fanout/env.json", "process mode: one child per agent, every rule enforced"),
+                 (r"^! T04 and T13 may collide: both name D06, and each would move it", "a hand roster: obeyed, and the pair named"),
                  (r"^! mode session: the agents are spawned by the session, so these are advisory", "session mode: what becomes advisory"),
                  (r"the confinement floor — no `dg-agent run` parent", None),
                  (r"^cleared 2 op\(s\) staged by", "turned down; nothing else touched")],
@@ -334,6 +347,7 @@ PART_INTRO = {
 </g>
 </svg>
 </figure>
+<p class="read"><b>Where each agent begins is computed, not written.</b> Two ready tasks never block each other, but they can meet at the seam between the stores: both are evidence for one decision, or one is evidence for a decision the other rests on. Two agents sent there collide &mdash; the second <code>close</code> is refused at the tray, or one agent's finished work turns <em>provisional</em> under the decision the other moved. So <code>dg-agent setup</code> takes the ready tasks in id order, keeps each one that collides with nothing already kept, and assigns one per agent; <code>dg task independent</code> shows that set on its own, with the pair holding every task out. Fewer independent tasks than agents launches fewer agents and names the pair to break; nothing ready launches the agents to read the frontier. The set is <em>maximal</em>, not maximum: that nothing can be added is a fact a reader checks by reading pairs, and that no larger set exists is not. A task is where an agent <em>starts</em>: when it is done the agent reads the frontier and carries on, so the run still absorbs a queue that moves. <code>--roster</code> names the tasks by hand instead, and is obeyed, with a colliding pair said rather than refused.</p>
 <p class="read">What an agent may do is a handful of environment variables, each read by <code>dg</code> at stage time and each a refusal rather than a habit. A <em>preset</em> is one word that sets them all; <code>dg-agent env</code> prints what is actually in force, naming a fallback as a fallback.</p>
 <table class="tbl policies">
 <tr><th>variable</th><th>values</th><th>what it limits</th><th>scout</th><th>contributor</th><th>maintainer</th></tr>
@@ -345,7 +359,7 @@ PART_INTRO = {
 <tr><td><code>DG_TERSE</code> · <code>DG_AREA</code></td><td>on/off · open/strict</td><td>how long a field may be; whether it may file under a new area</td><td colspan="3">on · open</td></tr>
 <tr><td><code>DG_CONFINE</code></td><td>require · off</td><td>whether a floor must be present below the tool layer</td><td colspan="3">require, where one is available</td></tr>
 </table>
-<p class="read">The tool's own words for all of this are in the recipes: <code>dg-agent presets</code> and both <code>setup</code> modes in <a href="#15-fanout">15</a>, <code>dg-agent env</code> and the refusals in <a href="#14-agent-loop">14</a>, the gate in <a href="#16-session">16</a>.</p>
+<p class="read">The tool's own words for all of this are in the recipes: <code>dg task independent</code>, the assignment, <code>dg-agent presets</code> and both <code>setup</code> modes in <a href="#15-fanout">15</a>, <code>dg-agent env</code> and the refusals in <a href="#14-agent-loop">14</a>, the gate in <a href="#16-session">16</a>.</p>
 </div>
 """,
 }

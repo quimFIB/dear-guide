@@ -802,11 +802,13 @@ Each prompt should carry six things:
 1. **The chain, in full.** `dg context <id> --full`, pasted in. A fresh context
    knows the task and nothing about why it exists, and without the chain it
    cannot tell a constraint from an implementation detail.
-2. **The loop, and that nothing will be assigned.** `dg show && dg task`, claim
-   with `dg task start`, `dg apply --mine`, finish with `dg task done --outcome`
-   or `dg task park --why`, then read the frontier again. An agent told only what
-   to do this once stops when it is done and leaves the rest of the queue sitting
-   there.
+2. **The loop, and where it begins.** `dg show && dg task`, claim with
+   `dg task start`, `dg apply --mine`, finish with `dg task done --outcome`
+   or `dg task park --why`, then read the frontier again. `dg-agent setup`
+   assigns each agent a first task — one of a set no two of which collide at
+   the seam — and that is where the loop starts, not where it stops: an agent
+   told only what to do this once stops when it is done and leaves the rest of
+   the queue sitting there.
 3. **The rule** from the top of this file — add questions and work, decide
    nothing — **and which `$DG_DECIDE`, `$DG_WRITE`, `$DG_BUDGET` and
    `$DG_TERSE` it is running under**, so a refusal at stage time or a prompt

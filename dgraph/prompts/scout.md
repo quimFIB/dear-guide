@@ -35,9 +35,10 @@ with it.
 ⟨MODE_PROSE⟩## The loop
 
 <!-- ⟨ASSIGNED⟩: whether this agent was launched for a named task. Filled from
-     the roster `dg-agent setup --roster` wrote into `launch.sh`; where there is
-     no roster it says nothing is assigned, which is the loop this tool has run
-     by default since it had one. -->
+     the roster `dg-agent setup` wrote into `launch.sh` — computed from the
+     graph, or given with `--roster`; where there is none, because nothing was
+     ready, it says nothing is assigned, which is the loop this tool ran by
+     default before it could choose. -->
 ⟨ASSIGNED⟩
 
 ```sh

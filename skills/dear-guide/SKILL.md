@@ -386,6 +386,7 @@ question with a falsifier. They never share a store.
 dg task                                   # outstanding work, and what is startable
 dg task node T14                          # one piece in full, with its premise
 dg task tree                              # the order of it: prerequisites, then what they release
+dg task independent                       # the ready tasks that can run at once — what a fan-out assigns
 dg task pending                           # what is staged for this store; `dg pending` is its twin
 dg task add --id T14 --title "Build the HNSW index and sweep efSearch" --area Search \
             --after T09 --because D02

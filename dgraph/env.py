@@ -60,9 +60,10 @@ AGENT_ENV = "DG_AGENT"
 #: *value* here rather than a bad op.
 UNOWNED = "unowned"
 
-#: The task this agent was launched for, where a fan-out named one. Empty or
-#: unset is the ordinary case and means *nothing is assigned to you* -- the
-#: scout prompt's own words, and the loop every agent has run until now.
+#: The task this agent was launched for, where a fan-out named one -- which
+#: `dg-agent setup` does by default, from the graph. Empty or unset means
+#: *nothing is assigned to you* -- the scout prompt's own words, and the loop
+#: every agent ran before setup could choose.
 #:
 #: **In `env.VARS`, so `dg-agent env` shows it** -- an agent told to start
 #: `"$DG_TASK"` needs one `dg` surface that says what it is (`X-F4`).

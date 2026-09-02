@@ -192,12 +192,18 @@ instructions — one agent per roster id, in the order you gave them. The setup
 report prints the roster back, and the prompt tells each agent to look in its
 instructions rather than in a variable (`D61`).
 
-**`--agents` is the default and `--roster` is the exception.** `--agents 3`
-launches three interchangeable agents that read the frontier and take what they
-find, which is what lets a run absorb a queue that moves while it runs.
-`--roster T04,T07,T11` launches one agent per named task instead, reaching each
-as `$DG_TASK` — reach for it only where somebody has a reason to say *this*
-agent does *this*. It sets the count rather than sitting beside it, so passing
+**Each agent is assigned a task, and by default the graph chooses them.**
+`--agents 3` computes a maximal set of ready tasks no two of which collide —
+two tasks collide when one is evidence for a decision the other names
+(`D45`) — and launches one agent per task, each reaching its own as
+`$DG_TASK`. The report says what was assigned and, where fewer independent
+tasks are ready than agents asked for, launches that many and names the pair
+holding each task out, so you can break the pair or mean it. With nothing
+ready, N agents read the frontier and take what they find. An assigned agent
+still reads the frontier when its task is done: the roster says where each
+begins, not where it stops. `--roster T04,T07,T11` names the tasks yourself
+instead, in this order, and is obeyed as written — a pair that may collide is
+said, not refused. It sets the count rather than sitting beside it, so passing
 both is refused.
 
 `--dry-run` prints the files without writing them. It produces

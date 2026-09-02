@@ -134,8 +134,8 @@ SESSION_LOSSES = (
      "the same; `$DG_BUDGET` is advisory and `dg-agent expire` the only "
      "backstop (D33)"),
     ("$DG_TASK", None,
-     "not lost but relocated: the session passed --roster, so it hands each "
-     "agent its task in the spawn instructions instead (D61)"),
+     "not lost but relocated: the setup report prints the roster, so the "
+     "session hands each agent its task in the spawn instructions instead (D61)"),
     ("a relayed verdict's claim to `person`", None,
      "the channel cannot prove a person wrote it with no floor (D40)"),
     ("`dg gate --write` and the commit gate", "opencode",
@@ -198,16 +198,20 @@ class Plan:
     #: context knows the task and nothing about why it exists, and without the
     #: chain it cannot tell a constraint from an implementation detail.
     focus: list[str] = field(default_factory=list)
-    #: Task ids to launch one agent each for, or empty for the loop this tool
-    #: has always run: N interchangeable agents that read the frontier and take
-    #: what they find.
+    #: Task ids to launch one agent each for. Empty in a fresh plan; `assign`
+    #: fills it from the graph unless `--roster` named the tasks by hand.
     #:
-    #: **Empty is not a lesser plan, and stays the default.** Self-selection is
-    #: what makes a fan-out absorb a queue that moves while it runs -- an agent
-    #: that finishes early takes the next thing rather than idling, and work
-    #: made ready by another agent's finish gets picked up without anybody
-    #: rewriting the launcher. A roster gives that up on purpose, and is worth
-    #: it only when somebody has a reason to say *this* agent does *this*.
+    #: **Filled by default, and not with any ready task.** Two ready tasks
+    #: never block each other, but they can still meet at the seam -- one is
+    #: evidence for a decision the other names -- and two agents sent there
+    #: collide at the tray or turn each other's work PROVISIONAL. So the
+    #: default roster is a maximal set of ready tasks no two of which collide
+    #: (`cross.independent`, the relation `D45` settled), one per agent. An
+    #: agent still reads the frontier when its task is done, so what the
+    #: roster gives up against pure self-selection is only the first pick.
+    #: Empty once assignment has run means nothing was ready: N agents that
+    #: read the frontier and take what they find, which is the right run
+    #: against a graph whose work is all questions.
     #:
     #: `agents` is derived from its length rather than kept beside it, for the
     #: reason `dg-agent run` gives about `--budget` and `timeout`: two numbers
@@ -527,6 +531,12 @@ def roster_warnings(plan: Plan, proj: project.Project | None = None) -> list[str
     start` does not refuse one, so the agent will begin work whose premise is
     not settled — which is sometimes exactly the point of a fan-out and is
     never something to discover afterwards.
+
+    A pair that may collide is the same kind of thing. A roster somebody wrote
+    is obeyed as written — `assign` never edits it — and the pair is named with
+    the decision it meets on (`cross.collision`, `D45`), so the person who
+    wrote it can break the pair or mean it. A roster `assign` computed has no
+    such pair by construction, and this says nothing about it.
     """
     if not plan.roster:
         return []
@@ -554,7 +564,75 @@ def roster_warnings(plan: Plan, proj: project.Project | None = None) -> list[str
         waiting = tg.waiting_on(tid)
         if waiting:
             out.append(f"{tid} waits on {', '.join(waiting)}")
+    named = [t for t in plan.roster if t in tg.tasks]
+    for i, a in enumerate(named):
+        for b in named[i + 1:]:
+            did = cross.collision(tg, a, b)
+            if did is not None:
+                # Which of the pair is the evidence for it -- or "each", the
+                # case where the tray refuses the second close outright.
+                movers = [t for t in (a, b) if t in cross.evidence(tg, did)]
+                who = "each" if len(movers) == 2 else movers[0]
+                out.append(f"{a} and {b} may collide: both name {did}, and "
+                           f"{who} would move it")
     return out
+
+
+def assign(plan: Plan, proj: project.Project | None = None
+           ) -> tuple[Plan, list[str]]:
+    """Fill an empty roster from the graph, and say what was done and why.
+
+    The default `dg-agent setup` runs — the thing `--roster` is the exception
+    to — so it runs where the plan is final and just before it is written.
+    A roster somebody wrote is returned untouched, warnings and all; see
+    `roster_warnings`.
+
+    The set is `cross.independent`: the ready tasks, in id order, greedily
+    kept while no two collide under `D45`. With N agents asked for and K in
+    the set, the first N are the roster when N ≤ K, and every agent starts on
+    work nothing else in the run can disturb. When K < N the roster is the K,
+    and the run is K agents rather than N. The alternative — N − K agents
+    with no assignment — would send them to the frontier to take exactly the
+    held tasks, which is the collision the set was computed to avoid; and a
+    supervisor who wants the Nth agent is told which pair to break, in the
+    report, rather than finding a refused `close` afterwards. Which is a
+    choice and not a finding: the dev graph holds it as an open question.
+
+    With nothing ready the plan is returned as it came: N agents, nothing
+    assigned, reading the frontier — the loop this tool has always run, and
+    the right one against a graph whose work is all questions.
+    """
+    if plan.roster:
+        return plan, []
+    proj = proj or project.find()
+    if not (proj.has_tasks and proj.has_decisions):
+        return plan, []
+    from dgraph.tasks import TaskGraph
+    from dgraph.model import Graph
+    from dgraph import cross
+    tg = TaskGraph.load(proj.tasks)
+    g = Graph.load(proj.store)
+    found = cross.independent(tg, g)
+    if not found.chosen:
+        return plan, []
+    roster = found.chosen[:plan.agents]
+    # Every assigned task's chain goes into the shared prompt (`D47`): an
+    # agent handed `$DG_TASK` without the reasoning behind it is the fresh
+    # context the chain exists for. Added to the focus, never in place of it
+    # -- `--focus` is what the person said the run is *for*.
+    focus = plan.focus + [t for t in roster if t not in plan.focus]
+    lines = [f"assigned {', '.join(roster)} — one agent each; "
+             f"no two name a decision the other would move"]
+    if len(found.chosen) < plan.agents:
+        lines.append(f"{plan.agents} agents asked for, {len(found.chosen)} "
+                     f"independent task(s) ready: launching "
+                     f"{len(found.chosen)}")
+        for t, m, d in found.held:
+            lines.append(f"{t} cannot join: shares {d} with {m}")
+    elif len(found.chosen) > plan.agents:
+        lines.append(f"{len(found.chosen) - plan.agents} more could run beside "
+                     f"these: {', '.join(found.chosen[plan.agents:])}")
+    return replace(plan, roster=roster, agents=len(roster), focus=focus), lines
 
 
 def plan_fault(plan: Plan) -> str | None:
@@ -650,6 +728,15 @@ def readiness(proj: project.Project | None = None) -> list[Check]:
                      + (f": {', '.join(ready[:5])}" if ready else ""),
                      "dg task add, and settle what blocks the rest",
                      bars=False))
+    if ready:
+        # How many of those a fan-out may hand out at once, per `assign`.
+        # Advisory like the line above it: a ready set that all meets at one
+        # decision is one agent's worth of work, not a reason to refuse.
+        side = cross.independent(tg, g).chosen
+        out.append(Check(True,
+                         f"{len(side)} of those can run side by side: "
+                         f"{', '.join(side[:5])}",
+                         bars=False))
     # A warning rather than a bar: a fan-out against a graph with nothing open
     # is legitimate if the agents are meant to propose questions, and refusing
     # it would refuse the one thing fan-out is best at.
@@ -962,13 +1049,12 @@ def _chain(proj: project.Project, ids: list[str]) -> str:
 def _assigned_prose(plan: Plan) -> str:
     """What "The loop" opens with, given a roster or the absence of one.
 
-    **The default keeps its exact words.** `scout.md` has said *nothing is
-    assigned to you* since the first fan-out, and `agentic/README.md` argues
-    for it: self-selection is what lets a run absorb a queue that moves while
-    it runs. A roster is the exception, so the exception is what reads
-    differently — an unrostered plan renders the sentence it always did, to the
-    byte, and a diff of two generated prompts shows the roster and nothing
-    else.
+    **An empty roster keeps its exact words.** `scout.md` has said *nothing is
+    assigned to you* since the first fan-out, and a run with nothing ready
+    still says it: an unrostered plan renders the sentence it always did, to
+    the byte, and a diff of two generated prompts shows the roster and nothing
+    else. Whether the roster was written by hand or by `assign` the agent is
+    told the same thing, because the same thing is true.
 
     It does not end the loop. An agent given a task still reads the frontier
     when that task is done, for the reason the section below gives in as many

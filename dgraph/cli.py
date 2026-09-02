@@ -102,7 +102,7 @@ T_STAGE = "The staging area — nothing is written until `apply`"
 T_STORE = "Starting a backlog, and moving one"
 
 TASK_LAYOUT = (
-    (T_READ, ("node", "tree")),
+    (T_READ, ("node", "tree", "independent")),
     (T_HONEST, ("render",)),
     (T_RECORD, ("add", "start", "park", "done", "drop", "amend", "link",
                 "unlink", "dep", "undep", "rm")),
@@ -4468,6 +4468,46 @@ def task_node(tid: str) -> None:
         lines += ["", "[bold]Note[/]", _x(t.note)]
     con.print(Panel("\n".join(lines), title=tid,
                     border_style=TASK_STYLE.get(t.status, "white")))
+
+
+@task_app.command("independent", rich_help_panel=T_READ)
+def task_independent() -> None:
+    """The ready tasks that can be worked on at once, and why the rest wait.
+
+    A maximal set of ready tasks no two of which collide — two collide when
+    one is evidence for a decision the other names, since finishing that
+    evidence moves the decision under the other. This is the set `dg-agent
+    setup` assigns, one task per agent; here it is on its own, to read before
+    a fan-out or to see how much of the ready work is really parallel.
+
+    Maximal, not maximum: every task left out names the chosen task it
+    collides with and the decision they meet on, which is a proof that nothing
+    can be added to this set — not that no larger set exists.
+    """
+    tg, staged, fell_back = _treading(_tg())
+    g = _decisions_or_none()
+    if g is None:
+        con.print(f"[yellow]needs a decision store[/] — whether a task is "
+                  f"ready depends on its premise, and this project has no "
+                  f"{project.STORE_NAME}")
+        raise typer.Exit(1)
+    from dgraph import cross
+    ready = [t for t in sorted(tg.tasks) if cross.ready(tg, g, t)]
+    if not ready:
+        con.print("[bold]INDEPENDENT[/]  nothing is ready")
+        return
+    found = cross.independent(tg, g)
+    con.print(f"[bold]INDEPENDENT[/]  {len(found.chosen)} of {len(ready)} "
+              f"ready can run side by side")
+    for tid in found.chosen:
+        con.print(f"  [green]{tid}[/]  {_x(tg.tasks[tid].title)}"
+                  + ("  [dim](staged)[/]" if tid in staged else ""))
+    if found.held:
+        con.print("[bold]held[/]")
+        for tid, member, did in found.held:
+            con.print(f"  {tid} cannot join: shares {did} with {member}")
+    if fell_back:
+        _say_fell_back("dg task pending", "dg task drop-op <id>")
 
 
 @task_app.command("tree", rich_help_panel=T_READ)

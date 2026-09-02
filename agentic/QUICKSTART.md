@@ -202,11 +202,11 @@ terminal — `setup` cannot tell a session from a person without sniffing a host
 variable — but that is not the intended use, and outside Claude Code or
 opencode only `--mode process` has guaranteed behaviour.
 
-**A roster in this mode reaches the agents through you.** You passed
-`--roster`, so you hold the list; nothing sets `$DG_TASK` for a subagent. Name
-each agent's task in its spawn instructions, one agent per id, in order — the
-report prints the roster to remind you, and the prompt tells the agent to look
-there rather than in a variable (`D61`).
+**The roster in this mode reaches the agents through you.** Whether you
+passed `--roster` or setup computed one, the report prints it, and nothing sets
+`$DG_TASK` for a subagent. Name each agent's task in its spawn instructions,
+one agent per id, in order — the prompt tells the agent to look there rather
+than in a variable (`D61`).
 
 **On opencode it is weaker still**, and this is worth a second look rather than
 a footnote: `tool.execute.before` does not fire for `task`-tool subagents
