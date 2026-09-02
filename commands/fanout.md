@@ -130,17 +130,40 @@ dg-agent setup --preset contributor --focus T04,T07 --agents 3 --budget 30m \
   --brief "…" --read "path:what it is" --findings "findings/<id>.md"
 ```
 
-**Offer the remit as a word rather than as six policy questions.** `--json`
-lists the presets with what each sets, so ask which of `scout` (proposes only),
-`contributor` (settles what evidence backs) or `maintainer` (settles anything)
-the person wants, and pass `--preset`. Spell the policies out only where they
-want something none of the three is:
+**Offer the remit as a word rather than as six policy questions, and offer it
+through this host's question surface.** The `--json` block at the top of this
+command already carries `presets` and `default_preset` — do not call for them
+again. Put one option per preset, in the order `--json` gives them, using each
+one's `row` as its description and marking `default_preset` as the recommended
+one, then pass the answer as `--preset`.
+
+Ask it as a question with options rather than in prose wherever the host has a
+surface for that. Six policy flags is not a thing to have an opinion about
+before the run, and a person reading three named remits side by side picks in a
+second what they would otherwise decline to read about — which is the whole of
+the decision behind presets. Where the host has no such surface, ask the same
+question the same way in prose; the answer is one of three words either way.
+
+**Do not invent a fourth option, and do not fold the other three answers into
+this question.** A person who wants something none of the three is gets the
+policies spelled out, below — that is the escape hatch, and a preset quietly
+edited into something no name describes is the one outcome presets exist to
+avoid. The brief, the reads and the findings path are free text and belong in
+their own asking:
 
 ```sh
 dg-agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
   --budget 30m --terse on --area-policy open \
   --brief "…" --read "path:what it is" --findings "findings/<id>.md"
 ```
+
+**`--agents` is the default and `--roster` is the exception.** `--agents 3`
+launches three interchangeable agents that read the frontier and take what they
+find, which is what lets a run absorb a queue that moves while it runs.
+`--roster T04,T07,T11` launches one agent per named task instead, reaching each
+as `$DG_TASK` — reach for it only where somebody has a reason to say *this*
+agent does *this*. It sets the count rather than sitting beside it, so passing
+both is refused.
 
 `--dry-run` prints the files without writing them. It produces
 `fanout/scout.md`, `fanout/launch.sh` and `fanout/env.json` — the last is the
