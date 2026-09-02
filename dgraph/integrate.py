@@ -412,11 +412,10 @@ CANNOT_CONFLICT = {
     "remove_edge": "a removal that no longer applies is inapplicable, not contested",
     "add_dep": "an edge accumulates; two writers adding edges is two facts",
     "remove_dep": "a removal that no longer applies is inapplicable, not contested",
-    # Removals. The record is gone, so there is nothing here to hold the other
-    # opinion — `_contest_*` returns early on an id this clone does not have,
-    # and a removal of something still present is caught by `_walk`'s refusal.
-    "remove_vertex": "a removal is refused or lands; there is no second opinion to hold",
-    "remove_task": "the same, for work",
+    # `remove_vertex` and `remove_task` were here, with a reason whose second
+    # half was false — the refusal it named fires only where a *decided* answer
+    # holds the vertex. They have rules now: `D48`, add-wins on a record this
+    # clone moved.
     # Provenance, not state. `reject` files that an answer was offered and not
     # taken, and `read_evidence` records that a reading happened; neither
     # asserts anything a second writer could assert differently.
@@ -448,6 +447,31 @@ def _contest(g, base, op: dict, store: str) -> tuple[str | None, str] | None:
     return _contest_task(g, base, op)
 
 
+def _moved_here(mine, was, g, base, rid: str, children) -> str | None:
+    """What this clone changed about `rid` since the base — or `None`.
+
+    The condition `D48` names, in the idiom `_contest` already uses: *the
+    arriving op removes a record this clone has moved*. Measured against the
+    base for the reason the docstring above gives — two writers changing one
+    record is contested, one writer changing it is a change.
+
+    **A gained child counts, and that is the case a field comparison misses.**
+    The clone that hangs a fresh undecided question on `D07` has not touched
+    `D07`'s own row at all, and the arriving removal takes the question with it
+    and leaves the child a root. Nothing in the fields would have said so.
+    """
+    for f in FIELDS:
+        if getattr(mine, f) != getattr(was, f):
+            return f"{f} changed here"
+    if mine.status != was.status:
+        return f"status moved here to {mine.status}"
+    gained = sorted(set(children(g, rid)) - set(children(base, rid)))
+    if gained:
+        return (f"{', '.join(gained)} {'was' if len(gained) == 1 else 'were'} "
+                f"hung on it here")
+    return None
+
+
 def _contest_decision(g: Graph, base: Graph, op: dict):
     kind, vid = op.get("op"), op.get("vertex") or op.get("id")
     if kind == "add_vertex" and vid in g.vertices:
@@ -455,6 +479,23 @@ def _contest_decision(g: Graph, base: Graph, op: dict):
     if vid not in g.vertices or vid not in base.vertices:
         return None
     mine, was = g.vertices[vid], base.vertices[vid]
+    if kind == "remove_vertex":
+        # **Add-wins on a contested record, declared** (`D48`). This was the
+        # one op kind whose `CANNOT_CONFLICT` entry argued it could carry no
+        # disagreement — *a removal is refused or lands; there is no second
+        # opinion to hold* — and the second half of that reason was false: the
+        # refusal it relied on fires only where a **decided** answer names the
+        # vertex, so a retitle, a status move or a fresh bare edge all went
+        # through with the report printing "nothing contested".
+        #
+        # The theory is the observed-remove set: a removal takes only what its
+        # author had seen, and a concurrent change to the same element survives
+        # it. No version vectors, because the required base is the causal
+        # context one would supply; no tombstones, because this store lets a
+        # removal remove and git is the record of what it took.
+        why = _moved_here(mine, was, g, base, vid, lambda x, i: x.children(i))
+        if why:
+            return vid, f"{vid} is removed there, and {why}"
     if kind == "set_fields":
         # Moved here *and* to somewhere else. Two writers making the same edit
         # is not a conflict, and reporting it as one puts a question to a
@@ -494,6 +535,14 @@ def _contest_task(tg: TaskGraph, base: TaskGraph, op: dict):
     if tid not in tg.tasks or tid not in base.tasks:
         return None
     mine, was = tg.tasks[tid], base.tasks[tid]
+    if kind == "remove_task":
+        # `remove_vertex`'s twin, and it has to be here rather than derived:
+        # a rule applied in one store and not the other is the shape most of
+        # this tool's audit findings took. `D48`.
+        why = _moved_here(mine, was, tg, base, tid,
+                          lambda x, i: x.unblocks(i))
+        if why:
+            return tid, f"{tid} is removed there, and {why}"
     if kind == "set_fields":
         # See `_contest_decision`: the same edit made twice is not a conflict.
         moved = [f for f in FIELDS

@@ -6,6 +6,12 @@
 # clone, so the protection existed only on the machine that first hit this.
 /dev-docs
 
+# Local instructions, and ignored for the same reason as the line above rather
+# than a different one. It exists to point at `dev-docs/`, and a *committed*
+# file naming a path inside it would strand every reader of the published repo
+# at a path they cannot open -- the one-way rule those notes are kept under.
+/CLAUDE.md
+
 __pycache__/
 *.pyc
 *.elc

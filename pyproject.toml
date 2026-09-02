@@ -16,6 +16,24 @@ dependencies = ["typer>=0.9", "rich>=13"]
 # pytest is part of what it offers, not just how it is developed.
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+# Not in `dev`, and the line above says why: `dev` is what somebody installs to
+# run *their* development-graph tests, and `pytest-xdist` is no part of what
+# this tool offers them -- it is how this repo's own 2,300 tests are run in
+# something under two minutes instead of three and a half.
+#
+# **Two phases, because two files cannot share a worker.** `test_broker.py`
+# binds a real socket in a per-project channel directory, and `test_compact.py`
+# asserts what a given terminal width does, which is the one thing `xdist`
+# changes about the environment it hands a test. So:
+#
+#     COLUMNS=200 pytest -n 8 --dist loadfile \
+#         --ignore=tests/test_broker.py --ignore=tests/test_compact.py
+#     pytest tests/test_broker.py tests/test_compact.py
+#
+# `COLUMNS` is set for the first phase and *not* the second, which is the same
+# split: the parallel phase needs a width fixed because `xdist` gives it none,
+# and the serial phase has tests whose whole subject is the width.
+contrib = ["pytest-xdist>=3"]
 # `dg-agent setup` without arguments. The wizard's non-interactive form -- the
 # one an agent inside Claude Code or opencode uses -- needs none of this, and
 # neither does anything else here, so a two-dependency install stays a

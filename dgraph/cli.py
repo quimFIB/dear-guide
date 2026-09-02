@@ -988,8 +988,15 @@ def node(
     if rivals:
         lines += ["", f"[red]{_x(model_rival_note(len(rivals)))}[/]"]
     if e and e.decided:
+        # **Outside the answer, deliberately, and it used to be inside.** Listed
+        # between the falsifier and the source it read as one of the answer's
+        # fields, which is exactly the claim `D57` retired: the targets are
+        # current dependency, contributed by whoever wrote the children, and the
+        # answer is the payload beside them. A reader citing `opens` as *what
+        # this answer raised* was reading the layout, and the layout was wrong.
         lines += [
             f"opens       {', '.join(e.to) or 'TERMINAL'}",
+            "",
             f"falsifier   {_x(e.falsifier) or '—'}",
             f"source      {_x(e.source)}   ({e.date})",
             "", "[bold]Answer[/]", _x(e.answer),
@@ -1621,7 +1628,8 @@ def decide(
     answer: str = typer.Option(None, "--answer", "-a"),
     source: str = typer.Option(None, "--source", "-s"),
     falsifier: str = typer.Option(None, "--falsifier", "-f"),
-    opens: str = typer.Option(None, "--opens", "-o", help="comma-separated ids"),
+    opens: list[str] = typer.Option(None, "--opens", "-o",
+                                    help="comma-separated ids"),
     summary: str = typer.Option(None, "--summary"),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs). "
@@ -1679,7 +1687,7 @@ def decide(
         seed = {k: val for k, val in (
             ("answer", answer), ("source", source), ("falsifier", falsifier),
             ("summary", summary),
-            ("to", [x.strip() for x in opens.split(",") if x.strip()] if opens else None),
+            ("to", _ids(opens, "--opens") or None),
         ) if val}
         ops = _compose(eff, "close", vertex=vid, seed=seed)
         _stage_close(eff, ops[0])
@@ -1694,7 +1702,7 @@ def decide(
         "Source (a report/ path, a script, or 'discussion')", "--source/-s")
     existing = eff.children(vid)
     opens_l = (
-        [x.strip() for x in opens.split(",") if x.strip()] if opens
+        _ids(opens, "--opens") if opens
         else [x.strip() for x in _ask(
             f"Opens which decisions? comma-separated, blank for terminal "
             f"(already linked: {', '.join(existing) or 'none'})",
@@ -1779,8 +1787,9 @@ def _late_evidence(eff, vid: str) -> list[dict]:
 @app.command(rich_help_panel=RECORD)
 def confirm(
     vid: str,
-    against: str = typer.Option(None, "--against",
-                                help="evidence tasks read against this answer"),
+    against: list[str] = typer.Option(None, "--against",
+                                      help="comma-separated evidence tasks read "
+                                           "against this answer"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what the evidence showed"),
 ) -> None:
@@ -1828,7 +1837,7 @@ def confirm(
             con.print(f"[red]{vid} is {v.status} — an answer has to be "
                       f"standing before evidence can be read against it[/]")
             raise typer.Exit(1)
-        named = _csv(against)
+        named = _ids(against, "--against")
         if not named:
             # Refused rather than defaulted to "all of them", matching
             # `dg task drop`: each result is a separate reading and the note is
@@ -1963,7 +1972,8 @@ def add(
         False, "--new-area",
         help="file under an area nobody has used yet, even where it resembles "
              "one that is in use"),
-    after: str = typer.Option(None, "--after", help="parent that opens this"),
+    after: list[str] = typer.Option(None, "--after",
+                                    help="comma-separated premises this rests on"),
     status: str = typer.Option("OPEN", "--status"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what is undecided, and why"),
@@ -1980,7 +1990,7 @@ def add(
         seed = {k: v for k, v in (
             ("id", vid), ("title", title), ("area", area), ("status", status),
             ("note", note),
-            ("after", [x.strip() for x in after.split(",") if x.strip()] if after else None),
+            ("after", _ids(after, "--after") or None),
         ) if v}
         ops = _compose(eff, "add_vertex", seed=seed, new_area=new_area)
         # The editor was the one staging route with no stage-time guard: the
@@ -2008,7 +2018,7 @@ def add(
     # question must not bring a second set of rules with it. What stays here is
     # the shape of a *command-line* failure: the flag list above, and turning a
     # refusal into a clean exit rather than a traceback.
-    parents = [x.strip() for x in after.split(",") if x.strip()] if after else []
+    parents = _ids(after, "--after")
     try:
         ops = pending.compose_add(eff, vid=vid, title=title, area=area,
                                   new_area=new_area, status=status,
@@ -2152,7 +2162,7 @@ def _sanction(what: str, lines: list[str], yes: bool) -> None:
 @app.command(rich_help_panel=RECORD)
 def dep(
     vid: str,
-    after: str = typer.Option(..., "--after",
+    after: list[str] = typer.Option(..., "--after",
                               help="comma-separated premises this rests on"),
 ) -> None:
     """Record that this decision rests on others.
@@ -2171,7 +2181,7 @@ def dep(
     """
     g = _g()
     eff = _eff(g)
-    parents = [x.strip() for x in after.split(",") if x.strip()]
+    parents = _ids(after, "--after")
     try:
         ops, fresh, already = pending.compose_dep(eff, vid=vid, after=parents)
     except pending.ApplyError as exc:
@@ -2191,7 +2201,7 @@ def dep(
 @app.command(rich_help_panel=RECORD)
 def undep(
     vid: str,
-    after: str = typer.Option(..., "--after",
+    after: list[str] = typer.Option(..., "--after",
                               help="comma-separated premises to drop"),
 ) -> None:
     """Remove a dependency. The undo `dg add --after` never had.
@@ -2207,7 +2217,7 @@ def undep(
     """
     g = _g()
     eff = _eff(g)
-    parents = [x.strip() for x in after.split(",") if x.strip()]
+    parents = _ids(after, "--after")
     try:
         ops, blocker = pending.compose_undep(eff, vid=vid, after=parents)
     except pending.ApplyError as exc:
@@ -2218,6 +2228,7 @@ def undep(
 
     con.print(f"[green]staged[/] {vid} no longer rests on "
               f"{', '.join(parents)}")
+    _say_retargets(eff, ops)
     if released:
         con.print(f"[cyan]{vid} was BLOCKED:{blocker}[/] and is released to "
                   f"OPEN [dim]— the block asserted the dependency being "
@@ -2308,18 +2319,26 @@ def rm(
     op = {"op": "remove_vertex", "vertex": vid, "mode": mode}
     if into:
         op["into"] = into
-    # Vetted before the confirmation, not after: a `--splice` that would write
-    # into a decided answer is refused by the op itself, and asking somebody to
-    # approve a removal that cannot happen wastes the one decision this command
-    # exists to put in front of them.
+    # Vetted before the confirmation, not after: asking somebody to approve a
+    # removal that cannot happen wastes the one decision this command exists to
+    # put in front of them.
     try:
         pending.vet(eff, op)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
+    # **Above the sanction, not below it.** A `--splice` into a decided answer
+    # used to be refused outright; under `D57` it lands, so the one moment this
+    # is worth saying is while the person still has the confirmation in front of
+    # them. Printing it afterwards would be telling them what they had already
+    # agreed to.
+    for vid_, before, after in pending.retargets(eff, op):
+        lines.append(f"{vid_} opens  {', '.join(before) or 'TERMINAL'} → "
+                     f"{', '.join(after) or 'TERMINAL'}")
     _sanction(f"remove {vid} ({mode})", lines, yes)
     _stage_all([op], against=eff)
     con.print(f"[green]staged[/] remove {vid}")
+    _say_retargets(eff, [op])
     _warn_stuck()
 
 
@@ -3526,12 +3545,12 @@ def task_add(
         False, "--new-area",
         help="file under an area nobody has used yet, even where it resembles "
              "one that is in use"),
-    after: str = typer.Option(None, "--after",
+    after: list[str] = typer.Option(None, "--after",
                               help="comma-separated tasks that must come first"),
-    discovered_during: str = typer.Option(
+    discovered_during: list[str] = typer.Option(
         None, "--discovered-during",
         help="comma-separated tasks whose doing turned this one up"),
-    because: str = typer.Option(None, "--because",
+    because: list[str] = typer.Option(None, "--because",
                                 help="comma-separated decisions this work "
                                      "exists because of"),
     evidence_for: str = typer.Option(None, "--evidence-for",
@@ -3547,8 +3566,8 @@ def task_add(
         seed = {k: v for k, v in (
             ("id", tid), ("title", title), ("area", area), ("note", note),
             ("because", because), ("evidence_for", evidence_for),
-            ("after", _csv(after)),
-            ("discovered_during", _csv(discovered_during)),
+            ("after", _ids(after, "--after")),
+            ("discovered_during", _ids(discovered_during, "--discovered-during")),
         ) if v}
         ops = _tcompose("add_task", tg, seed=seed, new_area=new_area)
         # Vetted before staging, exactly as `dg add --edit` is: the buffer is
@@ -3574,12 +3593,13 @@ def task_add(
     # refuses, it is a task that reads as startable, which is the whole of
     # audit F28. What stays here is the shape of a command-line failure, and
     # saying afterwards which relations were fresh and which were already held.
-    parents, prompted = _csv(after) or [], _csv(discovered_during) or []
+    parents = _ids(after, "--after")
+    prompted = _ids(discovered_during, "--discovered-during")
     try:
         ops = task_pending.compose_add(
             tg, _decisions_eff_or_none(), tid=tid, title=title, area=area,
             new_area=new_area, after=parents, discovered_during=prompted,
-            because=_csv(because), evidence_for=evidence_for, note=note,
+            because=_ids(because, "--because"), evidence_for=evidence_for, note=note,
             stored=_tg())
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
@@ -3771,7 +3791,7 @@ def task_amend(
 @task_app.command("link", rich_help_panel=T_RECORD)
 def task_link(
     tid: str,
-    because: str = typer.Option(
+    because: list[str] = typer.Option(
         None, "--because",
         help="comma-separated decisions to add to what this work exists "
              "because of"),
@@ -3795,7 +3815,7 @@ def task_link(
         raise typer.Exit(2)
     try:
         ops = task_pending.compose_link(tg, _decisions_eff_or_none(), tid=tid,
-                                        because=_csv(because),
+                                        because=_ids(because, "--because"),
                                         evidence_for=evidence_for)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
@@ -3808,7 +3828,7 @@ def task_link(
 @task_app.command("unlink", rich_help_panel=T_RECORD)
 def task_unlink(
     tid: str,
-    because: str = typer.Option(None, "--because",
+    because: list[str] = typer.Option(None, "--because",
                                 help="comma-separated premises to remove — a "
                                      "task rests on several, so name which"),
     evidence_for: bool = typer.Option(False, "--evidence-for",
@@ -3828,7 +3848,8 @@ def task_unlink(
         raise typer.Exit(2)
     try:
         ops, was = task_pending.compose_unlink(
-            tg, tid=tid, because=_csv(because), evidence_for=evidence_for)
+            tg, tid=tid, because=_ids(because, "--because"),
+            evidence_for=evidence_for)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -3840,9 +3861,9 @@ def task_unlink(
 @task_app.command("dep", rich_help_panel=T_RECORD)
 def task_dep(
     tid: str,
-    after: str = typer.Option(None, "--after",
+    after: list[str] = typer.Option(None, "--after",
                               help="comma-separated tasks that must come first"),
-    discovered_during: str = typer.Option(
+    discovered_during: list[str] = typer.Option(
         None, "--discovered-during",
         help="comma-separated tasks whose doing turned this one up"),
 ) -> None:
@@ -3864,8 +3885,8 @@ def task_dep(
         raise typer.Exit(2)
     try:
         ops, said = task_pending.compose_dep(
-            tg, tid=tid, after=_csv(after) or [],
-            discovered_during=_csv(discovered_during) or [])
+            tg, tid=tid, after=_ids(after, "--after"),
+            discovered_during=_ids(discovered_during, "--discovered-during"))
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -3878,9 +3899,9 @@ def task_dep(
 @task_app.command("undep", rich_help_panel=T_RECORD)
 def task_undep(
     tid: str,
-    after: str = typer.Option(None, "--after",
+    after: list[str] = typer.Option(None, "--after",
                               help="comma-separated prerequisites to drop"),
-    discovered_during: str = typer.Option(
+    discovered_during: list[str] = typer.Option(
         None, "--discovered-during",
         help="comma-separated origins to drop"),
 ) -> None:
@@ -3897,8 +3918,8 @@ def task_undep(
         raise typer.Exit(2)
     try:
         ops, said = task_pending.compose_undep(
-            tg, tid=tid, after=_csv(after) or [],
-            discovered_during=_csv(discovered_during) or [])
+            tg, tid=tid, after=_ids(after, "--after"),
+            discovered_during=_ids(discovered_during, "--discovered-during"))
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -4011,13 +4032,64 @@ def _csv(raw: str | None) -> list[str]:
     return [x.strip() for x in raw.split(",") if x.strip()] if raw else []
 
 
+def _say_retargets(g, ops: list[dict]) -> None:
+    """Name every decided `opens` these ops rewrite. Temporary — see `D57`.
+
+    Printed rather than refused, which is the whole of `T38`: the refusals this
+    replaces said a decided answer's targets were part of it, and `D57` settled
+    that they belong to the graph. The edit is ordinary now. What is not
+    ordinary is that the *meaning* moved, and a reader who had taken `opens` for
+    a claim about the answer will not hear about it from an error that no longer
+    fires. So the edit says what it is reinterpreting, once, out loud.
+
+    It comes off once `D57`'s falsifier has had a run at it.
+    """
+    for vid, before, after in pending.retargets_all(g, ops):
+        con.print(
+            f"[yellow]note: {_x(vid)} is decided, and its `opens` becomes "
+            f"{', '.join(after) or 'TERMINAL'}[/] "
+            f"[dim]was {', '.join(before) or 'TERMINAL'} — targets are the "
+            f"graph's, not the answer's (D57). This note is temporary.[/]")
+
+
+def _ids(raw: str | list[str] | None, flag: str) -> list[str]:
+    """An id-list flag's value, refusing the spelling that used to drop.
+
+    **Every one of these takes a comma-separated list, and only that.** The
+    other plausible spelling -- `--after T01 --after T02` -- reads as a repeated
+    option, and a `typer.Option` declared as a scalar keeps the *last*
+    occurrence and discards the rest before any code here can see them. That is
+    why the flags are `list[str]`: not to accept the repeat, but to be handed it
+    so it can be refused. There is no warning to add while typer is still doing
+    the dropping.
+
+    It is worth saying why the repeat is refused rather than accepted, since
+    accepting it is one line from here. Two spellings for one thing is a second
+    way to write every command in the guide, and the id lists are exactly where
+    a silent difference is expensive: `--after T01 --after T02` losing `T01`
+    left a task waiting on one prerequisite of four, and nothing in the store
+    afterwards said a value had ever been given. `D54`.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return _csv(raw)
+    if len(raw) > 1:
+        con.print(
+            f"[red]✗ {flag} was given {len(raw)} times, and takes a "
+            f"comma-separated list instead[/]\n"
+            f"[dim]{flag} {','.join(x.strip() for v in raw for x in v.split(',') if x.strip())}[/]")
+        raise typer.Exit(2)
+    return _csv(raw[0]) if raw else []
+
+
 @task_app.command("drop", rich_help_panel=T_RECORD)
 def task_drop(
     tid: str,
     why: str = typer.Option(None, "--why", "-w", help="why it is not being done"),
-    keep: str = typer.Option(None, "--keep",
+    keep: list[str] = typer.Option(None, "--keep",
                              help="affected tasks that are still worth doing"),
-    drop_too: str = typer.Option(None, "--drop-too",
+    drop_too: list[str] = typer.Option(None, "--drop-too",
                                  help="affected tasks to abandon along with it"),
 ) -> None:
     """Stage a task as abandoned, and settle what that leaves behind.
@@ -4042,7 +4114,8 @@ def task_drop(
     tg = _teff(_tg())
     _require_task(tid, tg)
     fallout = _fallout(tg, tid)
-    kept, doomed = _csv(keep), _csv(drop_too)
+    kept = _ids(keep, "--keep")
+    doomed = _ids(drop_too, "--drop-too")
 
     stray = [t for t in kept + doomed if t not in fallout]
     if stray:

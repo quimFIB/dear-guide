@@ -10,6 +10,9 @@ unreachable one is a refusal rather than a fallthrough.
 from __future__ import annotations
 
 import json
+import signal
+import os
+import contextlib
 import pathlib
 import socket
 import threading
@@ -658,7 +661,9 @@ def test_the_relay_publishes_the_question_and_waits_for_an_answer(running, relay
     assert broker.send_answer(tmp_path, ask["id"], True, "it is the tests") is None
     t.join(timeout=5)
     assert got[0]["verdict"] == "allow" and got[0]["reason"] == "it is the tests"
-    # Transport, not the decider: a person answered *through* the relay.
+    # Transport, not the decider: a person answered *through* the relay — and
+    # this broker was not told its warrant was unprovable, so `person` stands.
+    # The floor-less case is the test below.
     assert _log(tmp_path, 1)[0]["by"] == "person"
 
 
@@ -887,7 +892,9 @@ def test_an_agent_cannot_reach_the_consent_channel(tmp_path, monkeypatch):
 
     **What this is not is a boundary.** The socket is a filesystem object and
     the agent is the same user; what stops it is the confinement floor. That
-    risk is taken deliberately and recorded as `D40`.
+    risk is taken deliberately, and `D40` answered it: relaying is not refused
+    without a floor, but the log stops claiming `person` for a verdict nothing
+    can attribute. See the two tests below.
     """
     monkeypatch.setenv("DG_WRITE", "launch")
     sock = broker.channel_dir(tmp_path) / broker.RELAY_SOCK_NAME
@@ -1456,3 +1463,99 @@ def test_no_broker_is_no_broker(tmp_path, monkeypatch):
     res = cli._broker_apply()
     assert res is None or res.get("verdict") == "deny"
     assert json.loads((tmp_path / "tasks.json").read_text())["tasks"] == []
+
+
+# ---- what a floor-less relay may claim ------------------------------------
+#
+# `D40`. The channel's safety rests on the floor: without one an agent shares
+# the uid that owns the socket, so it can answer its own request. The verdict
+# is not the thing that goes wrong — the *log* is, because `person` is read by
+# a supervisor asking who decided, and nothing here could tell them.
+
+
+def test_a_floor_less_relay_is_told_once_and_not_refused(tmp_path, monkeypatch):
+    """Not a refusal, deliberately: with no floor an agent can already write
+    the project at leisure, so declining to relay would shut the small hole
+    beside the open one."""
+    monkeypatch.delenv("DG_CONFINE", raising=False)
+    said = broker.unprovable(True, tmp_path)
+    assert said and "logged `relayed` rather than `person`" in said
+    assert "still stands" in said, "it says what still works, not only what does not"
+
+
+def test_a_floor_makes_the_warrant_provable_again(tmp_path, monkeypatch):
+    monkeypatch.setenv("DG_CONFINE", "require")
+    assert broker.unprovable(True, tmp_path) is None
+
+
+def test_a_terminal_answer_never_crosses_the_channel(tmp_path, monkeypatch):
+    """`unprovable` is about the *relay*, not about the floor. A person at a
+    terminal answers the broker directly, so there is nothing to forge and
+    nothing to qualify — which is why the caller passes whether it is relaying
+    rather than letting the broker guess."""
+    monkeypatch.delenv("DG_CONFINE", raising=False)
+    assert broker.unprovable(False, tmp_path) is None
+
+
+def test_a_relayed_verdict_without_a_floor_is_logged_relayed(
+        running, relay, tmp_path):
+    """The same person, the same answer, a weaker warrant — and the log is
+    where that difference belongs."""
+    r = relay()
+    running(prompt=r.prompt, rungs={"write": "scoped", "exec": "user"},
+            unprovable=True)
+    got = []
+    t = threading.Thread(target=lambda: got.append(
+        broker.consult(_req(kind="exec", target="cargo test"), tmp_path, 5)))
+    t.start()
+    for _ in range(250):
+        if broker.pending_ask(tmp_path):
+            break
+        time.sleep(0.02)
+    ask = broker.pending_ask(tmp_path)
+    assert ask is not None
+    assert broker.send_answer(tmp_path, ask["id"], True, "it is the tests") is None
+    t.join(timeout=5)
+    assert got[0]["verdict"] == "allow"
+    assert _log(tmp_path, 1)[0]["by"] == "relayed"
+
+
+# ---- starting one from a session -----------------------------------------
+#
+# `D53`. Recipe 2 has the session hold the broker and a *terminal* run the
+# launcher, because a broker started from a session's own shell call dies when
+# that call returns — and outliving the turn is the one thing it must do.
+
+
+def test_a_detached_broker_outlives_the_call_and_is_idempotent(tmp_path):
+    """Both properties `server.detach` established, needed here for the same
+    reasons: a child holding the caller's pipe would hang the block this exists
+    to serve, and a command run twice must not punish the second run."""
+    rec = broker.detach(tmp_path, argv=["--relay"])
+    try:
+        assert rec["state"] == "running" and rec["already"] is False
+        assert broker.listening(tmp_path)
+        again = broker.detach(tmp_path, argv=["--relay"])
+        assert again["already"] is True and "pid" not in again
+    finally:
+        _kill(rec.get("pid"))
+
+
+def test_a_detached_broker_does_not_inherit_a_writer_name(tmp_path, monkeypatch):
+    """Not shared boilerplate. This child outlives its caller *and* is the
+    process that writes `by:` into the consent log, so an inherited identity
+    is the failure `answered_by` exists to prevent, arriving through the front
+    door."""
+    monkeypatch.setenv("DG_AGENT", "ada")
+    rec = broker.detach(tmp_path, argv=["--relay"])
+    try:
+        environ = pathlib.Path(f"/proc/{rec['pid']}/environ").read_bytes()
+        assert b"DG_AGENT=" not in environ
+    finally:
+        _kill(rec.get("pid"))
+
+
+def _kill(pid):
+    if pid:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(pid, signal.SIGTERM)

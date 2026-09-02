@@ -581,6 +581,13 @@ REL_CASES = [
     pytest.param(
         "/api/dep", {"verb": "undep", "id": "D06", "after": ["D05"]},
         ["undep", "D06", "--after", "D05"], None, id="undep"),
+    # A **decided** premise, which both doors refused until `D57` settled that
+    # an edge's targets belong to the graph. Here rather than among the
+    # refusals below, and that move is the point: the two doors have to agree
+    # it is allowed exactly as they had to agree it was not.
+    pytest.param(
+        "/api/dep", {"verb": "undep", "id": "D04", "after": ["D02"]},
+        ["undep", "D04", "--after", "D02"], None, id="undep-decided"),
     pytest.param(
         "/api/task-dep", {"verb": "dep", "id": "T04", "after": ["T02"]},
         ["task", "dep", "T04", "--after", "T02"], "task", id="task-dep"),
@@ -625,8 +632,6 @@ def test_structure_stages_the_same_ops_through_both_doors(srv, both, route,
 
 
 @pytest.mark.parametrize("route,body,args,tray_of,fragment", [
-    ("/api/dep", {"verb": "undep", "id": "D04", "after": ["D02"]},
-     ["undep", "D04", "--after", "D02"], None, "is decided"),
     ("/api/dep", {"verb": "dep", "id": "D01", "after": ["D01"]},
      ["dep", "D01", "--after", "D01"], None, "cannot rest on itself"),
     ("/api/dep", {"verb": "undep", "id": "D01", "after": ["D05"]},
@@ -638,9 +643,10 @@ def test_structure_stages_the_same_ops_through_both_doors(srv, both, route,
 ])
 def test_structure_refuses_the_same_thing_through_both_doors(
         srv, both, route, body, args, tray_of, fragment):
-    """A decided premise cannot be dropped from either door: its targets are
-    part of the answer, and removing one says the answer never opened that
-    question."""
+    """What both doors refuse, they refuse identically — same reason, same
+    words. A decided premise used to be on this list and is not any more:
+    `D57` made it ordinary, so it moved to `REL_CASES`, where the doors are
+    asserted to *stage* it identically instead."""
     path = task_pending.path() if tray_of else None
     code, res = post(srv, route, body)
     assert code == 400, res

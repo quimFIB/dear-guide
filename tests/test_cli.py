@@ -965,10 +965,25 @@ def test_removing_a_dependency_reports_what_it_makes_odd(run):
     assert "no_orphans" in res.output and "D06" in res.output
 
 
-def test_a_decided_edge_refuses_removal_and_names_the_way_through(run):
+def test_a_decided_edge_is_edited_like_a_bare_one_and_says_what_it_moves(run, store):
+    """This was a refusal — *its targets are part of that answer* — until `D57`
+    settled that they are the graph's. So it lands, and what stands in the
+    refusal's place is a note: the edit is ordinary, but the *meaning* moved,
+    and `D57`'s falsifier fires too quietly to hear otherwise.
+
+    The note is temporary and says so; `T38` takes it off once it has had a run.
+    """
+    from dgraph.model import Graph
     res = run("undep", "D02", "--after", "D01")
-    assert res.exit_code == 1
-    assert "part of that answer" in res.output and "dg reopen D01" in res.output
+    assert res.exit_code == 0, res.output
+    assert "D01 is decided" in res.output
+    assert "`opens` becomes D03" in res.output and "was D02, D03" in res.output
+    assert "temporary" in res.output
+    assert run("apply").exit_code == 0
+    g = Graph.load(store / "decisions.json")
+    assert g.active_edge("D01").to == ["D03"]
+    # The half `reopen` still guards: dropping a target rewrites no answer.
+    assert g.active_edge("D01").answer is not None
 
 
 def test_reopen_then_undep_then_decide_drops_a_target(run, store):
@@ -1040,21 +1055,21 @@ def test_removing_a_blocker_releases_what_it_blocked(run, store, archived):
     assert Graph.load(store / "decisions.json").vertices["D06"].status == "OPEN"
 
 
-def test_removing_a_vertex_a_decided_answer_opens_is_refused(run, store, archived):
-    """Audit F21. `dg undep` refuses to drop a target from a decided edge, in as
-    many words — "its targets are part of that answer". `dg rm` made the
-    identical edit silently: D04 is DECIDED and its answer opens D05, and
-    removing D05 rewrote that answer to say it never did, with no reversal filed
-    and nothing in the confirmation to say so.
+def test_removing_a_vertex_a_decided_answer_opens_says_what_it_moves(run, store, archived):
+    """Audit F21, reopened by `D57` and closed the other way.
 
-    The refusal comes from `pending.vet`, which `cli.rm` runs *before* the
-    sanction — so nobody is asked to approve a removal that cannot happen.
+    F21's complaint was that `dg rm` made *silently* the edit `dg undep`
+    refused: D04 is DECIDED and its answer opens D05, so removing D05 changed
+    what D04 opens with nothing in the confirmation to say so. `D57` settled
+    that the targets are the graph's, so the edit is legitimate — but *silently*
+    was always the real defect, and that half stands. It is now in the
+    confirmation the person answers, and again after staging.
     """
     res = run("rm", "D05", "--yes")
-    assert res.exit_code == 1
-    assert "D04 is decided" in res.output
-    assert "dg reopen D04" in res.output
-    assert pending.load(store / ".dgraph-pending.json") == []
+    assert res.exit_code == 0, res.output
+    assert "D04 opens" in res.output, "the change belongs in the sanction"
+    assert "D04 is decided" in res.output and "temporary" in res.output
+    assert pending.load(store / ".dgraph-pending.json") != []
 
 
 def test_a_removal_never_edits_a_superseded_edge(run, store, archived):
@@ -1084,8 +1099,9 @@ def test_a_removal_never_edits_a_superseded_edge(run, store, archived):
 
 def test_splice_asserts_the_edge_it_reconnects(run, store, archived):
     """D05's premise D04 is decided, so a splice would rewrite that answer —
-    which the test below pins as a refusal. Reopening D04 first is the way
-    through the refusal names, and it leaves a bare edge a splice may write."""
+    which the test below now pins as a named change rather than a refusal.
+    Reopening D04 first leaves a bare edge, and a splice writing into one moves
+    nothing anybody has to be told about."""
     from dgraph.model import Graph
     assert run("reopen", "D04", "--why", "premise moved", "-y").exit_code == 0
     assert run("apply").exit_code == 0
@@ -1096,13 +1112,22 @@ def test_splice_asserts_the_edge_it_reconnects(run, store, archived):
     assert Graph.load(store / "decisions.json").depends("D06") == ["D04"]
 
 
-def test_splice_refuses_to_write_into_an_answer(run, store, archived):
-    """Attaching an answer to a question it never opened is the one claim this
-    model must not manufacture. Refused before the confirmation, not after."""
+def test_splice_into_an_answer_lands_and_is_named_before_the_confirmation(
+        run, store, archived):
+    """*Attaching an answer to a question it never opened* was the refusal here,
+    and `D57` retired the claim it rested on: an edge's targets are the graph's,
+    so a splice writes a dependency and manufactures nothing.
+
+    What it must not do is move a decided `opens` without saying so — and the
+    saying goes **above** the sanction, because the person is being asked to
+    approve this removal and the reinterpretation is part of what they are
+    approving. Below it would be telling them what they had already agreed to.
+    """
     res = run("rm", "D04", "--splice", "--yes")
-    assert res.exit_code == 1
-    assert "never did" in res.output and "dg reopen D02" in res.output
-    assert pending.load() == []
+    assert res.exit_code == 0, res.output
+    assert "D02 opens" in res.output, "named in the lines the sanction shows"
+    assert "temporary" in res.output
+    assert pending.load() != []
 
 
 def test_merge_moves_the_edges_onto_the_target(run, store, archived):
@@ -1974,3 +1999,47 @@ def test_the_tray_shows_the_correction_as_fields_not_as_json(run):
     out = run("pending", "--full").output
     assert "title Which shard count?" in out and "area Alpha" in out
     assert '{"op"' not in out
+
+
+# ---- id-list flags -------------------------------------------------------
+#
+# `D54`. Every one of these takes a comma-separated list and only that. The
+# repeated spelling used to be swallowed by `typer`, which keeps the last
+# occurrence of a scalar option and discards the rest — so `--after T01 --after
+# T02` left a task waiting on one prerequisite of two, with nothing in the
+# store afterwards to say a value had ever been given. Declaring them
+# `list[str]` is what lets `_ids` see the repeat and refuse it.
+
+
+@pytest.mark.parametrize("argv,flag", [
+    (("add", "--id", "D50", "--title", "x", "--area", "Alpha",
+      "--after", "D01", "--after", "D02"), "--after"),
+    (("dep", "D06", "--after", "D01", "--after", "D02"), "--after"),
+    (("undep", "D06", "--after", "D01", "--after", "D02"), "--after"),
+])
+def test_a_repeated_id_flag_is_refused_and_names_the_spelling(run, argv, flag):
+    """Refused rather than accepted, and the refusal shows the comma form —
+    a check that offered no way out would be answered by ignoring it."""
+    res = run(*argv)
+    assert res.exit_code == 2, res.stdout
+    assert f"{flag} was given 2 times" in res.stdout
+    assert f"{flag} D01,D02" in res.stdout, "the fix has to be on the screen"
+
+
+def test_the_comma_form_is_untouched(run, store):
+    """The spelling every help string and every document already names."""
+    assert run("add", "--id", "D50", "--title", "x", "--area", "Alpha",
+               "--after", "D01,D02").exit_code == 0
+    assert run("apply").exit_code == 0
+    g = Graph.load(store / "decisions.json")
+    assert sorted(e.src for e in g.edges if "D50" in e.to) == ["D01", "D02"]
+
+
+def test_an_absent_id_flag_is_still_absent(run, store):
+    """`list[str]` defaults are the easy way to turn "not given" into `[]` and
+    then into something that reads as given. A root vertex stays a root."""
+    assert run("add", "--id", "D50", "--title", "x",
+               "--area", "Alpha").exit_code == 0
+    assert run("apply").exit_code == 0
+    g = Graph.load(store / "decisions.json")
+    assert [e.src for e in g.edges if "D50" in e.to] == []

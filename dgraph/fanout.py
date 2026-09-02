@@ -99,6 +99,50 @@ HOSTS = {
     "opencode": Host('opencode run "$(cat {prompt})"'),
 }
 
+#: Where the agents live. `D52`.
+#:
+#: **Named for the mechanism, not for the weakness**, and `D34`'s falsifier is
+#: why: *a host gains per-child environment for spawned subagents, or wraps its
+#: own subagent spawn* — either makes this mode enforceable, at which point
+#: `session` is still exactly the right word and simply gains guarantees.
+#: `advisory` would have to be renamed, and a renamed mode breaks every script
+#: and document that named it.
+#:
+#: **Not a `Host`, and that is the other half.** A `Host` is *one runner a
+#: launch line can be generated for*; this mode has no launch line at all, since
+#: the session calls its own subagent tool. A third `HOSTS` entry would be
+#: `P-F2` again: a record claiming to carry something no line it generates
+#: could.
+MODES = ("process", "session")
+
+#: What `--mode session` gives up, and on which host. `D52`'s declared list, in
+#: one place so the prompt, the setup report and `agentic/RUNNING.md` cannot
+#: come to disagree about it.
+#:
+#: The first four are permanent consequences of in-process spawning and hold
+#: everywhere. The last is an opencode bug with an issue number, which is why it
+#: is marked rather than merged into the others: it may simply go away, and a
+#: reader deciding between hosts needs to know which losses are architecture and
+#: which are a defect.
+SESSION_LOSSES = (
+    ("$DG_AGENT", None,
+     "a subagent shares the session's environment, so without a "
+     "`DG_AGENT=<name>` prefix on every call it reads as the supervisor (D32)"),
+    ("the confinement floor", None,
+     "no `dg-agent run` parent to prepend it (D33)"),
+    ("the budget", None,
+     "the same; `$DG_BUDGET` is advisory and `dg-agent expire` the only "
+     "backstop (D33)"),
+    ("$DG_TASK", None,
+     "the assignment reaches a child the same way the name does (D47)"),
+    ("a relayed verdict's claim to `person`", None,
+     "the channel cannot prove a person wrote it with no floor (D40)"),
+    ("`dg gate --write` and the commit gate", "opencode",
+     "`tool.execute.before` does not fire for `task`-tool subagents "
+     "(opencode#5894) — absent here, not weakened, and `commit` and `rm` are "
+     "the two irreversible things"),
+)
+
 
 def capture_bin() -> Path | None:
     """The capture wrapper's directory, or `None` if this install has none.
@@ -168,6 +212,11 @@ class Plan:
     #: reason `dg-agent run` gives about `--budget` and `timeout`: two numbers
     #: in one generated file agree until somebody edits one.
     roster: list[str] = field(default_factory=list)
+    #: `process` — one `dg-agent run` per agent, every rule enforced — or
+    #: `session`, where the launching session spawns them itself and the rules
+    #: in `SESSION_LOSSES` become advisory. `D34` split those: a session may
+    #: supervise a fan-out without spawning it, and that gives up nothing.
+    mode: str = "process"
     agents: int = 2
     host: str = "claude"
     decide: str = "evidence"
@@ -522,6 +571,19 @@ def plan_fault(plan: Plan) -> str | None:
     in the first place.
     """
     from dgraph import confine as _confine
+    # **The refusal `D52` names, and the only one the mode carries.** Everything
+    # else `--mode session` gives up is *stated* — `SESSION_LOSSES`, said at
+    # setup and again in the prompt — because `D34` decided the mode is declared
+    # rather than enforced. This one cannot be a notice: `D33` established that
+    # a session-spawned agent has no `dg-agent run` parent to prepend a floor,
+    # so a plan asserting one is a prompt promising an agent a floor it has not
+    # got, and there is no invocation later that could put it right.
+    if plan.mode == "session" and plan.confine == "require":
+        return ("--mode session and --confine require contradict: the floor is "
+                "prepended by `dg-agent run`, and a subagent the session spawns "
+                "has no such parent — so the plan would assert a floor its "
+                "agents never get. Use --confine off and read what the mode "
+                "gives up, or --mode process and keep the floor")
     if plan.confine == "off":
         return None
     # The second combination, found while writing the presets. A floor seals
@@ -846,6 +908,11 @@ def _with_available_floor(plan: Plan) -> Plan:
     whose prompt promises an agent a floor it has not got.
     """
     from dgraph import confine as _confine
+    # A session-hosted run has no floor to have, whatever this machine offers:
+    # the backend is applied by the spawn line, and there is no spawn line.
+    # Answering `require` here would write the plan `plan_fault` then refuses.
+    if plan.mode == "session":
+        return replace(plan, confine="off")
     if _confine.available(plan.floor)[0]:
         return plan
     other = next((b for b in _confine.BACKENDS
@@ -923,6 +990,53 @@ def _assigned_prose(plan: Plan) -> str:
         "frontier and carry on as below.\nThe roster says where each "
         "agent *begins*, so that two agents do not open the\nsame work at "
         "the same moment — it does not say where any of them stops:")
+
+
+def _mode_prose(plan: Plan) -> str:
+    """What the agent must be told about where it is running. `D52`.
+
+    Empty under `process`, which is the point: the enforced mode has nothing to
+    say, so a generated prompt reads identically to the one this tool has always
+    produced and a diff of two shows the mode and nothing else.
+
+    Under `session` this is the site of the three that **changes behaviour**
+    rather than informing a human. `D32` established that a subagent shares its
+    session's environment, so `$DG_AGENT` is carried only by prefixing each
+    call — and a mechanism that depends on the agent cooperating works only if
+    the agent is asked. The rest of the list is here because an agent that knows
+    its budget is advisory is one that can park before it stops, which is the
+    difference between work the next agent resumes and work somebody redoes.
+    """
+    # Empty string and no newline, so the token's own line closes up: a
+    # generated `process` prompt is byte-identical to the one this tool wrote
+    # before the mode existed, which is what makes a diff of two prompts show
+    # the mode and nothing else.
+    if plan.mode != "session":
+        return ""
+    # Filtered by host, like the setup report and for a better reason: this one
+    # is read by an *agent*, and telling it about a defect in a runner it is not
+    # running under is noise in the one document it must act on.
+    rows = []
+    for what, host, why in SESSION_LOSSES:
+        if host and host != plan.host:
+            continue
+        rows.append(f"- **{what}** — {why}")
+    return (
+        "## Where you are running, and what it costs\n"
+        "\n"
+        "You were spawned **inside a session**, not as a child of `dg-agent "
+        "run`. That is a\nchoice somebody made deliberately, and it means the "
+        "rules below are advisory here\nrather than enforced:\n"
+        "\n"
+        + "\n".join(rows) + "\n"
+        "\n"
+        "**The first one is yours to keep.** Nothing sets `$DG_AGENT` for you, "
+        "so prefix it\nyourself on every `dg` call — `DG_AGENT=<your name> dg "
+        "…` — or every op you\nstage is filed as the supervisor's, and `dg "
+        "apply` will let you take a tray that\nis not yours.\n"
+        "\n"
+        "**And park before you stop.** Your budget stops nothing here, so the "
+        "one thing that\nsays where you got to is you saying it.\n\n")
 
 
 def _decide_prose(policy: str) -> str:
@@ -1134,6 +1248,7 @@ def render_scout(plan: Plan, proj: project.Project | None = None) -> str:
         "BRIEF": plan.brief or "(not stated — ask before you start)",
         "CHAIN": _chain(proj, plan.focus),
         "ASSIGNED": _assigned_prose(plan),
+        "MODE_PROSE": _mode_prose(plan),
         "AREAS": _areas(proj),
         "DECIDE": plan.decide,
         "DECIDE_PROSE": _decide_prose(plan.decide),
@@ -1210,6 +1325,14 @@ def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
         "# understands, and nothing exported in this shell contradicts it.",
         f"dg-agent env --check --plan {env_file}",
         "",
+        "# ...and whether anybody is there to answer an escalation. A warning,",
+        "# never a refusal: a run with no broker is legal and behaves exactly as",
+        "# it did before one existed -- the gate returns its own verdict, and an",
+        "# `ask` becomes a refusal. What is not legal is finding that out from",
+        "# an agent that stopped. `agentic/QUICKSTART.md` calls this the step",
+        "# people skip, and until now only prose said so. `D53`.",
+        "dg-agent broker --check || true",
+        "",
     ]
     if plan.capture:
         bin_dir = capture_bin()
@@ -1241,6 +1364,36 @@ def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
                 '{ echo "dg-agent capture wrapper not first on PATH" >&2; exit 1; }',
                 "",
             ]
+    if plan.mode == "session":
+        # **No `dg-agent run`, because there is nothing for it to parent.** The
+        # session spawns the agents with its own tool, so what this file can
+        # usefully be is the two things that still apply and a statement of what
+        # does not — rather than a script that would look like the other mode's
+        # and enforce none of it.
+        return "\n".join([
+            "#!/usr/bin/env bash",
+            "# Generated by `dg-agent setup --mode session`.",
+            "#",
+            "# **There is no launcher for this mode.** The session that set the",
+            "# fan-out up spawns the agents itself, with its own subagent tool,",
+            "# reading fanout/scout.md. What that costs is in the prompt and in",
+            "# `agentic/RUNNING.md`; the short of it is that every rule below",
+            "# becomes advisory, because `dg-agent run` is what enforced them",
+            "# and it is not in the picture.",
+            "set -euo pipefail",
+            "",
+            'cd "$(dirname "$0")/.."',
+            "",
+            "# Still worth running, and the only two things here that are:",
+            "# the remit is one this `dg` understands...",
+            f"dg-agent env --check --plan {env_file}",
+            "# ...and somebody is there to answer an escalation.",
+            "dg-agent broker --check || true",
+            "",
+            "echo 'mode: session — spawn the agents from the session, then'",
+            "echo '`dg pending` to read what they proposed.'",
+            "",
+        ])
     run = f"dg-agent run{' --floor-applied' if carried else ''}"
     if plan.roster:
         # One agent per named task, and the ids are the loop rather than a

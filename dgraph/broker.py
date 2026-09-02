@@ -60,7 +60,7 @@ from queue import SimpleQueue as _Queue
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dgraph import limits, project
+from dgraph import env as _env, limits, project
 
 #: Where the broker listens, beside both trays. `.dgraph-*` is already in the
 #: `.gitignore` `dg init` writes, so it is covered the day it first appears --
@@ -421,6 +421,11 @@ class Broker:
     #: broker that re-read it would answer two identical requests differently
     #: with nothing in the log to say why.
     rungs: dict[str, str] = field(default_factory=dict)
+    #: Whether a verdict this broker relays may be logged `person`. Set by the
+    #: caller from `unprovable`, which reads the floor — not derived here,
+    #: because the *caller* is the one that knows whether it is relaying at
+    #: all, and a terminal answer never crosses the channel. `D40`.
+    unprovable: bool = False
     #: The waiting map is rewritten whole and two threads reach it — the reader
     #: publishing a queued agent, and the decider publishing and clearing the
     #: one being asked. Read-modify-write on a shared file, which is the shape
@@ -567,7 +572,11 @@ class Broker:
                 return _answer(req, "deny", "no way to ask — broker has no "
                                             "front end attached",
                                by="unanswered")
-            ask, by = (lambda: self.prompt(req, level)), "person"
+            ask = lambda: self.prompt(req, level)
+            # `D40`. The same person answered; what differs is whether this
+            # process can show it was a person, and the log is where that
+            # belongs rather than in the verdict.
+            by = "relayed" if self.unprovable else "person"
 
         # Published around the wait, not inside it. `D24` gave a blocked agent
         # a heartbeat so `expire` would stop parking work that was only
@@ -846,13 +855,49 @@ class Broker:
 #: purpose: it is read by a person asking *who actually decided this*, and a
 #: field with room for prose would answer that with prose.
 #:
-#: `person` is the only one that means somebody was asked. A relay front end
-#: records `person` too — deliberately, because a relay is transport and the
-#: human at the other end of it is the decider — which is exactly the claim
-#: `D37`'s falsifier watches: a relay that answered *by itself* and still wrote
-#: `person` would make this field a lie in the one artefact a supervisor reads
-#: afterwards.
-ANSWERED_BY = ("person", "auto", "grant", "rung", "broker", "unanswered")
+#: `person` is the only one that means somebody was asked, **and that it can be
+#: shown**. A relay front end records `person` where a confinement floor is in
+#: force, because a relay is transport and the human at the other end of it is
+#: the decider — which is the claim `D37`'s falsifier watches.
+#:
+#: `relayed` is that same human, answering through a channel nothing protects.
+#: `D40`: the channel is a filesystem object and an unconfined agent shares the
+#: uid that owns it, so it can write its own `allow` and the blocked agent
+#: collects it. Under a floor the mounts exclude the channel and the forgery
+#: needs the permission it would grant, which is `D39`'s rule; without one that
+#: rule does not hold, and `person` becomes a claim this process cannot support.
+#:
+#: So it is not a weaker *answer* — the same person answered either way. It is a
+#: weaker **warrant**, and the log is exactly where the difference belongs: a
+#: supervisor reading it afterwards is asking who decided, and `relayed` says
+#: *somebody did, and nothing here can prove which somebody*.
+ANSWERED_BY = ("person", "relayed", "auto", "grant", "rung", "broker",
+               "unanswered")
+
+
+def unprovable(relaying: bool, root: Path | None = None) -> str | None:
+    """Why a relayed verdict here cannot be logged `person` — or `None`.
+
+    A **note**, not a refusal, and `D40` settled that deliberately: with no
+    floor an agent can already write the project at leisure, so refusing to
+    relay would close the small hole beside the open one. What it may not do is
+    let the log claim more than it can show.
+
+    Fails toward `relayed`. Where the floor cannot be established this answers
+    as though there were none — because *cannot establish* and *is not there*
+    are the same thing for a warrant, and the direction that guesses `person`
+    is the one that writes something false.
+    """
+    if not relaying:
+        return None                      # a terminal answer never crosses it
+    from dgraph import confine as _confine
+    if _confine.mode() == "require":
+        return None
+    return ("no confinement floor is in force, so a relayed verdict is logged "
+            "`relayed` rather than `person`: the channel is a filesystem "
+            "object an unconfined agent shares a uid with, and nothing here "
+            "can show which hand wrote the answer. The verdict still stands "
+            "and relaying still works — see `D40`")
 
 
 def _answer(req: dict, verdict: str, reason: str, *, grant: Grant | None = None,
@@ -1246,6 +1291,75 @@ def listening(root: Path | None = None) -> bool:
         return socket_path(root).is_socket()
     except OSError:
         return False
+
+
+#: Where a detached broker's own output goes. Beside the log rather than in the
+#: channel directory: this is a record of *this project's* run, and the channel
+#: is deliberately somewhere an agent cannot reach.
+DETACH_LOG = ".dgraph-consent.out"
+
+
+def detach(root: Path | None = None, *, argv: list[str]) -> dict:
+    """Start a broker in its own session and return once it is listening.
+
+    **The step a session cannot otherwise take.** `agentic/QUICKSTART.md`
+    Recipe 2 has the session hold the broker and a *terminal* run the launcher,
+    because a broker started from a session's own shell call dies when that
+    call returns — and the one thing the broker must do is outlive the turn
+    that started it. `D53`.
+
+    Modelled on `server.detach`, including the two properties that make it safe
+    to call from a slash command: **stdout and stderr go to a file, never
+    inherited**, since a child holding the caller's pipe open would hang the
+    block this exists to serve; and **it is idempotent**, reporting a broker
+    that is already there rather than fighting for the socket, because a
+    command run twice must not punish the second run.
+
+    **`$DG_AGENT` is scrubbed**, and that is not shared boilerplate. The
+    detached child outlives the caller, so an agent that started a broker would
+    leave a process holding its name for the rest of the run — and this
+    particular process is the one that writes `by:` into the consent log. An
+    inherited identity there is the failure `answered_by` exists to prevent,
+    arriving through the front door.
+    """
+    import subprocess
+    import sys
+    import time
+
+    root = root if root is not None else project.find().root
+    if listening(root):
+        return {"state": "running", "already": True,
+                "socket": str(socket_path(root))}
+
+    env = {k: v for k, v in os.environ.items() if k != _env.AGENT_ENV}
+    log = Path(root) / DETACH_LOG
+    with open(log, "ab", buffering=0) as fh:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "dgraph.agent_cli",
+             "--project", str(root), "broker", *argv],
+            stdin=subprocess.DEVNULL, stdout=fh, stderr=fh,
+            start_new_session=True, cwd=str(root), env=env,
+        )
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if listening(root):
+            return {"state": "running", "already": False, "pid": proc.pid,
+                    "socket": str(socket_path(root))}
+        if proc.poll() is not None:
+            break
+        time.sleep(0.1)
+    proc.kill()
+    tail = ""
+    try:
+        tail = "\n".join(
+            log.read_text(encoding="utf-8", errors="replace").strip()
+            .splitlines()[-4:])
+    except OSError:
+        pass
+    raise RuntimeError(
+        "the broker did not come up"
+        + (f"\n{tail}" if tail else "")
+        + f"\n(full output in {DETACH_LOG})")
 
 
 def consult(req: dict, root: Path | None = None,

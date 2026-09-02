@@ -441,6 +441,12 @@ def agent_setup(
     focus: str = typer.Option(None, "--focus",
                               help="comma-separated ids the fan-out is for; "
                                    "their chains are pasted into the prompt"),
+    mode: str = typer.Option(
+        None, "--mode",
+        help="process (default) — one `dg-agent run` per agent, every rule "
+             "enforced — or session, where the launching session spawns them "
+             "itself and the rules become advisory. `--mode session` prints "
+             "what it gives up"),
     roster: str = typer.Option(
         None, "--roster", metavar="IDS",
         help="comma-separated task ids to launch one agent each for, in this "
@@ -549,7 +555,7 @@ def agent_setup(
         }, ensure_ascii=False))
         return
 
-    given = {"preset": preset,
+    given = {"preset": preset, "mode": mode,
              "focus": focus, "roster": roster, "agents": n, "host": host,
              "decide": decide,
              "apply": apply_policy,
@@ -589,6 +595,21 @@ def agent_setup(
         cli.con.print(f"[red]✗ {cli._x(fault)}[/]\n"
                       f"[dim]nothing was written[/]")
         raise typer.Exit(2)
+    # **`D52`'s second site, and the one a launcher meets.** The mode is
+    # declared rather than enforced, so the declaring has to happen somewhere a
+    # person is standing — which is here, at the moment they chose it, not in a
+    # document they may not open. `plan_fault` above is the only refusal the
+    # mode carries; everything else it gives up is this.
+    if plan.mode == "session":
+        cli.con.print(f"[yellow]![/] mode [bold]session[/]: the agents are "
+                      f"spawned by the session, so these are advisory here")
+        for what, host, why in fanout.SESSION_LOSSES:
+            if host and host != plan.host:
+                continue
+            where = f" [yellow]({host} only)[/]" if host else ""
+            cli.con.print(f"    [dim]·[/] {cli._x(what)}{where} "
+                          f"[dim]— {cli._x(why)}[/]")
+
     # Said before the write and not instead of it. Each of these describes a
     # launch somebody can mean — see `roster_warnings` — so the line is
     # information, and the refusals above are the ones that stop.
@@ -740,7 +761,7 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
     # says it is confined, which is the whole of `P-F2`.
     from dgraph import confine as _confine
 
-    return replace(
+    out = replace(
         plan,
         confine=one_of("confine", given.get("confine"), set(_confine.CONFINE_MODES)),
         floor=one_of("floor", given.get("floor"), set(_confine.BACKENDS)),
@@ -754,6 +775,7 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
         # `--agents` alongside a roster is refused above rather than silently
         # losing to it.
         agents=len(roster) if roster else (given["agents"] or plan.agents),
+        mode=one_of("mode", given.get("mode"), set(fanout.MODES)),
         host=one_of("host", given["host"], set(fanout.HOSTS)),
         decide=one_of("decide", given["decide"], set(cross.POLICIES)),
         apply=one_of("apply", given["apply"], set(env.APPLY_POLICIES)),
@@ -767,6 +789,17 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
         findings=given["findings"] or plan.findings,
         out=given["out"] or plan.out,
     )
+    # **Normalised after the flags, not in `defaults`.** `defaults` settles the
+    # floor before it can know the mode, so a plan that later becomes
+    # `--mode session` would still carry the `require` this machine can offer —
+    # and `plan_fault` would refuse a pair the launcher never wrote.
+    #
+    # Only where `--confine` was *not* given. Somebody who typed
+    # `--mode session --confine require` has asserted a floor those agents
+    # cannot have, and that is exactly the contradiction to refuse.
+    if out.mode == "session" and given.get("confine") is None:
+        out = replace(out, confine="off")
+    return out
 
 
 #: What a missing `textual` says. A constant so a test can render it: `[tui]`
@@ -1441,6 +1474,14 @@ def agent_broker(
         None, "--relay-wait", metavar="SECONDS",
         help="how long a relayed request waits before it is denied; the "
              "default sits just above the deadline both host adapters pass"),
+    check: bool = typer.Option(
+        False, "--check",
+        help="say whether one is listening and exit — the launcher runs this "
+             "before the first agent, and it never fails the run"),
+    detach: bool = typer.Option(
+        False, "--detach",
+        help="start it in its own session and return — for a supervisor who "
+             "is a session and cannot hold a foreground process"),
 ) -> None:
     """Answer the consent requests a fan-out's agents block on.
 
@@ -1536,9 +1577,47 @@ def agent_broker(
     # The front end is the only thing `--relay` changes. Everything else —
     # the rungs, the memory of grants, the log, the serial answering — is the
     # same broker, because a relay is a way of *asking* and not a policy.
+    # Before everything, including `--detach`: this asks about the world rather
+    # than changing it, and a caller that passed both meant to look first.
+    if check:
+        up = _broker.listening(proj.root)
+        cli.con.print(
+            "[green]✓[/] a consent broker is listening" if up else
+            "[yellow]![/] no consent broker — an escalation will be refused, "
+            "not asked [dim]`dg-agent broker --relay --detach` from a session, "
+            "or `dg-agent broker` in a terminal[/]")
+        return
+
+    # Before any door check, because the child runs every one of them itself
+    # and running them twice would report each twice. `D53`.
+    if detach:
+        argv = [a for a in sys.argv[1:] if a != "--detach"]
+        argv = argv[argv.index("broker") + 1:] if "broker" in argv else []
+        try:
+            rec = _broker.detach(proj.root, argv=argv)
+        except RuntimeError as exc:
+            cli.con.print(f"[red]✗ {cli._x(exc)}[/]")
+            raise typer.Exit(1) from None
+        cli.con.print(
+            f"[green]{'already listening' if rec['already'] else 'listening'}[/]"
+            f" [dim]{cli._x(rec['socket'])}"
+            f"{'' if rec['already'] else f'  pid {rec["pid"]}'}[/]\n"
+            f"[dim]`dg-agent consent` to answer what it publishes; "
+            f"`dg-agent broker --stop` is not a thing — Ctrl-C the process, or "
+            f"let it go with the run[/]")
+        return
+
+    # **Said once, at the door, and never refused.** `D40` weighed refusing and
+    # turned it down: with no floor an agent can write the project at leisure,
+    # so declining to relay would shut the small hole beside the open one. What
+    # the run may not do is let its log claim a warrant it has not got — so the
+    # relay starts, and `relayed` is what the verdicts say.
+    warrant = _broker.unprovable(relay, proj.root)
+    if warrant:
+        cli.con.print(f"[yellow]![/] {cli._x(warrant)}")
     front = channel.prompt if channel else _broker.terminal_prompt
     b = _broker.Broker(root=proj.root, prompt=front, auto=auto_policy,
-                       rungs=rungs)
+                       rungs=rungs, unprovable=bool(warrant))
     # The relay's own listener, beside the broker's. Started before `serve`
     # blocks, stopped with it.
     relay_stop = threading.Event()

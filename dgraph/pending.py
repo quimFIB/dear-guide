@@ -992,6 +992,87 @@ def preview(g: Graph, path: Path | None = None, *, skip: int | None = None) -> G
     return out
 
 
+def retargets(g: Graph, op: dict) -> list[tuple[str, list[str], list[str]]]:
+    """Decided vertices whose `opens` this op changes: `(id, before, after)`.
+
+    **Temporary, and it should say so where it prints.** `D57` settled that a
+    decided edge's targets belong to the graph rather than to the answer, which
+    retired two refusals that had stood since the model was written. That is a
+    change of *meaning*, and its falsifier — somebody relying on `to` as a claim
+    about what an answer raised — fires quietly: an audit is simply wrong, with
+    nothing to error on. So the edits that would have been refused now say what
+    they are about to reinterpret, and somebody who answers *but that answer
+    raised it* has just fired the falsifier out loud.
+
+    It comes off once it has had a run. A notice kept forever on an operation
+    `D57` calls ordinary is the noise `opencode/dear-guide.ts` argues against,
+    where *a notice on each would train the reader to ignore the one that
+    matters* — and this one is deliberately loud, which is exactly what makes it
+    unaffordable as furniture.
+
+    Only the **write** half of the problem. A reader who takes `opens` for a
+    claim about the answer gets nothing from here; what reaches them is where
+    `dg node` puts the line, which `T38` moved out of the answer block for the
+    same reason.
+    """
+    kind = op.get("op")
+    vid = op.get("vertex") or op.get("from")
+
+    def row(src: str, after: list[str]):
+        e = g.active_edge(src)
+        if e is None or not e.decided or sorted(e.to) == sorted(after):
+            return None
+        return (src, list(e.to), sorted(after))
+
+    out = []
+    if kind == "remove_edge":
+        gone = set(op.get("to", ()))
+        e = g.active_edge(vid)
+        if e is not None:
+            out.append(row(vid, [t for t in e.to if t not in gone]))
+    elif kind == "remove_vertex":
+        for e in g.edges:
+            if e.active and vid in e.to:
+                out.append(row(e.src, [t for t in e.to if t != vid]))
+        mode = op.get("mode", "sever")
+        if mode in ("splice", "into"):
+            dsts = (g.children(vid) if mode == "splice"
+                    else [op.get("into")])
+            for parent in g.depends(vid):
+                e = g.active_edge(parent)
+                if e is not None:
+                    gained = [d for d in dsts if d and d not in e.to]
+                    if gained:
+                        out.append(row(parent, sorted(set(e.to) | set(gained))))
+    elif kind == "add_edge":
+        e = g.active_edge(vid)
+        if e is not None:
+            out.append(row(vid, sorted(set(e.to) | set(op.get("to", ())))))
+    return [r for r in out if r is not None]
+
+
+def retargets_all(g: Graph, ops: list[dict]) -> list[tuple[str, list[str], list[str]]]:
+    """`retargets` over a batch, walked against the graph the ops build.
+
+    Walked incrementally for the reason `moved` gives about its own walk: an op
+    is composed against the store plus everything before it, so judging each one
+    against the bare store would report a batch's own earlier edits as
+    somebody's surprise. Collapsed per vertex, keeping the first `before` and
+    the last `after`, so one command that touches one answer twice says so once.
+    """
+    probe = copy.deepcopy(g)
+    seen: dict[str, tuple[str, list[str], list[str]]] = {}
+    for op in ops:
+        for vid, before, after in retargets(probe, op):
+            first = seen[vid][1] if vid in seen else before
+            seen[vid] = (vid, first, after)
+        try:
+            _apply_one(probe, op)
+        except ApplyError:
+            break
+    return [v for v in seen.values() if sorted(v[1]) != sorted(v[2])]
+
+
 def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
     """Raise ApplyError if `op` could not be staged against `g`.
 
@@ -1484,9 +1565,11 @@ def compose_undep(g: Graph, *, vid: str,
                   after: list[str]) -> tuple[list[dict], str | None]:
     """`(ops, blocker_released)` for removing premises of `vid`.
 
-    Only a **bare** edge, one whose source has not been decided. A decided
-    edge's targets are part of its answer, so dropping one claims the answer no
-    longer opens that question — reopen first, and decide again meaning it.
+    A decided premise is edited like a bare one. It was refused until `D57`,
+    which settled that an edge's targets belong to the graph and not to the
+    answer beside them on the same row — so dropping one rewrites no answer, and
+    `reopen` goes on guarding the half that is one. The caller says what the
+    edit reinterprets through `retargets`; this composes it either way.
 
     The `set_status` in the op list is the one repair here with no judgement in
     it, so it is made rather than asked about: `BLOCKED:P` asserts a dependency
@@ -1504,14 +1587,6 @@ def compose_undep(g: Graph, *, vid: str,
     if unknown:
         raise ApplyError(f"{vid} does not rest on {', '.join(unknown)}\n"
                          f"`dg node {vid}` lists its premises")
-    decided = [p for p in after
-               if (e := g.active_edge(p)) is not None and e.decided]
-    if decided:
-        raise ApplyError(
-            f"{', '.join(decided)} is decided, and its targets are part of "
-            f"that answer\n`dg reopen {decided[0]}` first — that strips the "
-            f"payload and leaves the dependency editable — then remove the "
-            f"edge and decide again with the targets you mean")
     ops = [{"op": "remove_edge", "from": p, "to": [vid]} for p in after]
     blocker = g.vertices[vid].blocker
     released = (g.vertices[vid].base_status == "BLOCKED"
@@ -1737,38 +1812,17 @@ def _apply_one(g: Graph, op: dict) -> None:
                      + [(into, c) for c in g.children(vid)])
         else:
             pairs = []
-        for src, dst in pairs:
-            e = g.active_edge(src)
-            if e is not None and e.decided and dst not in e.to:
-                raise ApplyError(
-                    f"this would make {src}'s answer open {dst}, which it "
-                    f"never did — `dg reopen {src}` first, then decide again "
-                    f"with the targets you mean"
-                )
-        # A decided answer's targets are part of that answer. Dropping one says
-        # the answer never opened this vertex, which contradicts what was
-        # written down — `remove_edge` refuses the identical edit in as many
-        # words, and this used to make it silently, with no reversal filed and
-        # nothing in the confirmation to say so. Checked before anything is torn
-        # down, like the splice/into check above, so a refusal leaves the graph
-        # untouched.
+        # **No refusal here, and there used to be two.** Both said that a
+        # decided answer's targets are part of that answer, so a splice adding
+        # one or a removal dropping one was rewriting an answer. `D57` settled
+        # that they are not: an `Edge` row carries the payload *and* the child
+        # list, and only the payload — answer, falsifier, source — is what was
+        # decided. The children are dependency structure, contributed by
+        # whoever wrote them, and `reopen` already guards the half that is the
+        # answer.
         #
-        # The way through is the way it always is: reopen, which strips the
-        # payload and leaves a bare edge this op may then edit, then decide
-        # again with the targets you mean.
-        rewrites = sorted({e.src for e in g.edges
-                           if e.active and e.decided and vid in e.to})
-        if rewrites:
-            one = len(rewrites) == 1
-            raise ApplyError(
-                f"{', '.join(rewrites)} {'is' if one else 'are'} decided and "
-                f"{'its answer opens' if one else 'their answers open'} {vid} — "
-                f"removing it would rewrite {'that answer' if one else 'those '
-                'answers'} to say {'it' if one else 'they'} never did. "
-                f"`dg reopen {rewrites[0]}` first, then remove {vid} and decide "
-                f"again with the targets you mean"
-            )
-
+        # What the caller is told instead is in `retargets`, which the staging
+        # commands print. That note is temporary; this absence is not.
         for src, dst in pairs:
             if src != dst:
                 _apply_one(g, {"op": "add_edge", "from": src, "to": [dst]})
@@ -1852,17 +1906,10 @@ def _apply_one(g: Graph, op: dict) -> None:
                 f"{vid} does not open {', '.join(sorted(targets))} — "
                 f"nothing to remove"
             )
-        if e.decided:
-            # A decided edge's targets are part of the answer: dropping one
-            # claims the answer no longer opens that question. Rewriting an
-            # answer in place is the one thing this model never does, so the
-            # way through is the way it always is — reopen, which strips the
-            # payload and leaves a bare edge this op may then edit.
-            raise ApplyError(
-                f"{vid} is decided, and its targets are part of that answer — "
-                f"`dg reopen {vid}` first, then remove the edge and decide "
-                f"again with the targets you mean"
-            )
+        # A decided edge is edited like any other. `D57`: the targets belong to
+        # the graph, and the answer is the payload beside them — so removing a
+        # dependency here rewrites nothing that was decided. `retargets` says
+        # so at stage time, where the person is.
         e.to = sorted(set(e.to) - targets)
         # A bare edge opening nothing says nothing. Dropped so it cannot sit in
         # the store as an active edge with no content — and so `active_edge`

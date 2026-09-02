@@ -782,8 +782,15 @@ def test_every_op_kind_is_contestable_or_argued_not_to_be():
     So every op kind either has a rule or is named in `CANNOT_CONFLICT` with
     the reason two writers doing it to one record is not two judgements. A new
     kind fails here on the day it is added.
+
+    **What it cannot catch is a reason that is false**, and two were: the
+    removals sat in `CANNOT_CONFLICT` arguing that a removal *is refused or
+    lands*, when the refusal they named fires only where a decided answer holds
+    the vertex. This test passed throughout, because it counts entries rather
+    than checking them. `D50` is that gap; `D48` moved these two across.
     """
-    ruled = {"close", "set_fields", "set_status"}
+    ruled = {"close", "set_fields", "set_status",
+             "remove_vertex", "remove_task"}
     every = pending.OPS | task_pending.OPS
     unjudged = every - ruled - set(integrate.CANNOT_CONFLICT)
     assert not unjudged, (
@@ -857,3 +864,111 @@ def test_doing_is_not_exempt(tg):
     got = integrate._contest_task(
         mine, base, {"op": "set_status", "task": tid, "status": "DROPPED"})
     assert got is not None and "DOING" in got[1]
+
+
+# ---- a removal over a record this clone moved -----------------------------
+#
+# `D48`. These three arrive from the direction the module docstring does not:
+# not a removal losing to a side that still names the record, but a removal
+# *winning* over a side that changed it. All three landed silently under the
+# `CANNOT_CONFLICT` entry these rules replaced, with the report printing
+# "nothing contested" — which is the half of the enumeration nothing checked.
+
+
+def test_a_removal_over_a_local_retitle_is_contested(g):
+    base = copy.deepcopy(g)
+    theirs = replay(g, [{"op": "remove_vertex", "vertex": "D06",
+                         "mode": "sever"}])
+    ours = replay(g, [{"op": "set_fields", "vertex": "D06",
+                       "title": "retitled here"}])
+
+    found = integrate._walk(ours, base, integrate.decisions(base, theirs).ops,
+                            "decisions", pending.expand)[0]
+    assert [f.kind for f in found] == ["contested"]
+    assert "D06 is removed there" in found[0].message
+    assert "title changed here" in found[0].message
+
+
+def test_a_removal_over_a_child_hung_here_is_contested(g):
+    """The case a field comparison misses. This clone never touched D06's own
+    row — it hung a fresh question on it — and the removal takes the question
+    away and leaves the child a root."""
+    base = copy.deepcopy(g)
+    theirs = replay(g, [{"op": "remove_vertex", "vertex": "D06",
+                         "mode": "sever"}])
+    ours = replay(g, [
+        {"op": "add_vertex", "id": "D60", "title": "new question",
+         "area": "Alpha", "status": "OPEN"},
+        {"op": "add_edge", "from": "D06", "to": ["D60"]}])
+
+    found = integrate._walk(ours, base, integrate.decisions(base, theirs).ops,
+                            "decisions", pending.expand)[0]
+    assert [f.kind for f in found] == ["contested"]
+    assert "D60 was hung on it here" in found[0].message
+
+
+def test_a_removal_over_a_record_nobody_here_touched_is_not_contested(g):
+    """The other direction, and the one that makes the rule a rule rather than
+    a refusal: one writer removing what nobody else moved is a removal."""
+    base = copy.deepcopy(g)
+    theirs = replay(g, [{"op": "remove_vertex", "vertex": "D06",
+                         "mode": "sever"}])
+    ours = copy.deepcopy(g)
+
+    found, probe, _ = integrate._walk(
+        ours, base, integrate.decisions(base, theirs).ops, "decisions",
+        pending.expand)
+    assert found == []
+    assert "D06" not in probe.vertices
+
+
+def test_the_task_store_contests_a_removal_the_same_way(tg):
+    """The twin, because a rule applied in one store and not the other is the
+    shape most of this tool's audit findings took."""
+    base = copy.deepcopy(tg)
+    theirs = copy.deepcopy(tg)
+    task_pending._apply_one(theirs, {"op": "remove_task", "task": "T04",
+                                     "mode": "sever"})
+    ours = copy.deepcopy(tg)
+    task_pending._apply_one(ours, {"op": "set_fields", "task": "T04",
+                                   "title": "retitled here"})
+
+    found = integrate._walk(ours, base, integrate.tasks(base, theirs).ops,
+                            "tasks", None)[0]
+    assert [f.kind for f in found] == ["contested"]
+    assert "T04 is removed there" in found[0].message
+
+
+def test_a_removal_over_a_local_change_reaches_a_person_and_is_answerable(
+        two_writers):
+    """`D48` end to end: the report, the refusal to adopt while it is open, and
+    both answers. Add-wins is the *declared* policy — what it replaced was
+    remove-wins by accident, with the report asserting nothing was contested.
+    """
+    root, run = two_writers
+    # A record that is in the base: the worker removes it, we reword it.
+    _git(root, "checkout", "-q", "worker")
+    assert run("task", "rm", "T01", "--yes").exit_code == 0
+    assert run("apply").exit_code == 0
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "worker removes T01")
+    _git(root, "checkout", "-q", "master")
+    assert run("task", "amend", "T01",
+               "--title", "kept, and reworded here").exit_code == 0
+    assert run("apply").exit_code == 0
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "mine")
+
+    out = run("integrate", "worker").output
+    assert "T01 is removed there" in out and "title changed here" in out
+
+    assert run("incoming", "--adopt").exit_code == 1, "open while unanswered"
+    # The ref is read off the line that names the record, not hardcoded: the
+    # fixture's worker branch carries other ops, so the index is not stable.
+    line = next(l for l in run("incoming").output.splitlines()
+                if "T01 is removed there" in l)
+    ref = line.split()[1]
+    assert run("incoming", "--keep", ref).exit_code == 0
+    assert run("incoming", "--adopt").exit_code == 0
+    from dgraph.tasks import TaskGraph
+    assert "T01" in TaskGraph.load(root / "tasks.json").tasks

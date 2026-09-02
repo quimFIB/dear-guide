@@ -29,7 +29,10 @@ with it.
      detail, and it will optimise away the thing the constraint protected. -->
 ⟨CHAIN⟩
 
-## The loop
+<!-- ⟨MODE_PROSE⟩: empty under `--mode process`, which is every ordinary run.
+     Under `--mode session` it says what became advisory and asks the agent for
+     the one thing nothing can set for it. -->
+⟨MODE_PROSE⟩## The loop
 
 <!-- ⟨ASSIGNED⟩: whether this agent was launched for a named task. Filled from
      the roster `dg-agent setup --roster` wrote into `launch.sh`; where there is

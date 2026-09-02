@@ -1256,3 +1256,96 @@ def test_blocked_and_held_work_is_said_rather_than_refused(proj):
     held = run(proj, "setup", "--roster", "T04", "--brief", "x", "--force")
     assert held.exit_code == 0
     assert "T04 is already DOING" in held.stdout
+
+
+def test_the_launcher_asks_whether_anybody_can_answer_an_escalation(proj):
+    """`D53`. `agentic/QUICKSTART.md` calls broker-before-launch the step people
+    skip, and until this line only prose said so.
+
+    A warning and never a refusal — `|| true` says that in the file itself.
+    A run with no broker is legal and behaves exactly as it did before one
+    existed: the gate returns its own verdict and an `ask` becomes a refusal.
+    What is not legal is finding that out from an agent that stopped."""
+    out = fanout.render_launch(fanout.defaults(proj), proj)
+    assert "dg-agent broker --check || true" in out
+    check = out.index("dg-agent broker --check")
+    assert out.index("dg-agent env --check") < check < out.index("dg-agent run"), \
+        "after the plan check, before the first agent"
+
+
+# ---- --mode session ------------------------------------------------------
+#
+# `D52`. `D34` split supervising from spawning: a session may hold the tray and
+# broker consent, which gives up nothing, and spawning the agents in-process is
+# a separate mode that declares what it makes advisory. The property under all
+# of it is that `process` is untouched.
+
+
+def test_process_mode_renders_exactly_what_it_always_did(proj):
+    """A generated prompt in the enforced mode must be byte-identical to the
+    one written before the mode existed — which is what makes a diff of two
+    prompts show the mode and nothing else."""
+    plan = fanout.defaults(proj)
+    assert plan.mode == "process", "the enforced mode stays the default"
+    scout = fanout.render_scout(plan, proj)
+    assert "Where you are running" not in scout
+    assert "\n\n\n" not in scout, "the empty token must close its own line up"
+    assert "dg-agent run" in fanout.render_launch(plan, proj)
+
+
+def test_session_mode_refuses_a_floor_its_agents_cannot_have(proj):
+    """`D33`: the floor is prepended by `dg-agent run`, and a subagent the
+    session spawns has no such parent. This is the one refusal the mode carries
+    — everything else it gives up is stated, per `D34`."""
+    plan = replace(fanout.defaults(proj), mode="session", confine="require")
+    fault = fanout.plan_fault(plan)
+    assert fault and "--mode session and --confine require contradict" in fault
+
+
+def test_choosing_session_mode_drops_the_floor_rather_than_asserting_one(proj):
+    """...but only where `--confine` was not given. `defaults` settles the floor
+    before it can know the mode, so a plan that becomes `session` later would
+    otherwise carry a `require` the launcher never wrote and be refused for it.
+    """
+    res = run(proj, "setup", "--mode", "session", "--brief", "x", "--dry-run")
+    assert res.exit_code == 0, res.stdout
+    clash = run(proj, "setup", "--mode", "session", "--confine", "require",
+                "--brief", "x", "--dry-run")
+    assert clash.exit_code == 2 and "contradict" in clash.stdout
+
+
+def test_session_mode_writes_no_launcher_and_says_why(proj):
+    """There is nothing for `dg-agent run` to parent. What the file can
+    usefully be is the two checks that still apply and a statement of what does
+    not — rather than a script that looks like the other mode's and enforces
+    none of it."""
+    out = fanout.render_launch(
+        replace(fanout.defaults(proj), mode="session", confine="off"), proj)
+    # No *invocation* — the prose names the command to say it is absent, which
+    # is the sentence the file exists for.
+    assert "dg-agent run --plan" not in out and "&\n" not in out
+    assert "There is no launcher for this mode" in out
+    assert "dg-agent env --check" in out and "dg-agent broker --check" in out
+
+
+def test_the_agent_is_told_what_it_must_carry_itself(proj):
+    """The site of the three that changes behaviour rather than informing a
+    human: `D32`'s mechanism is the agent prefixing `$DG_AGENT` on every call,
+    and a mechanism that needs cooperation works only if it is asked for."""
+    scout = fanout.render_scout(
+        replace(fanout.defaults(proj), mode="session", confine="off"), proj)
+    assert "spawned **inside a session**" in scout
+    assert "DG_AGENT=<your name> dg" in scout
+    assert "park before you stop" in scout
+
+
+@pytest.mark.parametrize("host,expected", [("claude", 0), ("opencode", 1)])
+def test_the_opencode_loss_is_named_only_where_it_applies(proj, host, expected):
+    """Five of the losses are permanent consequences of in-process spawning.
+    The sixth is opencode#5894 and may go away, so it is marked rather than
+    merged — and an agent running under the other host is not told about a
+    defect in a runner it is not using."""
+    scout = fanout.render_scout(
+        replace(fanout.defaults(proj), mode="session", confine="off",
+                host=host), proj)
+    assert scout.count("opencode#5894") == expected
