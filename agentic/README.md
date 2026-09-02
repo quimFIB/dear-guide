@@ -294,6 +294,15 @@ dull, and mostly judged against the allowlist and the floor anyway, while a
 write outside the launch scope is rare and worth a person. The reverse would be
 strange, and nothing stops you writing it.
 
+**And where nothing protects the channel, the label says less.** A relayed
+verdict is logged `person` under a confinement floor and `relayed` without one:
+the socket is a filesystem object an unconfined agent shares a uid with, so the
+run cannot show which hand wrote the answer. The verdict stands either way and
+relaying is not refused — `D40` weighed that and declined, since an agent with
+no floor can already write the project at leisure. What it may not do is claim a
+warrant it has not got. `dg-agent broker` says which you are getting, once, at
+the door.
+
 **The tool guarantees the label, not the judgement.** `relay_auto` carries the
 question out and the answer back; whether the thing answering decides well is a
 question about that thing. What cannot happen is a supervisor reading the log

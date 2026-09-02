@@ -87,6 +87,16 @@ the plugin's environment is the host's.
   separate `opencode run` processes is unaffected; one launched through the
   `task` tool is not scoped at all. Claude Code has no equivalent gap, so this
   is a reason to prefer separate processes here.
+
+  **This is what `--mode session` costs on this host, and it is the worst of
+  the six.** That mode has the session spawn its agents with the `task` tool,
+  so neither the write scope nor the commit gate fires for them — absent, not
+  weakened, and `commit` and `rm` are the two irreversible things. The other
+  five losses the mode declares are consequences of in-process spawning and
+  hold on every host; this one is a defect with an issue number and may simply
+  go away. `dg-agent setup --mode session --host opencode` names it among the
+  rest, and `agentic/QUICKSTART.md` Recipe 4 says when the mode is worth it at
+  all.
 - **The write scope does not cover the `patch` tool.** `write` and `edit` name
   their target in `filePath`, which is what `dg gate --write` judges. `patch`
   takes `patchText` — one diff that may touch several files — so there is no

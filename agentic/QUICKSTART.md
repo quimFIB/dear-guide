@@ -78,12 +78,21 @@ rare out-of-scope write to you.
 dg-agent setup --preset contributor --focus T04,T07 \
   --brief "…" --read "path:what it is" --findings "findings/<task-id>.md"
 
-# 2. in the session, backgrounded so it outlives the turn
-dg-agent broker --relay --exec-rung auto --write-rung scoped
+# 2. start the broker. `--detach` puts it in its own session, so it outlives
+#    the turn that started it — which is the one thing it must do.
+dg-agent broker --relay --detach --exec-rung auto --write-rung scoped
 
-# 3. a terminal
+# 3. and launch. `launch.sh` asks whether a broker is listening before the
+#    first agent starts, so a skipped step 2 is a line you see rather than an
+#    agent that stops.
 ./fanout/launch.sh
 ```
+
+**Step 3 no longer needs a terminal**, and step 2 is why. A broker started from
+a session's own shell call dies when that call returns, so this recipe used to
+put the launcher in a second window — which made *"do not want a second
+window"* only half true. `--detach` is idempotent and reports a broker that is
+already there, so running it twice costs nothing.
 
 The session then answers each question as it arrives:
 
@@ -113,8 +122,16 @@ of the split — see *"...and letting the session answer"* in `README.md`.
 **Two things to know before relying on this.** Answer within about a minute and
 a half: the gate gives up at 100 seconds and the agent never sees a later
 verdict. And the relay's safety rests on the confinement floor — without one,
-only the cooperative gate stands between an agent and the channel. `--relay` does
-not check, deliberately; that is `D40`, open.
+only the cooperative gate stands between an agent and the channel.
+
+**`--relay` still does not refuse without a floor, and the log says so instead.**
+An unconfined agent shares the uid that owns the socket, so it could answer its
+own request; refusing to relay would shut that small hole beside the open one,
+since such an agent can already write the project at leisure. What the run may
+not do is *claim* more than it can show — so a verdict relayed with no floor is
+logged `relayed` rather than `person`, the broker says which at the door, and a
+supervisor reading the log afterwards can tell the two apart. The same person
+answered either way; what differs is the warrant.
 
 ---
 
@@ -147,6 +164,42 @@ agent may *answer* and nothing about what it may *add* — an `add` is ungated,
 and `dg apply` normally writes an owned caller's own ops with nothing consulted.
 So the tray keeps writers apart; it is not by itself approval. `scout` sets
 `$DG_APPLY=never`, which is what turns it into an approval queue.
+
+---
+
+## Recipe 4 — the session spawns the agents itself
+
+**Read what this gives up before choosing it.** The three recipes above run
+each agent as a child of `dg-agent run`, which is what enforces its name, its
+floor, its budget and its write scope. `--mode session` has the session spawn
+them with its own subagent tool instead, and a subagent has no such parent — so
+those rules become *advisory*, and the mode exists to say so rather than to
+pretend otherwise.
+
+```sh
+dg-agent setup --mode session --preset contributor --focus T04,T07 \
+  --brief "…" --read "path:what it is" --findings "findings/<task-id>.md"
+```
+
+It prints what is advisory before it writes anything, and the prompt tells the
+agents the same list. There is **no launcher**: `fanout/launch.sh` runs the two
+checks that still apply and says the rest is the session's to do.
+
+One refusal comes with it — `--confine require` is rejected, because a plan
+asserting a floor its agents cannot get is a prompt promising something no
+invocation can deliver. Everything else is stated.
+
+**On opencode it is weaker still**, and this is worth a second look rather than
+a footnote: `tool.execute.before` does not fire for `task`-tool subagents
+([opencode#5894](https://github.com/sst/opencode/issues/5894)), so the write
+scope and the commit gate are *absent* there rather than advisory — and
+`commit` and `rm` are the two irreversible things. A fan-out launched as
+separate `opencode run` processes is unaffected, which is Recipe 1 or 2.
+
+**Prefer Recipe 2 where you can.** A session can hold the tray, broker consent
+and drive the whole run without spawning anything itself, and that gives up
+nothing at all. Reach for this one when you have a reason the other three do not
+serve — not to avoid a second window, which Recipe 2 already handles.
 
 ---
 

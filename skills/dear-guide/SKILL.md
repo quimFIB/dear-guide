@@ -452,8 +452,11 @@ dg dep   D07 --after D03           # a premise discovered later
 dg undep D07 --after D03           # ...and removing one
 ```
 
-`dg undep` works only on a **bare** edge. A decided edge's targets are part of
-its answer, so `dg reopen` first, then remove, then decide again meaning it.
+`dg undep` edits a decided edge like a bare one. A decided edge's targets are
+the *graph's* — an `Edge` row carries the answer's payload and the child list
+together, and only the payload was decided — so dropping one rewrites no
+answer. The command names the `opens` it changes. `dg reopen` still guards the
+payload, which is what it always guarded.
 
 **If a reading says a question holds more than one current answer, stop.** It
 means the store was text-merged rather than integrated: `dg check` refuses it,

@@ -458,17 +458,22 @@ changed to.
 
 **`dg dep`** records a dependency between two questions that already exist —
 the one `dg add --after` cannot say, because it fires only at creation. **`dg
-undep`** removes one recorded against the wrong parent. It loses
-a claim and invents none. Only a bare edge: a decided edge's targets are part
-of its answer, so dropping one claims the answer no longer opens that question.
-The command says so and names the way through — reopen strips the payload and
-leaves the dependency editable:
+undep`** removes one recorded against the wrong parent. It loses a claim and
+invents none.
+
+**A decided edge is edited like a bare one**, and it was refused until the
+question was settled: what an `Edge` row carries is a payload — answer,
+falsifier, source — *and* a child list, and only the payload is what was
+decided. The children are dependency structure. So removing one rewrites no
+answer; the command names the `opens` it changes, and `reopen` goes on guarding
+the half that is an answer:
 
 ```sh
-dg reopen D01 --why "..."      # the edge becomes payload-free
-dg undep  D02 --after D01      # legal now; no answer is being rewritten
-dg decide D01 --opens D03 ...  # restate it, knowing the new target set
+dg undep D02 --after D01       # lands, and says what D01's `opens` becomes
 ```
+
+`dg reopen` is still how an *answer* is taken back; it is simply not what a
+dependency edit needs any more.
 
 **`dg amend`** (and `dg task amend`) is for a record that says the right thing
 in the wrong words — a typo, a question since clarified, work filed under the

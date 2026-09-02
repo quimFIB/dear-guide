@@ -122,11 +122,12 @@ relation, remove one, set a link, remove a link. Ids come from pickers over the
 store, and a removal only offers what the node actually holds — there is no way
 to name something that is not there.
 
-Two rules are worth knowing because the form will refuse them:
+One rule the form refuses, and one that changed:
 
-- **A decided premise cannot be removed.** Its targets are part of the answer,
-  so dropping one says the answer never opened that question. Reopen first,
-  then remove, then decide again meaning it.
+- **Removing a decided premise says what it moves.** It used to be refused —
+  its targets were held to be part of the answer — until that was settled the
+  other way: they are the graph's, and the answer is the payload beside them.
+  The edit lands and names the `opens` it changes.
 - **The seam is edited from the task side only.** `because` and `evidence_for`
   are fields on a task; the decision store never names work.
 

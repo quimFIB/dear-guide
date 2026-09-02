@@ -157,6 +157,32 @@ dg-agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
   --brief "…" --read "path:what it is" --findings "findings/<id>.md"
 ```
 
+**Start the broker with `--detach` from here.** It puts the broker in its own
+session so it outlives the turn, which a plain `dg-agent broker --relay` from a
+session's shell call does not — and `launch.sh` now asks whether one is
+listening before the first agent, so a skipped broker is a line you read rather
+than an agent that stopped. `--detach` is idempotent, so running it twice is
+free:
+
+```sh
+dg-agent broker --relay --detach --exec-rung auto --write-rung scoped
+```
+
+**Without a confinement floor a relayed verdict is logged `relayed`, not
+`person`** — the channel cannot show which hand wrote it. Relaying still works
+and the verdict still stands; the log simply stops claiming a warrant it has not
+got, and the broker says which you have at the door.
+
+**`--mode session` is a different kind of run, and usually not the one you
+want.** Everything above assumes each agent is a child of `dg-agent run`, which
+is what enforces its name, floor, budget and write scope. Under `--mode session`
+the session spawns them itself and all of that becomes advisory — on opencode
+the write scope and commit gate are absent outright (opencode#5894). You can
+supervise a whole fan-out from here *without* it: set up, `--detach` the broker,
+run `./fanout/launch.sh`, answer consent, read `dg pending`. Reach for `--mode
+session` only with a reason that shape does not serve, and read what it prints
+before you launch.
+
 **`--agents` is the default and `--roster` is the exception.** `--agents 3`
 launches three interchangeable agents that read the frontier and take what they
 find, which is what lets a run absorb a queue that moves while it runs.

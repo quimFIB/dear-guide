@@ -119,6 +119,17 @@ dg-agent setup --preset contributor --roster T04,T07,T11 --budget 30m \
   --brief "settle the Search frontier"
 ```
 
+**`--mode` says where the agents live**, and `process` — one `dg-agent run` per
+agent — is the default and the only one where anything is enforced. `--mode
+session` has the launching session spawn them with its own subagent tool, which
+gives up the name, the floor, the budget and the assignment, and on opencode the
+write scope and the commit gate as well. `dg-agent setup` prints that list
+before it writes, the prompt repeats it to the agents, and `--confine require`
+is refused outright rather than promising a floor those agents never get. It
+writes no launcher, because there is nothing for `dg-agent run` to parent. See
+`agentic/QUICKSTART.md` Recipe 4 — and Recipe 2 first, since a session can
+supervise a whole run without spawning anything.
+
 **`--roster` is the exception, and `--agents` is the rule.** By default a
 fan-out launches N interchangeable agents that read the frontier and take what
 they find, and that is what lets a run absorb a queue which moves while it runs:
@@ -194,6 +205,7 @@ them, `dg` reads them, and `dg-agent env` says what is actually in force:
 | `DG_AREA` | `strict` — may file only under an area already in use, and a new one goes back to a person · unset/`open` — any area, with a near-miss of one in use refused by the similarity guard and `--new-area` as the override. |
 | `DG_BUDGET` | how long before its work is handed back — `1800`, `30m`, `2h`, or `infinite`. `dg-agent run --budget` records it on the lease *and* stops the child at it, so there is one number rather than a `--budget` and a `timeout` that agree until somebody edits the file. |
 | `DG_TERSE` | how long a field may be — `on` (400 characters), a count, or unset/`off` for no limit. The store holds the synopsis somebody reads while deciding; the development goes in a file the record cites. Refused at stage time, before the tray is touched. |
+| `DG_MODE` | not a variable either, and deliberately: the mode is a fact about *how the run was launched* rather than a rule the agents read, and a session-spawned agent shares its session's environment, so setting one would be a value nothing could rely on. It is stated at setup, in `fanout/scout.md`, and by `plan_fault` refusing the one pair that cannot be written. |
 | `dg-agent env` | not a variable: the **report**. `$DG_DECIDE`, `$DG_WRITE`, `$DG_TERSE` and `$DG_AREA` all fail *open* — a typo does not weaken a rule by a notch, it removes it — so this is what names a fallback as a fallback. `--check` exits non-zero on anything set and not understood. |
 
 Set `DG_DECIDE` **here and not in the prompt.** A variable is a refusal; a

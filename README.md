@@ -868,6 +868,15 @@ that the skill's command table only names commands that exist.
   it the seam would be a choice between losing an answer and claiming the
   project once believed something it never did.
 
+  **A removal is contested too, where this clone moved the record.** The
+  arriving side deleting `D07` while you retitled it, moved its status, or hung
+  a fresh question on it is two writers disagreeing about whether `D07` should
+  exist — so it is reported and answered like the other three, rather than the
+  removal simply landing. Add-wins, and *declared*: the alternative is
+  defensible and what it replaced was remove-wins by accident, with the report
+  printing `nothing contested` over an edit somebody lost. Where nobody here
+  touched the record, a removal is still just a removal.
+
   An arriving id this store already holds is **not** one of the three: it is
   renamed inside the contribution, where an edge still knows which vertex it
   meant, and reported rather than asked about. Only ids the merge introduces
