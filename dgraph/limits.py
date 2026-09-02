@@ -244,8 +244,17 @@ def protected_paths(root: Path | None) -> list[str]:
 _MECHANICAL_STATUS = ("DOING", "PARKED")
 
 
-def mechanical(op: dict, agent: str) -> str | None:
+def mechanical(op: dict, agent: str, act: list[dict] | None = None) -> str | None:
     """Why `agent` may not have the broker apply this staged op — or `None`.
+
+    `act` is the group the op was staged in, for the one kind that is judged
+    against its company: an `add_dep` qualifies when every task on its waiting
+    side is filed in the same act (`D58`). The creator of a record is the
+    authority on that record, and what a new task rests on is a statement
+    about the new task. An edge between existing work, or one that makes
+    existing work wait on new work, edits somebody else's frontier and stays a
+    judgement. A lone `add_dep` therefore never qualifies, and a caller that
+    passes no act gets that answer.
 
     The judgement behind the broker's mechanical apply, here rather than in
     `dgraph/broker.py` because the broker holds no rule of its own: the
@@ -256,8 +265,9 @@ def mechanical(op: dict, agent: str) -> str | None:
 
     **The rule, not a list.** An op qualifies when it moves the writer's own
     work through the run: filing it, claiming it, putting it down. Today that
-    is `add_task` and a `set_status` into `DOING` or `PARKED`, and a fourth
-    would need its own decision rather than a line here.
+    is `add_task`, an additive `set_link`, an `add_dep` whose waiting side is
+    filed in the same act, and a `set_status` into `DOING` or `PARKED`; a
+    fifth would need its own decision rather than a line here.
 
     **`DONE` is excluded, and that is the whole boundary.** Finishing asserts
     the criteria were met, which is a judgement about the record rather than a
@@ -301,6 +311,15 @@ def mechanical(op: dict, agent: str) -> str | None:
             return ("unlinking retracts a premise the record already carries "
                     "— that is the supervisor's, like finishing")
         return None
+    if kind == "add_dep":
+        filed = {o.get("id") for o in (act or ()) if o.get("op") == "add_task"}
+        waiting = list(op.get("to") or ())
+        if waiting and all(t in filed for t in waiting):
+            return None
+        outside = [t for t in waiting if t not in filed] or waiting
+        return (f"an edge onto {', '.join(outside) or 'existing work'} relates a "
+                f"record this writer did not file in this act — the creator may say "
+                f"what its own new work rests on, and nothing more (D58)")
     if kind != "set_status":
         return f"{kind!r} is not an op a writer may land unattended"
     status = op.get("status")

@@ -67,10 +67,14 @@ Three things that are easy to get wrong:
   it — rather than asking it again in your own words.
 - **`dg apply --mine` after `dg task start`.** Where the run is unconfined this
   lands your claim in the record for everybody. Where there is a confinement
-  floor it refuses — the stores are sealed and applying is the supervisor's —
-  and that is not a failure of yours: the claim is published either way and the
-  queue shows the work as taken. What must never be skipped is `dg task start`
-  itself.
+  floor the stores are sealed to you, and the broker lands what is yours to
+  land — a filing, its prerequisites, a claim, a park — through hands outside
+  it; finishing waits for the supervisor. With no broker it refuses, and that
+  is not a failure of yours: the claim is published either way and the queue
+  shows the work as taken. If the broker was busy and did not reach your apply
+  before it gave up, the store follows when it does — keep working, or park
+  the task if you are not going to. What must never be skipped is `dg task
+  start` itself.
 - **`dg task park --why` when you stop.** A task left `DOING` by an agent that
   went away is indistinguishable from one being worked on.
 

@@ -1314,6 +1314,22 @@ def test_choosing_session_mode_drops_the_floor_rather_than_asserting_one(proj):
     assert clash.exit_code == 2 and "contradict" in clash.stdout
 
 
+def test_a_roster_under_session_mode_points_at_the_session_not_a_variable(proj):
+    """No `dg-agent run`, so nothing sets `$DG_TASK`; the session that passed
+    the roster is the only carrier. The prompt must not tell the agent a
+    launcher named its task, and the losses list must say where the
+    assignment went rather than that it is gone. `D61`, audit `X-F4`."""
+    plan = replace(fanout.defaults(proj), mode="session", confine="off",
+                   roster=["T02"], agents=1)
+    scout = fanout.render_scout(plan, proj)
+    assert "the launcher named yours" not in scout
+    assert 'dg task start "$DG_TASK"' not in scout
+    assert "named by the session that spawned you" in scout
+    assert "Do not stop after one task." in scout, "the open loop survives"
+    assert any("relocated" in why for what, _, why in fanout.SESSION_LOSSES
+               if what == "$DG_TASK")
+
+
 def test_session_mode_writes_no_launcher_and_says_why(proj):
     """There is nothing for `dg-agent run` to parent. What the file can
     usefully be is the two checks that still apply and a statement of what does

@@ -128,7 +128,11 @@ before it writes, the prompt repeats it to the agents, and `--confine require`
 is refused outright rather than promising a floor those agents never get. It
 writes no launcher, because there is nothing for `dg-agent run` to parent. See
 `agentic/QUICKSTART.md` Recipe 4 — and Recipe 2 first, since a session can
-supervise a whole run without spawning anything.
+supervise a whole run without spawning anything. The mode is the plugin's
+workflow: from a terminal nothing refuses it, but outside Claude Code or
+opencode only `--mode process` has guaranteed behaviour. A roster in this mode
+reaches the agents through the session that passed it — in the spawn
+instructions, since nothing sets `$DG_TASK` for a subagent (`D61`).
 
 **`--roster` is the exception, and `--agents` is the rule.** By default a
 fan-out launches N interchangeable agents that read the frontier and take what

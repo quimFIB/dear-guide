@@ -323,6 +323,24 @@ def _say_sealed(exc: "project.Sealed", res: dict | None = None) -> bool:
     failure of the agent's, and what it should do next — leave the ops staged
     for a supervisor — has already happened.
     """
+    if res and res.get("unanswered"):
+        # The broker was asked and did not reach the request in time. Not a
+        # refusal and not a consent question: it applies the writer's tray when
+        # its turn comes, so the ops may still land after this prints. Said in
+        # those words rather than quoting the gate's message, every sentence of
+        # which was about a different request. Audit `X-F3`, `D60`.
+        waited = res.get("waited")
+        con.print(
+            f"[yellow]· not written yet — the record is sealed, and the broker "
+            f"did not reach your apply"
+            f"{f' within {waited:g}s' if isinstance(waited, (int, float)) else ''}[/]\n"
+            f"[dim]it may still land: the broker applies your tray when it gets "
+            f"there, and your claim already shows you holding the work "
+            f"(`dg-agent list`). `dg task pending --mine` says whether it has "
+            f"landed. If you are not going to do the work, `dg task park` it — "
+            f"a claim you walk away from is the one thing this cannot "
+            f"correct[/]")
+        return False
     con.print(f"[yellow]· not applied — the record is sealed[/]\n{_x(exc)}\n"
               + (f"[dim]the broker would not land it either: "
                  f"{res.get('reason')}[/]\n" if res else "")

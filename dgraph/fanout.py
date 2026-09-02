@@ -134,7 +134,8 @@ SESSION_LOSSES = (
      "the same; `$DG_BUDGET` is advisory and `dg-agent expire` the only "
      "backstop (D33)"),
     ("$DG_TASK", None,
-     "the assignment reaches a child the same way the name does (D47)"),
+     "not lost but relocated: the session passed --roster, so it hands each "
+     "agent its task in the spawn instructions instead (D61)"),
     ("a relayed verdict's claim to `person`", None,
      "the channel cannot prove a person wrote it with no floor (D40)"),
     ("`dg gate --write` and the commit gate", "opencode",
@@ -676,7 +677,8 @@ def readiness(proj: project.Project | None = None) -> list[Check]:
         up,
         "a consent broker is listening" if up else
         "no consent broker — an escalation will be refused, not asked",
-        "dg-agent broker (a terminal), or `--relay` to answer from a session",
+        "dg-agent broker (a terminal), or `--relay --plan fanout/env.json` to "
+        "answer from a session",
         bars=False))
     return out
 
@@ -976,6 +978,27 @@ def _assigned_prose(plan: Plan) -> str:
     if not plan.roster:
         return ("Nothing is assigned to you. Read the frontier, take "
                 "something, finish it, read\nagain:")
+    if plan.mode == "session":
+        # No launcher and no `dg-agent run`, so nothing sets `$DG_TASK`. The
+        # session that spawned this agent passed the roster and is the only
+        # party that can hand the assignment over -- in the spawn
+        # instructions, which is where the agent is told to look. `D61`.
+        return (
+            "**Your task was named by the session that spawned you**, in its "
+            "instructions to\nyou — this fan-out was launched with a roster, "
+            "one agent per task, and there is\nno `$DG_TASK` here to read it "
+            "from. Start there:\n"
+            "\n"
+            "```sh\n"
+            "dg task start <the task you were given>\n"
+            "```\n"
+            "\n"
+            "If you were not given one, say so and read the frontier instead. "
+            "That is a starting\npoint and not a fence. Nothing stops you "
+            "taking more, and you should: when your\ntask is done, read the "
+            "frontier and carry on as below. The roster says where each\n"
+            "agent *begins*, so that two agents do not open the same work at "
+            "the same moment\n— it does not say where any of them stops:")
     return (
         "**`$DG_TASK` is yours.** This fan-out was launched with a roster "
         "— one agent per\ntask — and the launcher named yours. Start "

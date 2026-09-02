@@ -201,6 +201,13 @@ def apply_decisions(ops: list[dict], dry_run: bool = False,
         # will actually land on, and an op that no longer applies is refused
         # loudly by `apply_all` rather than silently overwriting.
         g = Graph.load(proj.store)
+        # The batch against the tray it came from, under the tray's lock: a
+        # batch holding part of an act is refused here, on the one function
+        # every door writes through, rather than on whichever door happened to
+        # select by something other than the act. Audit `X-F1`.
+        partial = pending.refuse_partial(ops, pending.load(proj.pending))
+        if partial:
+            raise pending.ApplyError(partial)
         # Before anything is applied, and against the store as re-read: what
         # moved under this batch while it sat in the tray.
         moved = tuple(pending.drift(g, ops))
@@ -277,6 +284,10 @@ def apply_tasks(ops: list[dict], dry_run: bool = False,
                       graph=task_pending.apply_all(tg, ops, cross.guard_tasks()))
     with pending.held(proj.task_pending, wait=APPLY_WAIT), _writing(proj):
         tg = TaskGraph.load(proj.tasks)     # under the lock; see apply_decisions
+        partial = pending.refuse_partial(ops, pending.load(proj.task_pending),
+                                         kind="task op")
+        if partial:
+            raise pending.ApplyError(partial)
         out = task_pending.apply_all(tg, ops, cross.guard_tasks())
         out.save(proj.tasks)
         _record_holdings(ops, out, proj)

@@ -811,6 +811,43 @@ def refuse_split(ops: list[dict], op: dict, *, kind: str = "op") -> str | None:
             f"it whole and turn it down with `clear`.")
 
 
+def refuse_partial(batch: list[dict], tray: list[dict], *,
+                   kind: str = "op") -> str | None:
+    """Why this batch may not be written -- or `None`: it holds part of an act
+    whose other members would stay staged.
+
+    `refuse_split` guards the door that *removes* from a tray; this guards the
+    one that *writes from* it, and it sits on `applying` rather than on any
+    caller because the callers select ops by different predicates -- a writer,
+    a ref, what `limits.mechanical` admits -- and any predicate other than the
+    act can cut one. The broker's mechanical apply did, one commit after `G11`
+    closed this for `drop-op`: `add_task` qualified, its `add_dep` did not, and
+    the task landed without its edge, startable to everything that asks. Audit
+    `X-F1`.
+
+    Judged against the tray as it stands under the lock, like `refuse_split`.
+    A member whose siblings have already left is a group of one -- they were
+    applied or dropped by a route that judged the act -- and is not refused for
+    company it has not got.
+    """
+    refs = {o.get("ref") for o in batch}
+    for op in batch:
+        gid = op.get("group")
+        if not gid:
+            continue
+        rest = [o for o in tray
+                if o.get("group") == gid and o.get("ref") not in refs]
+        if rest:
+            shown = ", ".join(f"{o.get('ref')} {o.get('op')}" for o in rest)
+            return (f"{op.get('ref')} {op.get('op')} was staged as one act with "
+                    f"{len(rest)} other {kind}(s) that this batch leaves "
+                    f"behind: {shown}\n"
+                    f"Writing part of an act would land the rest as though "
+                    f"they meant something they do not. Apply the act whole -- "
+                    f"`dg apply --group {op.get('ref')}` -- or drop it whole.")
+    return None
+
+
 def drop(ref: str | int, path: Path | None = None) -> dict:
     """Unstage op `i`, and return **the op that was removed**.
 

@@ -165,7 +165,8 @@ than an agent that stopped. `--detach` is idempotent, so running it twice is
 free:
 
 ```sh
-dg-agent broker --relay --detach --exec-rung auto --write-rung scoped
+dg-agent broker --relay --detach --exec-rung auto --write-rung scoped \
+  --plan fanout/env.json
 ```
 
 **Without a confinement floor a relayed verdict is logged `relayed`, not
@@ -181,7 +182,15 @@ the write scope and commit gate are absent outright (opencode#5894). You can
 supervise a whole fan-out from here *without* it: set up, `--detach` the broker,
 run `./fanout/launch.sh`, answer consent, read `dg pending`. Reach for `--mode
 session` only with a reason that shape does not serve, and read what it prints
-before you launch.
+before you launch. It is built for this command: run from a terminal it is not
+refused, but it is not the intended workflow, and outside Claude Code or
+opencode only `--mode process` has guaranteed behaviour.
+
+**With `--roster` in that mode, you are the carrier.** Nothing sets `$DG_TASK`
+for a subagent you spawn, so hand each agent its task in the spawn
+instructions — one agent per roster id, in the order you gave them. The setup
+report prints the roster back, and the prompt tells each agent to look in its
+instructions rather than in a variable (`D61`).
 
 **`--agents` is the default and `--roster` is the exception.** `--agents 3`
 launches three interchangeable agents that read the frontier and take what they

@@ -80,7 +80,8 @@ dg-agent setup --preset contributor --focus T04,T07 \
 
 # 2. start the broker. `--detach` puts it in its own session, so it outlives
 #    the turn that started it — which is the one thing it must do.
-dg-agent broker --relay --detach --exec-rung auto --write-rung scoped
+dg-agent broker --relay --detach --exec-rung auto --write-rung scoped \
+  --plan fanout/env.json
 
 # 3. and launch. `launch.sh` asks whether a broker is listening before the
 #    first agent starts, so a skipped step 2 is a line you see rather than an
@@ -128,10 +129,16 @@ only the cooperative gate stands between an agent and the channel.
 An unconfined agent shares the uid that owns the socket, so it could answer its
 own request; refusing to relay would shut that small hole beside the open one,
 since such an agent can already write the project at leisure. What the run may
-not do is *claim* more than it can show — so a verdict relayed with no floor is
-logged `relayed` rather than `person`, the broker says which at the door, and a
+not do is *claim* more than it can show — so a verdict relayed for a run whose
+plan declares no floor is logged `relayed` rather than `person`, the broker says
+which at the door, `dg-agent consent` says which before you answer, and a
 supervisor reading the log afterwards can tell the two apart. The same person
 answered either way; what differs is the warrant.
+
+**The broker learns about the floor from `--plan fanout/env.json`** — the same
+file `dg-agent run` applies it from, so the two cannot disagree — and never
+from its own shell, which nothing sets. Start it without the plan and every
+relayed verdict is `relayed`, whatever the agents are running under.
 
 ---
 
@@ -148,7 +155,7 @@ floor does not cover — see *"one thing the panel is not"* in `README.md`.
 
 ```sh
 dg-agent setup --preset scout --brief "…" --findings "findings/<task-id>.md"
-dg-agent broker --relay --write-rung scoped --exec-rung scoped
+dg-agent broker --relay --write-rung scoped --exec-rung scoped --plan fanout/env.json
 ./fanout/launch.sh
 ```
 
@@ -188,6 +195,18 @@ checks that still apply and says the rest is the session's to do.
 One refusal comes with it — `--confine require` is rejected, because a plan
 asserting a floor its agents cannot get is a prompt promising something no
 invocation can deliver. Everything else is stated.
+
+**This mode is the plugin's workflow.** It exists for `/dg:fanout`, where the
+session that runs `setup` is the session that spawns. Nothing refuses it from a
+terminal — `setup` cannot tell a session from a person without sniffing a host
+variable — but that is not the intended use, and outside Claude Code or
+opencode only `--mode process` has guaranteed behaviour.
+
+**A roster in this mode reaches the agents through you.** You passed
+`--roster`, so you hold the list; nothing sets `$DG_TASK` for a subagent. Name
+each agent's task in its spawn instructions, one agent per id, in order — the
+report prints the roster to remind you, and the prompt tells the agent to look
+there rather than in a variable (`D61`).
 
 **On opencode it is weaker still**, and this is worth a second look rather than
 a footnote: `tool.execute.before` does not fire for `task`-tool subagents

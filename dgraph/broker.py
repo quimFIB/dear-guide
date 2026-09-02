@@ -33,7 +33,8 @@ judgement keeps it.
     dg apply (sealed)  ──unix socket──►  broker  ──►  tasks.json
                        ◄── applied/deny
 
-`add_task`, a claim, a park and a link go through it; `dg task done` does not,
+`add_task`, a claim, a park, a link and the prerequisites of work filed in the
+same act go through it; `dg task done` does not,
 because finishing asserts the criteria were met and that is a judgement about
 the record rather than a fact about the run. D15 draws that line and D44 puts
 the link on the near side of it.
@@ -473,11 +474,32 @@ class Broker:
         at all; this composes neither. That is the same division the module
         header states for a verdict, reaching one act.
 
-        **Whole or nothing.** The eligible ops go in tray order, per D42, and a
-        batch that will not apply leaves everything staged rather than landing
-        a prefix -- `apply_tasks` validates against a copy before it writes,
-        and the trays are held across the read so a stage arriving mid-apply
-        waits rather than being lost.
+        **Whole acts, or nothing of them.** The eligible ops go in tray order,
+        per D42, and a batch that will not apply leaves everything staged
+        rather than landing a prefix -- `apply_tasks` validates against a copy
+        before it writes, and the trays are held across the read so a stage
+        arriving mid-apply waits rather than being lost.
+
+        And the unit judged is the **act**, not the op. `dg task add --after
+        T01` stages `add_task` and `add_dep` as one group; this used to admit
+        the first and not the second, and landing the first alone is the task
+        without its edge, startable to everything that asks -- the very state
+        `G-F11` was filed over, reached through this door one commit after
+        `G11` closed it for `drop-op`. So an act with any member the writer
+        may not land stays staged whole, the reason names that member, and
+        `applying.refuse_partial` refuses a split under the lock even if this
+        selection is ever wrong. Audit `X-F1`. The edge is then judged
+        *against* its act: `D58` lets the creator say what its own new work
+        rests on, so `limits.mechanical` is handed the group.
+
+        **A caller that has stopped waiting is not skipped** (`D60`). The
+        request carries no ops -- the tray is read here, at the broker's turn
+        -- so what lands is the writer's *current* staged intent: a park
+        staged after the claim lands after it, a dropped claim lands nothing.
+        That is what makes a late landing safe, where a late *prompt* is
+        refused (`G-F2`) because it spends a person. The lease published the
+        hold at stage time regardless, so skipping would leave the lease and
+        the store disagreeing about who holds the work.
 
         Imported here rather than at the top: this module is deliberately thin
         on imports because it holds no policy, and pulling the apply stack into
@@ -506,15 +528,34 @@ class Broker:
         try:
             with applying.trays():
                 tray = pending.load(task_pending.path())
-                mine = [op for op in tray
-                        if limits.mechanical(op, agent) is None]
+                own = [op for op in tray
+                       if (op.get("by") or "").strip() == agent]
+                # One key per act: the group where there is one, the op
+                # itself where there is not -- `pending.group_of`'s reading.
+                landing: set = set()
+                held_back: list[str] = []
+                seen: set = set()
+                for op in own:
+                    key = op.get("group") or op.get("ref") or id(op)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    act = pending.group_of(tray, op)
+                    bad = [(o, limits.mechanical(o, agent, act)) for o in act]
+                    bad = [(o, w) for o, w in bad if w]
+                    if bad:
+                        held_back.append("; ".join(
+                            f"{o.get('ref') or o.get('op')} {o.get('op')}: {w}"
+                            for o, w in bad))
+                    else:
+                        landing.add(key)
+                mine = [op for op in own
+                        if (op.get("group") or op.get("ref") or id(op)) in landing]
                 if not mine:
-                    refused = {limits.mechanical(op, agent) for op in tray
-                               if (op.get("by") or "").strip() == agent}
                     return _answer(req, "deny",
                                    "nothing staged that a writer may land "
-                                   "unattended" + (f": {'; '.join(sorted(r for r in refused if r))}"
-                                                   if refused else ""))
+                                   "unattended" + (f": {'; '.join(held_back)}"
+                                                   if held_back else ""))
                 applying.apply_tasks(mine)
         except Exception as exc:                       # noqa: BLE001
             # Every failure is the same answer to the caller: nothing landed
@@ -522,7 +563,9 @@ class Broker:
             # apply leaves them anyway. The reason travels so the agent can
             # say something truthful rather than retry blindly.
             return _answer(req, "deny", f"apply refused: {exc}")
-        return _answer(req, "allow", f"applied {len(mine)} op(s) for {agent}")
+        return _answer(req, "allow", f"applied {len(mine)} op(s) for {agent}"
+                       + (f"; left staged whole, as one act each: "
+                          f"{'; '.join(held_back)}" if held_back else ""))
 
     def _decide(self, req: dict) -> dict:
         agent = (req.get("agent") or "").strip()
@@ -797,7 +840,16 @@ class Broker:
                 return                      # the socket closed under us
             try:
                 raw = _read_line(conn)
-                req = json.loads(raw) if raw else {}
+                if not raw:
+                    # A peer that connected and said nothing is `listening()`
+                    # asking whether anyone is here, or a gate that died
+                    # between connect and send. Neither is a request: queuing
+                    # it would log a `deny` of nothing on every `dg-agent
+                    # list`. Closed and forgotten. `X-F6`.
+                    with contextlib.suppress(Exception):
+                        conn.close()
+                    continue
+                req = json.loads(raw)
             except Exception as exc:
                 with conn:
                     with contextlib.suppress(Exception):
@@ -875,7 +927,7 @@ ANSWERED_BY = ("person", "relayed", "auto", "grant", "rung", "broker",
                "unanswered")
 
 
-def unprovable(relaying: bool, root: Path | None = None) -> str | None:
+def unprovable(relaying: bool, confine: str | None = None) -> str | None:
     """Why a relayed verdict here cannot be logged `person` — or `None`.
 
     A **note**, not a refusal, and `D40` settled that deliberately: with no
@@ -883,21 +935,31 @@ def unprovable(relaying: bool, root: Path | None = None) -> str | None:
     relay would close the small hole beside the open one. What it may not do is
     let the log claim more than it can show.
 
-    Fails toward `relayed`. Where the floor cannot be established this answers
-    as though there were none — because *cannot establish* and *is not there*
-    are the same thing for a warrant, and the direction that guesses `person`
-    is the one that writes something false.
+    `confine` is the mode **the run's plan declares** — `dg-agent broker
+    --plan fanout/env.json`, the same file `dg-agent run` applies the floor
+    from. `D59`. It used to be read from this process's own `$DG_CONFINE`,
+    which nothing sets: the floor is a property of the *agents'* launch, so
+    Recipe 2 downgraded every verdict of a fully confined run while the consent
+    prompt promised `person` (`X-F2`). Not verified against the requester
+    either: the floor is declared by the plan and applied once by the launcher,
+    and a broker that re-checked it would be a second enforcement layer the
+    rest of the tool does not have.
+
+    Fails toward `relayed`. No plan, or a plan that declares no floor, answers
+    as though there were none — because *not declared* and *not there* are the
+    same thing for a warrant, and the direction that guesses `person` is the
+    one that writes something false.
     """
     if not relaying:
         return None                      # a terminal answer never crosses it
-    from dgraph import confine as _confine
-    if _confine.mode() == "require":
+    if (confine or "").strip().lower() == "require":
         return None
-    return ("no confinement floor is in force, so a relayed verdict is logged "
+    return ("no confinement floor is declared for this run — no `--plan`, or "
+            "a plan with `confine` off — so a relayed verdict is logged "
             "`relayed` rather than `person`: the channel is a filesystem "
             "object an unconfined agent shares a uid with, and nothing here "
             "can show which hand wrote the answer. The verdict still stands "
-            "and relaying still works — see `D40`")
+            "and relaying still works — see `D40`, `D59`")
 
 
 def _answer(req: dict, verdict: str, reason: str, *, grant: Grant | None = None,
@@ -1015,9 +1077,17 @@ class Relay:
     decides, which is why this sentence still holds.
     """
 
-    def __init__(self, root: Path | None = None, wait: float = RELAY_WAIT):
+    def __init__(self, root: Path | None = None, wait: float = RELAY_WAIT,
+                 by: str = "person"):
         self.root = root if root is not None else project.find().root
         self.wait = wait
+        #: The word the log will write for a verdict this relay carries —
+        #: `person` or `relayed`, decided once by `unprovable` from the plan
+        #: the broker was given. Published with every question so `dg-agent
+        #: consent` tells the answerer the same word before they answer; the
+        #: prompt used to read the rung alone and promised `person` while the
+        #: log wrote `relayed`. `X-F2`, `D59`.
+        self.by = by if by in ANSWERED_BY else "person"
         self._lock = threading.Lock()
         self._pending: dict | None = None
         self._answered = threading.Event()
@@ -1066,6 +1136,7 @@ class Relay:
         published = dict(req)
         published["level"] = level
         published["since"] = time.time()
+        published["by"] = self.by
         published["scope"] = _scope_for(req).value if level == "scoped" else None
         with self._lock:
             self._pending = published
@@ -1286,9 +1357,26 @@ def waiting(root: Path | None = None) -> dict[str, dict]:
 
 def listening(root: Path | None = None) -> bool:
     """Whether a broker is there to ask. Absence is not a degraded broker --
-    it is *no broker*, and the gate then returns the verdict it always did."""
+    it is *no broker*, and the gate then returns the verdict it always did.
+
+    **Connects, rather than looking for the file.** A broker that dies by a
+    signal, a closed terminal or a crash leaves its socket file behind, and
+    `is_socket()` went on answering yes to every caller: `--check` in the
+    launcher, the readiness check, the `Waiting` column, and `--detach` --
+    which then declined to start a broker because one was "already
+    listening", while every agent's gate met `ECONNREFUSED` and a deny. A
+    file is not a listener; only a connection knows. The reader ignores a
+    connection that sends nothing, so asking leaves no verdict and no log
+    line. Audit `X-F6`.
+    """
     try:
-        return socket_path(root).is_socket()
+        path = socket_path(root)
+        if not path.is_socket():
+            return False
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            s.connect(str(path))
+        return True
     except OSError:
         return False
 
@@ -1419,7 +1507,10 @@ def _unanswered(seconds: float) -> dict:
     timed out was about to allow the write without saying so.
     """
     shown = f"{seconds:g} second{'' if seconds == 1 else 's'}"
-    return {"v": 1, "verdict": "deny",
+    # `unanswered` and `waited` travel with the verdict so a caller that is
+    # not asking for consent — `dg apply` asking for hands — can say something
+    # true about its own request instead of quoting this one. `X-F3`, `D60`.
+    return {"v": 1, "verdict": "deny", "unanswered": True, "waited": seconds,
             "reason": f"nobody answered within {shown} — an undecided request "
                       f"is not consent. The supervisor may still be reading "
                       f"it; ask again, or raise the deadline the host gives "

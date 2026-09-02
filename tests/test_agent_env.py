@@ -176,7 +176,7 @@ def test_the_report_covers_the_whole_family_including_the_area_policy(run):
 
     assert names == [v.name for v in env.VARS]
     assert "DG_AREA" in names
-    assert set(names) == {"DG_AGENT", "DG_DECIDE", "DG_APPLY", "DG_WRITE",
+    assert set(names) == {"DG_AGENT", "DG_TASK", "DG_DECIDE", "DG_APPLY", "DG_WRITE",
                           "DG_EXEC_ALLOW", "DG_CONFINE", "DG_FLOOR", "DG_AREA",
                           "DG_BUDGET", "DG_TERSE", "DG_SILENT_AFTER",
                           "DG_PROJECT"}
@@ -569,3 +569,15 @@ def test_no_policy_vocabulary_is_spelled_twice(monkeypatch):
     assert _env.BY_NAME[confine.CONFINE_ENV].choices == confine.CONFINE_MODES
     assert _env.BY_NAME[confine.FLOOR_ENV].choices == confine.BACKENDS
     assert _env.BY_NAME[confine.FLOOR_ENV].unset == confine.BACKENDS[0]
+
+
+def test_the_report_shows_the_assignment(run, monkeypatch):
+    """An agent told to start `"$DG_TASK"` has one `dg` surface that says what
+    it is. Not in the remit -- an assignment differs per agent -- but in the
+    report of what this agent is running under. `X-F4`."""
+    monkeypatch.setenv("DG_TASK", "T07")
+    rows = {v["name"]: v for v in json.loads(run("env", "--json").output)["variables"]}
+    assert rows["DG_TASK"]["effective"] == "T07"
+    monkeypatch.delenv("DG_TASK")
+    rows = {v["name"]: v for v in json.loads(run("env", "--json").output)["variables"]}
+    assert "nothing is assigned" in rows["DG_TASK"]["reads_as"]

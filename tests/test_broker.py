@@ -294,6 +294,44 @@ def test_the_socket_is_gone_when_the_broker_stops(tmp_path):
     assert not broker.listening(tmp_path)
 
 
+def test_a_stale_socket_file_is_not_a_broker(tmp_path):
+    """A broker killed by a signal, a closed terminal or a crash leaves its
+    socket file behind, and a file is not a listener. Every surface that asks
+    `listening()` -- `dg-agent broker --check` in `launch.sh`, the readiness
+    check, `--detach`'s "already listening", the `Waiting` column -- reported
+    a broker while an agent's gate got `ECONNREFUSED` and a deny. Worse, a
+    supervisor following Recipe 2 could not start a new one: `--detach` said
+    one was already there. Audit `X-F6`."""
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(str(broker.socket_path(tmp_path)))
+    stale.close()                                   # the file stays behind
+    assert broker.socket_path(tmp_path).is_socket()
+    assert not broker.listening(tmp_path)
+
+
+def test_asking_whether_a_broker_listens_leaves_no_trace(tmp_path):
+    """`listening()` has to connect to know, and a connection the reader
+    cannot read must not become a logged verdict or a queued question --
+    `dg-agent list` asks this on every run."""
+    b = broker.Broker(root=tmp_path, prompt=lambda req, level: (True, "y", None))
+    stop = threading.Event()
+    t = threading.Thread(target=b.serve, args=(stop,), daemon=True)
+    t.start()
+    try:
+        for _ in range(50):
+            if broker.listening(tmp_path):
+                break
+            time.sleep(0.02)
+        assert broker.listening(tmp_path)
+        assert broker.listening(tmp_path)
+        time.sleep(0.3)                             # let the decider drain
+        assert not (tmp_path / broker.LOG_NAME).exists()
+        assert broker.waiting(tmp_path) == {}
+    finally:
+        stop.set()
+        t.join(timeout=3)
+
+
 # ---- the evidence ---------------------------------------------------------
 
 def test_every_answer_is_logged_because_the_grants_are_not_kept(running):
@@ -725,6 +763,64 @@ def test_a_question_is_gone_the_moment_its_asker_gives_up(running, relay,
     broker.consult(_req(), tmp_path, 5)
     assert broker.pending_ask(tmp_path) is None
     assert broker.relaying(tmp_path), "the relay itself should still be up"
+
+
+def test_the_consent_prompt_names_the_word_the_log_will_write(running, tmp_path,
+                                                            monkeypatch):
+    """A relay told its warrant is unprovable publishes `by: relayed` with the
+    question, and `dg-agent consent` says so before the person answers. It used
+    to read the rung alone and promise `person` while the log wrote `relayed`
+    -- `X-F2`'s third surface."""
+    from dgraph import project
+    monkeypatch.setattr(project, "_override", tmp_path)
+    r = broker.Relay(tmp_path, wait=5, by="relayed")
+    stop = threading.Event()
+    t = threading.Thread(target=r.serve, args=(stop,), daemon=True)
+    t.start()
+    try:
+        for _ in range(200):
+            if broker.relaying(tmp_path):
+                break
+            time.sleep(0.02)
+        running(prompt=r.prompt, rungs={"write": "user", "exec": "user"},
+                unprovable=True)
+        got = []
+        asker = threading.Thread(target=lambda: got.append(
+            broker.consult(_req(kind="exec", target="cargo test"), tmp_path, 5)))
+        asker.start()
+        for _ in range(250):
+            if broker.pending_ask(tmp_path):
+                break
+            time.sleep(0.02)
+        assert broker.pending_ask(tmp_path)["by"] == "relayed"
+        shown = _agent_cli(tmp_path, "consent")
+        assert "recorded as `relayed`" in shown.output, shown.output
+        assert "recorded as `person`" not in shown.output
+        _agent_cli(tmp_path, "consent", "--deny", "--why", "no")
+        asker.join(timeout=5)
+        assert got and got[0]["verdict"] == "deny"
+        assert _log(tmp_path, 1)[0]["by"] == "relayed"
+    finally:
+        stop.set()
+        t.join(timeout=3)
+
+
+def test_the_broker_reads_the_floor_from_the_plan_it_is_given(tmp_path):
+    """`--plan`'s `confine` is the declaration; an unreadable plan is refused
+    rather than read as `off`."""
+    from dgraph import agent_cli
+    import click
+    plan = tmp_path / "env.json"
+    plan.write_text(json.dumps({"decide": "never", "apply": "never",
+                                "write": "launch", "area": "open",
+                                "terse": "on", "budget": 1800,
+                                "exec_allow": [], "confine": "require",
+                                "floor": "bwrap"}), encoding="utf-8")
+    assert agent_cli._declared_confine(str(plan)) == "require"
+    assert agent_cli._declared_confine(None) is None
+    plan.write_text("{not json", encoding="utf-8")
+    with pytest.raises(click.exceptions.Exit):
+        agent_cli._declared_confine(str(plan))
 
 
 # ---- answering it from a session -----------------------------------------
@@ -1307,6 +1403,128 @@ def test_broker_will_not_land_another_writers_work(tmp_path, monkeypatch):
     assert [o["id"] for o in left] == ["T8"]
 
 
+def test_broker_never_lands_half_of_an_act(tmp_path, monkeypatch):
+    """An act with one member the writer may land and one it may not: the
+    answer is not to land the half that qualifies -- that was `G-F11`'s own
+    reproduction through the door added one commit after `G11` closed it. The
+    act stays staged whole, the reason names the member that stopped it, and a
+    qualifying act beside it lands. Audit `X-F1`.
+
+    The act here is a filing plus an edge between two *existing* tasks, which
+    `D58` keeps on the supervisor's side. (`dg task add --after` no longer
+    produces a split act -- see the test below it -- so the shape is built by
+    hand, which is what a guard on `applying` is for.)"""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tasks.json").write_text(json.dumps(
+        {"areas": ["x"], "edges": [],
+         "tasks": [{"id": "T1", "title": "first", "area": "x", "status": "TODO"},
+                   {"id": "T2", "title": "other", "area": "x", "status": "TODO"}]}),
+        encoding="utf-8")
+    (tmp_path / ".dgraph-task-pending.json").write_text(json.dumps([
+        {"op": "add_task", "id": "T9", "title": "second, after the first",
+         "area": "x", "by": "a", "ref": "aaaa", "group": "gggg"},
+        {"op": "add_dep", "from": "T1", "to": ["T2"], "kind": "precedes",
+         "by": "a", "ref": "bbbb", "group": "gggg"},
+        {"op": "set_status", "task": "T1", "status": "DOING", "by": "a",
+         "ref": "cccc"},
+    ]), encoding="utf-8")
+    b = broker.Broker(root=tmp_path)
+    res = b._decide(broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed"))
+    assert res["verdict"] == "allow", res
+    stored = json.loads((tmp_path / "tasks.json").read_text())
+    assert [t["id"] for t in stored["tasks"]] == ["T1", "T2"], stored
+    assert stored["tasks"][0]["status"] == "DOING"
+    left = json.loads((tmp_path / ".dgraph-task-pending.json").read_text())
+    assert [o["ref"] for o in left] == ["aaaa", "bbbb"]
+    assert "add_dep" in res["reason"], res
+
+
+def test_broker_lands_a_filed_task_with_its_prerequisite(tmp_path, monkeypatch):
+    """`dg task add --after T1` under a floor: the creator says what its own
+    new work rests on, and the whole act lands -- task and edge together.
+    `D58`."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tasks.json").write_text(json.dumps(
+        {"areas": ["x"], "edges": [],
+         "tasks": [{"id": "T1", "title": "first", "area": "x",
+                    "status": "TODO"}]}), encoding="utf-8")
+    (tmp_path / ".dgraph-task-pending.json").write_text(json.dumps([
+        {"op": "add_task", "id": "T9", "title": "second, after the first",
+         "area": "x", "by": "a", "ref": "aaaa", "group": "gggg"},
+        {"op": "add_dep", "from": "T1", "to": ["T9"], "kind": "precedes",
+         "by": "a", "ref": "bbbb", "group": "gggg"},
+    ]), encoding="utf-8")
+    b = broker.Broker(root=tmp_path)
+    res = b._decide(broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed"))
+    assert res["verdict"] == "allow", res
+    stored = json.loads((tmp_path / "tasks.json").read_text())
+    assert [t["id"] for t in stored["tasks"]] == ["T1", "T9"]
+    assert stored["edges"] == [{"from": "T1", "to": ["T9"], "kind": "precedes"}]
+    assert not (tmp_path / ".dgraph-task-pending.json").exists()
+
+
+def test_broker_refuses_an_edge_that_makes_existing_work_wait(tmp_path, monkeypatch):
+    """The other direction is somebody else's frontier: new T9 before existing
+    T1 changes what T1 reads as, so the act stays staged whole. `D58`'s first
+    boundary."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tasks.json").write_text(json.dumps(
+        {"areas": ["x"], "edges": [],
+         "tasks": [{"id": "T1", "title": "first", "area": "x",
+                    "status": "TODO"}]}), encoding="utf-8")
+    (tmp_path / ".dgraph-task-pending.json").write_text(json.dumps([
+        {"op": "add_task", "id": "T9", "title": "must come first", "area": "x",
+         "by": "a", "ref": "aaaa", "group": "gggg"},
+        {"op": "add_dep", "from": "T9", "to": ["T1"], "kind": "precedes",
+         "by": "a", "ref": "bbbb", "group": "gggg"},
+    ]), encoding="utf-8")
+    b = broker.Broker(root=tmp_path)
+    res = b._decide(broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed"))
+    assert res["verdict"] == "deny", res
+    assert "T1" in res["reason"] and "D58" in res["reason"]
+    assert [t["id"] for t in json.loads(
+        (tmp_path / "tasks.json").read_text())["tasks"]] == ["T1"]
+
+
+def test_mechanical_judges_an_edge_against_its_act():
+    """A lone `add_dep` never qualifies; the same op does when the act it
+    arrived in files every task on its waiting side. `D58`."""
+    edge = {"op": "add_dep", "from": "T1", "to": ["T9"], "kind": "precedes", "by": "a"}
+    filing = {"op": "add_task", "id": "T9", "title": "w", "area": "x", "by": "a"}
+    assert limits.mechanical(edge, "a") is not None
+    assert limits.mechanical(edge, "a", [edge]) is not None
+    assert limits.mechanical(edge, "a", [filing, edge]) is None
+    two = {**edge, "to": ["T9", "T2"]}
+    why = limits.mechanical(two, "a", [filing, two])
+    assert why is not None and "T2" in why
+
+
+def test_broker_refuses_an_act_it_can_only_half_land(tmp_path, monkeypatch):
+    """The same act with nothing else staged: `deny`, both ops still in the
+    tray, and the reason names the member rather than reporting that nothing
+    qualified -- `add_task` did, and a writer told otherwise re-stages it."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tasks.json").write_text(json.dumps(
+        {"areas": ["x"], "edges": [],
+         "tasks": [{"id": "T1", "title": "first", "area": "x", "status": "TODO"},
+                   {"id": "T2", "title": "other", "area": "x", "status": "TODO"}]}),
+        encoding="utf-8")
+    (tmp_path / ".dgraph-task-pending.json").write_text(json.dumps([
+        {"op": "add_task", "id": "T9", "title": "second", "area": "x",
+         "by": "a", "ref": "aaaa", "group": "gggg"},
+        {"op": "add_dep", "from": "T1", "to": ["T2"], "kind": "precedes",
+         "by": "a", "ref": "bbbb", "group": "gggg"},
+    ]), encoding="utf-8")
+    b = broker.Broker(root=tmp_path)
+    res = b._decide(broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed"))
+    assert res["verdict"] == "deny", res
+    assert "add_dep" in res["reason"] and "bbbb" in res["reason"], res
+    assert [t["id"] for t in json.loads(
+        (tmp_path / "tasks.json").read_text())["tasks"]] == ["T1", "T2"]
+    left = json.loads((tmp_path / ".dgraph-task-pending.json").read_text())
+    assert [o["ref"] for o in left] == ["aaaa", "bbbb"]
+
+
 def test_broker_says_why_when_nothing_qualifies(tmp_path, monkeypatch):
     """A writer told *why* it may not land something stops retrying it, which
     is the difference between this and a bare deny."""
@@ -1465,6 +1683,56 @@ def test_no_broker_is_no_broker(tmp_path, monkeypatch):
     assert json.loads((tmp_path / "tasks.json").read_text())["tasks"] == []
 
 
+def test_an_apply_the_broker_did_not_reach_is_told_the_truth_about_itself():
+    """`consult` answers an unreached request with the gate's consent wording,
+    every sentence of which is about a different request when the caller is
+    `dg apply`. The writer is told what is true of an apply instead: it may
+    still land, the claim already shows, park if you stop. `X-F3`, `D60`."""
+    from dgraph import cli, project
+    res = broker._unanswered(60)
+    assert res["unanswered"] and res["waited"] == 60
+    with cli.con.capture() as cap:
+        cli._say_sealed(project.Sealed(16, "sealed"), res)
+    out = " ".join(cap.get().split())            # the console wraps at 80
+    assert "did not reach your apply" in out and "may still land" in out
+    assert "park" in out
+    assert "not consent" not in out and "supervisor may still be reading" not in out
+    with cli.con.capture() as cap:
+        cli._say_sealed(project.Sealed(16, "sealed"),
+                        broker._answer({}, "deny", "criteria not met"))
+    assert "would not land it either" in " ".join(cap.get().split())
+
+
+def test_the_broker_lands_the_tray_as_it_stands_at_its_turn(tmp_path, monkeypatch):
+    """The request carries no ops, so a writer that changed its mind between
+    asking and being reached lands nothing, and one that parked lands the
+    park after the claim. This is what makes landing late safe. `D60`."""
+    monkeypatch.chdir(tmp_path)
+    _project(tmp_path, [
+        {"op": "set_status", "task": "T1", "status": "DOING", "by": "a"}])
+    (tmp_path / "tasks.json").write_text(json.dumps(
+        {"areas": ["x"], "edges": [],
+         "tasks": [{"id": "T1", "title": "w", "area": "x", "status": "TODO"}]}),
+        encoding="utf-8")
+    req = broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed",
+                         deadline=1)
+    # The writer changes its mind before the broker reaches it.
+    (tmp_path / ".dgraph-task-pending.json").write_text("[]", encoding="utf-8")
+    b = broker.Broker(root=tmp_path)
+    res = b._decide(req)
+    assert res["verdict"] == "deny" and "nothing staged" in res["reason"]
+    assert json.loads((tmp_path / "tasks.json").read_text())["tasks"][0][
+        "status"] == "TODO"
+    # ...or parks it: the claim and the park both land, in order.
+    (tmp_path / ".dgraph-task-pending.json").write_text(json.dumps([
+        {"op": "set_status", "task": "T1", "status": "DOING", "by": "a"},
+        {"op": "set_status", "task": "T1", "status": "PARKED", "why": "stopped",
+         "date": "2026-09-02", "by": "a"}]), encoding="utf-8")
+    assert b._decide(req)["verdict"] == "allow"
+    assert json.loads((tmp_path / "tasks.json").read_text())["tasks"][0][
+        "status"] == "PARKED"
+
+
 # ---- what a floor-less relay may claim ------------------------------------
 #
 # `D40`. The channel's safety rests on the floor: without one an agent shares
@@ -1477,15 +1745,20 @@ def test_a_floor_less_relay_is_told_once_and_not_refused(tmp_path, monkeypatch):
     """Not a refusal, deliberately: with no floor an agent can already write
     the project at leisure, so declining to relay would shut the small hole
     beside the open one."""
-    monkeypatch.delenv("DG_CONFINE", raising=False)
-    said = broker.unprovable(True, tmp_path)
+    said = broker.unprovable(True, None)
     assert said and "logged `relayed` rather than `person`" in said
     assert "still stands" in said, "it says what still works, not only what does not"
 
 
-def test_a_floor_makes_the_warrant_provable_again(tmp_path, monkeypatch):
+def test_a_declared_floor_makes_the_warrant_provable_again(monkeypatch):
+    """From the plan the broker is given, never from this process's shell.
+    `$DG_CONFINE=require` in the broker's environment is nobody's declaration
+    -- the floor is the agents', set for them by `dg-agent run` from the same
+    file -- so it must not count. `D59`, audit `X-F2`."""
+    assert broker.unprovable(True, "require") is None
+    assert broker.unprovable(True, "off") is not None
     monkeypatch.setenv("DG_CONFINE", "require")
-    assert broker.unprovable(True, tmp_path) is None
+    assert broker.unprovable(True, None) is not None
 
 
 def test_a_terminal_answer_never_crosses_the_channel(tmp_path, monkeypatch):
@@ -1493,8 +1766,7 @@ def test_a_terminal_answer_never_crosses_the_channel(tmp_path, monkeypatch):
     terminal answers the broker directly, so there is nothing to forge and
     nothing to qualify — which is why the caller passes whether it is relaying
     rather than letting the broker guess."""
-    monkeypatch.delenv("DG_CONFINE", raising=False)
-    assert broker.unprovable(False, tmp_path) is None
+    assert broker.unprovable(False, None) is None
 
 
 def test_a_relayed_verdict_without_a_floor_is_logged_relayed(

@@ -145,7 +145,7 @@ def test_demo_findings_are_the_four_the_walkthrough_names(demo):
         "evidence_after_deciding",       # T09 measured D02 after D02 was settled
         "link_premise_under_review",     # T08 rests on D07, which D03 reopened
         "verbose_field",                 # D02's answer pastes the sweep it cites
-    }
+    }, [(v.check, v.message, str(project.find().root), str(demo)) for v in found]
     assert all(v.severity == "warning" for v in found), [v.message for v in found]
 
 

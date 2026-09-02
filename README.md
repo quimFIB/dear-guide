@@ -228,7 +228,7 @@ dg-agent run -- claude -p "…"            # claim a name, compose the environme
 dg-agent env                             # what every $DG_* actually says — and which one was mistyped
 dg-agent env --check                     # ...exit non-zero if anything set was not understood
 dg-agent broker                          # answer the consent requests agents block on, at a terminal
-dg-agent broker --relay                  # ...or publish them, for a session to answer
+dg-agent broker --relay --plan fanout/env.json   # ...or publish them, for a session to answer
 dg-agent broker --relay --exec-rung auto # ...with commands answered as `auto`, never as a person
 dg-agent consent --allow --why "…"       # ...what is waiting on a relay, and the verdict for it
 dg-agent claim                           # a free name for one writer, printed bare

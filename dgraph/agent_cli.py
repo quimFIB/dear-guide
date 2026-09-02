@@ -609,6 +609,19 @@ def agent_setup(
             where = f" [yellow]({host} only)[/]" if host else ""
             cli.con.print(f"    [dim]·[/] {cli._x(what)}{where} "
                           f"[dim]— {cli._x(why)}[/]")
+        if plan.roster:
+            # The caller is the carrier (`D61`): nothing sets `$DG_TASK` in
+            # this mode, so the session that passed the roster hands each
+            # agent its task when it spawns it. Said here, where the session
+            # reads the report, and in the prompt, where the agent does.
+            cli.con.print(f"    [yellow]roster[/] {cli._x(', '.join(plan.roster))} "
+                          f"[dim]— one agent per task, in this order: name each "
+                          f"agent's task in its spawn instructions; there is no "
+                          f"`$DG_TASK` here[/]")
+        cli.con.print("    [dim]this mode is the plugin's workflow (`/dg:fanout`); "
+                      "from a terminal nothing refuses it, but outside Claude "
+                      "Code or opencode only `--mode process` has guaranteed "
+                      "behaviour[/]")
 
     # Said before the write and not instead of it. Each of these describes a
     # launch somebody can mean — see `roster_warnings` — so the line is
@@ -1414,9 +1427,17 @@ def agent_consent(
         if level == "auto":
             cli.con.print("  [yellow]rung `auto` — this answer is recorded as "
                       "`auto`, not as a person[/]")
-        else:
+        elif (req.get("by") or "person") == "person":
             cli.con.print(f"  [dim]rung `{cli._x(level)}` — this answer is "
                       f"recorded as `person`, so it must be a person's[/]")
+        else:
+            # The relay says which word the log will write, from the plan the
+            # broker was given. Promising `person` here while the log wrote
+            # `relayed` was `X-F2`'s third surface.
+            cli.con.print(f"  [yellow]rung `{cli._x(level)}` — this answer is "
+                      f"recorded as `relayed`: the same person, and no floor "
+                      f"was declared to the broker to prove it "
+                      f"(`--plan fanout/env.json` · D59)[/]")
         cli.con.print("\n[dim]`dg-agent consent --allow` · `--deny` "
                   + (f"· `--scope` grants {cli._x(req.get('scope'))} "
                      if level == "scoped" and req.get("scope") else "")
@@ -1461,6 +1482,22 @@ def agent_consent(
               + (f" [dim]· scope {cli._x(req.get('scope'))}[/]" if scope else ""))
 
 
+def _declared_confine(plan_path: str | None) -> str | None:
+    """The `confine` mode a fan-out's plan declares, or `None` for no plan.
+
+    Refused loudly where the file will not read, like `dg-agent run --plan`:
+    a broker that guessed `off` from an unreadable plan would downgrade every
+    verdict of a run whose launcher was about to refuse the same file. `D59`.
+    """
+    if plan_path is None:
+        return None
+    try:
+        return fanout.read_env_plan(plan_path).get("confine")
+    except (OSError, ValueError) as exc:
+        cli.con.print(f"[red]✗ {cli._x(exc)}[/]\n[dim]nothing is listening[/]")
+        raise typer.Exit(2) from None
+
+
 @app.command("broker")
 def agent_broker(
     write: str = typer.Option(None, "--write-rung", help="off | auto | scoped | user"),
@@ -1482,6 +1519,11 @@ def agent_broker(
         False, "--detach",
         help="start it in its own session and return — for a supervisor who "
              "is a session and cannot hold a foreground process"),
+    plan_path: str = typer.Option(
+        None, "--plan", metavar="PATH",
+        help="the fan-out's env.json — the same file `dg-agent run` applies "
+             "the floor from. Its `confine` is what lets a relayed verdict be "
+             "logged `person`; without it every relayed verdict is `relayed`"),
 ) -> None:
     """Answer the consent requests a fan-out's agents block on.
 
@@ -1539,7 +1581,18 @@ def agent_broker(
     # written to take: with `--relay` the `auto` rung has a relay to decide
     # with, so the door opens by itself — exactly as its docstring promised the
     # day one existed.
-    channel = (_broker.Relay(proj.root, wait=wait or _broker.RELAY_WAIT)
+    # **Said once, at the door, and never refused.** `D40` weighed refusing and
+    # turned it down: with no floor an agent can already write the project at
+    # leisure, so declining to relay would shut the small hole beside the open
+    # one. What the run may not do is let its log claim a warrant it has not
+    # got — so the relay starts, and `relayed` is what the verdicts say.
+    #
+    # Read from the plan, never from this shell (`D59`): the floor is the
+    # agents' and `dg-agent run` sets it for them from the same file, so this
+    # is the one declaration both sides can read. `X-F2`.
+    warrant = _broker.unprovable(relay, _declared_confine(plan_path))
+    channel = (_broker.Relay(proj.root, wait=wait or _broker.RELAY_WAIT,
+                             by="relayed" if warrant else "person")
                if relay else None)
     auto_policy = channel.auto if channel else None
     unattachable = _broker.unattachable(rungs, auto=auto_policy)
@@ -1584,7 +1637,8 @@ def agent_broker(
         cli.con.print(
             "[green]✓[/] a consent broker is listening" if up else
             "[yellow]![/] no consent broker — an escalation will be refused, "
-            "not asked [dim]`dg-agent broker --relay --detach` from a session, "
+            "not asked [dim]`dg-agent broker --relay --detach --plan "
+            "fanout/env.json` from a session, "
             "or `dg-agent broker` in a terminal[/]")
         return
 
@@ -1607,12 +1661,6 @@ def agent_broker(
             f"let it go with the run[/]")
         return
 
-    # **Said once, at the door, and never refused.** `D40` weighed refusing and
-    # turned it down: with no floor an agent can write the project at leisure,
-    # so declining to relay would shut the small hole beside the open one. What
-    # the run may not do is let its log claim a warrant it has not got — so the
-    # relay starts, and `relayed` is what the verdicts say.
-    warrant = _broker.unprovable(relay, proj.root)
     if warrant:
         cli.con.print(f"[yellow]![/] {cli._x(warrant)}")
     front = channel.prompt if channel else _broker.terminal_prompt

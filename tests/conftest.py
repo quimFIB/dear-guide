@@ -7,6 +7,22 @@ import pytest
 from dgraph import project
 from dgraph.model import Graph
 
+
+@pytest.fixture(autouse=True)
+def _no_pinned_project(monkeypatch):
+    """Every test starts with no project pinned.
+
+    `dg --project X` calls `project.use(X)`, which sets a **process-global**
+    override that `find()` prefers over `$DG_PROJECT` and over the cwd. Right
+    for a CLI process, which is one command; wrong for a test process, which is
+    thousands. A `CliRunner` invocation left the pin behind for every test that
+    followed in the same worker, so `test_demo` -- which sets `$DG_PROJECT` --
+    checked whichever directory the previous file's last `--project` named,
+    and failed with `store_loads` when that directory had no store. One red
+    run in six; which six depended on `xdist`'s file placement. Audit `X06`.
+    """
+    monkeypatch.setattr(project, "_override", None)
+
 FIXTURE = {
     "areas": ["Alpha", "Beta"],
     "vertices": [

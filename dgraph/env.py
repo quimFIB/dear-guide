@@ -64,6 +64,9 @@ UNOWNED = "unowned"
 #: unset is the ordinary case and means *nothing is assigned to you* -- the
 #: scout prompt's own words, and the loop every agent has run until now.
 #:
+#: **In `env.VARS`, so `dg-agent env` shows it** -- an agent told to start
+#: `"$DG_TASK"` needs one `dg` surface that says what it is (`X-F4`).
+#:
 #: **Not part of `ENV_FIELDS`, deliberately.** That table is the *remit*: the
 #: policy every agent in a run shares, written once into `env.json` and read
 #: back by `dg-agent run --plan`. An assignment is the opposite -- it differs
@@ -449,6 +452,9 @@ VARS: tuple[Var, ...] = (
     Var(AGENT_ENV, "who is staging; unset is the supervisor",
         lambda raw: (raw or "").strip() or None, _agent_show, "—",
         fails_open=False),
+    Var(TASK_ENV, "the task this agent was launched for",
+        lambda raw: (raw or "").strip() or None, _agent_show,
+        "— nothing is assigned", fails_open=False),
     Var(POLICY_ENV, "what an agent may close",
         policy, str, POLICIES[0], fails_open=True, choices=POLICIES),
     Var(WRITE_ENV, "where it may write without asking",
@@ -581,6 +587,14 @@ def _read_agent(raw: str | None) -> tuple[object, bool, str]:
                         else "supervisor — no refusal applies")
 
 
+def _read_task(raw: str | None) -> tuple[object, bool, str]:
+    """The assignment, or none. Not checked against the store here -- `dg task
+    start` refuses an id that names nothing, with the frontier beside it."""
+    tid = (raw or "").strip() or None
+    return tid, True, (f"assigned — `dg task start {tid}` is where you begin"
+                       if tid else "nothing is assigned; read the frontier")
+
+
 def _read_choice(var: Var, raw: str | None) -> tuple[object, bool, str]:
     value = var.parse(raw)
     if raw is not None and raw.strip() and raw.strip().lower() not in var.choices:
@@ -653,6 +667,7 @@ def _read_project(raw: str | None) -> tuple[object, bool, str]:
 #: answer "was that chosen, or fallen into".
 _READERS: dict[str, Callable[[str | None], tuple[object, bool, str]]] = {
     AGENT_ENV: _read_agent,
+    TASK_ENV: _read_task,
     EXEC_ENV: _read_exec_allow,
     CONFINE_ENV: _read_confine,
     FLOOR_ENV: _read_floor,

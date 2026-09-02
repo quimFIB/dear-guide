@@ -246,7 +246,7 @@ opencode session rather than a tty. So the front end is swappable — it always
 was, `Broker.prompt` — and `--relay` fills it:
 
 ```sh
-dg-agent broker --relay      # publishes each request instead of prompting
+dg-agent broker --relay --plan fanout/env.json   # publishes each request instead of prompting
 dg-agent consent             # ...what is waiting, and what answering means
 dg-agent consent --allow --why "it is the test suite"
 ```
