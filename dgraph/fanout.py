@@ -203,7 +203,8 @@ class Plan:
     #:
     #: **Filled by default, and not with any ready task.** Two ready tasks
     #: never block each other, but they can still meet at the seam -- one is
-    #: evidence for a decision the other names -- and two agents sent there
+    #: evidence for a decision the other's work stands on, directly or through
+    #: its premises' ancestry -- and two agents sent there
     #: collide at the tray or turn each other's work PROVISIONAL. So the
     #: default roster is a maximal set of ready tasks no two of which collide
     #: (`cross.independent`, the relation `D45` settled), one per agent. An
@@ -567,7 +568,7 @@ def roster_warnings(plan: Plan, proj: project.Project | None = None) -> list[str
     named = [t for t in plan.roster if t in tg.tasks]
     for i, a in enumerate(named):
         for b in named[i + 1:]:
-            did = cross.collision(tg, a, b)
+            did = cross.collision(tg, g, a, b)
             if did is not None:
                 # Which of the pair is the evidence for it -- or "each", the
                 # case where the tray refuses the second close outright.
@@ -637,7 +638,10 @@ def assign(plan: Plan, proj: project.Project | None = None
             if m in found.fixed:
                 who = ", in flight" + (f" — held by {held_by[m]}"
                                        if held_by.get(m) else "")
-            lines.append(f"{t} cannot join: shares {d} with {m}{who}")
+            via = [cross.through(tg, g, x, d) for x in (t, m)
+                   if cross.through(tg, g, x, d)]
+            thru = f" (through {', '.join(via)})" if via else ""
+            lines.append(f"{t} cannot join: shares {d} with {m}{thru}{who}")
     elif len(found.chosen) > plan.agents:
         lines.append(f"{len(found.chosen) - plan.agents} more could run beside "
                      f"these: {', '.join(found.chosen[plan.agents:])}")

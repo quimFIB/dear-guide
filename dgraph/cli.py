@@ -4475,8 +4475,9 @@ def task_independent() -> None:
     """The ready tasks that can be worked on at once, and why the rest wait.
 
     A maximal set of ready tasks no two of which collide — two collide when
-    one is evidence for a decision the other names, since finishing that
-    evidence moves the decision under the other. This is the set `dg-agent
+    one is evidence for a decision the other's work stands on, directly or
+    through the premises' own ancestry, since finishing that evidence moves
+    the decision under the other and everything below it. This is the set `dg-agent
     setup` assigns, one task per agent; here it is on its own, to read before
     a fan-out or to see how much of the ready work is really parallel. Chosen
     against work already `DOING` as well: a held row naming a task nobody can
@@ -4518,7 +4519,12 @@ def task_independent() -> None:
             if member in found.fixed:
                 who = ", in flight" + (f" — held by {held_by[member]}"
                                        if held_by.get(member) else "")
-            con.print(f"  {tid} cannot join: shares {did} with {member}{who}")
+            # The pair meets on `did`; where either reaches it through a
+            # premise of its own, say so, since that is the record to read.
+            via = [f"{cross.through(tg, g, t, did)}" for t in (tid, member)
+                   if cross.through(tg, g, t, did)]
+            thru = f" (through {', '.join(via)})" if via else ""
+            con.print(f"  {tid} cannot join: shares {did} with {member}{thru}{who}")
     if fell_back:
         _say_fell_back("dg task pending", "dg task drop-op <id>")
 

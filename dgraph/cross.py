@@ -197,7 +197,8 @@ def ready(tg: TaskGraph, g: Graph, tid: str) -> bool:
 
 def seam(tg: TaskGraph, tid: str) -> set[str]:
     """The decisions a task names, across the seam: its premises and the one
-    it is evidence for. `LINK_FIELDS`, as a set of ids."""
+    it is evidence for. `LINK_FIELDS`, as a set of ids. One hop; `stands_on`
+    is the closure."""
     t = tg.tasks[tid]
     out = set(t.because)
     if t.evidence_for:
@@ -205,27 +206,71 @@ def seam(tg: TaskGraph, tid: str) -> set[str]:
     return out
 
 
-def collision(tg: TaskGraph, a: str, b: str) -> str | None:
-    """The decision two tasks would collide on, or `None`. `D45`.
+def stands_on(tg: TaskGraph, g: Graph | None, tid: str) -> dict[str, str]:
+    """Every decision a task's work would be under if it moved, and the named
+    one it reaches each through: `{decision: seam member}`.
 
-    Two tasks collide when one *writes* a decision the other writes or reads —
-    when the decision one is evidence for is a decision the other names at all.
-    Finishing evidence closes or reopens its decision, and the other task is
-    either about to close the same one (the tray refuses the second `close`, and
-    a paid-for run is discarded) or stands on it (its finished work turns
-    PROVISIONAL under it). Sharing a `because` premise alone is not a collision:
-    two tasks resting on one settled decision read it and move nothing.
+    The seam, closed upward. A task rests on its premises and on everything
+    those premises rest on — `pending.expand` marks every decided descendant
+    of a reopened decision PROVISIONAL, so a write anywhere in the ancestry
+    of a premise reaches the work the same way a write to the premise does.
+    The decision a task is evidence for is in it too, with its ancestry: a
+    task about to close `D03` is building on `D02` when `D03` rests on it.
+
+    A named decision maps to itself; an ancestor maps to the premise (or the
+    write) it sits under, which is what a held row prints as *through*. With
+    no decision store there is no ancestry and this is `seam`. An unknown id
+    is kept as itself and not walked, for the reason `gated_by` gives.
+    """
+    out: dict[str, str] = {}
+    into = g._reverse() if g is not None else None
+    for named in sorted(seam(tg, tid)):
+        out.setdefault(named, named)
+        if g is not None and named in g.vertices:
+            for anc in g.ancestors(named, into):
+                out.setdefault(anc, named)
+    return out
+
+
+def collision(tg: TaskGraph, g: Graph | None, a: str, b: str) -> str | None:
+    """The decision two tasks would collide on, or `None`. `D45`, re-decided
+    2026-09-02 as the ancestry reading (audit `K-F2`).
+
+    Two tasks collide when one *writes* a decision the other's work stands
+    on — directly, as a premise or the decision it is itself evidence for, or
+    through the ancestry of one of those. Finishing evidence closes or
+    reopens its decision; the other task is then either about to close the
+    same one (the tray refuses the second `close`, and a paid-for run is
+    discarded) or stands on it, at any distance (its finished work turns
+    PROVISIONAL under it, because the reopen marks every decided descendant).
+    Sharing a premise alone is not a collision: two tasks resting on one
+    settled decision read it and move nothing.
+
+    **Kept as one function so the rule can be relaxed in one place.** `D45`'s
+    falsifier is that this proves too strict — pairs held apart that would
+    both have finished with neither's work under review. If that arrives, the
+    one-hop reading is `seam` in place of `stands_on` here, and nothing else
+    moves.
 
     Symmetric, and a single id rather than the set: a caller asking "may these
     two run together?" needs one witness a person can check by reading two
-    records, which is the bar `docs/query-framework.md` sets.
+    records, which is the bar `docs/query-framework.md` sets. `through` says
+    which named decision the witness sits under, for the row that prints it.
     """
     ta, tb = tg.tasks[a], tg.tasks[b]
-    if ta.evidence_for and ta.evidence_for in seam(tg, b):
+    if ta.evidence_for and ta.evidence_for in stands_on(tg, g, b):
         return ta.evidence_for
-    if tb.evidence_for and tb.evidence_for in seam(tg, a):
+    if tb.evidence_for and tb.evidence_for in stands_on(tg, g, a):
         return tb.evidence_for
     return None
+
+
+def through(tg: TaskGraph, g: Graph | None, tid: str, did: str) -> str | None:
+    """The decision `tid` names that `did` sits under — or `None` where `tid`
+    names `did` itself, or does not stand on it at all. For a held row:
+    *shares D02 with T01 (through D03)*."""
+    named = stands_on(tg, g, tid).get(did)
+    return None if named is None or named == did else named
 
 
 @dataclass(frozen=True)
@@ -310,7 +355,7 @@ def independent(tg: TaskGraph, g: Graph) -> Independent:
     """
     cands = [t for t in sorted(tg.tasks) if ready(tg, g, t)]
     doing = [t for t in sorted(tg.tasks) if tg.tasks[t].status == "DOING"]
-    return maximal_independent(cands, lambda a, b: collision(tg, a, b),
+    return maximal_independent(cands, lambda a, b: collision(tg, g, a, b),
                                fixed=doing)
 
 

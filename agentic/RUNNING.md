@@ -136,7 +136,8 @@ instructions, since nothing sets `$DG_TASK` for a subagent (`D61`).
 
 **Every agent starts on an assigned task, and by default the graph picks
 them.** Two ready tasks never block each other, but they can meet at the seam:
-one is evidence for a decision the other names, and two agents sent there
+one is evidence for a decision the other's work stands on — a premise, or
+anything that premise itself rests on — and two agents sent there
 collide at the tray — the second `close` is refused — or turn each other's
 finished work PROVISIONAL (`D45`). So `dg-agent setup` computes a maximal set
 of ready tasks no two of which collide — with each other, or with work an

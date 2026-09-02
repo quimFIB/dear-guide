@@ -194,8 +194,9 @@ instructions rather than in a variable (`D61`).
 
 **Each agent is assigned a task, and by default the graph chooses them.**
 `--agents 3` computes a maximal set of ready tasks no two of which collide —
-two tasks collide when one is evidence for a decision the other names
-(`D45`), and the set is chosen against work an agent already holds as well as
+two tasks collide when one is evidence for a decision the other's work
+stands on, directly or through the ancestry of its premises (`D45`), and the
+set is chosen against work an agent already holds as well as
 against itself — and launches one agent per task, each reaching its own as
 `$DG_TASK`. The report says what was assigned and, where fewer independent
 tasks are ready than agents asked for, launches that many and names the pair

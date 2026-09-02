@@ -1527,22 +1527,63 @@ def _stores(both):
 
 
 def test_collision_is_a_write_meeting_a_name_and_not_a_shared_premise(both):
-    tg, _ = _stores(both)
+    tg, g = _stores(both)
     tg.tasks["T02"].evidence_for = "D02"
     tg.tasks["T03"].because = ["D02"]
     tg.tasks["T04"].because = ["D02"]
     # evidence for D02 against a task resting on D02: a collision, on D02,
     # whichever way round it is asked
-    assert cross.collision(tg, "T02", "T03") == "D02"
-    assert cross.collision(tg, "T03", "T02") == "D02"
+    assert cross.collision(tg, g, "T02", "T03") == "D02"
+    assert cross.collision(tg, g, "T03", "T02") == "D02"
+    assert cross.through(tg, g, "T03", "D02") is None, "named directly"
     # two tasks resting on D02 and moving nothing: not a collision
-    assert cross.collision(tg, "T03", "T04") is None
+    assert cross.collision(tg, g, "T03", "T04") is None
     # two pieces of evidence for one decision: the tray refuses the second close
     tg.tasks["T04"].because = []
     tg.tasks["T04"].evidence_for = "D02"
-    assert cross.collision(tg, "T02", "T04") == "D02"
+    assert cross.collision(tg, g, "T02", "T04") == "D02"
     assert cross.seam(tg, "T02") == {"D01", "D02"}, "the fixture's premise, and the write"
     assert cross.seam(tg, "T01") == {"D01"}, "a premise alone is a seam, not a write"
+
+
+def test_a_collision_reaches_through_the_decision_graph(both):
+    """Audit `K-F2`, the ancestry reading of `D45`. The fixture has
+    D02 → D04 → D05. T02 writes D02; a task resting on D04 or on D05 stands
+    on D02 through them — `dg reopen D02` marks both PROVISIONAL and lists
+    that task as resting on a premise under review — so the pair collides on
+    D02, and `through` names the premise it comes in by."""
+    tg, g = _stores(both)
+    tg.tasks["T02"].evidence_for = "D02"
+    tg.tasks["T04"].because = ["D04"]                       # one hop down
+    assert cross.collision(tg, g, "T02", "T04") == "D02"
+    assert cross.through(tg, g, "T04", "D02") == "D04"
+    tg.tasks["T04"].because = ["D05"]                       # two hops down
+    assert cross.collision(tg, g, "T04", "T02") == "D02"
+    assert cross.through(tg, g, "T04", "D02") == "D05"
+    # evidence for D04 is building on D02 too: closing D04 stands on it
+    tg.tasks["T04"].because = []
+    tg.tasks["T04"].evidence_for = "D04"
+    assert cross.collision(tg, g, "T02", "T04") == "D02"
+    assert cross.through(tg, g, "T04", "D02") == "D04"
+    # the other branch: D03 rests on D01 only, so it does not stand on D02
+    tg.tasks["T04"].evidence_for = None
+    tg.tasks["T04"].because = ["D03"]
+    assert cross.collision(tg, g, "T02", "T04") is None
+    # and with no decision store there is no ancestry: the one-hop rule
+    tg.tasks["T04"].because = ["D04"]
+    assert cross.collision(tg, None, "T02", "T04") is None
+    assert cross.stands_on(tg, None, "T04") == {"D04": "D04"}
+
+
+def test_dg_task_independent_says_through_what_a_pair_meets(run_cli, both):
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D02"
+    tg.tasks["T04"].status = "TODO"
+    tg.tasks["T04"].because = ["D04"]
+    tg.save(both / "tasks.json")
+    res = run_cli("task", "independent")
+    assert res.exit_code == 0, res.output
+    assert "T04 cannot join: shares D02 with T02 (through D04)" in res.output
 
 
 def test_maximal_independent_is_greedy_in_order_sound_and_maximal():

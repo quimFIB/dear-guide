@@ -265,7 +265,7 @@ RECIPES: dict[str, dict] = {
                   (r"^✗ nothing written — 4 staged op\(s\) belong to", "the refusal is the review"),
                   (r"^\$ dg apply --agent", "take one proposal, leave the rest")],
         hl_full=[(r"^contributor", "one word for six policies"),
-                 (r"^INDEPENDENT  3 of 3 ready can run side by side", "no two of these move a decision the other names"),
+                 (r"^INDEPENDENT  3 of 3 ready can run side by side", "no two of these move a decision the other stands on"),
                  (r"^· assigned T04, T05 — one agent each", "one task per agent, from that set"),
                  (r"^for t in T04 T05; do", "the launcher: one child per assigned task"),
                  (r"^wrote fanout/scout.md", None),
