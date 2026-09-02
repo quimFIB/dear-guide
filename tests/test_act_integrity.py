@@ -6,7 +6,8 @@ one of those guards is on a *door*. `applying.apply_tasks` and
 `apply_decisions` take a list of ops as data and write whatever they are
 handed -- so a caller that selects ops by any predicate other than the act
 can still land half of one, and the broker's mechanical apply did, one commit
-after `G11` closed. Audit `X-F1`; shape 19 in `AUDIT-PROMPT.md`.
+after `G11` closed. Audit `X-F1`, and a shape that recurs: a guard placed on
+every door instead of on the one function every door reaches.
 
 These pin the guard where it belongs: on the function every door reaches.
 """
