@@ -139,8 +139,9 @@ them.** Two ready tasks never block each other, but they can meet at the seam:
 one is evidence for a decision the other names, and two agents sent there
 collide at the tray — the second `close` is refused — or turn each other's
 finished work PROVISIONAL (`D45`). So `dg-agent setup` computes a maximal set
-of ready tasks no two of which collide, greedily in id order so the same stores
-give the same answer, and assigns one per agent. Fewer independent tasks than
+of ready tasks no two of which collide — with each other, or with work an
+agent is already holding, which is what a relaunch meets — greedily in id
+order so the same stores give the same answer, and assigns one per agent. Fewer independent tasks than
 agents asked for launches that many, and the report names the pair holding
 each task out; nothing ready launches N agents that read the frontier, the run
 this tool always had. The set is maximal and not maximum: that no larger one

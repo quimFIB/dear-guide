@@ -588,7 +588,8 @@ def assign(plan: Plan, proj: project.Project | None = None
     `roster_warnings`.
 
     The set is `cross.independent`: the ready tasks, in id order, greedily
-    kept while no two collide under `D45`. With N agents asked for and K in
+    kept while no two collide under `D45` — with each other, or with work
+    somebody is already holding. With N agents asked for and K in
     the set, the first N are the roster when N ≤ K, and every agent starts on
     work nothing else in the run can disturb. When K < N the roster is the K,
     and the run is K agents rather than N. The alternative — N − K agents
@@ -627,8 +628,16 @@ def assign(plan: Plan, proj: project.Project | None = None
         lines.append(f"{plan.agents} agents asked for, {len(found.chosen)} "
                      f"independent task(s) ready: launching "
                      f"{len(found.chosen)}")
+        # A member that is not in the roster is work already in flight
+        # (`cross.independent`, audit `K-F1`): name the holder, since that is
+        # who a relaunching supervisor is about to collide with.
+        held_by = agents.holdings(proj.root)
         for t, m, d in found.held:
-            lines.append(f"{t} cannot join: shares {d} with {m}")
+            who = ""
+            if m in found.fixed:
+                who = ", in flight" + (f" — held by {held_by[m]}"
+                                       if held_by.get(m) else "")
+            lines.append(f"{t} cannot join: shares {d} with {m}{who}")
     elif len(found.chosen) > plan.agents:
         lines.append(f"{len(found.chosen) - plan.agents} more could run beside "
                      f"these: {', '.join(found.chosen[plan.agents:])}")

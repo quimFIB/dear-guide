@@ -4478,7 +4478,9 @@ def task_independent() -> None:
     one is evidence for a decision the other names, since finishing that
     evidence moves the decision under the other. This is the set `dg-agent
     setup` assigns, one task per agent; here it is on its own, to read before
-    a fan-out or to see how much of the ready work is really parallel.
+    a fan-out or to see how much of the ready work is really parallel. Chosen
+    against work already `DOING` as well: a held row naming a task nobody can
+    be assigned says who holds it.
 
     Maximal, not maximum: every task left out names the chosen task it
     collides with and the decision they meet on, which is a proof that nothing
@@ -4502,10 +4504,21 @@ def task_independent() -> None:
     for tid in found.chosen:
         con.print(f"  [green]{tid}[/]  {_x(tg.tasks[tid].title)}"
                   + ("  [dim](staged)[/]" if tid in staged else ""))
+    # This set is read by `dg-agent setup` off the committed store, since that
+    # is what the agents will read; a staged member is in this list and not in
+    # that one until it is applied (audit `K-F3`).
+    if any(t in staged for t in found.chosen):
+        con.print("  [dim]setup reads the committed store: `dg apply` before "
+                  "it sees what is staged[/]")
     if found.held:
         con.print("[bold]held[/]")
+        held_by = agents.holdings(project.find().root)
         for tid, member, did in found.held:
-            con.print(f"  {tid} cannot join: shares {did} with {member}")
+            who = ""
+            if member in found.fixed:
+                who = ", in flight" + (f" — held by {held_by[member]}"
+                                       if held_by.get(member) else "")
+            con.print(f"  {tid} cannot join: shares {did} with {member}{who}")
     if fell_back:
         _say_fell_back("dg task pending", "dg task drop-op <id>")
 

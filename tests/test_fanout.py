@@ -1439,3 +1439,29 @@ def test_the_opencode_loss_is_named_only_where_it_applies(proj, host, expected):
         replace(fanout.defaults(proj), mode="session", confine="off",
                 host=host), proj)
     assert scout.count("opencode#5894") == expected
+
+
+def test_assignment_is_chosen_against_work_in_flight(proj):
+    """Audit `K-F1`: T05 is DOING under an agent and is evidence for D02; T06
+    is ready and is evidence for the same decision. Assigning T06 would hand a
+    new agent the second close the tray refuses, so it is held, and the row
+    names who holds the work it collides with."""
+    from dgraph import agents
+    _ready(proj, T05={"evidence_for": "D02", "status": "DOING"},
+           T06={"evidence_for": "D02"})
+    agents.hold("agile-azimuth", "T05", proj.root)
+    res = run(proj, "setup", "--agents", "3", "--brief", "x")
+    assert res.exit_code == 0, res.stdout
+    assert "assigned T02 — one agent each" in res.stdout
+    assert "T06 cannot join: shares D02 with T05, in flight — held by agile-azimuth" in res.stdout
+    assert "for t in T02; do" in (proj.root / "fanout" / "launch.sh").read_text()
+
+
+def test_json_reports_the_roster_the_run_would_get(proj):
+    """Audit `K-F4`: `defaults` is what setup would use, and setup assigns."""
+    _ready(proj, T05={"evidence_for": "D02"}, T06={"because": ["D02"]})
+    res = run(proj, "setup", "--json")
+    assert res.exit_code == 0, res.stdout
+    got = json.loads(res.stdout)["defaults"]
+    assert got["roster"] == ["T02", "T05"], got
+    assert got["agents"] == 2

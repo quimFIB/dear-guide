@@ -22,7 +22,7 @@ supposed to be readable stays readable.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dgraph import env
 from dgraph.model import Graph
@@ -241,10 +241,14 @@ class Independent:
     """
     chosen: list[str]
     held: list[tuple[str, str, str]]
+    #: What the set was chosen *against* and could not choose: work already
+    #: in flight. A `held` row may name one of these as its member.
+    fixed: list[str] = field(default_factory=list)
 
 
 def maximal_independent(candidates: list[str],
-                        collide: Callable[[str, str], str | None]) -> Independent:
+                        collide: Callable[[str, str], str | None],
+                        *, fixed: list[str] = ()) -> Independent:
     """A maximal set of candidates no two of which collide. Greedy, in order.
 
     **This is the function to replace when the selection should get smarter.**
@@ -253,6 +257,13 @@ def maximal_independent(candidates: list[str],
     returns a set plus the reason each other candidate stayed out. A better
     algorithm keeps that contract — every candidate not chosen collides with a
     named member — and callers need not change.
+
+    `fixed` is what the set is chosen *against* as well as from: members that
+    are already taken, cannot be chosen, and hold a candidate out exactly as a
+    chosen one does. Without it the set is independent of itself and of
+    nothing else — the things filtered out of the candidates are the things a
+    new member is most likely to meet (audit `K-F1`). They are never in
+    `chosen`; a `held` row may name one.
 
     Maximal, not maximum. The largest independent set is set packing, which is
     NP-hard, and more to the point is not checkable by hand: that a set is
@@ -267,17 +278,20 @@ def maximal_independent(candidates: list[str],
     stores produce the same set every time: a supervisor comparing two setups
     has to be able to tell a real change from a reshuffle.
     """
+    fixed = list(fixed)
+    against: list[str] = list(fixed)
     chosen: list[str] = []
     held: list[tuple[str, str, str]] = []
     for c in candidates:
-        for m in chosen:
+        for m in against:
             d = collide(c, m)
             if d is not None:
                 held.append((c, m, d))
                 break
         else:
             chosen.append(c)
-    return Independent(chosen, held)
+            against.append(c)
+    return Independent(chosen, held, fixed)
 
 
 def independent(tg: TaskGraph, g: Graph) -> Independent:
@@ -287,9 +301,17 @@ def independent(tg: TaskGraph, g: Graph) -> Independent:
     is unsettled or whose prerequisite is unfinished is not offered, and sorted,
     so the answer depends on the stores and not on the order rows sit in the
     files. The relation is `collision`; the algorithm is `maximal_independent`.
+
+    Chosen against the `DOING` tasks as well: work somebody is holding is not
+    offered and is exactly what a new agent would collide with — a second
+    piece of evidence for a decision whose first is being gathered right now,
+    which is the ordinary state of a store at a relaunch or when agents are
+    added to a run. `PARKED` is not in flight and holds nothing out.
     """
     cands = [t for t in sorted(tg.tasks) if ready(tg, g, t)]
-    return maximal_independent(cands, lambda a, b: collision(tg, a, b))
+    doing = [t for t in sorted(tg.tasks) if tg.tasks[t].status == "DOING"]
+    return maximal_independent(cands, lambda a, b: collision(tg, a, b),
+                               fixed=doing)
 
 
 def task_link(tg: TaskGraph, g: Graph, tid: str) -> dict:

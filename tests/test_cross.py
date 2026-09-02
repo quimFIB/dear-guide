@@ -1589,3 +1589,53 @@ def test_dg_task_independent_prints_the_set_and_the_pairs(run_cli, both):
     assert "INDEPENDENT  1 of 2 ready can run side by side" in res.output
     assert "T02  Second, now startable" in res.output
     assert "T04 cannot join: shares D02 with T02" in res.output
+
+
+def test_work_in_flight_holds_a_colliding_candidate_out(both):
+    """Audit `K-F1`. T04 is DOING and is evidence for D02; T02 is ready and is
+    evidence for the same decision — the second close the tray will refuse.
+    The set is chosen against the in-flight work, not only against itself:
+    T02 is held out, the row names T04 and the decision, and T04 is never
+    offered. T03 waits on T02, so the only other candidate is unconnected."""
+    tg, g = _stores(both)
+    tg.tasks["T02"].evidence_for = "D02"
+    tg.tasks["T04"].status = "DOING"
+    tg.tasks["T04"].evidence_for = "D02"
+    got = cross.independent(tg, g)
+    assert "T02" not in got.chosen and "T04" not in got.chosen, got
+    assert ("T02", "T04", "D02") in got.held, got.held
+    assert got.fixed == ["T04"]
+    # PARKED is not in flight and holds nothing out
+    tg.tasks["T04"].status = "PARKED"
+    assert cross.independent(tg, g).chosen == ["T02"]
+
+
+def test_maximal_independent_fixed_members_hold_out_and_are_never_chosen():
+    edges = {frozenset(("a", "x")): "D1"}
+    collide = lambda p, q: edges.get(frozenset((p, q)))
+    got = cross.maximal_independent(["a", "b"], collide, fixed=["x"])
+    assert got.chosen == ["b"] and got.held == [("a", "x", "D1")]
+    assert got.fixed == ["x"]
+
+
+def test_dg_task_independent_names_in_flight_work_and_its_holder(run_cli, both):
+    from dgraph import agents
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D02"
+    tg.tasks["T04"].status = "DOING"
+    tg.tasks["T04"].evidence_for = "D02"
+    tg.save(both / "tasks.json")
+    agents.hold("agile-azimuth", "T04", both)
+    res = run_cli("task", "independent")
+    assert res.exit_code == 0, res.output
+    assert "T02 cannot join: shares D02 with T04, in flight — held by agile-azimuth" in res.output
+
+
+def test_dg_task_independent_says_a_staged_member_is_not_what_setup_reads(run_cli, both):
+    """Audit `K-F3`: the command previews the tray, setup reads the store."""
+    res = run_cli("task", "add", "--id", "T09", "--area", "Alpha", "--title", "staged only")
+    assert res.exit_code == 0, res.output
+    res = run_cli("task", "independent")
+    assert res.exit_code == 0, res.output
+    assert "T09  staged only  (staged)" in res.output
+    assert "setup reads the committed store: `dg apply` before it sees what is staged" in res.output

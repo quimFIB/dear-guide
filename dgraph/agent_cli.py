@@ -530,6 +530,11 @@ def agent_setup(
     plan = fanout.defaults(proj)
 
     if as_json:
+        # The roster the run would get, not the empty one `defaults` carries:
+        # `assign` is a step of setup, and a report of *what setup would use*
+        # that showed `roster: []` and `agents: N` for a run that will assign
+        # and may launch fewer was reporting a request as a count (`K-F4`).
+        plan, _ = fanout.assign(plan, proj)
         print(json.dumps({
             # Barring checks only. The two advisory ones — nothing ready to
             # claim, and no broker listening — describe runs that are unusual
