@@ -153,6 +153,21 @@ class Plan:
     #: context knows the task and nothing about why it exists, and without the
     #: chain it cannot tell a constraint from an implementation detail.
     focus: list[str] = field(default_factory=list)
+    #: Task ids to launch one agent each for, or empty for the loop this tool
+    #: has always run: N interchangeable agents that read the frontier and take
+    #: what they find.
+    #:
+    #: **Empty is not a lesser plan, and stays the default.** Self-selection is
+    #: what makes a fan-out absorb a queue that moves while it runs -- an agent
+    #: that finishes early takes the next thing rather than idling, and work
+    #: made ready by another agent's finish gets picked up without anybody
+    #: rewriting the launcher. A roster gives that up on purpose, and is worth
+    #: it only when somebody has a reason to say *this* agent does *this*.
+    #:
+    #: `agents` is derived from its length rather than kept beside it, for the
+    #: reason `dg-agent run` gives about `--budget` and `timeout`: two numbers
+    #: in one generated file agree until somebody edits one.
+    roster: list[str] = field(default_factory=list)
     agents: int = 2
     host: str = "claude"
     decide: str = "evidence"
@@ -411,6 +426,84 @@ def plan_env(spec: dict) -> dict[str, str]:
                 continue
             value = " ".join(value)
         out[name] = str(value)
+    return out
+
+
+def roster_fault(plan: Plan, proj: project.Project | None = None) -> str | None:
+    """Why this roster names work no agent could start — or `None`.
+
+    Separate from `plan_fault` because it needs the store and that one does
+    not: `plan_fault` is about a *pair of settings* that contradict each other,
+    answerable from the plan alone and therefore answerable anywhere. This is
+    about the plan against the graph, so it is checked where the graph is open.
+
+    Checked at setup rather than at launch, which is the same argument
+    `read_env_plan` makes about a mistyped policy: the roster ends up in a
+    generated `launch.sh`, and an id that resolves to nothing there costs a
+    spawned agent, a claimed name and a run that discovers it has no work.
+    Here, the launcher is standing at the terminal and the file is not written
+    yet.
+
+    **`DONE` is refused and `DOING` is not.** A finished task is a launcher
+    reading a stale frontier, and there is no reading under which they meant
+    it. `DOING` is a task some other agent may be holding right now — which is
+    worth saying and not worth refusing, because a supervisor relaunching after
+    a crash is the ordinary way that state arises.
+    """
+    if not plan.roster:
+        return None
+    proj = proj or project.find()
+    if not proj.has_tasks:
+        return (f"--roster names {', '.join(plan.roster)}, but this project "
+                f"has no task store — a roster launches one agent per task")
+    from dgraph.tasks import TaskGraph
+    tg = TaskGraph.load(proj.tasks)
+    missing = [t for t in plan.roster if t not in tg.tasks]
+    if missing:
+        return (f"--roster names {', '.join(missing)}, which "
+                f"{'is' if len(missing) == 1 else 'are'} not in the task store")
+    done = [t for t in plan.roster if tg.tasks[t].resolved]
+    if done:
+        return (f"--roster names {', '.join(f'{t} ({tg.tasks[t].status})' for t in done)} "
+                f"— an agent launched for finished work has nothing to start")
+    return None
+
+
+def roster_warnings(plan: Plan, proj: project.Project | None = None) -> list[str]:
+    """What is worth saying about a roster without refusing it.
+
+    Said rather than refused, because each of these describes a launch somebody
+    can legitimately mean. A blocked task is the case to read twice: `dg task
+    start` does not refuse one, so the agent will begin work whose premise is
+    not settled — which is sometimes exactly the point of a fan-out and is
+    never something to discover afterwards.
+    """
+    if not plan.roster:
+        return []
+    proj = proj or project.find()
+    if not proj.has_tasks:
+        return []
+    from dgraph.tasks import TaskGraph
+    from dgraph.model import Graph
+    from dgraph import cross
+    tg = TaskGraph.load(proj.tasks)
+    g = Graph.load(proj.store) if proj.has_decisions else None
+    out = []
+    for tid in plan.roster:
+        if tid not in tg.tasks:
+            continue
+        t = tg.tasks[tid]
+        if t.status == "DOING":
+            who = agents.holdings(proj.root).get(tid)
+            out.append(f"{tid} is already DOING"
+                       + (f", held by {who}" if who else ""))
+        if g is not None:
+            gate = cross.gated_by(tg, g, tid)
+            if gate is not None:
+                out.append(f"{tid} rests on {gate}, which is not settled")
+        waiting = tg.waiting_on(tid)
+        if waiting:
+            out.append(f"{tid} waits on {', '.join(waiting)}")
     return out
 
 
@@ -797,6 +890,41 @@ def _chain(proj: project.Project, ids: list[str]) -> str:
     return "\n\n".join(out) if out else "[no focus ids given]"
 
 
+def _assigned_prose(plan: Plan) -> str:
+    """What "The loop" opens with, given a roster or the absence of one.
+
+    **The default keeps its exact words.** `scout.md` has said *nothing is
+    assigned to you* since the first fan-out, and `agentic/README.md` argues
+    for it: self-selection is what lets a run absorb a queue that moves while
+    it runs. A roster is the exception, so the exception is what reads
+    differently — an unrostered plan renders the sentence it always did, to the
+    byte, and a diff of two generated prompts shows the roster and nothing
+    else.
+
+    It does not end the loop. An agent given a task still reads the frontier
+    when that task is done, for the reason the section below gives in as many
+    words: one agent finishing makes work startable for another that was never
+    told it existed.
+    """
+    if not plan.roster:
+        return ("Nothing is assigned to you. Read the frontier, take "
+                "something, finish it, read\nagain:")
+    return (
+        "**`$DG_TASK` is yours.** This fan-out was launched with a roster "
+        "— one agent per\ntask — and the launcher named yours. Start "
+        "there:\n"
+        "\n"
+        "```sh\n"
+        'dg task start "$DG_TASK"\n'
+        "```\n"
+        "\n"
+        "That is a starting point and not a fence. Nothing stops you "
+        "taking more, and\nyou should: when your task is done, read the "
+        "frontier and carry on as below.\nThe roster says where each "
+        "agent *begins*, so that two agents do not open the\nsame work at "
+        "the same moment — it does not say where any of them stops:")
+
+
 def _decide_prose(policy: str) -> str:
     return {
         "evidence": ("You may close a question only where a **finished** "
@@ -1005,6 +1133,7 @@ def render_scout(plan: Plan, proj: project.Project | None = None) -> str:
         "PROJECT": proj.root.name,
         "BRIEF": plan.brief or "(not stated — ask before you start)",
         "CHAIN": _chain(proj, plan.focus),
+        "ASSIGNED": _assigned_prose(plan),
         "AREAS": _areas(proj),
         "DECIDE": plan.decide,
         "DECIDE_PROSE": _decide_prose(plan.decide),
@@ -1112,20 +1241,38 @@ def render_launch(plan: Plan, proj: project.Project | None = None) -> str:
                 '{ echo "dg-agent capture wrapper not first on PATH" >&2; exit 1; }',
                 "",
             ]
+    run = f"dg-agent run{' --floor-applied' if carried else ''}"
+    if plan.roster:
+        # One agent per named task, and the ids are the loop rather than a
+        # count: `seq` would put the roster's length in the file twice, once
+        # as a number and once as the list it came from.
+        lines += [
+            "# One agent per task, named. `$DG_TASK` reaches the agent through",
+            "# `dg-agent run`, which sets it for the child only -- the same",
+            "# rule as `$DG_AGENT`, and for the same reason: an exported",
+            "# assignment would make this launcher an agent holding work.",
+            "for t in %s; do" % " ".join(shlex.quote(t) for t in plan.roster),
+            f"  {run} --plan {env_file} --task \"$t\" \\",
+            f"    -- {spawn} &",
+            "done",
+            "",
+        ]
+    else:
+        lines += [
+            "for i in $(seq 1 %d); do" % plan.agents,
+            f"  {run} --plan {env_file} \\",
+            f"    -- {spawn} &",
+            "done",
+            "",
+        ]
     lines += [
-        "for i in $(seq 1 %d); do" % plan.agents,
-        f"  dg-agent run{' --floor-applied' if carried else ''} "
-        f"--plan {env_file} \\",
-        f"    -- {spawn} &",
-        "done",
-        "",
         "dg-agent list      # who holds what, time left, and who has gone quiet",
         "wait",
         "# `dg-agent run` already parked what a child of *this* script dropped.",
         "# This is the backstop for what it cannot see: the script itself being",
         "# killed, the machine going down, the terminal closing.",
         "dg-agent expire",
-        "dg pending         # the roster: who proposed what",
+        "dg pending         # the tray: who proposed what",
         "",
     ]
     return "\n".join(lines)

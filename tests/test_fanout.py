@@ -13,6 +13,8 @@ import stat
 import pytest
 from typer.testing import CliRunner
 
+from dataclasses import replace
+
 from dgraph import fanout, project
 from dgraph.agent_cli import app
 
@@ -1145,3 +1147,112 @@ def test_a_fanout_generated_before_the_digest_existed_is_not_refused(proj):
                      encoding="utf-8")
     assert fanout.edited(proj, fanout.defaults(proj)) == []
     assert run(proj, "setup", "--preset", "scout").exit_code == 0
+
+
+# ---- the roster ----------------------------------------------------------
+#
+# One agent per named task, for a launcher who wants to say which. The
+# property under all of it is that **the default is untouched**: a plan with
+# no roster renders the artefacts it always did, byte for byte, because
+# self-selection is what lets a fan-out absorb a queue that moves while it
+# runs and a roster gives that up on purpose.
+
+
+def test_no_roster_renders_exactly_what_it_always_did(proj):
+    """The regression that would matter most, and the cheapest to miss.
+
+    A roster is an addition, so the plans that do not use one must be
+    unchanged — not "equivalent", identical. Both artefacts, because the
+    prompt and the launcher grew a branch each."""
+    plan = fanout.defaults(proj)
+    assert plan.roster == [], "self-selection stays the default"
+    launch = fanout.render_launch(plan, proj)
+    scout = fanout.render_scout(plan, proj)
+
+    assert "for i in $(seq 1 2); do" in launch
+    assert "--task" not in launch
+    assert "Nothing is assigned to you." in scout
+    assert "$DG_TASK" not in scout
+
+
+def test_a_roster_is_the_loop_rather_than_a_count(proj):
+    """`seq` would put the roster's length in the file twice — once as a
+    number and once as the list it came from — which is the two-numbers
+    failure `dg-agent run` was built to end."""
+    plan = fanout.defaults(proj)
+    launch = fanout.render_launch(
+        replace(plan, roster=["T02", "T06"], agents=2), proj)
+
+    assert "for t in T02 T06; do" in launch
+    assert "seq" not in launch
+    assert '--task "$t"' in launch
+
+
+def test_the_assignment_reaches_the_child_and_not_the_launcher(proj):
+    """`$DG_TASK` is set the way `$DG_AGENT` is: by `dg-agent run`, for the
+    child alone. A bare assignment in the launcher would be a value nothing
+    validates and one that outlives the run."""
+    launch = fanout.render_launch(
+        replace(fanout.defaults(proj), roster=["T02"], agents=1), proj)
+
+    assert "export DG_TASK" not in launch
+    assert "DG_TASK=" not in launch
+
+
+def test_a_rostered_prompt_names_the_task_and_still_ends_open(proj):
+    """The roster says where an agent *begins*. An agent that stopped after
+    its one task would leave the queue sitting there, which is the failure the
+    loop section has always argued against — so the assignment is added to
+    that section rather than replacing it."""
+    scout = fanout.render_scout(
+        replace(fanout.defaults(proj), roster=["T02"], agents=1), proj)
+
+    assert '`$DG_TASK` is yours' in scout
+    assert 'dg task start "$DG_TASK"' in scout
+    assert "Do not stop after one task." in scout, "the open loop survives"
+
+
+def test_a_roster_sets_the_agent_count_and_a_second_number_is_refused(proj):
+    """One number, not two — `dg-agent run`'s own argument about `--budget`
+    and `timeout`, applied to the pair that can disagree here."""
+    assert run(proj, "setup", "--roster", "T02,T03", "--brief", "x").exit_code == 0
+    plan = fanout.read_env_plan(proj.root / "fanout" / fanout.ENV_NAME)
+    assert "roster" not in plan, "an assignment is not part of the shared remit"
+    assert "for t in T02 T03; do" in (proj.root / "fanout" / "launch.sh").read_text()
+
+    clash = run(proj, "setup", "--roster", "T02,T03", "--agents", "3",
+                "--brief", "x", "--force")
+    assert clash.exit_code == 2
+    assert "already says how many" in clash.stdout
+
+
+def test_a_roster_that_names_work_nobody_could_start_is_refused(proj):
+    """Checked where the store is open and the file is not written yet. At
+    launch it would cost a spawned agent, a claimed name, and a run that
+    discovers it has nothing to do."""
+    missing = run(proj, "setup", "--roster", "T02,T99", "--brief", "x")
+    assert missing.exit_code == 2
+    assert "T99" in missing.stdout and "not in the task store" in missing.stdout
+
+    # T01 is DONE in the fixture.
+    done = run(proj, "setup", "--roster", "T01", "--brief", "x")
+    assert done.exit_code == 2
+    assert "nothing to start" in done.stdout
+
+    twice = run(proj, "setup", "--roster", "T02,T02", "--brief", "x")
+    assert twice.exit_code == 2
+    assert "more than once" in twice.stdout
+
+
+def test_blocked_and_held_work_is_said_rather_than_refused(proj):
+    """`dg task start` does not refuse a blocked task, so neither does this —
+    a supervisor who means to run ahead of a prerequisite is doing something
+    legitimate, and so is one relaunching after a crash onto work still marked
+    DOING. What is not legitimate is finding either out afterwards."""
+    blocked = run(proj, "setup", "--roster", "T03", "--brief", "x")
+    assert blocked.exit_code == 0, "said, not refused"
+    assert "T03 waits on T02" in blocked.stdout
+
+    held = run(proj, "setup", "--roster", "T04", "--brief", "x", "--force")
+    assert held.exit_code == 0
+    assert "T04 is already DOING" in held.stdout

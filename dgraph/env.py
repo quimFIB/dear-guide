@@ -60,6 +60,18 @@ AGENT_ENV = "DG_AGENT"
 #: *value* here rather than a bad op.
 UNOWNED = "unowned"
 
+#: The task this agent was launched for, where a fan-out named one. Empty or
+#: unset is the ordinary case and means *nothing is assigned to you* -- the
+#: scout prompt's own words, and the loop every agent has run until now.
+#:
+#: **Not part of `ENV_FIELDS`, deliberately.** That table is the *remit*: the
+#: policy every agent in a run shares, written once into `env.json` and read
+#: back by `dg-agent run --plan`. An assignment is the opposite -- it differs
+#: per agent by construction, so a run's one shared file is the one place it
+#: cannot live. It is passed on the launch line instead, which is why
+#: `render_launch` loops over the roster rather than over `seq`.
+TASK_ENV = "DG_TASK"
+
 #: What an agent may close. See `cross.py` for what each policy means.
 POLICY_ENV = "DG_DECIDE"
 POLICIES = ("open", "evidence", "never")

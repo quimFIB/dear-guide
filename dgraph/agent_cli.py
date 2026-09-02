@@ -441,6 +441,11 @@ def agent_setup(
     focus: str = typer.Option(None, "--focus",
                               help="comma-separated ids the fan-out is for; "
                                    "their chains are pasted into the prompt"),
+    roster: str = typer.Option(
+        None, "--roster", metavar="IDS",
+        help="comma-separated task ids to launch one agent each for, in this "
+             "order. Sets --agents; omit for the default, where "
+             "interchangeable agents read the frontier and take what they find"),
     n: int = typer.Option(None, "--agents", "-n", help="how many to launch"),
     host: str = typer.Option(None, "--host", help="claude | opencode"),
     decide: str = typer.Option(None, "--decide", help="open | evidence | never"),
@@ -545,7 +550,8 @@ def agent_setup(
         return
 
     given = {"preset": preset,
-             "focus": focus, "agents": n, "host": host, "decide": decide,
+             "focus": focus, "roster": roster, "agents": n, "host": host,
+             "decide": decide,
              "apply": apply_policy,
              "write": write_scope, "area": area, "budget": budget,
              "terse": terse, "brief": brief, "read": read,
@@ -578,11 +584,16 @@ def agent_setup(
     # mistyped policy: a plan that cannot be launched confined is a plan whose
     # prompt will assert a floor to an agent that has none, and there is no
     # invocation later that could put it right.
-    fault = fanout.plan_fault(plan)
+    fault = fanout.plan_fault(plan) or fanout.roster_fault(plan, proj)
     if fault:
         cli.con.print(f"[red]✗ {cli._x(fault)}[/]\n"
                       f"[dim]nothing was written[/]")
         raise typer.Exit(2)
+    # Said before the write and not instead of it. Each of these describes a
+    # launch somebody can mean — see `roster_warnings` — so the line is
+    # information, and the refusals above are the ones that stop.
+    for warn in fanout.roster_warnings(plan, proj):
+        cli.con.print(f"[yellow]![/] {cli._x(warn)}")
 
     if dry_run:
         cli.con.print("[dim]— fanout/scout.md —[/]")
@@ -704,6 +715,26 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
                 f"{', '.join(repr(b) for b in bad)} carries shell syntax and "
                 f"would never match one")
 
+    # A roster is ids in the order the launcher wrote them, and the order is
+    # kept: it is the one part of a fan-out somebody chose by hand, and sorting
+    # it would quietly discard that choice. Duplicates are refused rather than
+    # collapsed — two agents named for one task is a launcher who miscounted,
+    # and dropping the second silently would launch fewer agents than the line
+    # asks for while reporting success.
+    roster = [s.strip() for s in (given.get("roster") or "").split(",")
+              if s.strip()]
+    dupes = sorted({t for t in roster if roster.count(t) > 1})
+    if dupes:
+        raise ValueError(
+            f"--roster names {', '.join(dupes)} more than once — one agent per "
+            f"task is what a roster means, so this would launch two on the "
+            f"same work")
+    if roster and given.get("agents") is not None and given["agents"] != len(roster):
+        raise ValueError(
+            f"--agents {given['agents']} and --roster with {len(roster)} "
+            f"task(s) disagree — a roster launches one agent per task, so it "
+            f"already says how many. Drop --agents, or drop the roster")
+
     # Refused rather than defaulted, like every other word flag here. A floor
     # is the one value where a silent fallback means an unconfined run that
     # says it is confined, which is the whole of `P-F2`.
@@ -715,7 +746,14 @@ def _setup_from_flags(plan: fanout.Plan, given: dict) -> fanout.Plan:
         floor=one_of("floor", given.get("floor"), set(_confine.BACKENDS)),
         focus=[s.strip() for s in given["focus"].split(",") if s.strip()]
               if given["focus"] else plan.focus,
-        agents=given["agents"] or plan.agents,
+        roster=roster,
+        # **Derived where there is a roster, never kept beside it.** The count
+        # and the list are the same fact, and `dg-agent run` documents what
+        # happens to two numbers in one generated file: `--budget 30m` and
+        # `timeout 1800` agreed until somebody edited the one they could see.
+        # `--agents` alongside a roster is refused above rather than silently
+        # losing to it.
+        agents=len(roster) if roster else (given["agents"] or plan.agents),
         host=one_of("host", given["host"], set(fanout.HOSTS)),
         decide=one_of("decide", given["decide"], set(cross.POLICIES)),
         apply=one_of("apply", given["apply"], set(env.APPLY_POLICIES)),
@@ -1562,6 +1600,10 @@ def agent_run(
     name: str = typer.Option(
         None, "--agent", metavar="NAME",
         help="run under a name already claimed, instead of claiming one"),
+    task: str = typer.Option(
+        None, "--task", metavar="TID",
+        help="the task this agent is launched for; reaches it as `$DG_TASK`. "
+             "`dg-agent setup --roster` writes one of these per line"),
     floor_applied: bool = typer.Option(
         False, "--floor-applied",
         help="the spawn line already carries this backend's settings; "
@@ -1654,7 +1696,19 @@ def agent_run(
 
     child = dict(os.environ, **composed)
     child[env.AGENT_ENV] = name
-    cli.con.print(f"[green]running[/] as {cli._x(name)} "
+    # **Set for the child only, exactly as `$DG_AGENT` is, and for a reason of
+    # its own on top of that one.** An exported `$DG_TASK` would outlive the
+    # run and hand the launcher's next command an assignment nobody made.
+    #
+    # Validated at `dg-agent setup`, where the task store is open and a wrong
+    # id can still be fixed in the file that names it. Not re-checked here: the
+    # agent reads `dg task start "$DG_TASK"` and gets the store's own refusal,
+    # which names the id and lists what is ready — a better answer than
+    # anything this could print before spawning.
+    if task:
+        child[env.TASK_ENV] = task
+    cli.con.print(f"[green]running[/] as {cli._x(name)}"
+                  f"{f' on {cli._x(task)}' if task else ''} "
                   f"[dim]{' '.join(f'{k}={v}' for k, v in sorted(composed.items()))}"
                   f"{'' if seconds is None else f' · {env.show_span(seconds)}'}[/]")
 

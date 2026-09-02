@@ -113,7 +113,34 @@ dg-agent setup --focus T04,T07 --agents 3 --decide evidence --write launch \
 dg-agent setup --preset contributor --focus T04,T07 --agents 3 --budget 30m \
   --brief "settle the Search frontier" \
   --read "bench/README.md:how the sweep is run" --findings "findings/<id>.md"
+
+# ...or name the work yourself: one agent per task, in this order
+dg-agent setup --preset contributor --roster T04,T07,T11 --budget 30m \
+  --brief "settle the Search frontier"
 ```
+
+**`--roster` is the exception, and `--agents` is the rule.** By default a
+fan-out launches N interchangeable agents that read the frontier and take what
+they find, and that is what lets a run absorb a queue which moves while it runs:
+an agent finishing early takes the next thing instead of idling, and work made
+ready by another agent's finish is picked up without anybody rewriting the
+launcher. A roster gives that up on purpose. Reach for it when you have a reason
+to say *this* agent does *this* — two pieces of work that must not be opened at
+the same moment, or a re-run aimed at exactly what a previous one dropped.
+
+It sets `--agents` rather than sitting beside it, so the two cannot disagree,
+and passing both is refused. The ids are checked against the task store before
+anything is written: one that names nothing, names finished work, or names the
+same task twice is refused there, where you can still fix the line. Work that is
+blocked or already `DOING` is **said and not refused** — running ahead of a
+prerequisite is a thing a supervisor can legitimately mean, and so is relaunching
+onto work a crashed agent left held.
+
+Each agent gets the same `scout.md`, with every focus chain in it and `$DG_TASK`
+naming which task is its own. One prompt rather than one per agent, for two
+reasons: it stays a single file you can edit before launching — which the
+regeneration guard exists to protect — and an agent that can read its siblings'
+chains can see what it must not touch.
 
 **That flag form is how this works from inside Claude Code or opencode.** An
 agent can drive neither a full-screen app nor a prompt, so it reads
@@ -161,6 +188,7 @@ them, `dg` reads them, and `dg-agent env` says what is actually in force:
 | | |
 |---|---|
 | `DG_AGENT` | the writer's name, from `dg-agent claim` — or from `dg-agent run`, which claims one and sets it for the child. Never invent one: `claim` refuses a name that is held or that has ops in a tray, so two agents cannot conflate their work. **Never export it**: an exported name makes the launcher an agent, and its own policy then refuses it. |
+| `DG_TASK` | the task this agent was launched for, where a fan-out named one — set by `dg-agent run --task`, for the child only, like `DG_AGENT` and never exported. Unset is the ordinary case and means *nothing is assigned to you*. It is a starting point rather than a fence: the agent works it first, then reads the frontier as any other would. Not part of `env.json`, which holds the remit every agent in a run **shares** — an assignment differs per agent by construction. |
 | `DG_DECIDE` | `evidence` — may close a question only where a **finished** `--evidence-for` task backs it · `never` — may not close at all · unset — may close anything. |
 | `DG_WRITE` | `launch` — may write in the project and `/tmp`; anywhere else stops and asks the person · unset/`open` — anywhere, which is what the tool has always done. Reads are never judged. |
 | `DG_AREA` | `strict` — may file only under an area already in use, and a new one goes back to a person · unset/`open` — any area, with a near-miss of one in use refused by the similarity guard and `--new-area` as the override. |

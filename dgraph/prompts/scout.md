@@ -31,8 +31,11 @@ with it.
 
 ## The loop
 
-Nothing is assigned to you. Read the frontier, take something, finish it, read
-again:
+<!-- ⟨ASSIGNED⟩: whether this agent was launched for a named task. Filled from
+     the roster `dg-agent setup --roster` wrote into `launch.sh`; where there is
+     no roster it says nothing is assigned, which is the loop this tool has run
+     by default since it had one. -->
+⟨ASSIGNED⟩
 
 ```sh
 dg show && dg task          # what is open, what is ready
