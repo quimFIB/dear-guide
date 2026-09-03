@@ -519,7 +519,7 @@ check.
 ## The command
 
     dg find QUERY [--decisions | --tasks] [--full] [--json] [--ids] [--limit N]
-                  [--active]
+                  [--active] [--subgraph [--hops N]]
 
 Both stores by default, with a labelled section each:
 
@@ -578,6 +578,46 @@ reporting them as withheld.
 
 `--full` gives the table, clipping nothing, as everywhere else.
 
+`--subgraph` changes what the matches *are*. Without it they are the answer;
+with it they are a **seed**, and what comes back is the subgraph they induce —
+both stores, as one JSON object:
+
+    dg find --subgraph 'id:D04'              # D04 and everything connected
+    dg find --subgraph --hops 1 'id:D04'     # D04 and its neighbours
+    dg find --subgraph --hops 0 'area:consent'   # just the matches, and the
+                                                 # edges among them
+
+`--hops 0` is the literal induced subgraph, and the other depths are that plus
+growth. The default is the whole connected cone.
+
+**The growth walks both stores as one digraph** — decision→decision,
+task→task, `because` and `evidence_for` — which is the same union
+`cross._union_edges` builds for the acyclicity check, and deliberately so: a
+slice must not be able to follow an edge the cycle proof does not know about.
+The practical consequence is that seeding a decision reaches the work resting
+on it. A per-store closure would return no tasks at all, and `--subgraph
+'id:D04'` would answer a question nobody asked.
+
+It counts hops in the *union*, so one hop from a decision reaches its premises,
+its dependents and the work that rests on it alike. Counting per store would
+make a task one hop away in the joined reading and unreachable in the decision
+reading, from the same number.
+
+**`--hops` and not `--depth`**, because `depth` already means a vertex's rank
+in the DAG everywhere else here — `derived[…].depth`, the layered layout,
+`all_depths` — and one word cannot carry both readings in the one place a
+reader sees neither definition.
+
+A slice keeps every edge whose source it contains, **even when every target was
+trimmed away**: a decision's answer lives on its edge, so dropping the edge
+would hand back a D04 with no answer, the slice saying *still open* about
+something that is decided. Task edges carry no payload beyond their kind, so
+there the empty one goes. Whatever the slice still names but no longer contains
+comes back under `boundary` — a neighbourhood admitting to being one, rather
+than presenting itself as the whole graph. `boundary` is non-empty for a
+bounded `--hops`, and also for a `prompted` edge leaving the cone, since the
+union follows dependency and provenance is not one.
+
 `--active` arrived after the rest, with the archive. `answer:`, `falsifier:` and
 `source:` read a decision's **superseded** edges as well as its active one, and
 label a hit `superseded answer:` where it landed there — because a reversal's
@@ -597,7 +637,8 @@ already has a code, and a script can say
 Exit 2 covers six things, and they are one thing: a malformed query, an unknown
 field, a predicate whose store is absent, a structural term naming an id that
 does not exist, a query no single store can answer, and a query that
-contradicts its own flags. Each is "you did not ask what you think you asked",
+contradicts its own flags — `--hops` without `--subgraph` among them, since a
+flag that is accepted and ignored is the one mistake a run cannot show you. Each is "you did not ask what you think you asked",
 and each must be distinguishable from exit 1, which means "you asked, and the
 answer is nothing". Collapsing those two is how an empty result becomes a false
 fact.

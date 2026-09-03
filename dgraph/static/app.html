@@ -65,6 +65,20 @@
   .node .vid{font-weight:700;font-size:10.5px}
   .node{cursor:pointer}
   .node.dim{opacity:.16}
+  /* Drawn *around* the box, never on it: the box's own stroke-dasharray
+     already means something (OPEN, PROVISIONAL, a task waiting), and a second
+     meaning on the same line would make two facts unreadable at once. */
+  .node .bridge{fill:none;stroke:var(--dim);stroke-width:1.2px;
+    stroke-dasharray:2 3;pointer-events:none}
+  #focusChip{display:inline-flex;align-items:center;gap:2px;border:1px solid
+    var(--accent);border-radius:999px;padding:0 2px 0 8px;background:var(--panel)}
+  #focusChip[hidden]{display:none}
+  #focusQ{border:0;background:transparent;color:var(--ink);font:inherit;
+    font-size:11px;width:19ch;outline:none;padding:3px 0}
+  #focusChip button{border:0;background:transparent;color:var(--dim);
+    cursor:pointer;font-size:13px;line-height:1;padding:2px 6px}
+  #focusChip button:hover{color:var(--ink)}
+  #focusNote{font-size:11px}
   .edge{fill:none;stroke:var(--line);stroke-width:1.4px}
   .edge.pending-dep{stroke-dasharray:3 4;opacity:.75}
   .edge.hot{stroke:var(--accent);stroke-width:2.4px}
@@ -180,9 +194,19 @@
     <button class="chip" id="soundBtn" style="display:none"></button>
     <button class="chip" id="areasBtn" title="Counts by area and status, one block per store">areas</button>
     <button class="chip" id="frontierOnly">frontier only</button>
+    <button class="chip" id="focusBtn" title="Arm focus, then click a node: the canvas keeps only the subgraph that node induces and re-lays it out. The find box still dims within it. Same slice as `dg find --subgraph`.">&#8982; focus</button>
     <button class="chip" id="refreshBtn" title="Re-read both stores and both trays. Pan, zoom and the open inspector are kept.">&#8635; refresh</button>
-    <input id="q" placeholder="find…" title="Same query language as `dg find`: a bare word searches prose, field:value matches one field, is:name asks a derived question, under:D04 scopes to a subgraph. `-` negates, `or` alternates.">
+    <input id="q" placeholder="find…" title="Same query language as `dg find`: a bare word searches prose, field:value matches one field, is:name asks a derived question, under:D04 matches everything below D04. `-` negates, `or` alternates. This box dims what does not match — to draw a slice on its own instead, use the focus chip.">
     <span class="muted" id="qnote"></span>
+    <!-- The chip is the *seed*; `#q` beside it is the filter. Two roles, one
+         input each: focus decides what is on the canvas, find decides what is
+         lit up on it. Both are text, so both can be read, edited and pasted. -->
+    <span id="focusChip" hidden>
+      <input id="focusQ" spellcheck="false"
+             title="`subgraph:N <query>` — N hops from whatever the query matches, `*` for the whole cone. The same slice `dg find --subgraph --hops N` prints.">
+      <button id="focusClear" title="Drop the focus and draw the whole graph again">&times;</button>
+    </span>
+    <span class="muted" id="focusNote"></span>
     <span class="grow"></span>
     <span class="legend" id="legend"></span>
     <button class="primary" id="applyBtn" disabled>Apply</button>
@@ -253,6 +277,20 @@ const TOKEN = document.querySelector('meta[name=dg-token]').content;
    an empty list ("filtered, and nothing here"). */
 let QUERY = "", FOUND = null, QSEQ = 0;
 
+/* The focus chip, and it is a *different* filter from `QUERY` on purpose.
+   `QUERY` dims: everything stays where it was and the matches are lit, which
+   answers "where do these sit in the whole?". `FOCUS` removes and re-ranks, so
+   the slice becomes the graph, which answers "what does this piece look like
+   on its own?". Conflating them would lose one of the two questions.
+
+   The membership is the server's, never worked out here. `cross.induced` walks
+   decision→decision, task→task, `because` and `evidence_for` as one digraph —
+   the same one the acyclicity proof walks — and this page holds `derived` and
+   could close over it in five lines. It must not: two answers to "what is
+   connected to D04" agree right up until the day they do not, and there would
+   be no way to tell which one was lying. */
+let FOCUS = null, FSEQ = 0;
+
 const base = s => s.split(":")[0];
 const $ = s => document.querySelector(s);
 
@@ -317,6 +355,12 @@ async function boot(){
   ALL_AREAS = areas;
   if(tab!=="decisions" && !T) tab="decisions";
   bindQuery();
+  bindFocus();
+  /* The stores were just re-read, so the slice may name records that have
+     gone. Re-asking is cheaper than reconciling, and it is the same question.
+     `layout()` below runs against the *old* set for one frame; `runFocus`
+     re-lays out when it lands, which is what `relayout` is for. */
+  if(FOCUS) runFocus();
   layout();
   $("#build").textContent = BUILD;
   await soundness();
@@ -440,6 +484,11 @@ function tabs(){
   $("#tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{
     if(b.disabled) return;
     tab=b.dataset.t; sel=null; tsel=null;
+    /* The focused set does not change with the tab — it is one slice of both
+       stores, and switching view must not silently change what you are looking
+       at. What changes is whether a bridge is drawable, so a node marked
+       "reached through work" on the decisions tab loses the mark on the joined
+       tab, where the hop is a line you can see. */
     tabs(); chips(); layout(); fit(); draw();
     $("#side").innerHTML=`<p class="muted">Click a node to inspect it.</p>`;
   });
@@ -510,6 +559,141 @@ async function runQuery(){
   syncChips();
   draw();
 }
+
+/* ---- focus: the second filter, which removes rather than dims ------------ */
+
+/* `subgraph:<N|*> <seed query>`. The prefix is this page's spelling of the two
+   CLI flags — `--subgraph --hops N` — and never a term in the query language:
+   `parse` has no `subgraph` field and must not grow one, because it is not a
+   question about a record, it is how far to walk from the records that match.
+   So it is stripped here and sent as a parameter. */
+const FOCUS_RE = /^\s*subgraph:(\*|\d+)(?:\s+|$)/;
+
+function parseFocus(text){
+  const m = String(text||"").match(FOCUS_RE);
+  return {hops: m ? (m[1]==="*" ? null : parseInt(m[1],10)) : null,
+          seed: (m ? text.slice(m[0].length) : String(text||"")).trim()};
+}
+
+function focusText(seed, hops){
+  return `subgraph:${hops==null?"*":hops} ${seed}`.trim();
+}
+
+/* Whether an id survives the focus. `true` when nothing is focused, so every
+   caller reads the same whether or not a chip is up. */
+function inFocus(id){ return !FOCUS || FOCUS.ids.has(id); }
+
+/* Why this id is on a canvas that cannot draw the edge that brought it in, or
+   null. Only ever set for a hop the *server* saw; the page cannot know it,
+   which is the point of shipping it.
+
+   Silent when *everything* drawn is bridged — seed a task and the decisions
+   tab is nothing but nodes reached through work, and a ring around every one
+   of them distinguishes nothing while making the canvas look broken. The fact
+   is still worth one sentence, so it moves to the note beside the chip. A mark
+   earns its place by being on some nodes and not others. */
+function bridgeNote(id){
+  if(!FOCUS || bridgeVisible() || ALL_BRIDGED) return null;
+  return FOCUS.bridged[id] || null;
+}
+
+/* Set by `draw`, read by `bridgeNote` — of the nodes this tab actually puts on
+   screen, is every one of them bridged? */
+let ALL_BRIDGED = false;
+
+/* The note is rewritten, never appended to. It was appended to, and the
+   sentence then survived the tab switch that made it false: "all of it reached
+   through the other store" stayed on screen on the joined tab, which draws
+   every bridge as a line. Whether it holds is a fact about the tab, so it is
+   recomputed for whichever tab is drawing. */
+let FNOTE = "";
+
+function markBridged(ids){
+  ALL_BRIDGED = !!(FOCUS && !bridgeVisible() && ids.length
+                   && ids.every(id => FOCUS.bridged[id]));
+  $("#focusNote").textContent = FNOTE + (ALL_BRIDGED
+    ? " · all of it reached through the other store" : "");
+}
+
+/* The joined tab draws both stores, so every bridge on it is a line you can
+   see and no node needs explaining. On the single-store tabs it does not. */
+function bridgeVisible(){ return tab==="joined" && !!T; }
+
+function setFocus(text){
+  const box = $("#focusQ");
+  if(box.value !== text) box.value = text;
+  $("#focusChip").hidden = !text.trim();
+  runFocus();
+}
+
+async function runFocus(){
+  const seq = ++FSEQ;
+  const {hops, seed} = parseFocus($("#focusQ").value);
+  if(!seed){ FOCUS = null; FNOTE = ""; relayout(); return; }
+  let r;
+  try {
+    r = await api("/api/find?q=" + encodeURIComponent(seed)
+                  + "&subgraph=" + (hops==null ? "" : hops));
+  } catch(e){ return; }
+  if(seq !== FSEQ) return;              /* an older seed, answered late */
+  if(r.fault || !r.subgraph){
+    /* The chip keeps its text and the canvas keeps its previous slice: a typo
+       mid-edit must not blank the graph out from under the person typing. */
+    FOCUS = null;
+    FNOTE = "\u26a0 " + (r.fault || "no slice");
+    $("#focusNote").textContent = FNOTE;
+    $("#focusQ").classList.add("bad");
+    relayout(); return;
+  }
+  const sg = r.subgraph;
+  FOCUS = {seed, hops, ids: new Set([...sg.decisions, ...sg.tasks]),
+           bridged: sg.bridged || {}};
+  $("#focusQ").classList.remove("bad");
+  const n = FOCUS.ids.size;
+  FNOTE = `${n} in focus` + (hops==null ? "" : `, ${hops} hop${hops===1?"":"s"}`);
+  relayout();
+}
+
+/* Focus changes which nodes exist, so the ranks and the extent are both stale
+   — unlike `QUERY`, which only changes which of them are lit. `fit()` too:
+   a slice of six nodes left at the whole graph's zoom is a canvas of empty. */
+function relayout(){ layout(); fit(); draw(); }
+
+/* Clicking a node while focus is armed re-seeds the chip and keeps the hop
+   count, because the hop count is the reader's setting and the seed is the
+   reader's gesture. Replacing both would throw away a `subgraph:1` they had
+   deliberately typed. */
+function focusOn(id){
+  setFocus(focusText("id:" + id, parseFocus($("#focusQ").value).hops));
+}
+
+function bindFocus(){
+  const btn = $("#focusBtn"), box = $("#focusQ");
+  btn.onclick = () => {
+    ARMED = !ARMED;
+    btn.classList.toggle("on", ARMED);
+    /* Arming with a node already selected focuses it straight away — the
+       gesture that armed it is almost always about the node just clicked. */
+    if(ARMED && cur()) focusOn(cur());
+  };
+  $("#focusClear").onclick = () => { setFocus(""); ARMED = false;
+                                     btn.classList.remove("on"); };
+  if(box.dataset.bound) return;        /* boot() runs again after Apply */
+  box.dataset.bound = "1";
+  let timer = null;
+  box.oninput = () => { clearTimeout(timer);
+                        timer = setTimeout(() => setFocus(box.value), 160); };
+  box.onkeydown = e => {
+    if(e.key==="Enter"){ clearTimeout(timer); setFocus(box.value); }
+    if(e.key==="Escape"){ setFocus(""); box.blur(); }
+    e.stopPropagation();
+  };
+}
+
+/* Whether a node click seeds the focus. Off by default: clicking a node is
+   how you read one, and hijacking that gesture would cost the commonest
+   thing this page does to buy the rarer one. */
+let ARMED = false;
 
 function syncChips(){
   const on = statusesIn(QUERY);
@@ -710,26 +894,41 @@ function unionParents(){
   return up;
 }
 
+/* Ranks are recomputed inside a focus rather than inherited from the whole
+   graph. A slice of D02 and D45 carries their store-wide depths of 1 and 12,
+   which would draw them eleven empty ranks apart — the layout of a graph that
+   is not on screen. The slice *is* the graph now, so it gets its own longest
+   path, and the joined tab has always worked this way. */
 function layout(){
+  const keep = list => FOCUS ? list.filter(inFocus) : list;
+  const only = fn => id => fn(id).filter(inFocus);
   if(tab==="tasks"){
-    const ids=T.tasks.map(x=>x.id);
-    const r=layerLayout(ids, id=>T.derived[id].depth,
-                        id=>T.derived[id].prerequisites,
-                        id=>T.derived[id].unblocks);
+    const ids=keep(T.tasks.map(x=>x.id));
+    const par=only(id=>T.derived[id].prerequisites);
+    const rank=FOCUS ? rankIn(ids, par) : (id=>T.derived[id].depth);
+    const r=layerLayout(ids, rank, par, only(id=>T.derived[id].unblocks));
     T.xy=r.xy; T.bends=r.bends; T.extent=r.extent; return;
   }
   if(tab==="joined" && T){
     const up=unionParents();
-    const ids=[...G.vertices.map(v=>v.id), ...T.tasks.map(x=>x.id)];
-    const par=id=>up[id]||[];
+    const ids=keep([...G.vertices.map(v=>v.id), ...T.tasks.map(x=>x.id)]);
+    const par=only(id=>up[id]||[]);
     const depth=longestPath(ids, par);
     const kids={}; ids.forEach(i=>par(i).forEach(p=>(kids[p]=kids[p]||[]).push(i)));
     const r=layerLayout(ids, id=>depth[id]||0, par, id=>kids[id]||[]);
     JOIN.xy=r.xy; JOIN.bends=r.bends; JOIN.extent=r.extent; return;
   }
-  const r=layerLayout(G.vertices.map(v=>v.id), id=>G.derived[id].depth,
-                      id=>G.derived[id].depends, id=>G.derived[id].children);
+  const ids=keep(G.vertices.map(v=>v.id));
+  const par=only(id=>G.derived[id].depends);
+  const rank=FOCUS ? rankIn(ids, par) : (id=>G.derived[id].depth);
+  const r=layerLayout(ids, rank, par, only(id=>G.derived[id].children));
   G.xy=r.xy; G.bends=r.bends; G.extent=r.extent;
+}
+
+/* Depth within a slice, as a lookup the layout can call per id. */
+function rankIn(ids, parentsOf){
+  const d=longestPath(ids, parentsOf);
+  return id => d[id]||0;
 }
 
 /* Whichever view is showing owns the canvas extent. */
@@ -745,9 +944,18 @@ function bendsOf(from, to){
   return (b && b[from+"\u0000"+to]) || [];
 }
 
+/* Two different verbs. `passes` decides what is *lit*; `inFocus` decides what
+   is *drawn at all*. A node outside the focus is not dim, it is absent — the
+   canvas re-ranked without it — so no caller may reach for one when it meant
+   the other. */
 function visible(v){ return passes("decisions", v.id); }
 
 function tvisible(x){ return passes("tasks", x.id); }
+
+/* An edge belongs to an induced subgraph only when both of its ends do. This
+   is the whole of "induced" as far as the drawing is concerned; the vertex set
+   came from the server. */
+function edgeIn(a, b){ return inFocus(a) && inFocus(b); }
 
 /* One node renderer for both stores: same box, same two wrapped title lines,
    so a decision and a task read as the same kind of thing in the joined view
@@ -778,7 +986,10 @@ function nodeSvg(id, title, status, area, stroke, dash, dim){
   const half = cut<0 ? s : s.slice(0,cut);
   const rest = cut<0 ? "" : s.slice(cut+1);
   const claim = claimOn(id);
+  const bridge = bridgeNote(id);
   return `<g class="node${dim?" dim":""}${claim?" claimed":""}" data-id="${esc(id)}" transform="translate(${p.x},${p.y})">
+      ${bridge?`<title>${esc(bridge)} — the hop is on the joined tab.</title>
+      <rect class="bridge" x="-4" y="-4" width="${NW+8}" height="${NH+8}" rx="10"/>`:""}
       <rect width="${NW}" height="${NH}" rx="7" fill="${AREA_COLOR[area]||"#888"}22"
             stroke="${stroke}" ${dash}/>
       <text class="vid" x="8" y="15">${esc(id)}</text>
@@ -828,6 +1039,12 @@ function taskNode(x, related){
 
 function draw(){
   const vp=$("#viewport");
+  /* Before rendering, not after: `nodeSvg` asks `bridgeNote` per node, so the
+     "is every one of them bridged?" answer has to exist by the time the first
+     node is built. */
+  markBridged(tab==="tasks" ? T.tasks.map(x=>x.id).filter(inFocus)
+            : tab==="joined" ? []
+            : G.vertices.map(v=>v.id).filter(inFocus));
   vp.innerHTML = tab==="tasks" ? drawTasks()
                : tab==="joined" ? drawJoined() : drawDecisions();
   $("#svg").setAttribute("viewBox",view.join(" "));
@@ -839,13 +1056,14 @@ function drawDecisions(){
   let edges="", nodes="";
   G.edges.filter(e=>e.active).forEach(e=>{
     e.to.forEach(to=>{
+      if(!edgeIn(e.from,to)) return;
       const cls=["edge"];
       if(!e.answer) cls.push("pending-dep");
       if(related) cls.push(related.has(e.from)&&related.has(to)?"hot":"dim");
       edges+=edgeSvg(e.from,to,cls.join(" "));
     });
   });
-  G.vertices.forEach(v=>{ nodes+=decisionNode(v, related); });
+  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, related); });
   return edges+nodes;
 }
 
@@ -855,6 +1073,7 @@ function drawTasks(){
     : null;
   let edges="", nodes="";
   T.tasks.forEach(x=>T.derived[x.id].prerequisites.forEach(pq=>{
+    if(!edgeIn(pq,x.id)) return;
     const cls=["edge"];
     /* An unresolved prerequisite is the thing actually holding this up; a
        resolved one is history. Same faint-dash convention the decision view
@@ -863,7 +1082,7 @@ function drawTasks(){
     if(related) cls.push(related.has(pq)&&related.has(x.id)?"hot":"dim");
     edges+=edgeSvg(pq,x.id,cls.join(" "));
   }));
-  T.tasks.forEach(x=>{ nodes+=taskNode(x, related); });
+  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, related); });
   return edges+nodes;
 }
 
@@ -883,9 +1102,11 @@ function drawJoined(){
   const rel=(a,b)=>related?(related.has(a)&&related.has(b)?"hot":"dim"):"";
   let edges="", nodes="";
   G.edges.filter(e=>e.active).forEach(e=>e.to.forEach(to=>{
+    if(!edgeIn(e.from,to)) return;
     edges+=edgeSvg(e.from,to,["edge",e.answer?"":"pending-dep",rel(e.from,to)].join(" "));
   }));
   T.tasks.forEach(x=>T.derived[x.id].prerequisites.forEach(pq=>{
+    if(!edgeIn(pq,x.id)) return;
     edges+=edgeSvg(pq,x.id,["edge",
       T.derived[x.id].waiting_on.includes(pq)?"pending-dep":"",rel(pq,x.id)].join(" "));
   }));
@@ -898,14 +1119,16 @@ function drawJoined(){
        and drawing the first was the joined view asserting a dependency the
        store does not have while hiding two it does. A premise that resolves to
        nothing has no node to draw from — the panel names it instead. */
-    c.premises.forEach(p=>
-      edges+=edgeSvg(p.id,x.id,["edge","cross",rel(p.id,x.id)].join(" ")));
-    if(c.evidence_for && G.derived[c.evidence_for])
+    c.premises.forEach(p=>{
+      if(!edgeIn(p.id,x.id)) return;
+      edges+=edgeSvg(p.id,x.id,["edge","cross",rel(p.id,x.id)].join(" "));
+    });
+    if(c.evidence_for && G.derived[c.evidence_for] && edgeIn(x.id,c.evidence_for))
       edges+=edgeSvg(x.id,c.evidence_for,
                      ["edge","cross","evidence",rel(x.id,c.evidence_for)].join(" "));
   });
-  G.vertices.forEach(v=>{ nodes+=decisionNode(v, related); });
-  T.tasks.forEach(x=>{ nodes+=taskNode(x, related); });
+  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, related); });
+  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, related); });
   return edges+nodes;
 }
 
@@ -1060,7 +1283,11 @@ function select(id){
   captureDraft();
   const isTask = T && T.tasks.some(x=>x.id===id);
   if(isTask){ tsel=id; sel=null; } else { sel=id; tsel=null; }
-  draw();
+  /* Armed, the click does both: it re-seeds the slice *and* opens the record.
+     Reading the node you just focused is the next thing you want, and making
+     focus swallow the click would trade the page's commonest gesture for its
+     rarer one. `focusOn` redraws by itself, so this does not. */
+  if(ARMED) focusOn(id); else draw();
   isTask ? taskPanel() : panel();
 }
 

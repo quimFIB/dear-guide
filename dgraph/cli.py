@@ -711,6 +711,18 @@ def find(
                               help="The table, with no title clipped."),
     active: bool = typer.Option(False, "--active",
                                 help="Active edges only: skip superseded answers."),
+    subgraph: bool = typer.Option(False, "--subgraph",
+                                  help="Emit the subgraph the matches induce, "
+                                       "as both stores, instead of a report."),
+    # Not `--depth`: `depth` already means a vertex's rank in the DAG
+    # everywhere else in this tool -- `derived[vid].depth`, the layered layout,
+    # `all_depths` -- and a flag reusing the word for "hops from the seed"
+    # would make the two readings collide in the one place a reader cannot see
+    # both definitions at once.
+    hops: int = typer.Option(None, "--hops", metavar="N",
+                             help="Grow the subgraph N hops from the matches. "
+                                  "Default: the whole connected cone. 0 is the "
+                                  "matches alone."),
     limit: int = typer.Option(20, "--limit", "-n",
                               help="Rows per section before summarising."),
 ) -> None:
@@ -734,6 +746,14 @@ def find(
         dg find 'date:>=2026-01-01 is:decidable'
         dg find 'humdrum-data --active'   # only what still stands
         dg find 'is:decidable' --ids | xargs -n1 dg context
+        dg find --subgraph 'id:D04'              # the subgraph D04 induces
+        dg find --subgraph --hops 1 'id:D04'     # ...neighbours only
+
+    `--subgraph` makes the matches a *seed* rather than the answer, and prints
+    the subgraph they induce as `{decisions, tasks}` — plus `boundary`, naming
+    whatever the slice still mentions and no longer contains. The growth walks
+    both stores as one digraph, so seeding a decision reaches the work resting
+    on it.
 
     Exit 1 means the query was fine and nothing matched. Exit 2 means it could
     not be answered as asked — a bad term, an unknown field, a predicate whose
@@ -747,6 +767,17 @@ def find(
         raise typer.Exit(2)
     if decisions and tasks:
         con.print("[red]--decisions and --tasks are opposites[/]")
+        raise typer.Exit(2)
+    if hops is not None and not subgraph:
+        # `--hops` alone would silently do nothing, and a flag that is accepted
+        # and ignored is the one kind of mistake a run cannot show you.
+        con.print("[red]--hops needs --subgraph[/]\n"
+                  "[dim]it says how far to grow the slice; without one there "
+                  "is nothing to grow[/]")
+        raise typer.Exit(2)
+    if hops is not None and hops < 0:
+        con.print("[red]--hops counts hops, so it starts at 0[/]\n"
+                  "[dim]`--subgraph` with no --hops is the whole cone[/]")
         raise typer.Exit(2)
     if limit < 1:
         # `--limit 0` used to print a count and a "… 2 more" line with no rows
@@ -798,6 +829,25 @@ def find(
         wanted = narrowed
 
     found = {l.kind: _query.select(q, l) for l in wanted}
+    if subgraph:
+        # The matches are a *seed*, not the answer. Growing them is `cross`'s
+        # job and not this command's: the browser's focus chip asks the same
+        # question through `find_payload`, and a slice that differed between
+        # the two surfaces would be this tool disagreeing with itself about
+        # what "connected to D04" means.
+        cut = cross.induced(g, tg, [r for rows in found.values() for r in rows],
+                             depth=hops)
+        if ids:
+            for rid in (*cut.decisions, *cut.tasks):
+                print(rid)
+        else:
+            print(json.dumps(cross.slice_stores(g, tg, cut),
+                             indent=2, ensure_ascii=False))
+        # Empty in, empty out -- and the exit code says which question came
+        # back empty, the same as it does for a report.
+        if not cut.ids:
+            raise typer.Exit(1)
+        return
     if as_json:
         # A store the query was not about is `null`; one that was, and matched
         # nothing, is `[]`. The key is always present — omitting it, as this

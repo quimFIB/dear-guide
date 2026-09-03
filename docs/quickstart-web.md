@@ -224,6 +224,46 @@ Drag to pan, scroll to zoom. The chips in the header filter by status;
 **frontier only** narrows to what is still open or blocked. Clicking a vertex
 highlights it with its premises and its consequences, and dims the rest.
 
+### Focus: the second filter, which removes
+
+**⌖ focus** arms a different question. Armed, clicking a node puts a chip beside
+the find box reading `subgraph:* id:D04`, and the canvas keeps only the
+subgraph that node induces — everything else is *gone*, not dimmed, and the
+slice is re-ranked so it fills the screen.
+
+The two filters answer different questions and so they compose rather than
+compete. The find box dims: everything stays where it was and the matches light
+up, which answers *where do these sit in the whole?* The chip removes: the
+slice becomes the graph, which answers *what does this piece look like on its
+own?* Type in the box while a chip is up and you are filtering **within** the
+focus.
+
+The chip is text, and it is the page's spelling of two `dg find` flags:
+
+| chip | shell |
+|---|---|
+| `subgraph:* id:D04` | `dg find --subgraph 'id:D04'` |
+| `subgraph:1 id:D04` | `dg find --subgraph --hops 1 'id:D04'` |
+| `subgraph:0 area:consent` | `dg find --subgraph --hops 0 'area:consent'` |
+
+So the seed is any query, not just one node: `id:D04 or id:D12` focuses both,
+`area:consent` focuses an area. Edit the chip by hand, or press `×` to drop it.
+The hop count is yours and survives the next click; only the seed is replaced.
+
+`subgraph:` is **not** a term in the query language — there is no `subgraph`
+field and `dg find` would refuse one. It is how the chip writes down a flag, and
+the page strips it before the query is sent.
+
+**A node ringed in dashes was reached through the other store.** The slice spans
+both graphs, so focusing a decision pulls in the work resting on it; on the
+decisions tab that work is not drawn, and a decision reached *through* it would
+otherwise sit there with no edge, reading as a node the layout forgot. The ring
+says so, and hovering names the hop — *D01 is here through the task store: T01
+is evidence for D11, and D01 follows from D11*. The joined tab draws those
+links as lines, so nothing is ringed there. When every node on a tab is
+bridged, the rings go and the note beside the chip says it once instead: a mark
+earns its place by being on some nodes and not others.
+
 ## Deciding
 
 Click a vertex. The panel shows everything known about it — status, premises,

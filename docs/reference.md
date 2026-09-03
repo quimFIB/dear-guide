@@ -172,6 +172,8 @@ dg find embedding                        # every decision and task that says so
 dg find 'under:D04 is:unsettled'         # ...still open in what D04 opened
 dg find 'is:decidable' --ids             # ...ids alone, for a pipe
 dg find 'brute force' --active           # ...skipping answers since overturned
+dg find --subgraph 'id:D04'              # the subgraph D04 induces, both stores
+dg find --subgraph --hops 1 'id:D04'     # ...D04 and its neighbours only
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg amend  D06 --title "..."              # correct a wording; nothing else is touched

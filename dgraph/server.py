@@ -710,8 +710,16 @@ def stage_task(tg: TaskGraph, op: dict, *, new_area: bool = False) -> list[dict]
     return stage_tasks(tg, [op], new_area=new_area)
 
 
-def find_payload(q: str) -> dict:
+def find_payload(q: str, hops: int | None = None, *,
+                 subgraph: bool = False) -> dict:
     """One query, answered for the browser exactly as the CLI answers it.
+
+    With `subgraph`, the matches are a *seed* and the answer carries the slice
+    they induce — the focus chip's question, run through `cross.induced`, which
+    is the same call `dg find --subgraph` makes. The page could close over
+    `derived` itself and save the round trip; it must not, because then "what
+    is connected to D04" would have two implementations that agree until the
+    day they do not.
 
     The same `cross.lenses` and the same `dgraph.query`, so a query typed into
     the page and the same query typed at a shell cannot disagree. The page
@@ -742,6 +750,16 @@ def find_payload(q: str) -> dict:
         out.setdefault("why", {}).update({
             rid: [{"field": m.field, "snippet": m.text[:160]}
                   for m in _q.explain(parsed, l, rid)] for rid in hits})
+    if subgraph:
+        cut = cross.induced(*_stores(),
+                            [r for rows in out["matched"].values() for r in rows],
+                            depth=hops)
+        # `bridged` travels with the ids because only this side can compute it:
+        # it is a fact about the *path* the walk took, and the page sees only
+        # the destination. Without it a decisions tab drawing a task-reached
+        # decision has a node it cannot explain.
+        out["subgraph"] = {"decisions": cut.decisions, "tasks": cut.tasks,
+                           "bridged": cut.bridged}
     # A store the query is not about is absent from `matched`, which the page
     # reads as "this tab is not filtered" — different from an empty list, which
     # means "filtered, and nothing here matches".
@@ -939,8 +957,28 @@ class Handler(BaseHTTPRequestHandler):
                 # The path alone, not a prefix: `startswith` answered
                 # `/api/findXYZ` as a find, which is the only route here that
                 # did not have to be spelled correctly.
-                self._json(find_payload(parse_qs(
-                    urlparse(self.path).query).get("q", [""])[0]))
+                # `keep_blank_values`, and it is load-bearing: `parse_qs`
+                # drops an empty value, which made `subgraph=` — the page's
+                # spelling of *the whole cone* — arrive identical to no
+                # `subgraph` at all, and the chip's `*` drew an unfiltered
+                # graph. The two other readings here are unaffected; only this
+                # route has a parameter whose empty form means something.
+                fq = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                # Absent and empty mean different things: no `subgraph` at all
+                # is the plain filter, `subgraph=` with no number is the whole
+                # cone, and a number bounds it. A junk number is the caller's
+                # mistake and travels as a fault, not a 500 — same bargain the
+                # query box already has with a mistyped term.
+                raw = fq.get("subgraph", [None])[0]
+                try:
+                    hops = int(raw) if raw not in (None, "") else None
+                except ValueError:
+                    self._json({"query": fq.get("q", [""])[0],
+                                "fault": f"subgraph takes a hop count, "
+                                         f"not `{raw}`"})
+                    return
+                self._json(find_payload(fq.get("q", [""])[0], hops,
+                                        subgraph=raw is not None))
             elif urlparse(self.path).path == "/api/context":
                 self._json(context_payload(parse_qs(
                     urlparse(self.path).query).get("id", [""])[0]))

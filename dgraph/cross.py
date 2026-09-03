@@ -828,6 +828,260 @@ def _union_edges(tg: TaskGraph, g: Graph) -> dict[str, list[str]]:
     return {node: sorted(heads) for node, heads in adj.items()}
 
 
+
+# ---- induced subgraphs ----------------------------------------------------
+#
+# A slice of both stores, grown from a seed set. `dg find --subgraph` emits it
+# and the browser's focus chip draws it, through this one function, for the
+# reason every other reading in this module is here: two implementations of
+# "what is connected to D04" is the disagreement the tool exists to prevent.
+
+
+@dataclass(frozen=True)
+class Induced:
+    """A vertex set closed to `depth` hops, split by the store each id sits in.
+
+    `bridged` is the part a single-store view cannot explain by itself: an id
+    whose path back to a seed leaves its store, mapped to the sentence naming
+    the hop it left by. The decisions tab draws no tasks, so a decision reached
+    through work arrives there with none of its edges — without this it reads
+    as a node the layout forgot to connect, which is the one reading worse than
+    leaving it out.
+    """
+
+    decisions: list[str]
+    tasks: list[str]
+    bridged: dict[str, str]
+    #: Seeds naming no record. Reported rather than dropped: a query that
+    #: matched nothing and a query whose matches are all outside the store are
+    #: different facts, and a caller that cannot tell them apart will read an
+    #: empty slice as "nothing is connected to this".
+    unknown: list[str]
+
+    @property
+    def ids(self) -> set[str]:
+        return {*self.decisions, *self.tasks}
+
+
+def union_adjacency(g: Graph | None,
+                    tg: TaskGraph | None) -> tuple[dict, dict]:
+    """Both stores as one digraph, and its transpose.
+
+    The forward half is `_union_edges` — the same four edge kinds the cycle
+    check walks, and deliberately the same function, so a slice cannot follow
+    an edge the acyclicity proof does not know about. A project holding only
+    one store gets that store's own edges and no link, which is not a special
+    case so much as the union of one thing.
+
+    Both directions, because a subgraph grows *outward*: focusing a decision
+    means the premises it rests on as much as the work that rests on it, and a
+    walk that ran only downhill would answer half the question without saying
+    which half.
+    """
+    if g is not None and tg is not None:
+        down = {node: list(heads) for node, heads in _union_edges(tg, g).items()}
+    elif g is not None:
+        by_src = g.by_src()
+        down = {vid: g.children(vid, by_src) for vid in g.vertices}
+    elif tg is not None:
+        tadj = tg._adjacency()
+        down = {tid: tg.unblocks(tid, tadj) for tid in tg.tasks}
+    else:
+        return {}, {}
+    up: dict[str, list[str]] = {node: [] for node in down}
+    for node, heads in down.items():
+        for h in heads:
+            up.setdefault(h, []).append(node)
+    return down, up
+
+
+def induced(g: Graph | None, tg: TaskGraph | None, seeds,
+            depth: int | None = None) -> Induced:
+    """The subgraph induced by `seeds`, grown `depth` hops in every direction.
+
+    `depth=0` is the literal induced subgraph: the seeds themselves, and later
+    the edges among them. `None` is the whole connected cone. Anything between
+    is a neighbourhood — `1` being the reading the browser's focus starts from.
+
+    Depth counts hops in the *union*, so one hop from a decision reaches its
+    premises, its dependents, and the work that rests on it alike. That is the
+    only counting under which "neighbours" means the same thing on both tabs;
+    counting per store would make a task one hop from D04 on the joined view
+    and unreachable on the decisions view, from the same number.
+    """
+    down, up = union_adjacency(g, tg)
+    decisions = set(g.vertices) if g is not None else set()
+    tasks = set(tg.tasks) if tg is not None else set()
+    known = decisions | tasks
+
+    wanted = list(dict.fromkeys(seeds))
+    seen = {s for s in wanted if s in known}
+    parent: dict[str, str] = {}
+    frontier, hops = list(seen), 0
+    while frontier and (depth is None or hops < depth):
+        nxt = []
+        for node in frontier:
+            for nb in (*down.get(node, ()), *up.get(node, ())):
+                if nb not in seen:
+                    seen.add(nb)
+                    parent[nb] = node
+                    nxt.append(nb)
+        frontier, hops = nxt, hops + 1
+
+    def store(i: str) -> str:
+        return "decisions" if i in decisions else "tasks"
+
+    # Bridged is asked as a *reachability* question, not read off the parent
+    # chain. Both give the same answer most of the time and the chain gives the
+    # wrong one where it matters: `parent` is whichever neighbour reached a
+    # node first, so a node with a same-store route and a crossing route of
+    # equal length was marked or not according to iteration order. Marking a
+    # node "you can only get here through the other store" when you cannot is
+    # the one claim this mark must never make falsely.
+    #
+    # So: walk again from the same seeds, over each store's own edges only and
+    # never leaving the slice. A node the restricted walk misses is one the
+    # reader cannot trace back to a seed by following lines that are actually
+    # on the canvas — which is the question the mark answers.
+    #
+    # Unbounded, unlike the walk above, and confined to `seen` rather than to
+    # the store. Both follow from what is being asked: `depth` bounds what gets
+    # *drawn*, and this asks what is explicable once drawn, so a chain of four
+    # visible edges explains a node as well as one does. A store with no seed
+    # of its own has nothing to trace back to, and everything it contributes is
+    # marked — correctly, because the whole of it arrived through the link.
+    reachable = set()
+    for kind in (decisions, tasks):
+        near = {s for s in seen if s in kind and s in wanted}
+        reachable |= near
+        edge = list(near)
+        while edge:
+            nxt = []
+            for node in edge:
+                for nb in (*down.get(node, ()), *up.get(node, ())):
+                    if nb in kind and nb in seen and nb not in reachable:
+                        reachable.add(nb)
+                        nxt.append(nb)
+            edge = nxt
+
+    bridged = {}
+    for node in sorted(seen - reachable):
+        # It has no same-store route, so its parent chain must cross somewhere;
+        # the first crossing walking back is the hop nearest this node, and so
+        # the one a reader looking at this node needs named.
+        cur = node
+        while cur in parent:
+            prev = parent[cur]
+            if store(prev) != store(cur):
+                bridged[node] = _bridge_note(node, prev, cur, down, decisions)
+                break
+            cur = prev
+
+    return Induced(
+        decisions=sorted(seen & decisions),
+        tasks=sorted(seen & tasks),
+        bridged=bridged,
+        unknown=[s for s in wanted if s not in known],
+    )
+
+
+def _bridge_note(node: str, prev: str, cur: str, down: dict,
+                 decisions: set) -> str:
+    """Why `node` is in the slice, in the words the stored link uses.
+
+    `node` is what the reader is looking at; `prev -> cur` is the crossing that
+    let the walk reach it, and the two are the same pair only when the crossing
+    is adjacent. Naming just the crossing read as a sentence about some other
+    record — a tooltip on T03 saying "T02 rests on D01" answers a question
+    nobody asked — so the subject is always the node the mark is on.
+
+    A union edge always means "the head waits on the tail" and `down` is keyed
+    by the tail, so which of the two relations this is follows from which way
+    the edge runs. That has to be read off `down` rather than inferred from the
+    two stores, because the walk may have crossed the edge backwards — growing
+    a subgraph goes outward, and `because` read from the task end is the same
+    link as `because` read from the decision end.
+    """
+    waits, on = (cur, prev) if cur in down.get(prev, ()) else (prev, cur)
+    link = (f"{waits} rests on the answer to {on}" if on in decisions
+            else f"{on} is evidence for {waits}")
+    where = "the task store" if node in decisions else "the decision store"
+    if node in (waits, on):
+        return f"{node} is here through {where}: {link}"
+    return f"{node} is here through {where}: {link}, and {node} follows from " \
+           f"{waits}"
+
+
+
+def slice_stores(g: Graph | None, tg: TaskGraph | None,
+                 cut: Induced) -> dict:
+    """The slice as two stores, plus what it had to cut to close them.
+
+    **A decision's answer lives on its edge**, so an edge whose `from` is in
+    the slice is kept even when every target it names was trimmed away. Drop it
+    and D04 arrives answerless — the slice would say *this is still open* about
+    a decision that is not, which is the worst thing a reading of this store
+    can do. A task edge carries no payload beyond its kind, so there the empty
+    one goes and nothing is lost; that asymmetry is the stores' own, not a
+    choice made here.
+
+    `boundary` is every id the slice still names but no longer contains, and it
+    fills up two ways. The obvious one is a bounded horizon: `--subgraph=1` has
+    an edge of the world, and this is how the slice admits to having one rather
+    than presenting a neighbourhood as if it were the whole graph.
+
+    The other is provenance, and it survives even an unbounded cone. The union
+    walk follows `unblocks` and not `prompted`, for the reason `_union_edges`
+    gives — a "discovered during" edge means nobody waits on anybody, and
+    feeding it in would manufacture deadlocks. So a task can name a task the
+    cone never reaches, and the slice trims that edge and says so here. The
+    trim is right: dependency is what makes a subgraph, and the slice follows
+    exactly the edges the acyclicity proof knows about. Reporting it is what
+    keeps "your slice mentions T37 and does not contain it" a fact the reader
+    is told rather than one they discover.
+    """
+    ids, boundary = cut.ids, set()
+
+    def keep(names) -> list[str]:
+        boundary.update(n for n in names if n not in ids)
+        return [n for n in names if n in ids]
+
+    out: dict = {}
+    if g is not None:
+        d = g.to_dict()
+        out["decisions"] = {
+            "areas": d["areas"],
+            "vertices": [v for v in d["vertices"] if v["id"] in ids],
+            "edges": [{**e, "to": keep(e["to"])}
+                      for e in d["edges"] if e["from"] in ids],
+        }
+    if tg is not None:
+        t = tg.to_dict()
+        rows = []
+        for row in t["tasks"]:
+            if row["id"] not in ids:
+                continue
+            row = dict(row)
+            if row.get("because"):
+                row["because"] = keep(row["because"]) or None
+                if row["because"] is None:
+                    del row["because"]
+            if row.get("evidence_for"):
+                if row["evidence_for"] not in ids:
+                    boundary.add(row["evidence_for"])
+                    del row["evidence_for"]
+            rows.append(row)
+        out["tasks"] = {
+            "areas": t["areas"],
+            "tasks": rows,
+            "edges": [dict(e, to=kept) for e in t["edges"]
+                      if e["from"] in ids and (kept := keep(e["to"]))],
+        }
+    if boundary:
+        out["boundary"] = sorted(boundary)
+    return out
+
+
 def _cycles(adj: dict[str, list[str]]) -> list[list[str]]:
     """Iterative DFS colouring, for the reason both validators are iterative:
     a deep but legal graph must not crash the check that guards it."""

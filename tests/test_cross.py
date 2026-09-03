@@ -1680,3 +1680,193 @@ def test_dg_task_independent_says_a_staged_member_is_not_what_setup_reads(run_cl
     assert res.exit_code == 0, res.output
     assert "T09  staged only  (staged)" in res.output
     assert "setup reads the committed store: `dg apply` before it sees what is staged" in res.output
+
+
+# ---- induced subgraphs ----------------------------------------------------
+#
+# `dg find --subgraph` and the browser's focus chip are the same question asked
+# twice, so these pin the answer once and both surfaces against it.
+
+
+@pytest.fixture
+def linked(both):
+    """`both`, plus a task whose outcome informs a decision.
+
+    `both` only ever points work *at* premises. One `evidence_for` is what
+    makes the union a genuine two-way digraph rather than a tree with tasks
+    hanging off it, and it is the direction that lets a walk arrive at a
+    decision through work — the case the bridge mark exists for.
+    """
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D06"
+    tg.save(both / "tasks.json")
+    return both
+
+
+def _pair(root):
+    return Graph.load(root / "decisions.json"), TaskGraph.load(root / "tasks.json")
+
+
+def test_hops_zero_is_the_seed_set_and_nothing_else(both):
+    """The literal induced subgraph: the vertices asked for, and later the
+    edges among them. Every other depth is this plus growth."""
+    g, tg = _pair(both)
+    cut = cross.induced(g, tg, ["D01", "D04"], depth=0)
+    assert cut.decisions == ["D01", "D04"] and cut.tasks == []
+
+
+def test_one_hop_reaches_both_directions(both):
+    """A subgraph grows outward. D02 rests on D01 and opens D04, and a
+    neighbourhood that held only one of them would answer half the question
+    without saying which half."""
+    g, tg = _pair(both)
+    cut = cross.induced(g, tg, ["D02"], depth=1)
+    assert "D01" in cut.decisions and "D04" in cut.decisions
+
+
+def test_the_cone_crosses_into_the_other_store(both):
+    """The reason this lives in `cross` and not in `model`: seeded at a
+    decision, the walk reaches the work resting on it. A per-store closure
+    would return no tasks at all and the joined view's focus would be empty."""
+    g, tg = _pair(both)
+    cut = cross.induced(g, tg, ["D01"])
+    assert {"T01", "T02"} <= set(cut.tasks)
+
+
+def test_a_decision_is_reached_through_work(linked):
+    """The `evidence_for` direction. T04 is unconnected in the task store, so
+    the only way to it is through the decision its outcome informs."""
+    g, tg = _pair(linked)
+    assert "T04" in cross.induced(g, tg, ["D06"], depth=1).tasks
+
+
+def test_bridged_names_the_node_it_marks_not_some_other_record(both):
+    """The tooltip hangs on T03, so its sentence has to be about T03. Naming
+    only the crossing said `T02 rests on D01` on a mark the reader put their
+    pointer over to ask about T03."""
+    g, tg = _pair(both)
+    note = cross.induced(g, tg, ["D01"], depth=2).bridged["T03"]
+    assert note.startswith("T03 is here through the decision store:")
+    assert "T03 follows from T02" in note
+
+
+def test_nothing_is_bridged_when_the_walk_never_leaves_its_store(both):
+    """Seeded and grown among decisions alone, every node's route is drawable
+    on the decisions tab, and a mark would be noise. D03 is terminal and its
+    one neighbour is D01, so a single hop stays inside the decision store —
+    the work resting on D01 is a hop further out."""
+    g, tg = _pair(both)
+    cut = cross.induced(g, tg, ["D03"], depth=1)
+    assert cut.decisions == ["D01", "D03"] and cut.tasks == []
+    assert cut.bridged == {}
+
+
+def test_bridged_is_reachability_not_the_order_the_walk_happened_to_take(both):
+    """A node the reader can trace back to a seed over visible edges is not
+    bridged, however many hops that takes and whichever neighbour the walk
+    reached it from first. T02 sits behind T01 in the task store, and both are
+    in the slice, so T02's presence is explicable without leaving the tab."""
+    g, tg = _pair(both)
+    cut = cross.induced(g, tg, ["T01"])
+    assert "T02" in cut.tasks and "T02" not in cut.bridged
+    # ...while the decisions it reached through T01 are not traceable there.
+    assert "D01" in cut.bridged
+
+
+def test_a_seed_naming_no_record_is_reported_not_dropped(both):
+    """An empty slice and a slice of a misspelling are different facts, and a
+    caller that cannot tell them apart reads the second as the first."""
+    g, tg = _pair(both)
+    cut = cross.induced(g, tg, ["D01", "D99"], depth=0)
+    assert cut.decisions == ["D01"] and cut.unknown == ["D99"]
+
+
+def test_the_slice_keeps_an_answer_whose_targets_were_all_trimmed(both):
+    """A decision's answer lives on its edge. Dropping the edge because every
+    target fell outside the horizon would hand back a D01 with no answer —
+    the slice saying *still open* about a decision that is decided."""
+    g, tg = _pair(both)
+    cut = cross.induced(g, tg, ["D01"], depth=0)
+    out = cross.slice_stores(g, tg, cut)
+    edges = [e for e in out["decisions"]["edges"] if e["from"] == "D01"]
+    assert edges and edges[0]["to"] == []
+    assert any(e.get("answer") == "The root answer." for e in edges)
+
+
+def test_the_slice_says_what_it_had_to_cut(both):
+    """`boundary` is how a neighbourhood admits to being one, rather than
+    presenting itself as the whole graph."""
+    g, tg = _pair(both)
+    out = cross.slice_stores(g, tg, cross.induced(g, tg, ["D01"], depth=0))
+    assert "D02" in out["boundary"] and "D03" in out["boundary"]
+
+
+def test_a_slice_loads_back_and_validates_at_every_depth(both):
+    """The trimming has to leave two *stores*, not two dictionaries. A slice
+    naming a record it does not contain would fail `dg check` the moment
+    anybody pointed the tool at it."""
+    g, tg = _pair(both)
+    for depth in (0, 1, 2, None):
+        out = cross.slice_stores(g, tg, cross.induced(g, tg, ["D01"], depth=depth))
+        sub = Graph.from_dict(out["decisions"])
+        subt = TaskGraph.from_dict(out["tasks"])
+        bad = [v for v in (*sub.validate(), *subt.validate())
+               if getattr(v, "severity", "error") == "error"]
+        assert not bad, f"depth={depth}: {bad}"
+
+
+def test_a_trimmed_because_leaves_no_dangling_premise(both):
+    """T03 rests on D05. Slice around D01 at one hop and D05 is outside, so the
+    stored link has to go with it — and be reported, not just dropped."""
+    g, tg = _pair(both)
+    cut = cross.induced(g, tg, ["D01"], depth=1)
+    out = cross.slice_stores(g, tg, cut)
+    for row in out["tasks"]["tasks"]:
+        for did in row.get("because", []):
+            assert did in cut.ids
+
+
+def test_dg_find_subgraph_emits_both_pair(run_cli):
+    res = run_cli("find", "--subgraph", "--hops", "0", "id:D01")
+    assert res.exit_code == 0, res.output
+    out = json.loads(res.stdout)
+    assert set(out) >= {"decisions", "tasks"}
+    assert [v["id"] for v in out["decisions"]["vertices"]] == ["D01"]
+
+
+def test_dg_find_subgraph_ids_lists_the_slice_not_the_matches(run_cli):
+    """The matches are a seed. `--ids` under `--subgraph` has to print what the
+    slice holds, or the flag would silently mean something else here."""
+    res = run_cli("find", "--subgraph", "--hops", "1", "--ids", "id:D02")
+    assert res.exit_code == 0, res.output
+    assert set(res.stdout.split()) >= {"D01", "D02", "D04"}
+
+
+def test_dg_find_hops_without_subgraph_is_refused(run_cli):
+    """A flag that is accepted and ignored is the one mistake a run cannot
+    show you."""
+    res = run_cli("find", "--hops", "2", "id:D01")
+    assert res.exit_code == 2
+    assert "--hops needs --subgraph" in res.output
+
+
+def test_dg_find_subgraph_of_nothing_exits_one(run_cli):
+    """Same bargain as a report: exit 1 means the query was fine and nothing
+    came back."""
+    assert run_cli("find", "--subgraph", "id:D01 -id:D01").exit_code == 1
+
+
+def test_find_payload_answers_the_page_with_the_same_slice(both):
+    """The browser must not close over `derived` itself. Two answers to *what
+    is connected to D01* agree until the day they do not."""
+    from dgraph import server
+    g, tg = _pair(both)
+    got = server.find_payload("id:D01", 1, subgraph=True)["subgraph"]
+    want = cross.induced(g, tg, ["D01"], depth=1)
+    assert got["decisions"] == want.decisions and got["tasks"] == want.tasks
+
+
+def test_find_payload_without_the_parameter_carries_no_slice(both):
+    """Absent and empty differ: no `subgraph` at all is the plain filter."""
+    from dgraph import server
+    assert "subgraph" not in server.find_payload("id:D01")
