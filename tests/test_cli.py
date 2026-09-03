@@ -93,29 +93,29 @@ def test_check_names_the_rule_on_a_blocking_error(run, store, g):
 def test_apply_names_the_rule_when_it_aborts(run, store, g):
     """`dg apply` interpolates the same Violation strings via ApplyError.
 
-    Staged unexpanded, so the batch is the stale-block failure that `expand`
-    now prevents — the message still has to name the rule.
+    An edge that closes a cycle, staged raw — the message has to name the rule.
     """
     write(g)
-    pending.save([{"op": "close", "vertex": "D05", "answer": "yes",
-                   "source": "discussion", "falsifier": "f", "to": [],
-                   "date": "2026-02-01"}], store / ".dgraph-pending.json")
+    pending.save([{"op": "add_edge", "from": "D04", "to": ["D01"]}],
+                 store / ".dgraph-pending.json")
     res = run("apply")
     assert res.exit_code == 1
-    assert "[stale_block]" in res.output
+    assert "[acyclic]" in res.output
     assert "nothing written" in res.output
 
 
 def test_decide_reports_what_it_released(run, store, g):
-    """The CLI half of the propagation fix: `dg decide D05` stages D06 too."""
+    """`dg decide D05` stages the close and nothing else: D06 waited on D05 by
+    its edge, and stops waiting by derivation once D05 is settled (`D68`)."""
     write(g)
     # blank answer to the "opens which decisions?" prompt: D06 is already linked
     res = run("decide", "D05", "-a", "yes", "-s", "discussion", "-f", "f",
               input="\n")
     assert res.exit_code == 0
-    assert "released to OPEN: D06" in res.output
+    assert "released" not in res.output
     assert run("apply").exit_code == 0
-    assert Graph.load(store / "decisions.json").vertices["D06"].status == "OPEN"
+    after = Graph.load(store / "decisions.json")
+    assert after.vertices["D06"].status == "OPEN" and after.waiting_on("D06") == []
 
 
 def test_bracketed_store_text_survives_the_terminal(run, store, g):
@@ -203,9 +203,8 @@ def test_decide_edit_stages_the_close_and_the_release(run, store, g, stub_editor
                                 falsifier="the corpus changes"))
     res = run("decide", "D05", "--edit")
     assert res.exit_code == 0
-    assert "released to OPEN: D06" in res.output
     ops = pending.load(store / ".dgraph-pending.json")
-    assert [o["op"] for o in ops] == ["close", "set_status"]
+    assert [o["op"] for o in ops] == ["close"]
     assert ops[0]["answer"] == "Settle on 32k."
 
 
@@ -285,13 +284,14 @@ def test_add_without_edit_still_requires_its_flags(run, store, g):
 
 
 def test_deciding_a_blocked_vertex_warns_about_the_block(run, store, g):
-    """Audit C2. Closing a BLOCKED vertex silently discarded the block. It is
-    still allowed — sometimes the recorded blocker turns out irrelevant, and
-    there is deliberately no other exit — but now it is said out loud."""
+    """Audit C2, restated under `D68`. D06 waits on D05, which is open;
+    composing an answer is allowed — the tray is a draft — but the note says
+    `apply` will refuse it under `propagation`, and names the two ways out."""
     write(g)
     res = run("decide", "D06", "-a", "a", "-s", "s", "-f", "f")
     assert res.exit_code == 0
-    assert "BLOCKED:D05" in res.output and "did not matter" in res.output
+    assert "waits on D05" in res.output and "will refuse" in res.output
+    assert "dg undep D06 --after D05" in res.output
 
 
 # ---- import-md refuses to plant a contradiction (audit C8) ----------------
@@ -462,15 +462,16 @@ def test_edit_replaces_a_staged_op_in_place(run, store, g, stub_editor):
     stub_editor(lambda t: t.replace("First.", "Revised."))
     assert run("edit", "0").exit_code == 0
     after = pending.load(store / ".dgraph-pending.json")
-    assert len(after) == len(before)                 # replaced, not appended
+    assert len(after) == len(before) == 1            # replaced, not appended
     assert after[0]["answer"] == "Revised."
-    assert after[1] == before[1]                     # derived op untouched
 
 
 def test_edit_refuses_a_derived_op(run, store, g, stub_editor):
+    """A reopen derives the PROVISIONAL marks on the decided descendants; those
+    are the ops nobody typed, and `dg edit` refuses to open one."""
     write(g)
-    stub_editor(lambda t: _fill(t, answer="a", source="s", falsifier="f"))
-    run("decide", "D05", "--edit")
+    assert run("reopen", "D01", "--why", "w", "--yes").exit_code == 0
+    assert pending.load()[1]["op"] == "set_status"
     res = run("edit", "1")                           # the derived set_status
     assert res.exit_code == 1
     assert "derived" in res.output
@@ -840,18 +841,16 @@ def test_confirm_returns_it_to_decided(run, store, g):
 
 
 def test_confirm_releases_what_was_blocked_on_it(run, store, g):
-    """The release comes from `pending.expand`, so it cannot differ between the
-    commands that settle a vertex."""
+    """Confirming settles D05 and stages nothing for D06: it waited by its
+    edge and stops waiting by derivation (`D68`)."""
     write(g)
     gg = Graph.load(store / "decisions.json")
     gg.vertices["D05"] = replace(gg.vertices["D05"], status="PROVISIONAL")
     gg.save(store / "decisions.json")
     res = run("confirm", "D05")
     assert res.exit_code == 0
-    assert "D06" in res.output
     ops = pending.load(store / ".dgraph-pending.json")
-    assert {(o["vertex"], o["status"]) for o in ops} == {
-        ("D05", "DECIDED"), ("D06", "OPEN")}
+    assert {(o["vertex"], o["status"]) for o in ops} == {("D05", "DECIDED")}
 
 
 def test_reopen_then_confirm_round_trips(run, store, g):
@@ -1010,13 +1009,16 @@ def test_init_keeps_what_is_already_in_the_gitignore(fresh_repo):
     assert ".dgraph-*" in text
 
 
-def test_add_puts_a_blocks_implied_edge_in_the_tray(run, store):
-    """A block is a dependency, and `dg pending` is read by a person before it
-    is applied — structure that only materialises at apply time cannot be
-    reviewed. `_apply_one` adds it regardless; this keeps it visible."""
+def test_add_refuses_the_old_blocked_status_and_names_after(run, store):
+    """`--status BLOCKED:D05` was how a block was typed. It is refused with the
+    spelling that does the same thing now, which is the edge alone."""
     from dgraph import pending
     res = run("add", "--id", "D07", "--title", "x", "--area", "Alpha",
               "--status", "BLOCKED:D05", "--no-edit")
+    assert res.exit_code != 0 and "--after" in res.output
+    assert pending.load() == []
+    res = run("add", "--id", "D07", "--title", "x", "--area", "Alpha",
+              "--after", "D05", "--no-edit")
     assert res.exit_code == 0
     assert {"op": "add_edge", "from": "D05", "to": ["D07"]} in bare(pending.load())
 
@@ -1038,17 +1040,15 @@ def test_a_dependency_can_be_removed(run, store):
 
 
 def test_removing_a_block_releases_the_status_in_the_same_batch(run, store):
-    """`BLOCKED:D05` asserts the dependency being removed, so the status is
-    false the moment this applies. There is no judgement in the repair, and
-    `block_is_a_premise` is an error — leaving it would make `apply` refuse the
-    batch with a message about an invariant the user did not break."""
+    """Removing the edge D06 waited on is the whole act: nothing stored has
+    to be repaired beside it, because the wait was never stored (`D68`)."""
     from dgraph.model import Graph
     res = run("undep", "D06", "--after", "D05")
-    assert res.exit_code == 0 and "released to OPEN" in res.output
+    assert res.exit_code == 0 and "released" not in res.output
     assert run("apply").exit_code == 0
     g = Graph.load(store / "decisions.json")
-    assert g.vertices["D06"].status == "OPEN"
-    assert not [v for v in g.validate() if v.check == "block_is_a_premise"]
+    assert g.vertices["D06"].status == "OPEN" and g.waiting_on("D06") == []
+    assert not [v for v in g.validate() if v.blocking]
 
 
 def test_removing_a_dependency_reports_what_it_makes_odd(run):
@@ -1132,8 +1132,8 @@ def test_severing_removes_the_vertex_and_its_edges(run, store, archived):
 
 
 def test_removing_a_blocker_releases_what_it_blocked(run, store, archived):
-    """No judgement is available once the blocker is gone, so the status is
-    repaired rather than left for `status_legal` to refuse the batch over.
+    """Removing a premise leaves what rested on it OPEN and waiting on
+    nothing, with no repair to stage: the wait was in the edge that went.
 
     D04 is reopened first because its decided answer opens D05, and removing a
     vertex a decided answer names is refused — see below. Reopening is the way
@@ -1143,9 +1143,10 @@ def test_removing_a_blocker_releases_what_it_blocked(run, store, archived):
     assert run("reopen", "D04", "--why", "premise moved", "-y").exit_code == 0
     assert run("apply").exit_code == 0
     res = run("rm", "D05", "--yes")
-    assert "releases" in res.output and "D06" in res.output
+    assert res.exit_code == 0
     assert run("apply").exit_code == 0
-    assert Graph.load(store / "decisions.json").vertices["D06"].status == "OPEN"
+    after = Graph.load(store / "decisions.json")
+    assert after.vertices["D06"].status == "OPEN" and after.waiting_on("D06") == []
 
 
 def test_removing_a_vertex_a_decided_answer_opens_says_what_it_moves(run, store, archived):
@@ -1277,21 +1278,20 @@ def test_a_dependency_can_be_added_between_existing_vertices(run, store):
     assert Graph.load(store / "decisions.json").depends("D08") == ["D07"]
 
 
-def test_dep_is_the_remedy_block_is_a_premise_names(run, store):
-    """The check shipped pointing only at `dg decide`, which works solely if
-    the blocker is being answered now. Where the dependency is real and only
-    the edge was forgotten, that left clearing a true status as the only move."""
+def test_severing_a_premise_ends_the_wait_with_no_finding(run, store):
+    """The finding `block_is_a_premise` used to raise here — a status naming a
+    premise the edge list did not hold — cannot arise: sever the edge and the
+    vertex simply waits on one premise fewer (`D68`)."""
     from dgraph.model import Graph
     g = Graph.load(store / "decisions.json")
-    g.active_edge("D05").to.remove("D06")          # D06 is BLOCKED:D05
+    g.active_edge("D05").to.remove("D06")
     g.save(store / "decisions.json")
-    hit = [v for v in Graph.load(store / "decisions.json").validate()
-           if v.check == "block_is_a_premise"]
-    assert hit and "dg dep D06 --after D05" in str(hit[0])
+    after = Graph.load(store / "decisions.json")
+    assert after.waiting_on("D06") == []
+    assert not [v for v in after.validate() if v.blocking]
     assert run("dep", "D06", "--after", "D05").exit_code == 0
     assert run("apply").exit_code == 0
-    assert not [v for v in Graph.load(store / "decisions.json").validate()
-                if v.check == "block_is_a_premise"]
+    assert Graph.load(store / "decisions.json").waiting_on("D06") == ["D05"]
 
 
 def test_dep_onto_an_answered_premise_is_allowed(run, store):
@@ -1637,14 +1637,9 @@ def test_editing_a_close_supersedes_nothing(run, store, g, stub_editor):
 
 
 def test_undep_stages_its_release_in_the_same_write(run, store, g, monkeypatch):
-    """Audit F31. The comment above the release already claimed 'the same
-    batch'; it was two writes, safe only because the intermediate happens to
-    trip `block_is_a_premise` — and that refusal lands on whichever *other*
-    writer applied in the window, over an invariant they had not broken.
-
-    Asserted on what the tray is asked to hold at each write, not on where it
-    ends up: both versions end up the same, and only one of them ever puts a
-    `remove_edge` in the tray without the release that makes it legal.
+    """Audit F31, kept under `D68`. The release that had to travel in the same
+    write is gone — there is nothing stored to release — so the act is one op
+    in one write, and this pins that it stays one write.
     """
     write(g)
     seen = []
@@ -1654,13 +1649,8 @@ def test_undep_stages_its_release_in_the_same_write(run, store, g, monkeypatch):
                                                 real(ops, path))[1])
     res = run("undep", "D06", "--after", "D05")
     assert res.exit_code == 0
-    assert [len(s) for s in seen] == [2], seen
-    assert [o["op"] for o in seen[-1]] == ["remove_edge", "set_status"]
-    # `derived_from` says which settlement produced it — the same stamp
-    # `expand` puts on a propagated status, and what tells `pending.vet` this
-    # is a derived op rather than a status somebody wrote by hand.
-    assert bare(seen[-1][1]) == {"op": "set_status", "vertex": "D06",
-                                 "status": "OPEN", "derived_from": "D05"}
+    assert [len(s) for s in seen] == [1], seen
+    assert [o["op"] for o in seen[-1]] == ["remove_edge"]
     monkeypatch.setattr(pending, "save", real)
     assert run("apply").exit_code == 0
 

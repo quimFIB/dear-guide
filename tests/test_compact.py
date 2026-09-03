@@ -92,7 +92,7 @@ def test_no_prose_at_all_is_the_empty_string():
 
 
 ROWS = [("D01", "DECIDED", "A short one", "waits D00"),
-        ("D02", "BLOCKED", "A very much longer title than the other", "")]
+        ("D02", "REOPENED", "A very much longer title than the other", "")]
 
 
 def test_an_id_is_never_clipped_however_narrow_the_width():
@@ -106,7 +106,7 @@ def test_the_columns_line_up():
     """The whole value of a listing over a paragraph is reading down one
     column, so a title is padded even where the aside beside it is empty."""
     a, b = compact.listing(ROWS, width=100)
-    assert a.index("DECIDED") == b.index("BLOCKED")
+    assert a.index("DECIDED") == b.index("REOPENED")
 
 
 def test_a_long_title_is_clipped_with_an_ellipsis():

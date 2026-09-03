@@ -591,8 +591,7 @@ def test_a_taken_id_is_renamed_rather_than_put_to_a_person(g):
 
 
 def test_a_rename_carries_every_place_the_id_hid(g):
-    """The two that are easy to forget are the two that fail *silently*: a
-    `BLOCKED:<id>` status is a dependency written into a string, and
+    """The ones that are easy to forget are the ones that fail *silently*:
     `because` / `evidence_for` are ids in the **other** store's file — which is
     where a decision-id collision crosses over and quietly rewrites what a
     task's premise points at."""
@@ -600,7 +599,7 @@ def test_a_rename_carries_every_place_the_id_hid(g):
         {"op": "add_vertex", "id": "D07", "title": "t", "area": "Alpha",
          "status": "OPEN"},
         {"op": "add_vertex", "id": "D08", "title": "u", "area": "Alpha",
-         "status": "BLOCKED:D07"},
+         "status": "OPEN"},
         {"op": "add_edge", "from": "D07", "to": ["D08"]},
     ]
     t_ops = [{"op": "add_task", "id": "T90", "title": "w", "area": "Alpha",
@@ -610,7 +609,6 @@ def test_a_rename_carries_every_place_the_id_hid(g):
     integrate.rename_collisions(d_ops, t_ops, ours, None,
                                 lambda p, taken: f"{p}99")
     assert d_ops[0]["id"] == "D99"
-    assert d_ops[1]["status"] == "BLOCKED:D99"
     assert d_ops[2]["from"] == "D99" and d_ops[2]["to"] == ["D08"]
     assert t_ops[0]["because"] == "D99"
 

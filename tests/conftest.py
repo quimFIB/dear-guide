@@ -32,8 +32,11 @@ FIXTURE = {
         {"id": "D04", "title": "Downstream", "area": "Beta", "status": "DECIDED"},
         {"id": "D05", "title": "Still open", "area": "Beta", "status": "OPEN",
          "note": "Nobody has decided this yet."},
+        # Waits on D05 by the edge below and nothing else: there is no stored
+        # blocked status (`D68`). `test_an_old_store_folds_blocked_to_open`
+        # loads the pre-D68 spelling on purpose.
         {"id": "D06", "title": "Waiting on D05", "area": "Beta",
-         "status": "BLOCKED:D05"},
+         "status": "OPEN"},
     ],
     "edges": [
         {"from": "D01", "to": ["D02", "D03"], "active": True,

@@ -33,19 +33,20 @@ A **vertex** is a question the project must answer — *"Which distance
 metric?"*, not *"Build the index"*. It carries an explicit status:
 
 ```
-DECIDED · OPEN · BLOCKED:<id> · REOPENED · PROVISIONAL
+DECIDED · OPEN · REOPENED · PROVISIONAL
 ```
 
 An **edge** is a dependency: *this question only becomes answerable once that
 one is settled*. When you answer a question, the edge gains a payload — the
 answer, a source, a falsifier, a date.
 
-`BLOCKED:<id>` is the one status that names another vertex, and it is a
-dependency claim like any other — so it has to be backed by an edge. Saying
-`--status BLOCKED:D03` records that edge for you, and `dg check` refuses a
-store where the two disagree (`block_is_a_premise`). A dependency kept in a
-status field instead of the edge list is the second copy this model exists to
-prevent, and the one that can contradict the first.
+There is no *blocked* status. Whether a vertex is waiting is read off its
+edges — it waits on whichever of its premises is unsettled — the way a task's
+readiness always was. There used to be one, `BLOCKED:<id>`, and it was a
+dependency written into a status field: the second copy this model exists to
+prevent, and the one that can contradict the first. Two rules kept it honest,
+and both went with it. A store that still spells a vertex that way is folded
+to `OPEN` on load.
 
 So a nearest-neighbour search service looks like this:
 
@@ -75,7 +76,7 @@ dg add --id D01 --title "Exact or approximate search?"        --area Search
 dg add --id D02 --title "Which distance metric?"              --area Search  --after D01
 dg add --id D03 --title "How are queries spread across cores?" --area Serving --after D01
 dg add --id D04 --title "How does the index absorb new documents?" --area Index \
-       --after D03 --status BLOCKED:D03
+       --after D03
 dg apply
 ```
 
@@ -83,11 +84,11 @@ dg apply
 each item is waiting for:
 
 ```
-FRONTIER  4 not settled of 4   BLOCKED 1  OPEN 3
-  D01  OPEN     Exact or approximate search?         ·  decidable now
-  D02  OPEN     Which distance metric?               ·  waits D01
-  D03  OPEN     How are queries spread across core…  ·  waits D01 · unblocks D04
-  D04  BLOCKED  How does the index absorb new docu…  ·  waits D03
+FRONTIER  4 not settled of 4   OPEN 4
+  D01  OPEN  Exact or approximate search?         ·  decidable now
+  D02  OPEN  Which distance metric?               ·  waits D01
+  D03  OPEN  How are queries spread across core…  ·  waits D01 · unblocks D04
+  D04  OPEN  How does the index absorb new docu…  ·  waits D03
   `dg show --full` for the table, nothing clipped
 ```
 
@@ -144,8 +145,9 @@ FRONTIER  1 not settled of 4   DECIDED 3  OPEN 1
   D04  OPEN  How does the index absorb new documents?  ·  decidable now · Index
 ```
 
-D04 went from `BLOCKED:D03` to `OPEN` on its own. Settling D03 released
-everything blocked on it — derived, never typed. Working that out by hand
+D04 went from `waits D03` to `decidable now` on its own. Nothing was written
+for that: what a vertex waits on is derived from its edges, so settling D03
+released everything resting on it by construction. Working that out by hand
 across a real graph is exactly the mistake the tool exists to prevent.
 
 ## Six months later: the falsifier fires
@@ -385,8 +387,8 @@ base pick the same id for *every* record either adds.
 
 The rename happens **inside the arriving contribution**, where the association
 between an edge and its vertex is still intact, and it follows the id into
-every place it hides: an edge's `from` and `to`, a `BLOCKED:<id>` status,
-and `because` / `evidence_for` in the *other* store's file. On a flattened
+every place it hides: an edge's `from` and `to`, and `because` /
+`evidence_for` in the *other* store's file. On a flattened
 file — one array, two `D50`s, four bare id strings — repair is guesswork. That
 is why there is no `dg renumber` and never will be.
 
@@ -771,10 +773,10 @@ T04  TODO  Wire the shard fan-out and the merge path  [Serving]
 CHAIN  D01 → D02 → D04! → D05! → T04    ! = not settled
   ...
 
-BECAUSE  D05  BLOCKED  How many shards, and how are results merged?
+BECAUSE  D05  OPEN  How many shards, and how are results merged?
          not settled
 
-→ this work waits on D05 (BLOCKED), which is not settled — starting it now is
+→ this work waits on D05 (OPEN), which is not settled — starting it now is
   a bet on the answer
 ```
 

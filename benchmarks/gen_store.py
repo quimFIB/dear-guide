@@ -12,7 +12,7 @@ of the error path. So the shape here is constrained by `Graph.validate` and
   edge count alone, and the traversal numbers are not silently a depth sweep.
 - **Unsettled work lives at the bottom.** `propagation` refuses a DECIDED
   vertex resting on an unsettled premise, so every OPEN vertex is a sink in the
-  last layer. A slice of them then point (with an answerless edge) at BLOCKED
+  last layer. A slice of them then point (with an answerless edge) at waiting
   and PROVISIONAL vertices, which is the only arrangement in which those two
   statuses are legal *and* clean: a block must be backed by an edge, and a
   PROVISIONAL vertex must have an unsettled ancestor or `stale_provisional`
@@ -72,8 +72,8 @@ def build_decisions(n: int, degree: int, *, seed: int = 7,
 
     last = LAYERS - 1
     bottom = by_layer.get(last, [])
-    # The bottom layer splits three ways: OPEN sinks, and the BLOCKED and
-    # PROVISIONAL vertices that hang off them.
+    # The bottom layer splits three ways: OPEN sinks, and the waiting (OPEN
+    # under an open premise) and PROVISIONAL vertices that hang off them.
     n_open = max(1, len(bottom) * 3 // 5)
     opens = bottom[:n_open]
     rest = bottom[n_open:]
@@ -96,7 +96,7 @@ def build_decisions(n: int, degree: int, *, seed: int = 7,
         parent = opens[i % len(opens)]
         edges.append({"from": parent, "to": [vid], "active": True})
         if vid in blocked:
-            status[vid] = f"BLOCKED:{parent}"
+            status[vid] = "OPEN"          # waits on `parent` by the edge
 
     for i, vid in enumerate(ids):
         l = layer[vid]

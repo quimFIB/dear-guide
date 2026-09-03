@@ -28,7 +28,9 @@ create a graph uninvited.
 Vertices and edges, nothing else.
 
 - A **vertex** is a decision the project must make, carrying an explicit status:
-  `DECIDED` · `OPEN` · `BLOCKED:<id>` · `REOPENED` · `PROVISIONAL`.
+  `DECIDED` · `OPEN` · `REOPENED` · `PROVISIONAL`. Whether it *waits* is not a
+  status: an `OPEN` vertex waits on whichever of its premises is unsettled,
+  read off the edges, and `dg show` says `waits D04` beside it.
 - An **edge** is a dependency, which gains a payload — answer, falsifier, source,
   date — once that decision is made. An edge with no answer means *B depends on
   A, and A is not settled yet*.

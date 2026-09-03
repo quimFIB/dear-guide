@@ -31,7 +31,7 @@ service.
 
 ```
 D01 exact or approximate? ─┬─ D02 which index? ──── D04 efSearch ─── D05 sharding
-        DECIDED            │   DECIDED               OPEN            BLOCKED:D04
+        DECIDED            │   DECIDED               OPEN            OPEN, waits D04
                            │   (IVF-PQ superseded)   ← decide this
                            │
                            └─ D03 which metric? ──── D07 where is unit norm
@@ -84,9 +84,9 @@ and the taxonomy it belongs to is not.
    `dg export`. `C-c d p` is the parent, `C-c d a` the ancestor chain. Under
    Doom the popup takes focus; `q` comes back.
 6. **`C-c C-c`.** Emacs checks the required fields are filled, saves, exits. The
-   browser stages the decision **and** `D05 → OPEN`, because it was
-   `BLOCKED:D04` and nothing blocks it any more. That propagation is derived,
-   never typed.
+   browser stages the decision, and D05 — which waited on D04 by its edge —
+   is decidable the moment it applies. Nothing is typed for that: waiting is
+   read off the edges, never stored.
 7. **Press Apply.** Only now is `decisions.json` written. The readable view is
    built on demand: `dg render` when you want `decision-graph.md`.
 
@@ -322,7 +322,8 @@ one a prerequisite list cannot tell you.
   to interrupt someone.
 - **+ new** in the header. In **joined** it asks which store you mean, because
   the tab has not answered that and guessing is how work gets filed as a
-  decision. Choosing `BLOCKED` stages the dependency as an *edge*.
+  decision. What it rests on is the *edge*; a vertex waits on whichever of
+  its premises is unsettled.
 - **Edit structure** on any panel. Removing a prerequisite or a `because` says
   what it sets loose *before* staging anything — including any new `dg check`
   finding it would introduce. Try removing D02's premise: refused, because D01

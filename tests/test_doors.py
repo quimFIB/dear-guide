@@ -114,11 +114,11 @@ ADD_CASES = [
          "--after", "D01,D02"],
         id="after"),
     pytest.param(
-        {"id": "D07", "title": "Blocked on another", "area": "Beta",
-         "status": "BLOCKED:D04"},
-        ["add", "--id", "D07", "--title", "Blocked on another", "--area", "Beta",
-         "--status", "BLOCKED:D04"],
-        id="blocked"),
+        {"id": "D07", "title": "Waiting on another", "area": "Beta",
+         "after": ["D05"]},
+        ["add", "--id", "D07", "--title", "Waiting on another", "--area", "Beta",
+         "--after", "D05"],
+        id="waiting"),
     pytest.param(
         {"id": "D07", "title": "With a note", "area": "Alpha",
          "note": "Nobody has looked at this yet."},
@@ -143,19 +143,15 @@ def test_add_stages_the_same_ops_through_both_doors(srv, store, body, args):
 
 
 def test_a_blocked_status_stages_its_edge_from_the_browser(srv, store):
-    """`BLOCKED:X` asserts a dependency, and dependency is the edge list.
-
-    The status alone would be a second copy of the structure — the one thing
-    both stores refuse to keep. `BLOCKED` buys emphasis in `dg show`, not a
-    fact: `waiting_on` and the frontier derive from edges and statuses
-    together, so an OPEN vertex resting on an unsettled premise reads correctly
-    everywhere without it. Anything that learns to write a block stages the
-    edge too, the way `dg add --status BLOCKED:X` already does.
-    """
+    """The paragraph this test used to carry was already the argument for
+    `D68`: `waiting_on` and the frontier derive from edges, so an OPEN vertex
+    resting on an unsettled premise reads correctly everywhere without a
+    status saying so. The status is now refused at this door as at every
+    other, with the remedy named."""
     code, res = post(srv, "/api/add", {
         "id": "D07", "title": "Blocked", "area": "Alpha", "status": "BLOCKED:D04"})
-    assert code == 200, res
-    assert {"op": "add_edge", "from": "D04", "to": ["D07"]} in bare(res["staged"])
+    assert code != 200 or "error" in res, res
+    assert "--after" in str(res)
 
 
 def test_the_browser_refuses_what_the_command_refuses(srv, store):
@@ -437,7 +433,7 @@ const want = (html, ids, what) => ids.forEach(i => {
   if (!html.includes(\`id="\${i}"\`)) throw new Error(what + " has no " + i);
 });
 newDecisionForm();
-want(side.innerHTML, ["nId","nTitle","nArea","nStatus","nBlocker","nAfter",
+want(side.innerHTML, ["nId","nTitle","nArea","nStatus","nAfter",
                       "nNote","nGo","nNo"], "the decision form");
 if (!side.innerHTML.includes(\`value="\${G.next_id}"\`))
   throw new Error("the id was not prefilled with " + G.next_id);
@@ -658,17 +654,13 @@ def test_structure_refuses_the_same_thing_through_both_doors(
 
 
 def test_removing_a_block_releases_it_in_the_same_op_list(srv, store):
-    """`BLOCKED:P` asserts a dependency on P. Remove the edge carrying it and
-    the status is false the moment it applies, so the release is composed into
-    the same list rather than left for a second act — F31."""
+    """F31's release travelled in the same list as the `remove_edge`. Under
+    `D68` there is no release to travel: the wait was the edge."""
     code, res = post(srv, "/api/dep",
                      {"verb": "undep", "id": "D06", "after": ["D05"]})
     assert code == 200, res
-    ops = bare(res["staged"])
-    assert {"op": "remove_edge", "from": "D05", "to": ["D06"]} in ops
-    assert {"op": "set_status", "vertex": "D06", "status": "OPEN",
-            "derived_from": "D05"} in ops
-    assert any("released to OPEN" in n for n in res["notes"])
+    assert bare(res["staged"]) == [{"op": "remove_edge", "from": "D05", "to": ["D06"]}]
+    assert not any("released" in n for n in res["notes"])
 
 
 def test_the_seam_may_only_be_edited_from_the_task_side(srv, both):
@@ -722,7 +714,7 @@ def test_the_fallout_names_the_findings_a_removal_would_introduce(srv, store):
     code, res = post(srv, "/api/fallout", {
         "store": "decisions", "verb": "undep", "id": "D06", "after": ["D05"]})
     assert code == 200, res
-    assert res["releases"] == ["D06 is released to OPEN — it was BLOCKED:D05"]
+    assert res["releases"] == []
     assert any("no_orphans" in f for f in res["findings"])
 
 

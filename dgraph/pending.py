@@ -1497,11 +1497,9 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
     - **the edges are part of the op list, not a consequence of it.** A vertex
       staged without them is only a `no_orphans` *warning*, so unlike every
       other group in this module a half-staged add can be applied and pass.
-    - **`BLOCKED:<id>` stages its edge too.** A block asserts a dependency, and
-      dependency is the edge list — never a second copy in a status field. The
-      blocker joins `after` here so that `dg pending` shows the structure a
-      person is about to write, rather than having it materialise at apply time
-      out of a status string.
+    - **there is no blocked status to stage.** A vertex waits when a premise
+      it rests on is unsettled, which is `--after` and nothing else; the
+      `BLOCKED:<id>` form is refused with the flag to use instead (`D68`).
     - **the graph-facing refusals happen before anything is staged**, so a typo
       is reported by the act that contains it rather than by `apply`, several
       acts later, in a tray shared with another writer.
@@ -1553,14 +1551,11 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
         raise ApplyError(f"unknown parent(s): {', '.join(unknown)}")
     fault = status_fault(status, g.vertices, of=vid)
     if fault is not None:
+        # The fault's own sentence: for the pre-`D68` `BLOCKED:<id>` it names
+        # the remedy (`--after`), which "illegal status" would have hidden.
         raise ApplyError(
-            f"illegal status {status!r}\n"
-            f"one of {', '.join(sorted(SIMPLE_STATUSES))}, "
-            f"or BLOCKED:<existing id>")
-    if status.startswith("BLOCKED:"):
-        blocker = status.split(":", 1)[1]     # `status_fault` proved it exists
-        if blocker not in after:
-            after.append(blocker)
+            f"{fault}\n"
+            f"one of {', '.join(sorted(SIMPLE_STATUSES))}")
     op = {"op": "add_vertex", "id": vid, "title": title,
           "area": area, "status": status}
     if note:
@@ -1599,8 +1594,8 @@ def compose_dep(g: Graph, *, vid: str,
 
 
 def compose_undep(g: Graph, *, vid: str,
-                  after: list[str]) -> tuple[list[dict], str | None]:
-    """`(ops, blocker_released)` for removing premises of `vid`.
+                  after: list[str]) -> list[dict]:
+    """The ops for removing premises of `vid`.
 
     A decided premise is edited like a bare one. It was refused until `D57`,
     which settled that an edge's targets belong to the graph and not to the
@@ -1608,14 +1603,11 @@ def compose_undep(g: Graph, *, vid: str,
     `reopen` goes on guarding the half that is one. The caller says what the
     edit reinterprets through `retargets`; this composes it either way.
 
-    The `set_status` in the op list is the one repair here with no judgement in
-    it, so it is made rather than asked about: `BLOCKED:P` asserts a dependency
-    on P, and the edge carrying that dependency is being removed, so the status
-    is false the moment this applies. It goes in the **same list**, and
-    therefore the same write, because `block_is_a_premise` is an error and
-    `apply_all` would otherwise refuse the whole batch over an invariant the
-    user did not break — audit F31, and the reason this is composed in one
-    place rather than assembled at each door.
+    This used to append a `set_status` to OPEN when the premise removed was
+    the one a `BLOCKED:P` status named — a repair with no judgement in it, made
+    in the same write so `block_is_a_premise` could not refuse the batch. There
+    is nothing to repair now: whether `vid` waits is read off the edges that
+    remain (`D68`).
     """
     if vid not in g.vertices:
         raise ApplyError(f"unknown vertex {vid}")
@@ -1624,14 +1616,7 @@ def compose_undep(g: Graph, *, vid: str,
     if unknown:
         raise ApplyError(f"{vid} does not rest on {', '.join(unknown)}\n"
                          f"`dg node {vid}` lists its premises")
-    ops = [{"op": "remove_edge", "from": p, "to": [vid]} for p in after]
-    blocker = g.vertices[vid].blocker
-    released = (g.vertices[vid].base_status == "BLOCKED"
-                and blocker in after)
-    if released:
-        ops.append({"op": "set_status", "vertex": vid, "status": "OPEN",
-                    "derived_from": blocker})
-    return ops, (blocker if released else None)
+    return [{"op": "remove_edge", "from": p, "to": [vid]} for p in after]
 
 
 def compose_confirm(g: Graph, *, vid: str) -> list[dict]:
@@ -1656,9 +1641,8 @@ def compose_confirm(g: Graph, *, vid: str) -> list[dict]:
       unsettled, PROVISIONAL is the *accurate* status, and re-affirming would
       claim a conclusion the graph cannot support.
 
-    Expanded, not bare: settling a vertex releases everything `BLOCKED:` on it,
-    and leaving that to the caller is how a block goes stale and `apply`
-    refuses the whole batch.
+    Expanded, not bare, for the PROVISIONAL marks a reopen derives; nothing
+    is released by settling any more, since waiting is read off the edges.
     """
     v = g.vertices.get(vid)
     if v is None:
@@ -1722,9 +1706,9 @@ def expand(g: Graph, op: dict) -> list[dict]:
 
     - Reopening a vertex puts every decided descendant on a premise under
       review, so each becomes PROVISIONAL.
-    - Settling a vertex releases everything `BLOCKED:` on it. Without this the
-      block goes stale, `apply` refuses the whole batch, and the remedy — one
-      `set_status` per blocked vertex — is left to be worked out by hand.
+    - Settling a vertex used to release everything `BLOCKED:` on it. It
+      releases nothing now: a vertex that rests on a settled premise stops
+      waiting by derivation, with no op to write (`D68`).
 
     Computing either by hand across the graph is the mistake the validator
     exists to catch, so the tool does it.
@@ -1738,14 +1722,6 @@ def expand(g: Graph, op: dict) -> list[dict]:
                     "derived_from": op["vertex"],
                 })
 
-    settled = _settles(op)
-    if settled is not None:
-        for vid, v in sorted(g.vertices.items()):
-            if v.base_status == "BLOCKED" and v.blocker == settled:
-                out.append({
-                    "op": "set_status", "vertex": vid, "status": "OPEN",
-                    "derived_from": settled,
-                })
     return out
 
 
@@ -1808,22 +1784,6 @@ def _apply_one(g: Graph, op: dict) -> None:
             # the tag describes the note; without one it describes nothing
             format=op.get("format") if op.get("note") else None,
         )
-        # `BLOCKED:X` asserts a dependency, and dependency is the graph
-        # structure — a status field holding one is the second copy this model
-        # exists to refuse. Recorded here rather than in the callers so that
-        # every route in (the CLI, the editor, the web app) agrees by
-        # construction and `block_is_a_premise` cannot be broken by whichever
-        # one forgets. `add_edge` unions, so a caller that stages the edge
-        # itself — as `dg add` does, to keep it visible in the tray — costs
-        # nothing.
-        #
-        # A blocker that names no vertex, or names this one, is left alone:
-        # `status_legal` reports both, and inventing an edge to an id that does
-        # not resolve would turn a clear finding into a dangling reference.
-        blocker = g.vertices[op["id"]].blocker
-        if blocker and blocker != op["id"] and blocker in g.vertices:
-            _apply_one(g, {"op": "add_edge", "from": blocker,
-                           "to": [op["id"]]})
         return
 
     vid = op.get("vertex") or op.get("from")
@@ -1878,14 +1838,6 @@ def _apply_one(g: Graph, op: dict) -> None:
         g.edges = [e for e in g.edges
                    if e.src != vid and (e.to or e.decided or not e.active)]
         del g.vertices[vid]
-        # `BLOCKED:<removed>` names a vertex that no longer exists. No
-        # judgement is available — the blocker is gone — so the status is
-        # repaired here rather than left for `status_legal` to refuse a batch
-        # over an invariant the caller did not break. `dg confirm` releases
-        # blocked vertices to OPEN the same way.
-        for other, v in list(g.vertices.items()):
-            if v.blocker == vid:
-                g.vertices[other] = _dc_replace(v, status="OPEN")
         return
 
     if kind == "set_status":

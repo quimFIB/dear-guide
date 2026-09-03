@@ -209,9 +209,8 @@ def test_compose_stages_what_the_editor_returned(srv, monkeypatch):
     op = body["staged"][0]
     assert op["op"] == "close" and op["vertex"] == "D05"
     assert op["answer"] == "Chose the small one."
-    # the same propagation the CLI does: D06 was BLOCKED:D05
-    assert {"op": "set_status", "vertex": "D06", "status": "OPEN",
-            "derived_from": "D05"} in body["staged"]
+    # and nothing for D06: it waits on D05 by its edge, and stops by derivation
+    assert [o["op"] for o in body["staged"]] == ["close"]
     assert body["pending"] == pending.load()
 
 
@@ -536,8 +535,8 @@ def test_one_apply_writes_both_stores(srv, dual):
          {"op": "set_status", "task": "T02", "status": "DOING"})
     code, body = jreq(srv, "/api/apply", "POST")
     assert code == 200, body
-    # 2 decision ops: closing D05 also unstacks D06, which was BLOCKED:D05.
-    assert (body["applied"], body["applied_tasks"]) == (2, 1)
+    # 1 decision op: closing D05 stages nothing for D06, which waits by edge.
+    assert (body["applied"], body["applied_tasks"]) == (1, 1)
     assert Graph.load(dual / "decisions.json").vertices["D05"].status == "DECIDED"
     assert TaskGraph.load(dual / "tasks.json").tasks["T02"].status == "DOING"
     assert pending.load() == [] and pending.load(task_pending.path()) == []
@@ -562,7 +561,7 @@ def test_a_refused_task_batch_does_not_stop_a_decision_batch(srv, dual):
     pending.stage({"op": "set_status", "task": "T02", "status": "DONE"},
                   task_pending.path())
     code, body = jreq(srv, "/api/apply", "POST")
-    assert code == 500 and body["applied"] == 2 and body["applied_tasks"] == 0
+    assert code == 500 and body["applied"] == 1 and body["applied_tasks"] == 0
     assert "task batch refused" in body["error"]
     assert Graph.load(dual / "decisions.json").vertices["D05"].status == "DECIDED"
     assert TaskGraph.load(dual / "tasks.json").tasks["T02"].status == "TODO"

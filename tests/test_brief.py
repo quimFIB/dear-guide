@@ -87,7 +87,7 @@ def test_brief_marks_a_decidable_frontier_vertex(run, store, g):
     out = run("brief").output
     assert "decidable now" in out
     assert "unblocks D06" in out          # deciding D05 releases D06
-    assert "waiting on D05" in out        # D06 is BLOCKED:D05
+    assert "waiting on D05" in out        # D06 rests on the open D05
 
 
 def test_brief_survives_a_note_containing_newlines(run, store, g):

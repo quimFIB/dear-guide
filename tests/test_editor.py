@@ -176,24 +176,23 @@ def test_add_round_trips_into_two_ops(g, store, fake_emacs):
     assert ops[1] == {"op": "add_edge", "from": "D05", "to": [ops[0]["id"]]}
 
 
-def test_a_composed_block_records_its_dependency(g, store, fake_emacs):
-    """A block is a dependency, and the buffer must produce a batch that reads
-    as what it does — `_apply_one` adds the edge anyway, so a batch missing it
-    would gain structure the composer never saw."""
+def test_a_composed_block_is_refused_with_the_remedy(g, store, fake_emacs):
+    """The buffer's Status field used to accept `BLOCKED:D05` and stage the
+    edge it implied. The wait is the edge alone now (`D68`): the status is
+    refused naming `After`, and a buffer with `After: D05` composes it."""
     fake_emacs(lambda t: _status(fill(t, title="Blocked on D05", area="Beta"),
                                  "BLOCKED:D05"))
-    ops = editor.compose(g, "add_vertex")
-    assert ops[0]["status"] == "BLOCKED:D05"
-    assert ops[1] == {"op": "add_edge", "from": "D05", "to": [ops[0]["id"]]}
+    with pytest.raises(editor.EditorError, match="not stored"):
+        editor.compose(g, "add_vertex")
 
 
-def test_a_composed_block_does_not_duplicate_an_explicit_parent(g, store,
-                                                                fake_emacs):
-    fake_emacs(lambda t: _status(
-        fill(t, title="Blocked on D05", area="Beta", after="D05"),
-        "BLOCKED:D05"))
+def test_a_parent_in_after_makes_the_vertex_wait(g, store, fake_emacs):
+    fake_emacs(lambda t: fill(t, title="Waits on D05", area="Beta", after="D05"))
     ops = editor.compose(g, "add_vertex")
-    assert len(ops) == 2 and ops[1]["from"] == "D05"
+    assert len(ops) == 2 and ops[1] == {"op": "add_edge", "from": "D05",
+                                        "to": [ops[0]["id"]]}
+    out = pending.apply_all(g, ops)
+    assert out.waiting_on(ops[0]["id"]) == ["D05"]
 
 
 def test_comments_and_org_escapes_are_stripped(g, store, fake_emacs):
@@ -715,9 +714,9 @@ Alpha
 {}
 """)
     for bad, says in (("DONE", "illegal status 'DONE'"),
-                      ("BLOCKED", "BLOCKED must name a blocker"),
-                      ("BLOCKED:D99", "blocked by unknown vertex D99"),
-                      ("BLOCKED:D07", "blocked by itself")):
+                      ("BLOCKED", "BLOCKED is not stored"),
+                      ("BLOCKED:D99", "BLOCKED is not stored"),
+                      ("BLOCKED:D07", "BLOCKED is not stored")):
         with pytest.raises(editor.EditorError) as exc:
             editor.parse(buf.format(bad), g=g, expect_kind="add_vertex")
         assert says in str(exc.value)

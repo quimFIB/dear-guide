@@ -283,8 +283,8 @@ The shape is constrained by what the tool accepts, not chosen freely:
 
 - Unsettled decisions are sinks in the last layer, because `propagation`
   refuses a DECIDED vertex resting on an unsettled premise.
-- BLOCKED and PROVISIONAL vertices hang off those sinks, which is the only
-  arrangement where both statuses are legal *and* clean.
+- Waiting (OPEN under an open premise) and PROVISIONAL vertices hang off those
+  sinks, which is the only arrangement where both are legal *and* clean.
 - 15% of decided vertices carry a superseded edge with its own answer,
   falsifier and `why`, so the archive is in the measurement — `dg find` reads
   it unless `--active` is passed.

@@ -727,13 +727,11 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         if name == "id":
             out = [vid]
         if name == "status":
-            # Both forms, because a blocked vertex stores `BLOCKED:D05` — the
-            # premise is part of the string. `status:` matches exactly now, and
-            # `BLOCKED` is what the listing shows and therefore what a reader
-            # types; offering the base as well as the stored value keeps that
-            # working, and keeps `status:BLOCKED:D05` — "blocked on *that*" —
-            # available for anyone who wants it.
-            out = _texts(dict.fromkeys([v.base_status, v.status]))
+            # One form: the stored status. It used to offer `BLOCKED` beside
+            # `BLOCKED:D05`, because the premise was part of the string; a
+            # waiting vertex is `OPEN` now and `is:blocked` asks about the
+            # edges (`D68`).
+            out = _texts([v.status])
         e = active_of(vid)
         if e is not None:
             out += _texts([getattr(e, name, None)])
@@ -766,7 +764,10 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
         "unsettled": lambda vid: not g.vertices[vid].settled,
         "provisional": lambda vid: g.vertices[vid].base_status == "PROVISIONAL",
         "shaky": lambda vid: g.vertices[vid].base_status in _shaky(),
-        "blocked": lambda vid: g.vertices[vid].base_status == "BLOCKED",
+        # Derived, as the task store's always was: unsettled, and resting on a
+        # premise that is unsettled too. What `waits …` in the listing says.
+        "blocked": lambda vid: (not g.vertices[vid].settled
+                                and bool(g.waiting_on(vid))),
         "terminal": lambda vid: (e := active_of(vid)) is not None and e.terminal,
         "superseded": lambda vid: bool(hist_of(vid)),
         # Both indexed: this is asked of every vertex in the store, so the

@@ -128,41 +128,55 @@ def test_detects_unpropagated_reopen(g):
     assert hits and "D04" in str(hits[0])
 
 
-def test_detects_stale_block(g):
+def test_a_settled_premise_ends_the_wait_by_derivation(g):
+    """There is no `stale_block` to detect: what D06 waits on is read off its
+    edges, so settling D05 leaves nothing stored to go stale (`D68`)."""
     from dataclasses import replace
+    assert g.waiting_on("D06") == ["D05"]
     g.vertices["D05"] = replace(g.vertices["D05"], status="DECIDED")
-    assert _check(g, "stale_block")
+    e = g.active_edge("D05")
+    e.answer, e.source, e.falsifier, e.date = "a", "s", "f", "2026-01-05"
+    assert g.waiting_on("D06") == []
+    assert not [v for v in g.validate() if v.blocking]
 
 
-# ---- a block is a dependency ---------------------------------------------
+# ---- waiting is derived --------------------------------------------------
 #
-# `BLOCKED:D05` asserts that this vertex rests on D05. Dependency is the graph
-# structure and never a second copy in a status field, so the two have to
-# agree — and before this check they could disagree in silence.
+# A vertex waits when a premise it rests on is unsettled, and that is read off
+# the edges (`waiting_on`). `BLOCKED:<id>` used to store the same fact beside
+# them, and two rules — `block_is_a_premise`, `stale_block` — existed to keep
+# the copy honest. `D68` removed the copy and the rules with it.
 
 
-def test_detects_a_block_that_rests_on_nothing(g):
-    """D06 is BLOCKED:D05 in the fixture. Sever the edge and the status is a
-    claim the graph does not hold."""
-    g.active_edge("D05").to.remove("D06")
-    hits = _check(g, "block_is_a_premise")
-    assert hits and "D06" in str(hits[0]) and "D05" in str(hits[0])
-    assert hits[0].blocking
+def test_an_old_store_folds_blocked_to_open(store):
+    """A store written before `D68` spells a waiting vertex `BLOCKED:<id>`.
+    It loads as OPEN, still waits by its edge, and is valid — the fold is the
+    whole migration, and nothing ever writes the old form back."""
+    import json
+    from dgraph.model import Graph, fold_status
+    raw = json.loads((store / "decisions.json").read_text())
+    for v in raw["vertices"]:
+        if v["id"] == "D06":
+            v["status"] = "BLOCKED:D05"
+    g = Graph.from_dict(raw)
+    assert g.vertices["D06"].status == "OPEN"
+    assert g.waiting_on("D06") == ["D05"]
+    assert not [v for v in g.validate() if v.blocking]
+    assert fold_status("BLOCKED") == "OPEN" and fold_status("DECIDED") == "DECIDED"
 
 
 def test_a_backed_block_is_quiet(g):
     assert not _check(g, "block_is_a_premise")
 
 
-def test_an_unbacked_block_is_reported_once_not_twice(g):
-    """A blocker that is both settled and not a premise is one contradiction,
-    not two: whether it has settled cannot matter if the block was never real,
-    so `stale_block` stays quiet and the more fundamental fault is named."""
-    from dataclasses import replace
-    g.active_edge("D05").to.remove("D06")
-    g.vertices["D05"] = replace(g.vertices["D05"], status="DECIDED")
-    assert _check(g, "block_is_a_premise")
-    assert not _check(g, "stale_block")
+def test_a_blocked_status_is_refused_at_stage_time_with_the_remedy(g):
+    """The one place the old spelling can still arrive is an op somebody
+    types. It is refused before the tray, naming `--after`."""
+    from dgraph.model import status_fault
+    assert "--after" in status_fault("BLOCKED:D05", set(g.vertices), of="D07")
+    with pytest.raises(pending.ApplyError, match="not stored"):
+        pending.apply_all(g, [{"op": "add_vertex", "id": "D07", "title": "x",
+                               "area": "Alpha", "status": "BLOCKED:D05"}])
 
 
 def test_an_unknown_blocker_is_not_reported_as_unbacked(g):
@@ -174,13 +188,13 @@ def test_an_unknown_blocker_is_not_reported_as_unbacked(g):
     assert not _check(g, "block_is_a_premise")
 
 
-def test_adding_a_blocked_vertex_records_the_dependency(g, store):
-    """Every route in goes through this op, so the status and the structure
-    agree by construction rather than by each caller remembering."""
-    out = pending.apply_all(g, [{"op": "add_vertex", "id": "D07", "title": "x",
-                                 "area": "Alpha", "status": "BLOCKED:D05"}])
-    assert out.depends("D07") == ["D05"]
-    assert not [v for v in out.validate() if v.check == "block_is_a_premise"]
+def test_adding_a_vertex_after_an_open_premise_makes_it_wait(g, store):
+    """`--after` is the whole of "blocked on": the edge, and the derivation."""
+    out = pending.apply_all(g, [
+        {"op": "add_vertex", "id": "D07", "title": "x", "area": "Alpha",
+         "status": "OPEN"},
+        {"op": "add_edge", "from": "D05", "to": ["D07"]}])
+    assert out.depends("D07") == ["D05"] and out.waiting_on("D07") == ["D05"]
 
 
 def test_a_blocked_vertex_naming_an_unknown_blocker_invents_no_edge(g):
@@ -378,16 +392,15 @@ def test_unpropagated_reopen_is_rejected(g):
         pending.apply_all(g, [{"op": "reopen", "vertex": "D01", "why": "x"}])
 
 
-def test_settling_a_vertex_releases_what_was_blocked_on_it(g):
-    """The mirror of reopen propagation: D06 is BLOCKED:D05, so closing D05
-    must stage D06 -> OPEN rather than leaving a stale block for apply to
-    reject."""
+def test_settling_a_vertex_stages_no_release(g):
+    """The release `expand` used to derive — D06 → OPEN when D05 closes — is
+    not an op any more, because there is nothing stored to release: D06 stops
+    waiting the moment D05 settles, by derivation (`D68`)."""
     ops = pending.expand(g, {"op": "close", "vertex": "D05", "answer": "a",
                              "source": "s", "falsifier": "f", "to": []})
-    assert [(o["vertex"], o["status"]) for o in ops if o["op"] == "set_status"] \
-        == [("D06", "OPEN")]
-    assert all(o.get("derived_from") == "D05"
-               for o in ops if o["op"] == "set_status")
+    assert [o["op"] for o in ops] == ["close"]
+    out = pending.apply_all(g, ops)
+    assert out.waiting_on("D06") == [] and out.vertices["D06"].status == "OPEN"
 
 
 def test_expanded_close_applies_without_manual_help(g):
@@ -401,17 +414,10 @@ def test_expanded_close_applies_without_manual_help(g):
     assert out.validate() == []
 
 
-def test_unexpanded_close_still_fails_the_stale_block(g):
-    """The invariant is what makes the propagation load-bearing; keep it sharp."""
-    with pytest.raises(pending.ApplyError, match="stale_block"):
-        pending.apply_all(g, [{"op": "close", "vertex": "D05", "answer": "a",
-                               "source": "s", "falsifier": "f", "to": []}])
-
-
-def test_set_status_to_a_settled_status_also_releases(g):
+def test_set_status_to_a_settled_status_stages_only_itself(g):
     ops = pending.expand(g, {"op": "set_status", "vertex": "D05",
                              "status": "PROVISIONAL"})
-    assert [o["vertex"] for o in ops if o["op"] == "set_status"][1:] == ["D06"]
+    assert [o["vertex"] for o in ops if o["op"] == "set_status"] == ["D05"]
 
 
 def test_set_status_to_an_unsettled_status_releases_nothing(g):
@@ -926,7 +932,7 @@ def test_repairs_clears_the_finding_and_nothing_else(g):
     assert not [v for v in out.validate() if v.check == "propagation"]
     assert not [v for v in out.validate() if v.blocking]
     assert out.vertices["D05"].status == "OPEN"      # untouched: never DECIDED
-    assert out.vertices["D06"].status == "BLOCKED:D05"
+    assert out.vertices["D06"].status == "OPEN"      # untouched: waits by edge
 
 
 def test_repairs_is_empty_on_a_graph_the_checker_is_happy_with(g):
@@ -1100,17 +1106,16 @@ def test_drift_skips_an_id_the_batch_is_about_to_create(g):
 
 @pytest.mark.parametrize("status,fault", [
     ("OPEN", None), ("DECIDED", None), ("REOPENED", None), ("PROVISIONAL", None),
-    ("BLOCKED:D02", None),
     ("DONE", "illegal status 'DONE'"),
     ("", "illegal status ''"),
     ("open", "illegal status 'open'"),
-    ("BLOCKED", "BLOCKED must name a blocker"),
-    ("BLOCKED:", "BLOCKED must name a blocker"),
-    ("BLOCKED:D01", "blocked by itself"),
-    ("BLOCKED:D99", "blocked by unknown vertex D99"),
-    # The drift the extraction found: `validate` read only `base_status`, so a
-    # blocker smuggled onto a non-BLOCKED status went unread while
-    # `Vertex.blocker` went on reporting it.
+    # Every spelling of the pre-`D68` status gets the same sentence, which
+    # names the remedy rather than judging the blocker it can no longer read.
+    *((s, "BLOCKED is not stored — a vertex waits when a premise it rests on "
+          "is unsettled, so name the premise with --after and leave the "
+          "status OPEN")
+      for s in ("BLOCKED", "BLOCKED:", "BLOCKED:D01", "BLOCKED:D02", "BLOCKED:D99")),
+    # A blocker smuggled onto any other status is still just an illegal string.
     ("OPEN:D02", "illegal status 'OPEN:D02'"),
     ("DECIDED:D02", "illegal status 'DECIDED:D02'"),
 ])
@@ -1124,7 +1129,6 @@ def test_a_blocker_on_a_non_blocked_status_is_refused_by_the_validator(g, store)
     dependency asserted in a field nothing reads as one."""
     from dataclasses import replace as _r
     g.vertices["D05"] = _r(g.vertices["D05"], status="OPEN:D99")
-    assert g.vertices["D05"].blocker == "D99"
     hits = [str(v) for v in g.validate() if v.check == "status_legal"]
     assert hits == ["[status_legal] D05: illegal status 'OPEN:D99'"]
 
@@ -1818,29 +1822,6 @@ def test_the_two_depth_readings_agree_over_random_graphs_with_rival_answers():
             vid: graph.depth(vid) for vid in graph.vertices}
     assert rivals > 50, f"the corpus barely held a rival answer ({rivals})"
     assert dangling > 20, f"the corpus barely held a dangling target ({dangling})"
-
-
-def test_validate_reads_the_blocked_rule_through_the_index_unchanged(g):
-    """`validate` builds one reverse index for the BLOCKED branch, which used
-    to scan the edge list once per blocked vertex -- 62x on an all-BLOCKED
-    store, in the command the commit gate runs. The index is an optimisation
-    and nothing else, so what `validate` *reports* must not move."""
-    from dataclasses import replace
-    from dgraph.model import Edge, Graph, Vertex
-
-    # The fixture, with a block that is backed by an edge and one that is not.
-    g.vertices["D02"] = replace(g.vertices["D02"], status="BLOCKED:D01")
-    g.vertices["D04"] = replace(g.vertices["D04"], status="BLOCKED:D05")
-    findings = {(v.check, v.message) for v in g.validate()}
-    blocked = {c for c, _ in findings if c in
-               ("block_is_a_premise", "stale_block")}
-    assert blocked, "the fixture no longer exercises either BLOCKED rule"
-
-    # And the same judgement reached the scanning way, per vertex.
-    for vid, vert in g.vertices.items():
-        if vert.base_status == "BLOCKED":
-            assert (vert.blocker in g.depends(vid, g._reverse())) == (
-                vert.blocker in g.depends(vid))
 
 
 def test_the_blocked_rule_is_not_quadratic_in_the_store():

@@ -86,9 +86,9 @@ mean; in **joined** it asks, because the tab has not answered that and guessing
 is how work gets recorded as a decision.
 
 A new decision takes what `dg add` takes — an id (prefilled with the next
-unused one), a title, an area, a status and what it rests on. Choosing
-**BLOCKED** asks which decision it is blocked on and stages that dependency as
-an *edge*, because a block is a dependency and dependency is the edge list.
+unused one), a title, an area, a status and what it rests on. There is no
+"blocked" to choose: a vertex waits on whichever of the decisions it rests on
+is unsettled, because a block is a dependency and dependency is the edge list.
 
 A new task takes what `dg task add` takes, including the two links into the
 decision store: **because** — the decisions (plural) this work exists for — and

@@ -53,10 +53,14 @@ def rows(g: Graph) -> list[Row]:
         out.append(Row(
             id=vid, status=v.status, title=v.title, area=v.area,
             waiting_on=g.waiting_on(vid),
-            # What deciding this releases. `children` alone would overstate it:
-            # a target can depend on this vertex without being blocked by it.
+            # What deciding this makes decidable: the unsettled children for
+            # which this is the *last* unsettled premise. `children` alone
+            # would overstate it twice over — a child waiting on two premises
+            # is not released by one, and a PROVISIONAL child is settled
+            # already, whatever it rests on.
             unblocks=[c for c in g.children(vid)
-                      if g.vertices[c].blocker == vid],
+                      if not g.vertices[c].settled
+                      and g.waiting_on(c) == [vid]],
         ))
     return out
 

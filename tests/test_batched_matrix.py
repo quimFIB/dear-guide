@@ -54,7 +54,7 @@ from dgraph.tasks import KINDS, Task, TaskEdge, TaskGraph
 #: The parameter names this codebase uses for "an index the caller already has".
 INDEX_PARAMS = {"_by": "by_src", "_into": "_reverse", "_adj": "_adjacency"}
 
-D_STATUSES = ("OPEN", "DECIDED", "PROVISIONAL", "REOPENED", "BLOCKED", "TERMINAL")
+D_STATUSES = ("OPEN", "DECIDED", "PROVISIONAL", "REOPENED", "TERMINAL")
 T_STATUSES = ("TODO", "DOING", "PARKED", "DONE", "DROPPED")
 
 #: Enough seeds to reach every shape the guards below assert, and few enough to
@@ -71,8 +71,7 @@ def decision_store(seed: int) -> Graph:
     verts = {}
     for i in ids:
         s = r.choice(D_STATUSES)
-        verts[i] = Vertex(i, "t", "a",
-                          f"BLOCKED:{r.choice(ids)}" if s == "BLOCKED" else s)
+        verts[i] = Vertex(i, "t", "a", s)
     edges = []
     for _ in range(r.randint(0, 14)):
         src = r.choice(ids + ["D99"])            # a source naming no vertex

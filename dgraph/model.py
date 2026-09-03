@@ -41,7 +41,22 @@ def rival_note(n: int) -> str:
 
 
 SIMPLE_STATUSES = {"DECIDED", "OPEN", "REOPENED", "PROVISIONAL"}
-UNSETTLED = {"OPEN", "BLOCKED", "REOPENED"}
+UNSETTLED = {"OPEN", "REOPENED"}
+
+#: What a store written before 2026-09-03 spells a waiting vertex as. Folded to
+#: `OPEN` on load and never written again: whether a vertex waits is derived
+#: from its edges (`waiting_on`), the way a task's readiness always was. The
+#: stored form was a second copy of an edge — `block_is_a_premise` and
+#: `stale_block` existed only to keep the copy honest, and a slice that trimmed
+#: the edge left the copy naming a vertex it no longer held (audit `U-F1`,
+#: `D68`). The premise itself is not touched here: the old rule made it an
+#: error for the edge to be missing, so a valid store already has it.
+_FOLDED_STATUS = "BLOCKED"
+
+
+def fold_status(status: str) -> str:
+    """`BLOCKED:<id>` and bare `BLOCKED` become `OPEN`; anything else is itself."""
+    return "OPEN" if status.partition(":")[0] == _FOLDED_STATUS else status
 
 
 def status_fault(status: str, ids, of: str | None = None) -> str | None:
@@ -63,23 +78,19 @@ def status_fault(status: str, ids, of: str | None = None) -> str | None:
       only arrive by hand-edit or merge, which is what `validate` is for.
 
     Returns the *reason*, without a vertex id in front of it, so `validate` can
-    prefix `D07: ` and a stage-time caller can say it plainly. `ids` is what a
-    blocker may name; `of` is the vertex the status belongs to, when there is
-    one, so `BLOCKED:<itself>` can be told from `BLOCKED:<other>`.
+    prefix `D07: ` and a stage-time caller can say it plainly. `ids` and `of`
+    are kept for the callers that pass them; nothing here reads them since
+    `BLOCKED:<id>` stopped being a status (`D68`) — a status that named
+    another vertex was a dependency asserted by a field that is not read as
+    one, the second copy this model exists to refuse.
     """
-    base, sep, blocker = status.partition(":")
-    if base != "BLOCKED":
-        # A blocker on anything else is a dependency asserted by a field that
-        # is not read as one — the second copy this model exists to refuse.
-        return None if base in SIMPLE_STATUSES and not sep \
-            else f"illegal status {status!r}"
-    if not blocker:
-        return "BLOCKED must name a blocker"
-    if of is not None and blocker == of:
-        return "blocked by itself"
-    if blocker not in ids:
-        return f"blocked by unknown vertex {blocker}"
-    return None
+    if status in SIMPLE_STATUSES:
+        return None
+    if status.partition(":")[0] == _FOLDED_STATUS:
+        return ("BLOCKED is not stored — a vertex waits when a premise it "
+                "rests on is unsettled, so name the premise with --after and "
+                "leave the status OPEN")
+    return f"illegal status {status!r}"
 
 
 @dataclass
@@ -93,11 +104,10 @@ class Vertex:
 
     @property
     def base_status(self) -> str:
-        return self.status.split(":")[0]
-
-    @property
-    def blocker(self) -> str | None:
-        return self.status.split(":", 1)[1] if ":" in self.status else None
+        """The status. Once the part of `BLOCKED:<id>` before the colon; kept
+        because every reader that wanted the status without a blocker in it
+        asked for this, and they were right to."""
+        return self.status
 
     @property
     def settled(self) -> bool:
@@ -183,7 +193,8 @@ class Graph:
             )
         return cls(
             areas=raw.get("areas", []),
-            vertices={v["id"]: Vertex(**v) for v in raw["vertices"]},
+            vertices={v["id"]: Vertex(**{**v, "status": fold_status(v["status"])})
+                      for v in raw["vertices"]},
             edges=[
                 Edge(
                     src=e["from"],
@@ -746,12 +757,6 @@ class Graph:
             v.append(Violation(c, m, severity))
         ids = set(self.vertices)
         by_src = self.by_src()   # one grouping for the per-vertex reads below
-        # ...and one reverse index, for the BLOCKED branch below. Built here
-        # beside `by_src` and for the same reason: the reads under it are
-        # per-vertex, and a scan per vertex is what makes this — the command
-        # the commit gate runs — quadratic. `dg check` on a store where most
-        # work is blocked was 62x an unblocked one of the same size before it.
-        into = self._reverse()
 
         for vid, vert in self.vertices.items():
             if not vid.startswith("D") or not vid[1:].isdigit():
@@ -759,32 +764,11 @@ class Graph:
             fault = status_fault(vert.status, ids, of=vid)
             if fault:
                 add("status_legal", f"{vid}: {fault}")
-            elif vert.base_status == "BLOCKED":
-                # Legal and resolving, so what is left are the two rules about
-                # what the block *means* — that it is backed by an edge, and
-                # that the blocker has not since settled.
-                tgt = vert.blocker
-                if tgt not in self.depends(vid, into):
-                    # Before the staleness check below, because it is the more
-                    # fundamental fault: if the block is not backed by an edge,
-                    # whether the blocker has settled does not matter — the
-                    # status is wrong either way, and reporting both would
-                    # describe one contradiction twice.
-                    add(
-                        "block_is_a_premise",
-                        f"{vid} is BLOCKED:{tgt} but does not rest on {tgt} — "
-                        f"a block *is* a dependency, and dependency lives in "
-                        f"the edge list, never in a second copy in a status "
-                        f"field. `dg dep {vid} --after {tgt}` records it; "
-                        f"otherwise {vid} should be OPEN",
-                    )
-                elif self.vertices[tgt].settled:
-                    add(
-                        "stale_block",
-                        f"{vid} is BLOCKED:{tgt} but {tgt} is now "
-                        f"{self.vertices[tgt].status} — nothing is blocking it, "
-                        f"so it should be OPEN",
-                    )
+            # There is no rule about a *waiting* vertex, and its absence is the
+            # point: whether a vertex waits is `waiting_on`, read off the
+            # edges, so nothing stored can disagree with it. `block_is_a_premise`
+            # and `stale_block` were the two rules that kept a stored copy
+            # honest, and went with the copy (`D68`).
 
         seen_active: set[str] = set()
         for e in self.edges:

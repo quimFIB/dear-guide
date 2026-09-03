@@ -441,9 +441,9 @@ def contested(proj):
     def settled(answer, falsifier):
         """One side's store, settled through the real op path.
 
-        `pending.expand` derives the group a `close` implies — here the release
-        of `D06`, which is `BLOCKED:D05` — so the side is valid because the tool
-        refused anything else.
+        `pending.expand` derives the group a `close` implies — a bare close
+        here, since `D06` waits on `D05` by its edge and nothing has to be
+        released — so the side is valid because the tool refused anything else.
 
         Driven through the real op path rather than hand-written, and that is the
         method rather than a convenience: an integration conflict is only worth

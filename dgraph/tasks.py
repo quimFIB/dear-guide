@@ -20,8 +20,10 @@ are not decisions and the differences are the whole point of keeping two stores:
   are resolved. The decision graph keeps status explicit because a decision can
   have consequences and still be under review — out-degree says nothing about
   it. Task readiness genuinely *is* a function of dependencies, so storing it
-  would only create something that can go stale. `stale_block` has no analogue
-  here; it cannot occur.
+  would only create something that can go stale. The decision store came
+  round to the same view for *waiting* (`D68`): its `BLOCKED:<id>` status was
+  a stored copy of an edge, and the rule that kept it honest, `stale_block`,
+  went with it.
 - **Supersession, in two places, and both are lists.** A decision that is
   overturned keeps its old answer forever, because how a project changed its
   mind is worth more than the conclusion. Here that applies to the two

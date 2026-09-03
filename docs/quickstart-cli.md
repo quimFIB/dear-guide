@@ -210,10 +210,10 @@ CHAIN  D01 → D02 → D04! → D05! → T04    ! = not settled
   D02  DECIDED  Which index structure?      ·  HNSW, M=32, efConstruction=200.
   D04  OPEN     efSearch for the recall t…  ·  not settled
 
-BECAUSE  D05  BLOCKED  How many shards, and how are results merged?
+BECAUSE  D05  OPEN  How many shards, and how are results merged?
          not settled
 
-→ this work waits on D05 (BLOCKED), which is not settled — starting it now is
+→ this work waits on D05 (OPEN), which is not settled — starting it now is
   a bet on the answer
   `dg context T04 --full` for each answer, its evidence and its falsifier
 ```

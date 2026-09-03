@@ -95,7 +95,7 @@ CASES = [
     ([], ("add", "--id", "D07", "--title", "x", "--area", "Alpha",
           "--after", "D01,D05")),
     ([], ("add", "--id", "D07", "--title", "x", "--area", "Alpha",
-          "--status", "BLOCKED:D05")),
+          "--after", "D05")),
     ([], ("decide", "D05", "-a", "a", "-s", "s", "-f", "f")),
     ([], ("reopen", "D01", "-w", "why", "--yes")),
     ([], ("dep", "D06", "--after", "D01,D02")),

@@ -925,12 +925,12 @@ def test_a_pattern_overrides_exactness(both):
 
 
 def test_a_status_matches_the_base_and_the_stored_form(store):
-    """A blocked vertex stores `BLOCKED:D05` — the premise is part of the
-    string, and `status:BLOCKED` only ever worked because matching was a
-    substring test. `BLOCKED` is what the listing shows and so what a reader
-    types, so the base is offered alongside the stored value."""
-    assert dg(store, "find", "status:BLOCKED", "--ids").stdout.split() == ["D06"]
-    assert dg(store, "find", "status:BLOCKED:D05", "--ids").stdout.split() == ["D06"]
+    """There is no stored blocked status (`D68`): a waiting vertex is `OPEN`,
+    and *held up* is the derived `is:blocked`. `status:BLOCKED` matches
+    nothing, honestly — exit 1, not a fault, because the field is real."""
+    assert dg(store, "find", "status:BLOCKED", "--ids").exit_code == 1
+    assert set(dg(store, "find", "status:OPEN", "--ids").stdout.split()) == {"D05", "D06"}
+    assert dg(store, "find", "is:blocked", "--ids").stdout.split() == ["D06"]
 
 
 def test_a_status_no_longer_matches_a_prefix_of_itself(store):

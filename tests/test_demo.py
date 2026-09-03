@@ -74,8 +74,11 @@ def test_demo_holds_one_of_every_record(demo):
     g = Graph.load(demo / "decisions.json")
     tg = TaskGraph.load(demo / "tasks.json")
 
-    assert {v.base_status for v in g.vertices.values()} == {
-        "DECIDED", "OPEN", "BLOCKED", "REOPENED", "PROVISIONAL"}
+    assert {v.status for v in g.vertices.values()} == {
+        "DECIDED", "OPEN", "REOPENED", "PROVISIONAL"}
+    # ...and one OPEN vertex waits, which is the fifth state the walkthrough
+    # shows — derived from D05's edge, not stored (`D68`).
+    assert g.waiting_on("D05") == ["D04"]
     assert {t.status for t in tg.tasks.values()} == {
         "TODO", "DOING", "PARKED", "DONE", "DROPPED"}
 

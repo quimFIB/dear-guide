@@ -14,7 +14,8 @@ work, or both.
 ### The decision graph — `decisions.json`
 
 - A **vertex** is a decision the project must make, with an explicit status:
-  `DECIDED` · `OPEN` · `BLOCKED:<id>` · `REOPENED` · `PROVISIONAL`.
+  `DECIDED` · `OPEN` · `REOPENED` · `PROVISIONAL`. Waiting is derived, never
+  stored: an `OPEN` vertex waits on whichever of its premises is unsettled.
 - An **edge** is a dependency, which gains a decision payload — answer,
   falsifier, source, date — once that decision is made. An edge with no answer
   means *B depends on A, and A is not settled yet*.
@@ -351,13 +352,13 @@ check added to the tool shows up in every project automatically.
 It checks whichever stores the project has, and the seam between them when it
 has both. Every rule prints its own name, so a refusal is greppable.
 
-**The decisions.** Well-formed unique IDs · legal statuses · no dangling edge or
-`BLOCKED:` references · a `BLOCKED:` premise backed by a real edge · at most one
-active edge per vertex · every `DECIDED` vertex has a date, source, falsifier and
-decision edge · `OPEN`/`BLOCKED` vertices carry no answer · no `DECIDED` vertex
-resting on an unsettled premise · nothing `BLOCKED` on something already settled
-· acyclic. Two warnings: an orphan, and a vertex left `PROVISIONAL` once its
-premises are settled again.
+**The decisions.** Well-formed unique IDs · legal statuses · no dangling edge
+references · at most one active edge per vertex · every `DECIDED` vertex has a
+date, source, falsifier and decision edge · `OPEN` vertices carry no answer · no
+`DECIDED` vertex resting on an unsettled premise · acyclic. Two warnings: an
+orphan, and a vertex left `PROVISIONAL` once its premises are settled again.
+(There is no rule about a *waiting* vertex: what it waits on is read off its
+edges, so nothing stored can disagree with it.)
 
 **The work.** The same well-formedness — ids, statuses, no dangling reference,
 acyclic — plus: an edge says which kind it is · a `DONE` task has a

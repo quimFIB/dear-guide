@@ -595,10 +595,9 @@ def _show_listing(g: Graph, att: list[dict],
         # nobody has applied would be an invitation to act on the tray.
         if staged and r.id in staged:
             aside.append("staged")
-        # The base status, not the stored one: `BLOCKED:D04` says the blocker
-        # twice, once here and once in `waits D04` above. Dropping it from the
-        # column gives four characters back to every title in the listing.
-        base = g.vertices[r.id].base_status
+        # Whether it waits is in the aside (`waits D04`), read off the edges;
+        # the column is the stored status and nothing else.
+        base = g.vertices[r.id].status
         entries.append((r.id, f"[{_style(base)}]{base}[/]", _x(r.title),
                         "[dim]" + _x(" · ".join(aside)) + "[/]"))
         areas.append(f"[dim]{_x(r.area)}[/]")
@@ -1700,11 +1699,6 @@ def _stage_close(g: Graph, op: dict) -> None:
     # `against`: each op records what its premises looked like now, so an
     # apply after somebody else has moved one can say which. See `pending.stamp`.
     _stage_all(ops, against=g)
-    released = [o["vertex"] for o in ops if o["op"] == "set_status"]
-    if released:
-        con.print(f"[cyan]{len(released)}[/] vertex(es) were "
-                  f"BLOCKED:{op['vertex']} and are released to OPEN: "
-                  f"{', '.join(released)}")
     con.print(f"[green]staged[/] {len(ops)} op(s) — review with `dg pending`, "
               f"then `dg apply`")
     # Said here rather than in `decide`, so `--edit` and the prompt path — both
@@ -1769,15 +1763,16 @@ def decide(
                       f"`dg pending` to review it, `dg edit N` to revise it, "
                       f"or `dg drop <id>` to unstage it[/]")
         raise typer.Exit(1)
-    if v.base_status == "BLOCKED" and v.blocker in eff.vertices \
-            and not eff.vertices[v.blocker].settled:
-        # A warning, not a refusal: sometimes the recorded blocker turns out
-        # irrelevant, and closing the vertex is the only way to say so — there
-        # is no unblock command, deliberately, since BLOCKED is a claim about
-        # dependence and dropping it is itself a judgement worth making here.
-        con.print(f"[yellow]note: {vid} is BLOCKED:{v.blocker} and "
-                  f"{v.blocker} is not settled — deciding it anyway records "
-                  f"that the block did not matter, and drops it[/]")
+    waiting = eff.waiting_on(vid)
+    if waiting:
+        # A note, not a refusal, and `apply` will refuse anyway: a DECIDED
+        # vertex resting on an unsettled premise is the `propagation` error.
+        # Said here so the person hears it before composing an answer, with
+        # the remedy — settle the premise, or `dg undep` if it was never one.
+        con.print(f"[yellow]note: {vid} waits on {', '.join(waiting)}, not "
+                  f"settled — `dg apply` will refuse a decision resting on an "
+                  f"open premise; settle it first, or `dg undep {vid} --after "
+                  f"{waiting[0]}` if it was never a premise[/]")
 
     if _wants_editor(edit):
         seed = {k: val for k, val in (
@@ -1840,10 +1835,10 @@ def repair() -> None:
     Deliberately narrow. It repairs `propagation` and nothing else, and only
     where the validator is reporting it right now — `set_status` stays an op the
     tool derives rather than one a caller may invent, which is the property that
-    keeps a status from being writable by hand. `stale_block` and
-    `block_is_a_premise` have derivable remedies too and are left alone until
-    somebody decides they should not be; `no_dangling_refs` has none that is
-    safe to derive at all.
+    keeps a status from being writable by hand. `no_dangling_refs` has no
+    remedy that is safe to derive at all. (`stale_block` and
+    `block_is_a_premise` had derivable remedies and went instead, with the
+    stored status they policed — `D68`.)
     """
     g = _g()
     eff = _eff(g)
@@ -1986,10 +1981,6 @@ def confirm(
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
     _stage_all(ops, against=eff)
-    released = [o["vertex"] for o in ops[1:]]
-    if released:
-        con.print(f"[cyan]{len(released)}[/] vertex(es) were BLOCKED:{vid} and "
-                  f"are released to OPEN: {', '.join(released)}")
     con.print(f"[green]staged[/] {len(ops)} op(s) — {vid} back to DECIDED, "
               f"review with `dg pending`, then `dg apply`")
     _warn_stuck()
@@ -2315,20 +2306,15 @@ def undep(
     eff = _eff(g)
     parents = _ids(after, "--after")
     try:
-        ops, blocker = pending.compose_undep(eff, vid=vid, after=parents)
+        ops = pending.compose_undep(eff, vid=vid, after=parents)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    released = blocker is not None
     _stage_all(ops, against=eff)
 
     con.print(f"[green]staged[/] {vid} no longer rests on "
               f"{', '.join(parents)}")
     _say_retargets(eff, ops)
-    if released:
-        con.print(f"[cyan]{vid} was BLOCKED:{blocker}[/] and is released to "
-                  f"OPEN [dim]— the block asserted the dependency being "
-                  f"removed[/]")
 
     # Reported, not repaired: each is a judgement the graph cannot make.
     # `pending.introduced` is the same difference the browser shows *before*
@@ -2409,9 +2395,6 @@ def rm(
     if eff.history(vid):
         lines.append(f"[yellow]loses[/] {len(eff.history(vid))} superseded "
                      f"answer(s) — the record of how this changed")
-    freed = sorted(o for o, x in eff.vertices.items() if x.blocker == vid)
-    if freed:
-        lines.append(f"releases   {', '.join(freed)} to OPEN")
     op = {"op": "remove_vertex", "vertex": vid, "mode": mode}
     if into:
         op["into"] = into

@@ -99,7 +99,7 @@ def _base(status: str) -> str:
 
 
 #: A premise in one of these states does not hold the weight put on it.
-SHAKY = frozenset({"OPEN", "BLOCKED", "REOPENED", "PROVISIONAL"})
+SHAKY = frozenset({"OPEN", "REOPENED", "PROVISIONAL"})
 
 
 def chain(g: Graph, vid: str) -> list[Premise]:

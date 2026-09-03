@@ -1022,7 +1022,11 @@ function edgeSvg(from, to, cls){
 
 function decisionNode(v, related){
   const st=base(v.status);
-  const stroke=STATUS_COLOR[st]||"var(--line)";
+  /* Waiting is derived, never stored (`D68`): an OPEN vertex whose premises
+     are not all settled takes the colour BLOCKED used to, from `waiting_on`,
+     which the server reads off the edges. The dash stays OPEN's. */
+  const waiting = st==="OPEN" && (G.derived[v.id].waiting_on||[]).length;
+  const stroke = waiting ? STATUS_COLOR.BLOCKED : (STATUS_COLOR[st]||"var(--line)");
   const dash = st==="OPEN"?'stroke-dasharray="5 4"'
              : st==="PROVISIONAL"?'stroke-dasharray="1 3"':"";
   const dim = related ? !related.has(v.id) : !visible(v);
@@ -1501,11 +1505,10 @@ function knownAreas(){
 
 function newDecisionForm(){
   const opts = idOptions(G.vertices, "id", "title");
-  /* Every status the store has, plus the one that needs a target. BLOCKED is
-     offered as its own control rather than as free text: `BLOCKED:D04` asserts
-     a dependency, and a person typing the id into a status string is one typo
-     away from a block on a decision that does not exist. */
-  const blockers = idOptions(G.vertices, "id", "title");
+  /* No blocked control: a vertex waits on whichever of the decisions in
+     "rests on" is unsettled, read off the edges (`D68`). The picker that used
+     to ask "blocked until which decision is settled?" was a second copy of
+     that list, one typo away from a block on a decision it did not rest on. */
   $("#side").innerHTML = `<h2>A new question</h2>
     <p class="muted">Nothing is written until Apply, as with everything else here.</p>
     <label>Id</label><input id="nId" value="${esc(G.next_id||"")}">
@@ -1516,13 +1519,8 @@ function newDecisionForm(){
     <label>Status</label>
     <select id="nStatus">
       <option value="OPEN">OPEN — nobody has answered it yet</option>
-      <option value="BLOCKED">BLOCKED — unanswerable until another is settled</option>
     </select>
-    <div id="nBlockWrap" style="display:none">
-      <label>Blocked until which decision is settled?</label>
-      <select id="nBlocker">${blockers}</select>
-    </div>
-    <label>Rests on (ctrl-click; none = a root)</label>
+    <label>Rests on (ctrl-click; none = a root) — it waits on whichever is unsettled</label>
     <select id="nAfter" multiple>${opts}</select>
     <label>Note — what is undecided, and why (optional)</label>
     <textarea id="nNote"></textarea>
@@ -1530,11 +1528,6 @@ function newDecisionForm(){
       <button class="primary" id="nGo">Stage new decision</button>
       <button class="ghost" id="nNo">Cancel</button></p>
     <div class="note" id="note"></div>`;
-  /* The blocker control appears only when it means something. A disabled box
-     that is always on screen teaches the eye past it. */
-  const sync=()=>$("#nBlockWrap").style.display =
-    $("#nStatus").value==="BLOCKED" ? "" : "none";
-  $("#nStatus").onchange=sync; sync();
   $("#nNo").onclick=closeNew;
   $("#nGo").onclick=stageNewDecision;
 }
@@ -1542,8 +1535,7 @@ function newDecisionForm(){
 async function stageNewDecision(){
   const id=$("#nId").value.trim(), title=$("#nTitle").value.trim();
   if(!id || !title){ say("An id and a title are required.","bad"); return; }
-  const status = $("#nStatus").value==="BLOCKED"
-    ? "BLOCKED:"+$("#nBlocker").value : $("#nStatus").value;
+  const status = $("#nStatus").value;
   await postNew("/api/add", {
     id, title, area:$("#nArea").value.trim(), new_area:$("#nNewArea").checked,
     status,
@@ -2368,7 +2360,9 @@ function panel(){
   const st=base(v.status);
   const decided = !!(e&&e.answer);
   let h=`<h2>${esc(v.id)} — ${esc(v.title)}</h2>
-    <span class="pill" style="background:${STATUS_COLOR[st]};color:#04121f">${esc(v.status)}</span>
+    <span class="pill" style="background:${STATUS_COLOR[st]};color:#04121f">${esc(v.status)}</span>${
+      (st==="OPEN" && (d.waiting_on||[]).length)
+        ? ` <span class="muted">waits ${d.waiting_on.map(esc).join(", ")}</span>` : ""}
     <span class="muted"> ${esc(v.area)}</span>
     <div class="kv">
       <div>depends on</div><div>${idList(d.depends)}${

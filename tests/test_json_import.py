@@ -140,7 +140,7 @@ BROKEN = {
     "vertices": [{"id": "D01", "title": "Root", "area": "Search",
                   "status": "DECIDED"},
                  {"id": "D02", "title": "Child", "area": "Search",
-                  "status": "BLOCKED:D99"}],
+                  "status": "WOBBLY"}],
     "edges": [{"from": "D01", "to": ["D02"], "active": True,
                "answer": "Yes.", "source": "x"}],
 }
@@ -151,14 +151,14 @@ def test_an_invalid_graph_is_not_written(empty):
     one, the contradiction the tool exists to prevent."""
     res = dg(empty, "import", str(write(empty, BROKEN)))
     assert res.exit_code == 1
-    assert "blocked by unknown vertex D99" in res.output
+    assert "illegal status 'WOBBLY'" in res.output
     assert not (empty / "decisions.json").exists()
 
 
 def test_force_writes_it_anyway_and_still_says_what_is_wrong(empty):
     res = dg(empty, "import", str(write(empty, BROKEN)), "--force")
     assert res.exit_code == 0
-    assert "blocked by unknown vertex D99" in res.output
+    assert "illegal status 'WOBBLY'" in res.output
     assert (empty / "decisions.json").exists()
 
 

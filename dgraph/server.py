@@ -116,6 +116,11 @@ def graph_payload(g: Graph) -> dict:
     d["derived"] = {
         vid: {
             "depends": g.depends(vid, into),
+            # The premises not settled yet — what the vertex *waits on*. Read
+            # off the edges here, as everywhere: there is no stored blocked
+            # status (`D68`), so this is how the page colours a waiting vertex
+            # and names what it waits for.
+            "waiting_on": g.waiting_on(vid, into),
             # Which premises are still under review. The panel needs it to say
             # whether a PROVISIONAL decision can be re-affirmed *yet* — and to
             # say which premise, rather than offering a button that refuses.
@@ -1204,9 +1209,8 @@ class Handler(BaseHTTPRequestHandler):
         """Open a question from the browser. `dg add`'s twin.
 
         Every rule and the op list itself are `pending.compose_add`, which the
-        CLI calls too — so the edges that attach the vertex, and the edge a
-        `BLOCKED:` status implies, cannot be present at one door and missing at
-        the other. This method is transport: read the body, hand it over, stage
+        CLI calls too — so the edges that attach the vertex cannot be present
+        at one door and missing at the other. This method is transport: read the body, hand it over, stage
         the group as one write.
         """
         g = Graph.load()
@@ -1458,12 +1462,9 @@ class Handler(BaseHTTPRequestHandler):
                 # not there — the same distinction `dg dep` makes.
                 return [], said
         elif verb == "undep":
-            ops, blocker = pending.compose_undep(eff, vid=vid, after=after)
-            said = ([f"{vid} was BLOCKED:{blocker} and is released to OPEN — "
-                     f"the block asserted the dependency being removed"]
-                    if blocker else [])
-            said += [f"{v.check} — {v.message}"
-                     for v in pending.introduced(eff, ops)]
+            ops = pending.compose_undep(eff, vid=vid, after=after)
+            said = [f"{v.check} — {v.message}"
+                    for v in pending.introduced(eff, ops)]
         else:
             raise pending.ApplyError(
                 f"{verb} is a task verb — the seam is a field on a task, and "
@@ -1525,12 +1526,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if body.get("store") == "decisions":
                 eff = pending.preview(Graph.load())
-                ops, blocker = pending.compose_undep(
+                ops = pending.compose_undep(
                     eff, vid=(body.get("id") or "").strip(),
                     after=[x for x in (body.get("after") or []) if x])
                 return self._json({
-                    "releases": [f"{body['id']} is released to OPEN — it was "
-                                 f"BLOCKED:{blocker}"] if blocker else [],
+                    "releases": [],
                     "findings": [f"{v.check} — {v.message}"
                                  for v in pending.introduced(eff, ops)]})
             if not proj.has_tasks:

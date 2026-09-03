@@ -491,7 +491,7 @@ def blast_radius(tg: TaskGraph, dids: list[str]) -> list[str]:
 
 #: The decision statuses that mean "this answer is being re-examined". A task
 #: resting on one of these is building on a premise under review. Deliberately
-#: excludes OPEN/BLOCKED: work planned ahead of a decision that was never
+#: excludes OPEN: work planned ahead of a decision that was never
 #: settled is ordinary, and flagging it would produce noise proportional to the
 #: backlog, which is how a check teaches people to ignore it.
 UNDER_REVIEW = ("REOPENED", "PROVISIONAL")

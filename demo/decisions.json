@@ -16,7 +16,7 @@
      "note": "The sweep is running in T03. Nobody has written down what the numbers mean yet -- this is the decision the demo makes."},
 
     {"id": "D05", "title": "How many shards, and how are results merged?",
-     "area": "Serving", "status": "BLOCKED:D04"},
+     "area": "Serving", "status": "OPEN"},
 
     {"id": "D06", "title": "What is recall measured against?", "area": "Eval",
      "status": "DECIDED"},

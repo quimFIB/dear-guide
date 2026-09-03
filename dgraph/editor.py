@@ -35,7 +35,7 @@ from dgraph.model import Graph, status_fault
 
 ELISP = Path(__file__).resolve().parent / "elisp" / "dgraph.el"
 
-STATUSES = ("DECIDED", "OPEN", "BLOCKED", "REOPENED", "PROVISIONAL")
+STATUSES = ("DECIDED", "OPEN", "REOPENED", "PROVISIONAL")
 
 
 class EditorAbort(RuntimeError):
@@ -338,7 +338,7 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
         + _field("Area", "One in use, or a new one — areas accumulate.",
                  seed.get("area", ""))
         + _field("Status", f"One of: {', '.join(STATUSES)}. Default OPEN.\n"
-                           "BLOCKED needs a target, e.g. BLOCKED:D04.",
+                           "A vertex waits on whatever in After is unsettled.",
                  seed.get("status", "OPEN"))
         + _field("After", "Optional. Comma-separated parents that open this.",
                  ", ".join(seed.get("after", [])) if seed.get("after") else "")
@@ -615,13 +615,6 @@ def _parse_add(g: Graph, f: dict, *, new_area: bool = False) -> list[dict]:
         op["format"] = "org"
     ops = [op]
     parents = [p.strip() for p in f.get("after", "").split(",") if p.strip()]
-    # A block is a dependency; see the same addition in `cli.add`. Staged here
-    # too so the composed batch reads as what it does, rather than gaining an
-    # edge at apply time that the buffer never mentioned.
-    if op["status"].startswith("BLOCKED:"):
-        blocker = op["status"].split(":", 1)[1]
-        if blocker and blocker not in parents:
-            parents.append(blocker)
     for parent in parents:
         if parent not in g.vertices:
             raise EditorError(f"unknown parent {parent!r} in After")

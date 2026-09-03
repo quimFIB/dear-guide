@@ -78,7 +78,7 @@ the ones nobody remembered were resting on it.
 independent: track only decisions, only work, or both.
 
 A **decision** is a question the project must answer, with an explicit status —
-`DECIDED` · `OPEN` · `BLOCKED:<id>` · `REOPENED` · `PROVISIONAL`. Answering one
+`DECIDED` · `OPEN` · `REOPENED` · `PROVISIONAL`. Answering one
 requires a **falsifier**: what evidence would overturn it, written before that
 evidence arrives. Dependency is the graph structure, never a stored field, and
 a reversal is kept forever rather than deleted.

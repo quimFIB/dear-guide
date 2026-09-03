@@ -35,7 +35,7 @@ truth; this file is the readable view of it. `dg check` enforces the invariants.
 - **Status is explicit.** Never infer it from out-degree — a vertex may have
   outgoing edges and still be reopened for re-evaluation.
 
-Statuses: `DECIDED` · `OPEN` · `BLOCKED:<id>` · `REOPENED` · `PROVISIONAL`
+Statuses: `DECIDED` · `OPEN` · `REOPENED` · `PROVISIONAL`. Waiting is derived: an `OPEN` vertex waits on whichever of its premises is unsettled.
 """
 
 SUPERSEDED_INTRO = """Permanent record, rendered from the inactive edges. A
@@ -65,7 +65,7 @@ def _index(g: Graph, _by=None) -> str:
     frontier = ", ".join(g.frontier())
     rows.append("")
     rows.append(
-        f"**Frontier** — filter to `OPEN` and `BLOCKED`: {frontier}."
+        f"**Frontier** — filter to `OPEN` and `REOPENED`: {frontier}."
     )
     return "## Index\n\n" + "\n".join(rows) + "\n"
 

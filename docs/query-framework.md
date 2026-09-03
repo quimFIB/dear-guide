@@ -202,14 +202,14 @@ sentence is never the question anybody has, so `note:` would have required a
 regex one hundred percent of the time. A default that is never the right answer
 is not a default, it is a toll.
 
-One coupling worth knowing, because it is invisible and a naive change breaks
-it silently. A blocked vertex stores `BLOCKED:D05` — the premise id is part of
-the status string — so `status:BLOCKED` only ever worked *because* matching was
-a substring test. Both forms are now offered: `status:BLOCKED` is what the
-listing shows and therefore what a reader types, and `status:BLOCKED:D05`
-("blocked on *that* one") stays available. The web app's status chips write
-`status:` + the base status into the query box, so this is also what keeps
-clicking a chip from silently emptying the canvas.
+A coupling that *used* to be here, recorded because its removal is the kind
+of thing a reader would otherwise reconstruct: a blocked vertex once stored
+`BLOCKED:D05`, premise id and all, so `status:` offered both the stored string
+and its `BLOCKED` prefix. There is no stored blocked status now — a waiting
+vertex is `OPEN`, and *held up* is `is:blocked`, derived from the edges as the
+task store's always was. `status:BLOCKED` matches nothing, and says so as an
+empty result rather than a fault, because the field is real and the value is
+merely absent.
 
 Dates compare — `date:>2026-01-01`, `date:>=2026-01-01`, `date:<=2026-03` —
 and otherwise prefix-match, so `date:2026-01` is that month. Both the strict
@@ -324,7 +324,7 @@ exempt from, and the test is what ends the exemption.
 | `shaky` | `context.SHAKY` (`context.py`) | — |
 | `terminal` | `Edge.terminal` (`model.py`) | — |
 | `superseded` | `Graph.history` non-empty (`model.py`) | — |
-| `blocked` | `base_status == BLOCKED` | `TaskGraph.blocked` (`tasks.py`) |
+| `blocked` | unsettled ∧ `Graph.waiting_on` non-empty (`model.py`) | `TaskGraph.blocked` (`tasks.py`) |
 | `ready` | — | `TaskGraph.ready` ∧ not `cross.gated_by` |
 | `outstanding` | — | `Task.unfinished` (`tasks.py`) |
 | `resolved` | — | `Task.resolved` — `DONE` or `DROPPED` |
@@ -341,7 +341,7 @@ needs a way to ask which work that is.
 
 `is:blocked` computes differently in the two stores, and that is correct rather
 than a wart. It means *held up*, and the two stores are held up by different
-things: a decision by a premise it names in its status, a task by an unresolved
+things: a decision by a premise that is not settled, a task by an unresolved
 prerequisite. One word, one meaning, two derivations — which is the same
 arrangement `dg areas` already makes when it prints two tables that share their
 areas and not their vocabularies (`dgraph/cli.py`).

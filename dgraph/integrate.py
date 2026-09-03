@@ -1208,11 +1208,11 @@ def rename_collisions(d_ops: list[dict], t_ops: list[dict], ours_g, ours_tg,
 
 
 #: Every place an id can hide in an op. Spelled out rather than found by
-#: walking values, because the two that are easy to forget are the two that
-#: fail *silently*: a `BLOCKED:<id>` status is a dependency written into a
-#: string, and `because` / `evidence_for` are ids in the **other** store's
-#: file — which is where a decision-id collision crosses over and quietly
-#: rewrites what a task's premise points at.
+#: walking values, because the ones that are easy to forget are the ones that
+#: fail *silently*: `because` / `evidence_for` / `against` are ids in the
+#: **other** store's file — which is where a decision-id collision crosses
+#: over and quietly rewrites what a task's premise points at. (A `BLOCKED:<id>`
+#: status was the other one, until `D68` stopped storing it.)
 _ID_KEYS = ("id", "vertex", "task", "from", "against", "because",
             "evidence_for", "into")
 
@@ -1223,11 +1223,6 @@ def _rewrite(op: dict, mapping: dict[str, str]) -> None:
             op[key] = mapping[op[key]]
     if isinstance(op.get("to"), list):
         op["to"] = [mapping.get(t, t) for t in op["to"]]
-    status = op.get("status")
-    if isinstance(status, str) and status.startswith("BLOCKED:"):
-        blocker = status.split(":", 1)[1]
-        if blocker in mapping:
-            op["status"] = f"BLOCKED:{mapping[blocker]}"
 
 
 def split_one(raw: dict, ref: str, new_id: str, *, title: str,
