@@ -20,8 +20,8 @@ from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import env, limits, project, ranges
-from dgraph.model import (SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex,
-                          status_fault)
+from dgraph.model import (CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED, Edge,
+                          Graph, Vertex, status_fault)
 from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
@@ -1769,6 +1769,18 @@ def repairs(g: Graph) -> list[dict]:
 # ---- apply ---------------------------------------------------------------
 
 
+def _payload(op: dict) -> dict:
+    """What a `close` or `reject` op writes onto an edge, by `PAYLOAD`.
+
+    `answer` and `source` are indexed rather than fetched: an op without them
+    is malformed, and a `KeyError` here is the same refusal the hand-written
+    version gave.
+    """
+    out = {k: op.get(k) for k in PAYLOAD}
+    out["answer"], out["source"] = op["answer"], op["source"]
+    return out
+
+
 def _apply_one(g: Graph, op: dict) -> None:
     kind = op.get("op")
     if kind not in OPS:
@@ -1911,17 +1923,13 @@ def _apply_one(g: Graph, op: dict) -> None:
     if kind == "close":
         e = g.active_edge(vid)
         targets = sorted(set(op.get("to", [])) | set(e.to if e else []))
-        payload = dict(
-            answer=op["answer"], falsifier=op.get("falsifier"),
-            source=op["source"], date=op.get("date") or _date.today().isoformat(),
-            format=op.get("format"),
-        )
+        payload = _payload(op)
+        payload["date"] = payload["date"] or _date.today().isoformat()
         if e is None:
             g.edges.append(Edge(src=vid, to=targets, **payload))
         else:
             if e.decided:
-                same = (e.answer == op["answer"] and e.source == op["source"]
-                        and e.falsifier == op.get("falsifier"))
+                same = all(getattr(e, k) == op.get(k) for k in CLAIM)
                 raise already(vid, same, "decision")
             e.to = targets
             for k, v in payload.items():
@@ -1966,10 +1974,9 @@ def _apply_one(g: Graph, op: dict) -> None:
                 "a declined answer has to say where it came from: --from")
         g.edges.append(Edge(
             src=vid, to=sorted(op.get("to", [])), active=False,
-            answer=op["answer"], falsifier=op.get("falsifier"),
-            source=op["source"], date=op.get("date"),
+            **_payload(op),
             summary=op.get("summary") or _clip(op["answer"]),
-            format=op.get("format"), from_source=op["from_source"],
+            from_source=op["from_source"],
         ))
         return
 
@@ -1978,23 +1985,25 @@ def _apply_one(g: Graph, op: dict) -> None:
         if e is None or not e.decided:
             raise ApplyError(f"{vid} has no decision to reopen")
         # The answer is superseded; the dependency structure is not. The edge
-        # keeps its targets and loses only its payload.
+        # keeps its targets and loses only its payload — every field of it,
+        # read off `PAYLOAD` so that a field added there is archived and
+        # cleared here without this site being told.
+        archived = {k: getattr(e, k) for k in PAYLOAD}
+        # `format` is this op's dialect, covering the prose composed here —
+        # why and summary. The archived answer keeps no dialect of its own:
+        # `e.format` describes an answer this edge no longer owns, and a
+        # second field for it would be a schema change for the one place
+        # the two dialects differ (a single `*…*` span: bold in org,
+        # italic in markdown). The web panel renders the archived answer in
+        # this dialect and can be that much wrong about its emphasis.
+        archived["format"] = op.get("format")
         g.edges.append(Edge(
-            src=vid, to=list(e.to), active=False,
-            answer=e.answer, falsifier=e.falsifier, source=e.source,
-            date=e.date, summary=op.get("summary") or _clip(e.answer or ""),
+            src=vid, to=list(e.to), active=False, **archived,
+            summary=op.get("summary") or _clip(e.answer or ""),
             replaced_by=None, why=op["why"],
-            # `format` is this op's dialect, covering the prose composed here —
-            # why and summary. The archived answer keeps no dialect of its own:
-            # `e.format` describes an answer this edge no longer owns, and a
-            # second field for it would be a schema change for the one place
-            # the two dialects differ (a single `*…*` span: bold in org,
-            # italic in markdown). The web panel renders the archived answer in
-            # this dialect and can be that much wrong about its emphasis.
-            format=op.get("format"),
         ))
-        e.answer = e.falsifier = e.source = e.date = None
-        e.format = None
+        for k in PAYLOAD:
+            setattr(e, k, None)
         g.vertices[vid] = _dc_replace(
             g.vertices[vid], status="REOPENED",
             note=op.get("note") or op["why"], format=op.get("format"),

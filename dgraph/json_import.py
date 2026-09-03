@@ -39,7 +39,7 @@ import json
 from pathlib import Path
 from typing import NamedTuple
 
-from dgraph.model import Graph
+from dgraph.model import EDGE_FIELDS, Graph
 from dgraph.tasks import TaskGraph
 
 
@@ -80,9 +80,13 @@ SCHEMA = {
         "required": ("id", "title", "area", "status"),
         "optional": ("note", "format"),
         "edge_required": ("from",),
-        "edge_optional": ("to", "active", "answer", "falsifier", "source",
-                          "date", "summary", "replaced_by", "why", "format",
-                          "from_source"),
+        # The store's own list, so a field added to `Edge` is accepted here
+        # the same day. This door still *refuses* a key outside it, and that
+        # is the difference from `Graph.load`: a load carries what it cannot
+        # read (`Vertex.extra`), because the store is already the record; an
+        # import adopts a document somebody prepared, and a key nobody named
+        # is the writer's mistake to fix, not the store's to keep.
+        "edge_optional": ("to", "active", *EDGE_FIELDS),
     },
     "tasks": {
         "collection": "tasks",
@@ -92,8 +96,13 @@ SCHEMA = {
         # neither: `tasks._task` folds a legacy pair into a one-entry
         # `completions` list, so a document written against the old shape is
         # still adoptable and says so by loading rather than by an error.
+        # `stops` and `readings` were missing here for as long as the store
+        # has held them, so `dg task import` refused every store with a
+        # parked task or a read result — the drift this table's own comment
+        # warns of, arriving through the door it was written to guard.
         "optional": ("status", "note", "completions", "done", "outcome",
-                     "why", "format", "because", "evidence_for"),
+                     "why", "format", "because", "evidence_for", "stops",
+                     "readings"),
         "edge_required": ("from",),
         # `kind` is required by the store and deliberately not checked here:
         # `tasks._edge` refuses an absent one with a message that also names

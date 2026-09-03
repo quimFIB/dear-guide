@@ -41,6 +41,10 @@ CHECKS: tuple[str, ...] = (
     "stale_view",
     # both stores; stamped where it is emitted, like `store_loads`
     "verbose_field",
+    # both stores: a field the store holds and this version cannot read,
+    # carried verbatim and named. A warning, for the reason `model.unknown_field`
+    # gives.
+    "unknown_field",
     # the task store; absent in most projects, checked only when present
     "task_ids_wellformed",
     "task_status_legal",
@@ -87,6 +91,8 @@ ORIGIN: dict[str, str] = {
     # stores, and splitting the name in two would make the rule twice as easy
     # to let rot in one of them.
     "verbose_field": "",
+    # As `verbose_field`: emitted by both validators, stamped by the caller.
+    "unknown_field": "",
     # Either tray; stamped where it is emitted, like `store_loads`.
     "tray_applies": "",
     "ids_wellformed": DECISION,
@@ -329,6 +335,34 @@ def _verbose(rows: list[tuple[str, dict]], origin: str) -> list[Violation]:
     return out
 
 
+def _unknown(rows: list[tuple[str, dict]], origin: str) -> list[Violation]:
+    """`unknown_field` for one store's records, as `(where, extra)` pairs.
+
+    A field the store holds and this version cannot read — `Vertex.extra`,
+    `Edge.extra`, `Task.extra`, `TaskEdge.extra` — carried verbatim by the
+    loader and named here. **A warning, from here and never from either
+    `validate`**, for the reason `_verbose` gives: this is not a store
+    invariant. The store is legal and representable, the field is kept exactly
+    as written, and the reader is told there is something an install of this
+    version cannot interpret. Blocking would deny every commit in a clone
+    whose only fault is being a version behind, which is the failure `extra`
+    exists to end; and `apply_all` must not refuse to write a field it is
+    carrying for somebody else.
+
+    One finding per field rather than per record, unlike `_verbose`: two
+    unknown fields are two things a newer install means, and the remedy — run
+    that install — is the same, so listing both costs nothing and hides
+    nothing.
+    """
+    return [Violation(
+        "unknown_field",
+        f"{where} carries `{name}`, which this version of dg does not read — "
+        f"kept as written, never dropped; an install that reads it is the "
+        f"one to say what it means (`dg --version`)",
+        "warning", origin)
+        for where, extra in rows for name in sorted(extra)]
+
+
 def _link(proj: _project.Project, g: Graph | None = None,
           tg: TaskGraph | None = None) -> list[Violation]:
     """The cross-graph invariants, when the project has both stores.
@@ -414,6 +448,10 @@ def _tasks(proj: _project.Project, tg: TaskGraph | None = None, *,
                  "why": t.stops[-1].why if t.stops else None})
          for t in tg.tasks.values()],
         TASK)
+    problems += _unknown(
+        [(t.id, t.extra) for t in tg.tasks.values()]
+        + [(f"the {e.kind} edge from {e.src}", e.extra) for e in tg.edges],
+        TASK)
 
     if not views:
         return problems
@@ -478,6 +516,10 @@ def _decisions(proj: _project.Project, g: Graph | None = None, *,
         + [(e.src, {"answer": e.answer, "falsifier": e.falsifier,
                     "summary": e.summary, "why": e.why})
            for e in g.edges if e.active],
+        DECISION)
+    problems += _unknown(
+        [(v.id, v.extra) for v in g.vertices.values()]
+        + [(f"the edge from {e.src}", e.extra) for e in g.edges],
         DECISION)
 
     if not views:

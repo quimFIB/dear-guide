@@ -43,6 +43,38 @@ def rival_note(n: int) -> str:
 SIMPLE_STATUSES = {"DECIDED", "OPEN", "REOPENED", "PROVISIONAL"}
 UNSETTLED = {"OPEN", "REOPENED"}
 
+#: What a decision *asserts*: the fields two answers are compared on, by
+#: `pending.already` when a close meets an edge already decided and by
+#: `integrate._same_answer` when an arriving store is read against a base.
+#: One tuple, because a field one of the two comparisons forgets is a
+#: difference that vanishes at integration.
+CLAIM = ("answer", "falsifier", "source")
+
+#: Everything a `close` writes onto the active edge, a `reopen` archives onto
+#: the superseded copy and clears from the live one, and a `reject` files
+#: beside the answer that stood. `CLAIM` plus when and in what dialect.
+#:
+#: Read rather than restated by every site that copies a decision from one
+#: record to another — the apply path, the archive, the integration seam, the
+#: rejected-answer keepsake. Before this tuple existed each of those named the
+#: fields by hand, and a copy that names four fields **silently drops** a
+#: fifth: the store keeps loading, `dg check` says nothing, and the field is
+#: gone from the archive the day somebody adds one. A field added here is
+#: carried by all of them, and `tests/test_payload.py` pushes one value per
+#: field through every site to prove it.
+PAYLOAD = ("answer", "falsifier", "source", "date", "format")
+
+#: Every optional field an edge record holds in the store, in the order the
+#: file writes them. `from_dict` reads exactly these and `to_dict` writes
+#: exactly these; `json_import.SCHEMA` accepts exactly these. Anything else on
+#: a stored edge is `Edge.extra`.
+EDGE_FIELDS = ("answer", "falsifier", "source", "date", "summary",
+               "replaced_by", "why", "format", "from_source")
+
+#: Every field a vertex record holds. `id`, `title`, `area` and `status` are
+#: required; the rest optional. Anything else is `Vertex.extra`.
+VERTEX_FIELDS = ("id", "title", "area", "status", "note", "format")
+
 #: What a store written before 2026-09-03 spells a waiting vertex as. Folded to
 #: `OPEN` on load and never written again: whether a vertex waits is derived
 #: from its edges (`waiting_on`), the way a task's readiness always was. The
@@ -101,6 +133,28 @@ class Vertex:
     status: str
     note: str | None = None  # prose for a vertex with no decision yet
     format: str | None = None  # the note's dialect: "org", else markdown
+    #: Fields the store holds that this version of the tool does not read.
+    #: Carried from load to save verbatim, and reported by `dg check` as
+    #: `unknown_field`, a warning — from `check.py` and not from `validate`,
+    #: for the reason `verbose_field` is: it is not a store invariant, and no
+    #: write path may consult it. **Never dropped and never crashed on.**
+    #:
+    #: The case is version skew, which is this tool's ordinary state: the
+    #: plugin cache does not refresh itself, so two clones of one graph run
+    #: two versions of `dg` for weeks at a time. Before this field existed an
+    #: older install did one of two things with a key it did not know, both
+    #: wrong: on an edge it silently dropped the key on its next save, so a
+    #: newer install's field vanished from the shared store with nothing to
+    #: say so; on a vertex it raised in the constructor, which is a blocking
+    #: `store_loads`, and the commit gate then denied **every commit in that
+    #: clone** until somebody upgraded. `from_source` went through the first
+    #: of those the week it was added. Carrying the key and naming it is the
+    #: only behaviour under which a store written by a newer tool is safe in
+    #: an older one — which is what lets a field be added at all.
+    #:
+    #: Not a place to put anything on purpose. A field the tool reads is a
+    #: field on the dataclass; this holds what it *cannot* read yet.
+    extra: dict = field(default_factory=dict)
 
     @property
     def base_status(self) -> str:
@@ -148,6 +202,13 @@ class Edge:
     #: "org" when composed through the editor, else markdown. `replaced_by` is
     #: written later by a different op and is deliberately not covered.
     format: str | None = None
+    #: As `Vertex.extra`: what the store holds and this version cannot read,
+    #: carried verbatim and warned about. Stays on the live edge across a
+    #: reopen and is not copied to the archive, because what an unknown field
+    #: *means* under a reopen — a claim to archive, or an address to keep — is
+    #: exactly what this version does not know; the install that does know
+    #: puts the field in `PAYLOAD` and the archive follows.
+    extra: dict = field(default_factory=dict)
 
     @property
     def decided(self) -> bool:
@@ -191,24 +252,23 @@ class Graph:
                 f"duplicate vertex id(s): {', '.join(dupes)} — one entry per "
                 f"id; merge or renumber them by hand"
             )
+        # Known keys by name, everything else into `extra` — never `**v`,
+        # which is what made an unknown vertex key a crash (see `Vertex.extra`).
+        known_e = {"from", "to", "active", *EDGE_FIELDS}
         return cls(
             areas=raw.get("areas", []),
-            vertices={v["id"]: Vertex(**{**v, "status": fold_status(v["status"])})
-                      for v in raw["vertices"]},
+            vertices={v["id"]: Vertex(
+                **{k: v[k] for k in VERTEX_FIELDS if k in v and k != "status"},
+                status=fold_status(v["status"]),
+                extra={k: x for k, x in v.items() if k not in VERTEX_FIELDS})
+                for v in raw["vertices"]},
             edges=[
                 Edge(
                     src=e["from"],
                     to=list(e.get("to", [])),
                     active=e.get("active", True),
-                    answer=e.get("answer"),
-                    falsifier=e.get("falsifier"),
-                    source=e.get("source"),
-                    date=e.get("date"),
-                    summary=e.get("summary"),
-                    replaced_by=e.get("replaced_by"),
-                    why=e.get("why"),
-                    format=e.get("format"),
-                    from_source=e.get("from_source"),
+                    **{k: e.get(k) for k in EDGE_FIELDS},
+                    extra={k: x for k, x in e.items() if k not in known_e},
                 )
                 for e in raw["edges"]
             ],
@@ -217,11 +277,11 @@ class Graph:
     def to_dict(self) -> dict:
         def edge_dict(e: Edge) -> dict:
             d: dict = {"from": e.src, "to": e.to, "active": e.active}
-            for k in ("answer", "falsifier", "source", "date", "summary",
-                      "replaced_by", "why", "format", "from_source"):
+            for k in EDGE_FIELDS:
                 v = getattr(e, k)
                 if v is not None:
                     d[k] = v
+            d.update(e.extra)      # written back as read: see `Vertex.extra`
             return d
 
         # `areas` is a registry rather than a whitelist, so a record may
@@ -239,13 +299,12 @@ class Graph:
             "areas": self.areas,
             "vertices": [
                 {
-                    k: val
-                    for k, val in (
+                    **{k: val for k, val in (
                         ("id", v.id), ("title", v.title), ("area", v.area),
                         ("status", v.status), ("note", v.note),
                         ("format", v.format),
-                    )
-                    if val is not None
+                    ) if val is not None},
+                    **v.extra,     # written back as read: see `Vertex.extra`
                 }
                 for v in verts
             ],

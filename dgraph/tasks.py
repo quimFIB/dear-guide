@@ -64,7 +64,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as _dc_fields
 from pathlib import Path
 
 from dgraph import areas as _areas
@@ -280,6 +280,10 @@ class Task:
     #: happened stays happened. `cross.evidence_after_deciding` reads the last
     #: one as its baseline; nothing here interprets `against`.
     readings: list[Reading] = field(default_factory=list)
+    #: What the store holds that this version cannot read, carried verbatim
+    #: and warned about by `dg check`. `model.Vertex.extra` has the argument;
+    #: this is the same field for the same reason.
+    extra: dict = field(default_factory=dict)
 
     def read_against(self, did: str) -> str | None:
         """The date this work was last read against `did`, if it ever was.
@@ -459,6 +463,13 @@ class TaskEdge:
     src: str
     to: list[str]
     kind: str
+    #: As `Task.extra`.
+    extra: dict = field(default_factory=dict)
+
+
+#: What a task record may hold, by name. Everything else is `Task.extra`.
+TASK_FIELDS = (frozenset(f.name for f in _dc_fields(Task)) - {"extra"}
+               | {"done", "outcome", "why"})   # legacy spellings `_task` handles
 
 
 def _fold_because(raw) -> list[str]:
@@ -532,6 +543,10 @@ def _task(raw: dict) -> Task:
     # is folded rather than refused, the same way the two-scalar completion was:
     # nothing has to be invented.
     fields["because"] = _fold_because(fields.pop("because", None))
+    # Known keys by name, everything else carried: never `Task(**raw)`, which
+    # made an unknown key a crash at load. See `model.Vertex.extra`.
+    fields["extra"] = {k: fields.pop(k) for k in list(fields)
+                       if k not in TASK_FIELDS}
     return Task(**fields)
 
 
@@ -551,7 +566,9 @@ def _edge(i: int, e: dict) -> TaskEdge:
             f'written before edge kinds existed holds only prerequisites: add '
             f'"kind": "precedes" to each edge.'
         )
-    return TaskEdge(src=e["from"], to=list(e.get("to", [])), kind=e["kind"])
+    return TaskEdge(src=e["from"], to=list(e.get("to", [])), kind=e["kind"],
+                    extra={k: v for k, v in e.items()
+                           if k not in ("from", "to", "kind")})
 
 
 @dataclass
@@ -598,7 +615,7 @@ class TaskGraph:
             "areas": self.areas,
             "tasks": [
                 {
-                    k: val
+                    **{k: val
                     for k, val in (
                         ("id", t.id), ("title", t.title), ("area", t.area),
                         ("status", t.status), ("note", t.note),
@@ -618,12 +635,13 @@ class TaskGraph:
                                        "against": r.against}
                                       for r in t.readings] or None),
                     )
-                    if val is not None
+                    if val is not None},
+                    **t.extra,     # written back as read: see `Task.extra`
                 }
                 for t in rows
             ],
             "edges": [
-                {"from": e.src, "to": sorted(e.to), "kind": e.kind}
+                {"from": e.src, "to": sorted(e.to), "kind": e.kind, **e.extra}
                 for e in sorted(self.edges, key=lambda e: (e.src, e.kind))
                 if e.to
             ],
@@ -798,6 +816,7 @@ class TaskGraph:
                     f"{', '.join(STATUSES)}")
 
         for e in self.edges:
+
             # Checked before the id checks below, which are kind-agnostic and
             # so keep working on an edge whose kind is nonsense — one bad field
             # should not suppress every other finding about the same edge.

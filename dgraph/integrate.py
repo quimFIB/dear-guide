@@ -49,7 +49,7 @@ import copy
 import json
 from dataclasses import dataclass, field
 
-from dgraph.model import Graph
+from dgraph.model import CLAIM, PAYLOAD, Graph
 from dgraph.tasks import TaskGraph
 
 #: The fields `set_fields` carries, in the order a report reads best. Imported
@@ -118,6 +118,11 @@ def decisions(base: Graph, theirs: Graph) -> Derived:
         _fields(base.vertices[vid], theirs.vertices[vid], vid, "vertex", out,
                 skip=("note", "format") if vid in settled else ())
     for vid in sorted(theirs.vertices):
+        _unknown(base.vertices.get(vid), theirs.vertices[vid], vid, out)
+        was, now = base.active_edge(vid), theirs.active_edge(vid)
+        if now is not None:
+            _unknown(was, now, f"the edge from {vid}", out)
+    for vid in sorted(theirs.vertices):
         out.ops.extend(edge_ops[vid])
 
     # Removals last, and this is the ordering that matters most. A removal
@@ -155,12 +160,34 @@ def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
     _deps(base, theirs, out)
     for tid in sorted(theirs.tasks):
         _readings(base.tasks.get(tid), theirs.tasks[tid], tid, out)
+        _unknown(base.tasks.get(tid), theirs.tasks[tid], tid, out)
     for tid in sorted(set(base.tasks) - set(theirs.tasks)):
         out.ops.append({"op": "remove_task", "task": tid, "mode": "sever"})
     return out
 
 
 # ---- the pieces ----------------------------------------------------------
+
+
+def _unknown(was, now, rid: str, out: Derived) -> None:
+    """A field this version cannot read, arriving changed: unexpressible.
+
+    `extra` travels by load and save and never by an op — no op writes a
+    field the tool does not know — so a contribution that added or changed
+    one cannot be replayed here, and the honest report is the one this
+    module gives for everything it cannot say. It arrives as a store that
+    `dg check` warns about as `unknown_field`, which is the same fact read
+    from the other side.
+    """
+    before = was.extra if was is not None else {}
+    changed = sorted(k for k in set(before) | set(now.extra)
+                     if before.get(k) != now.extra.get(k))
+    if changed:
+        out.unexpressible.append(
+            f"{rid} arrives with {', '.join(f'`{k}`' for k in changed)}, "
+            f"which this version of dg does not read — carried by a load, "
+            f"never by an op, so it cannot be adopted here; the install that "
+            f"reads it is the one to bring it in")
 
 
 def _fields(was, now, rid: str, what: str, out: Derived, skip=()) -> None:
@@ -201,12 +228,11 @@ def _edges(base: Graph, theirs: Graph, vid: str, out: Derived) -> None:
         return
 
     if now.decided and not _same_answer(was, now):
-        out.ops.append({"op": "close", "vertex": vid, "answer": now.answer,
-                        "source": now.source, "to": sorted(now.to),
-                        **({"falsifier": now.falsifier}
-                           if now.falsifier else {}),
-                        **({"date": now.date} if now.date else {}),
-                        **({"format": now.format} if now.format else {})})
+        # Every `PAYLOAD` field the edge carries, and none it does not: a
+        # field named here by hand is one this seam drops the day it is added.
+        out.ops.append({"op": "close", "vertex": vid, "to": sorted(now.to),
+                        **{k: getattr(now, k) for k in PAYLOAD
+                           if getattr(now, k) is not None}})
         return
 
     # A bare edge: the targets are all it holds, so a difference in them is an
@@ -227,8 +253,7 @@ def _same_answer(was, now) -> bool:
     handled beside this and `replaced_by` is written later by a different act.
     """
     return was is not None and was.decided and all(
-        getattr(was, f) == getattr(now, f)
-        for f in ("answer", "falsifier", "source"))
+        getattr(was, f) == getattr(now, f) for f in CLAIM)
 
 
 def _links(was, now, tid: str, out: Derived) -> None:
@@ -1147,10 +1172,8 @@ def _keepsake(op: dict, raw: dict) -> dict | None:
     """
     if op.get("op") != "close":
         return None
-    return {"op": "reject", "vertex": op["vertex"], "answer": op["answer"],
-            "source": op["source"], "to": op.get("to", []),
-            "falsifier": op.get("falsifier"), "date": op.get("date"),
-            "format": op.get("format"),
+    return {"op": "reject", "vertex": op["vertex"], "to": op.get("to", []),
+            **{k: op.get(k) for k in PAYLOAD},
             "from_source": raw.get("source", "another writer")}
 
 
