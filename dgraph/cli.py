@@ -224,6 +224,12 @@ def _version(show: bool) -> None:
     `pip install` — so skew is not hypothetical. Without a version surface an
     adapter's only symptom is a subcommand that does not exist yet, which looks
     exactly like a project with no graph.
+
+    What it prints is the **commit**, not a number, for as long as this is
+    beta — `dgraph.version` says why, and what would end that. Printed bare,
+    one line, with no `dg` in front of it: it is read
+    by adapters as often as by people, and a bare token is what `git log -1
+    --format=%h` gives back to compare it against.
     """
     if not show:
         return
@@ -241,7 +247,7 @@ def _root(
     ),
     version: bool = typer.Option(
         False, "--version", callback=_version, is_eager=True,
-        help="Print the installed version and exit.",
+        help="Print the commit this copy was installed from, and exit.",
     ),
 ) -> None:
     project.use(project_dir)

@@ -73,6 +73,11 @@
     overflow:auto;padding:14px}
   aside h2{font-size:14px;margin:0 0 2px}
   .muted{color:var(--dim)}
+  /* Monospace and dim: it is a token to compare against another token, and
+     comparing hashes by eye is what a proportional font is worst at. */
+  .build{color:var(--dim);font:11px/1 ui-monospace,SFMono-Regular,monospace;
+    border:1px solid var(--line);border-radius:99px;padding:3px 8px}
+  .build:empty{display:none}
   /* An area the graph has not used before. A mark, not a warning: nothing is
      wrong with a new area — see `dgraph/areas.py`. Audit `R-F7`. */
   .fresh-area{color:var(--warn,#d29922)}
@@ -163,6 +168,11 @@
 <div id="app">
   <header>
     <h1>Development graph</h1>
+    <!-- The commit the *server* is running, not the page: the page is served
+         by that same process, so one stamp answers for both. A number would go
+         here instead once there is one worth showing; while this is beta there
+         is not, and a stale number in a header is believed. -->
+    <span class="build" id="build" title="The commit this dg was installed from. Compare it with `git log -1 --format=%h` where you installed from."></span>
     <span id="tabs"></span>
     <span class="muted" id="counts"></span>
     <span id="statusChips"></span>
@@ -190,6 +200,9 @@ const PALETTE = ["#1f6feb","#8957e5","#238636","#9e6a03","#1f7a8c","#bd561d"];
 const STATUS_COLOR = {DECIDED:"var(--ok)",OPEN:"var(--bad)",BLOCKED:"var(--warn)",
                       PROVISIONAL:"var(--prov)",REOPENED:"var(--reop)"};
 let G=null, PEND=[], sel=null, ED=null;
+/* The server's commit, fetched once. `null` is "not asked yet" and `""` is
+   "asked, and it would not say" — the second must not retry on every Apply. */
+let BUILD=null;
 /* The second store, and the reading that joins them. `T` is null in a project
    with no tasks.json — which is not the same as a project whose backlog is
    empty, and the tab says which. */
@@ -280,6 +293,13 @@ async function boot(){
   const pend = await api("/api/pending");
   const tpend = t ? await api("/api/task-pending").catch(()=>[]) : [];
   ED = ED || await api("/api/editor").catch(()=>({available:false}));
+  /* Once per page, not once per boot: `boot()` runs again after every Apply,
+     and the process answering cannot have changed its own commit between two
+     of them. A server too old to answer leaves the stamp empty, which `:empty`
+     hides — an unlabelled blank chip in the header would be worse than no
+     chip at all. */
+  if(BUILD===null){ BUILD = await api("/api/health").then(h=>h.version||"")
+                                                    .catch(()=>""); }
   /* Read *with* the payloads, not after them: a token taken later would
      describe a store this page never drew, and the first poll after it would
      call the page current while it was already behind. Every existing caller
@@ -298,6 +318,7 @@ async function boot(){
   if(tab!=="decisions" && !T) tab="decisions";
   bindQuery();
   layout();
+  $("#build").textContent = BUILD;
   await soundness();
   tabs(); chips(); legend(); draw(); tray();
 }

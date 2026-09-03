@@ -556,8 +556,9 @@ passes flags.
 - **About fifteen lines of context per session start**, plus a subprocess. In a
   project with no `decisions.json`: nothing at all.
 - **Nothing here needed a slash command.** The brief is injected and the skill
-  loads when a decision is in play, so the six commands — `/dg:brief`,
-  `/dg:frontier`, `/dg:tasks`, `/dg:find`, `/dg:context`, `/dg:serve`, spelled
+  loads when a decision is in play, so the seven commands — `/dg:brief`,
+  `/dg:frontier`, `/dg:tasks`, `/dg:find`, `/dg:context`, `/dg:serve`,
+  `/dg:version`, spelled
   `/dg-brief` and so on under opencode — are for asking rather than waiting to
   be told. `/dg-brief` matters more on opencode, whose brief injection is the
   one part its API does not guarantee.
@@ -575,8 +576,10 @@ passes flags.
   not because anything compared 48M against the threshold. Wiring that up is
   [still open](open-questions.md).
 - **Version skew is real** — the plugin and the `dg` package install separately.
-  `dg --version` exists so you can check; the brief hook says so explicitly when
-  it meets a `dg` too old to know `dg brief`.
+  `dg --version` exists so you can check — a commit hash while this is beta,
+  which `git log -1 --format=%h` in the checkout you installed from answers
+  against; the brief hook says so explicitly when it meets a `dg` too old to
+  know `dg brief`.
 
 ## Where to go next
 

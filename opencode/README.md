@@ -31,7 +31,7 @@ Two things about those paths:
 - The directories are **plural** — `plugins/`, `commands/`. The singular form
   loads nothing and says nothing about it.
 - **`commands/` is at the repo root, not under `opencode/`.** It used to hold
-  one file for one host; it now holds the same six files Claude Code loads
+  one file for one host; it now holds the same eight files Claude Code loads
   from the plugin root. One copy, two hosts — the arrangement the skill has
   always had.
 - **The link is named `dg-<file>`, not `<file>`.** Claude Code namespaces a

@@ -2,7 +2,7 @@
 
 A CLI only records what somebody remembers to run, and the thing that forgets is
 an agent working across many sessions. The plugin turns three of the four habits
-into mechanisms, for **Claude Code** and **opencode** alike, and adds seven
+into mechanisms, for **Claude Code** and **opencode** alike, and adds eight
 commands for the times you want to ask rather than wait to be told.
 
 |  | how |
@@ -10,7 +10,7 @@ commands for the times you want to ask rather than wait to be told.
 | **read the frontier first** | `dg brief` is injected at the start of every session, and again after a compaction — no rule in an instructions file, no "read this first" |
 | **know the discipline** | the `dear-guide` skill: the model, the rules, the flag-complete commands. Loaded on demand, not carried in every context |
 | **refuse the contradictions** | a `git commit` that would leave the graph invalid is denied, quoting the rule that broke and the command that fixes it |
-| **ask on demand** | `/dg:brief` `/dg:frontier` `/dg:tasks` `/dg:find` `/dg:context` `/dg:serve` `/dg:fanout` — the same seven files on both hosts, `/dg-brief` and friends on opencode |
+| **ask on demand** | `/dg:brief` `/dg:frontier` `/dg:tasks` `/dg:find` `/dg:context` `/dg:serve` `/dg:fanout` `/dg:version` — the same eight files on both hosts, `/dg-brief` and friends on opencode |
 
 The interesting parts live in `dg` — `dg brief`, `dg gate`, `dg context` — so
 each adapter is a few dozen lines of translation with no policy of its own, and
@@ -176,6 +176,7 @@ from the prefix the install put on the link.
 | `/dg:context <id> [--full]` | `/dg-context <id>` | the chain of premises a decision or a task rests on |
 | `/dg:serve` | `/dg-serve` | the graphs in a browser |
 | `/dg:fanout` | `/dg-fanout` | who holds a name, what each is holding, and what is staged — before running several agents against one graph |
+| `/dg:version` | `/dg-version` | the commit the installed `dg` is from — beta has no release number to print |
 
 Four of them are worth a note.
 
@@ -316,7 +317,11 @@ plugin's environment is the host's.
   answers.
 - **Version skew is real** — the plugin and the package install separately.
   `dg --version` exists so an adapter can tell; the Claude Code brief hook says
-  so explicitly when it meets a `dg` too old to know `dg brief`.
+  so explicitly when it meets a `dg` too old to know `dg brief`. While this is
+  beta it prints the **commit**, not a number — compare it with `git -C
+  /path/to/dear-guide log -1 --format=%h` to see whether the install is
+  current, and read a trailing `-dirty` as "that checkout has uncommitted
+  changes".
 
 ## What stays a habit
 

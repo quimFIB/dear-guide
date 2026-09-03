@@ -707,6 +707,99 @@ def test_version_matches_the_installed_package():
     assert res.output.strip() == dgraph.version()
 
 
+def test_version_is_the_commit_this_checkout_is_on():
+    """Beta reports the commit rather than a number, and this is the whole
+    claim: run against the checkout, `dg --version` answers what `git log -1`
+    answers. A number would need bumping per change to say as much, which is
+    exactly the chore that gets skipped and leaves March and today reporting
+    the same string."""
+    import re
+
+    import dgraph
+    root = Path(__file__).resolve().parent.parent
+    head = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    printed = runner.invoke(app, ["--version"]).output.strip()
+    assert re.fullmatch(r"[0-9a-f]{7,40}(-dirty)?", printed), printed
+    assert printed.split("-")[0] == head
+    assert dgraph.commit() == printed
+
+
+def test_dg_agent_reports_the_same_commit_as_dg():
+    """One distribution, two entry points. Two binaries out of one install that
+    could name different commits would make the stamp useless for the only
+    thing it is for — telling whether what is on this machine is current."""
+    from dgraph.agent_cli import app as agent_app
+    assert (runner.invoke(agent_app, ["--version"]).output.strip()
+            == runner.invoke(app, ["--version"]).output.strip())
+
+
+def test_the_commit_is_read_from_this_tree_and_no_other(tmp_path):
+    """A non-editable install can land inside somebody else's repository — a
+    vendored tree, a site-packages under a dotfiles repo — and that repo's HEAD
+    is not this code's provenance. Reporting it would be worse than reporting
+    nothing: it is a hash, it looks like an answer, and it is another project's.
+    """
+    import dgraph
+    top = tmp_path
+    # Before there is a repository at all — the wheel case, and the one where
+    # `git` may not even be on the machine. No answer, and no exception.
+    assert dgraph._ask_git(top / "dgraph" / "__init__.py") is None
+    subprocess.run(["git", "init", "-q", str(top)], check=True)
+    subprocess.run(["git", "-C", str(top), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(top), "config", "user.name", "t"], check=True)
+    (top / "dgraph").mkdir()
+    ours = top / "dgraph" / "__init__.py"
+    ours.write_text("")
+    (top / "elsewhere.py").write_text("")
+    subprocess.run(["git", "-C", str(top), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(top), "commit", "-qm", "one"], check=True)
+    head = subprocess.run(["git", "-C", str(top), "rev-parse", "--short", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+
+    # The package this repo actually holds: answered.
+    assert dgraph._ask_git(ours) == head
+    # A file the repo does not hold at `dgraph/__init__.py`: refused, even
+    # though `git` in that directory answers perfectly well.
+    assert dgraph._ask_git(top / "elsewhere.py") is None
+
+    # Tracked file edited — the hash alone would be a lie about the code
+    # actually running, since an editable install *is* the working tree.
+    ours.write_text("# edited\n")
+    assert dgraph._ask_git(ours) == f"{head}-dirty"
+    # Untracked file — nothing about the installed code has changed, and a
+    # scratch file beside the package must not make `--version` permanently
+    # dirty for whoever keeps notes there.
+    ours.write_text("")
+    (top / "notes.md").write_text("scratch")
+    assert dgraph._ask_git(ours) == head
+
+
+def test_a_tree_with_no_git_falls_back_to_the_packaged_version(monkeypatch):
+    """A wheel, or a source tree with the history stripped. There is no commit
+    to report and no repository to compare one against, so the number in
+    `pyproject.toml` is what is left — it says "beta" and nothing more, which
+    is more than an empty line says."""
+    import dgraph
+    monkeypatch.setattr(dgraph, "_COMMIT", dgraph._UNASKED)
+    monkeypatch.setattr(dgraph, "_ask_git", lambda here=None: None)
+    assert dgraph.version() == dgraph._packaged()
+    monkeypatch.setattr(dgraph, "_COMMIT", dgraph._UNASKED)
+
+
+def test_the_commit_is_asked_of_git_once(monkeypatch):
+    """`/api/health` is on the probe path `dg serve --status` walks, and the
+    root callback runs before every command. A subprocess per call would be
+    paid by commands that never print it."""
+    import dgraph
+    calls = []
+    monkeypatch.setattr(dgraph, "_COMMIT", dgraph._UNASKED)
+    monkeypatch.setattr(dgraph, "_ask_git", lambda here=None: calls.append(1) or "abc1234")
+    assert dgraph.commit() == "abc1234" and dgraph.commit() == "abc1234"
+    assert len(calls) == 1
+    monkeypatch.setattr(dgraph, "_COMMIT", dgraph._UNASKED)
+
+
 # ---- `dg confirm`: the way out of PROVISIONAL ---------------------------
 
 

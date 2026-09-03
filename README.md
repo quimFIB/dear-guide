@@ -31,6 +31,23 @@ pip install -e /path/to/dear-guide
 directory holding `decisions.json`, `tasks.json`, or both — found by walking up
 from the cwd, or set with `--project PATH` or `$DG_PROJECT`.
 
+**This is beta, and there are no release numbers yet.** `dg --version` prints
+the commit the installed copy was built from — as does `dg-agent --version`,
+`/dg:version` in either host, and the stamp in the browser page's header. To
+see whether an install is current, compare it against the checkout it came
+from:
+
+```sh
+dg --version                                   # e.g. 8ec4171
+git -C /path/to/dear-guide log -1 --format=%h  # the same, if it is current
+```
+
+A trailing `-dirty` means that checkout has uncommitted changes to tracked
+files, so the hash names the last commit rather than the code being run. A
+number here would have to be bumped on every change to say as much, and one
+that has to be bumped by hand is one that gets skipped — which reports a copy
+from March and a copy from today as the same thing.
+
 ## Five minutes
 
 ```sh

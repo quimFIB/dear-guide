@@ -103,6 +103,13 @@ def _root(
         help="Project directory. Defaults to $DG_PROJECT, else the nearest "
              "ancestor holding decisions.json, else the cwd.",
     ),
+    # `cli._version`, not a second copy of it: the two binaries ship in one
+    # distribution and are the same code, so a `dg-agent` that could report a
+    # different commit from `dg` would be reporting a fiction.
+    version: bool = typer.Option(
+        False, "--version", callback=cli._version, is_eager=True,
+        help="Print the commit this copy was installed from, and exit.",
+    ),
 ) -> None:
     """The same session-level refusal `dg` makes, for the same reason.
 

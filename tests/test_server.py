@@ -598,6 +598,27 @@ def test_health_identifies_the_tool_and_the_project(srv, store):
     assert body["pid"] == os.getpid() and body["project"] == str(store)
 
 
+def test_health_reports_the_commit_the_server_is_running(srv):
+    """The same string `dg --version` prints, from the same call — the page
+    shows it in its header, and a browser tab left open across a `git pull` is
+    exactly the copy whose staleness nobody notices. One source, so the header
+    and the terminal cannot disagree."""
+    import dgraph
+    code, body = jreq(srv, "/api/health")
+    assert code == 200 and body["version"] == dgraph.commit()
+
+
+def test_the_page_stamps_the_commit_it_was_served_by():
+    """The browser half of the same claim: the header carries the stamp, it is
+    filled from `/api/health` rather than from anything baked into the page,
+    and a server too old to answer leaves it empty rather than blank-chipped."""
+    html = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    assert 'id="build"' in html
+    assert '/api/health' in html
+    assert '$("#build").textContent = BUILD' in html
+    assert ".build:empty{display:none}" in html
+
+
 def test_health_needs_no_token_but_still_checks_the_host(srv, store):
     code, _ = jreq(srv, "/api/health", token=False)
     assert code == 200
