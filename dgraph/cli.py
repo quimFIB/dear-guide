@@ -28,7 +28,7 @@ from dgraph import cross, editor, fanout, limits, pending, project, ranges, rend
 from dgraph import integrate as integrate_mod
 from dgraph import task_pending, task_render
 from dgraph import query as _query
-from dgraph.model import Graph, probe_fault
+from dgraph.model import Graph, probe_fault, spell_bind
 from dgraph.model import rival_note as model_rival_note
 from dgraph.tasks import done_label
 from dgraph.tasks import ID_RE as TASK_ID_RE
@@ -72,7 +72,7 @@ LAYOUT = (
             "areas")),
     (HONEST, ("check", "gate", "render")),
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
-              "reprobe", "dep", "undep", "rm")),
+              "reprobe", "bind", "unbind", "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
     (STORE, ("init", "range", "import", "import-md", "export", "integrate",
              "incoming")),
@@ -104,8 +104,8 @@ T_STORE = "Starting a backlog, and moving one"
 TASK_LAYOUT = (
     (T_READ, ("node", "tree", "independent")),
     (T_HONEST, ("render",)),
-    (T_RECORD, ("add", "start", "park", "done", "drop", "amend", "reprobe", "link",
-                "unlink", "dep", "undep", "rm")),
+    (T_RECORD, ("add", "start", "park", "done", "drop", "amend", "reprobe",
+                "bind", "unbind", "link", "unlink", "dep", "undep", "rm")),
     (T_STAGE, ("pending", "drop-op", "clear")),
     (T_STORE, ("init", "import", "export")),
 )
@@ -1135,6 +1135,8 @@ def node(
         lines += [f"opens       {', '.join(g.children(vid)) or '—'}"]
         if v.note:
             lines += ["", "[bold]Note[/]", _x(v.note)]
+    if v.binds:
+        lines.append(f"bound to    {_x(', '.join(b.spelled for b in v.binds))}")
     if v.probes:
         # Every entry, the way a task's stops are drawn: the record is what
         # this question was going to be judged by, and only the last is live
@@ -1785,6 +1787,11 @@ def _compose(g: Graph, kind: str, **kw) -> list[dict]:
     except editor.EditorError as exc:
         con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
+
+
+def _binds_line(op: dict) -> str:
+    return ", ".join(f"{b.get('kind')}:{b.get('ref')}"
+                     for b in op.get("binds") or ())
 
 
 def _probe_line(probe: dict) -> str:
@@ -2462,6 +2469,53 @@ def dep(
 
 
 @app.command(rich_help_panel=RECORD)
+def bind(
+    vid: str,
+    binds: list[str] = typer.Argument(
+        ..., metavar="KIND:REF...",
+        help="what this question is about, in a domain's terms — "
+             "rocq.constant:Closure.closed_under_step"),
+) -> None:
+    """Record what a decision is about, in a domain's terms. Accumulates.
+
+    A bind is an address, not a claim: how a probe's domain finds its subject
+    and how a relation finds its endpoints. Written like an edge — the union
+    of what is held and what is named — so two clones binding one record
+    compose rather than contest, and `dg amend` does not reach it.
+    """
+    _bind_cmd(vid, binds, remove=False)
+
+
+@app.command(rich_help_panel=RECORD)
+def unbind(
+    vid: str,
+    binds: list[str] = typer.Argument(..., metavar="KIND:REF...",
+                                      help="the pairs to drop"),
+) -> None:
+    """Drop a bind. The difference, the way `dg undep` takes it."""
+    _bind_cmd(vid, binds, remove=True)
+
+
+def _bind_cmd(vid: str, binds: list[str], *, remove: bool) -> None:
+    eff = _eff(_g())
+    try:
+        op, fresh, already = pending.compose_bind(
+            eff, vid=vid, binds=[spell_bind(b) for b in binds], remove=remove)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    if already:
+        con.print(f"[dim]{'not bound to' if remove else 'already bound to'} "
+                  f"{_x(', '.join(already))}[/]")
+    if op is None:
+        return
+    _stage_all([op], against=eff)
+    con.print(f"[green]staged[/] {vid} {'unbound from' if remove else 'bound to'} "
+              f"{_x(', '.join(fresh))}")
+    _warn_stuck()
+
+
+@app.command(rich_help_panel=RECORD)
 def undep(
     vid: str,
     after: list[str] = typer.Option(..., "--after",
@@ -2984,6 +3038,8 @@ def _area_cell(o: dict, known: set[str] | None = None) -> str:
 _PENDING_DETAIL = {
     "close": lambda o: _x((o.get("answer") or "")[:70]),
     "reprobe": lambda o: _x(_probe_line(o.get("probe") or {})),
+    "bind": lambda o: "+ " + _x(_binds_line(o)),
+    "unbind": lambda o: "✗ " + _x(_binds_line(o)),
     "reopen": lambda o: _x(o.get("why", "")),
     "set_status": lambda o: f"→ {_x(o.get('status', '?'))}"
     + (f"  [dim](from {_x(o['derived_from'])})[/]" if o.get("derived_from") else ""),
@@ -4255,6 +4311,46 @@ def task_park(
     _twarn_stuck()
 
 
+@task_app.command("bind", rich_help_panel=T_RECORD)
+def task_bind(
+    tid: str,
+    binds: list[str] = typer.Argument(..., metavar="KIND:REF...",
+                                      help="what this work is about, in a "
+                                           "domain's terms"),
+) -> None:
+    """Record what a task is about, in a domain's terms. `dg bind`'s twin."""
+    _task_bind_cmd(tid, binds, remove=False)
+
+
+@task_app.command("unbind", rich_help_panel=T_RECORD)
+def task_unbind(
+    tid: str,
+    binds: list[str] = typer.Argument(..., metavar="KIND:REF...",
+                                      help="the pairs to drop"),
+) -> None:
+    """Drop a bind from a task. `dg unbind`'s twin."""
+    _task_bind_cmd(tid, binds, remove=True)
+
+
+def _task_bind_cmd(tid: str, binds: list[str], *, remove: bool) -> None:
+    tg = _teff(_tg())
+    try:
+        op, fresh, already = task_pending.compose_bind(
+            tg, tid=tid, binds=[spell_bind(b) for b in binds], remove=remove)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    if already:
+        con.print(f"[dim]{'not bound to' if remove else 'already bound to'} "
+                  f"{_x(', '.join(already))}[/]")
+    if op is None:
+        return
+    _tstage(op)
+    con.print(f"[green]staged[/] {tid} {'unbound from' if remove else 'bound to'} "
+              f"{_x(', '.join(fresh))}")
+    _twarn_stuck()
+
+
 @task_app.command("reprobe", rich_help_panel=T_RECORD)
 def task_reprobe(
     tid: str,
@@ -4740,6 +4836,8 @@ def task_node(tid: str) -> None:
             tag = ("  [cyan](still parked)[/]" if now and t.parked
                    else "  [dim](abandoned here)[/]" if now else "")
             lines.append(f"  [dim]{k.date}[/]  {_x(k.why)}{tag}")
+    if t.binds:
+        lines.append(f"bound to    {_x(', '.join(b.spelled for b in t.binds))}")
     if t.probes:
         # Drawn like the stops: every entry, the last tagged live while the
         # work is still unfinished enough for a definition of done to apply.
@@ -4911,6 +5009,8 @@ def task_pending_cmd(
 _TASK_DETAIL = {
     "add_task": lambda o: _x(o.get("title", "")),
     "reprobe": lambda o: _x(_probe_line(o.get("probe") or {})),
+    "bind": lambda o: "+ " + _x(_binds_line(o)),
+    "unbind": lambda o: "✗ " + _x(_binds_line(o)),
     # The kind is named, not implied: the whole point of storing it is that a
     # reader never has to know which relation an absence stands for, and a
     # review screen is where that matters most. Not bracketed — square brackets

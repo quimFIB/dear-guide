@@ -71,7 +71,8 @@ from dgraph import areas as _areas
 from dgraph import project
 # The shape a task shares with a vertex, from the module that belongs to
 # neither: `tests/test_cross.py` keeps this file from importing `model`.
-from dgraph.probe import Probe, probe_entry_fault, probes_from, probes_to
+from dgraph.probe import (Bind, Probe, binds_fault, binds_from, binds_to,
+                          probe_entry_fault, probes_from, probes_to)
 from dgraph.violation import Violation, cycle_from
 
 STATUSES = ("TODO", "DOING", "PARKED", "DONE", "DROPPED")
@@ -288,6 +289,9 @@ class Task:
     #: append-only record, and `model.Probe` has the argument. The last is
     #: live; `dg reprobe` appends and nothing else writes it.
     probes: list[Probe] = field(default_factory=list)
+    #: What this work is about, in a domain's terms — `probe.Bind` has the
+    #: argument. A set held as a list, written only by `bind`/`unbind`.
+    binds: list[Bind] = field(default_factory=list)
     #: What the store holds that this version cannot read, carried verbatim
     #: and warned about by `dg check`. `model.Vertex.extra` has the argument;
     #: this is the same field for the same reason.
@@ -546,6 +550,7 @@ def _task(raw: dict) -> Task:
         ) from None
     fields["probes"] = probes_from(fields.pop("probes", []),
                                    raw.get("id", "?"))
+    fields["binds"] = binds_from(fields.pop("binds", []), raw.get("id", "?"))
     readings = fields.pop("readings", [])
     try:
         fields["readings"] = [Reading(**k) for k in readings]
@@ -650,6 +655,7 @@ class TaskGraph:
                                        "against": r.against}
                                       for r in t.readings] or None),
                         ("probes", probes_to(t.probes)),
+                        ("binds", binds_to(t.binds)),
                     )
                     if val is not None},
                     **t.extra,     # written back as read: see `Task.extra`
@@ -900,6 +906,8 @@ class TaskGraph:
                 fault = probe_entry_fault(p)
                 if fault:
                     add("task_probe_wellformed", f"{tid}: {fault}")
+            for fault in binds_fault(t.binds):
+                add("task_binding_wellformed", f"{tid}: {fault}")
             for c in t.completions:
                 if not c.date or not c.outcome:
                     add("task_done_complete",

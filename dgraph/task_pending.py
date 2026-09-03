@@ -28,15 +28,15 @@ from dgraph import project, ranges
 from dgraph.pending import (FIELDS, ApplyError, already,
                             area_counts, owner, refuse_area,
                             stored_area_counts, vet_fields)
-from dgraph.pending import _register, probe_entry
-from dgraph.model import Graph, probe_fault
+from dgraph.pending import _register, bind_step, probe_entry
+from dgraph.model import Graph, bind_fault, probe_fault
 from dgraph.tasks import (ID_RE, KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
                           Completion, Reading, Stop, Task, TaskEdge,
                           TaskGraph, _fold_because, matches)
 from dgraph.violation import Violation
 
 OPS = {"add_task", "add_dep", "remove_dep", "remove_task", "set_status",
-       "set_link", "read_evidence", "set_fields", "reprobe"}
+       "set_link", "read_evidence", "set_fields", "reprobe", "bind", "unbind"}
 
 #: An extra validator over a proposed task graph — see `apply_all`.
 Checker = Callable[[TaskGraph], list[Violation]]
@@ -81,6 +81,15 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             # `pending._apply_one`'s twin: the first appended entry.
             probes=[e for e in (probe_entry(op),) if e is not None],
         )
+        return
+
+    if kind in ("bind", "unbind"):
+        # `pending._apply_one`'s twin, through the one function that knows
+        # what the two ops do to a list.
+        tid = op["task"]
+        if tid not in tg.tasks:
+            raise ApplyError(f"unknown task {tid!r}")
+        tg.tasks[tid].binds = bind_step(tg.tasks[tid].binds, op)
         return
 
     if kind == "reprobe":
@@ -726,6 +735,30 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
     return ops
 
 
+def compose_bind(tg: TaskGraph, *, tid: str, binds: list[dict],
+                 remove: bool = False) -> tuple[dict | None, list[str], list[str]]:
+    """`pending.compose_bind`'s twin — see there."""
+    if tid not in tg.tasks:
+        raise ApplyError(f"unknown task {tid}")
+    for b in binds:
+        fault = bind_fault(b)
+        if fault:
+            raise ApplyError(fault)
+    held = {b.spelled for b in tg.tasks[tid].binds}
+    spelled = [f"{b['kind']}:{b['ref']}" for b in binds]
+    if remove:
+        fresh = [s for s in spelled if s in held]
+        already = [s for s in spelled if s not in held]
+    else:
+        fresh = [s for s in spelled if s not in held]
+        already = [s for s in spelled if s in held]
+    if not fresh:
+        return None, fresh, already
+    op = {"op": "unbind" if remove else "bind", "task": tid,
+          "binds": [b for b, s in zip(binds, spelled) if s in fresh]}
+    return op, fresh, already
+
+
 def preview(tg: TaskGraph, p: Path | None = None, *, skip: int | None = None) -> TaskGraph:
     """The task graph as it will stand once the staged ops apply."""
     from dgraph import pending
@@ -775,6 +808,11 @@ def vet(tg: TaskGraph, op: dict, *, new_area: bool = False) -> None:
         fault = probe_fault(op["probe"])
         if fault:
             raise ApplyError(f"probe: {fault}")
+    if op.get("op") in ("bind", "unbind"):
+        for b in op.get("binds") or ():
+            fault = bind_fault(b)
+            if fault:
+                raise ApplyError(f"bind: {fault}")
     if op.get("op") == "set_fields":
         t = tg.tasks[op["task"]]
         vet_fields(op, own=area_counts(tg.areas, tg.tasks.values()),

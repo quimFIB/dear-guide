@@ -112,15 +112,9 @@ def probe_fault(probe: object) -> str | None:
     if extra:
         return (f"a probe carries only kind and args — "
                 f"{', '.join(extra)} is not read by anything")
-    kind = probe.get("kind")
-    if not isinstance(kind, str):
-        return "a probe's kind is a string like \"prose.rule\""
-    domain, dot, name = kind.partition(".")
-    if not dot or not domain or not name:
-        return (f"a probe's kind is <domain>.<name> — {kind!r} does not name "
-                f"a domain")
-    if kind != kind.strip() or any(c.isspace() for c in kind):
-        return f"a probe's kind carries no whitespace: {kind!r}"
+    fault = kind_fault(probe.get("kind"), "a probe's")
+    if fault:
+        return fault
     args = probe.get("args")
     if not isinstance(args, dict):
         return ("a probe's args is an object, even an empty one — "
@@ -133,3 +127,110 @@ def probe_fault(probe: object) -> str | None:
                 f"artefact, not the artefact; put it in a file under the "
                 f"project and name the path")
     return None
+
+
+# ---- the address ---------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Bind:
+    """What a record is *about*, in a domain's terms: `{kind, ref}`.
+
+    `{"kind": "rocq.constant", "ref": "Closure.closed_under_step"}` — how a
+    relation finds its endpoints and how a probe's domain finds its subject.
+    Not a claim, so it is not archived; not a wording, so `dg amend` cannot
+    reach it. Written by `bind` and `unbind` ops that take the union and the
+    difference the way `add_edge` and `remove_edge` do, and for the reason
+    proposal C2 gives: a field a `set_fields` assigns has the semantics of a
+    scalar, and two clones binding different refs to one record would then
+    be a keep-or-take whose only right answer is the union. An edge already
+    accumulates; a bind is that kind of thing.
+
+    On the vertex rather than the edge because the subject persists across
+    reversals, and an edge is remade by every reopen. Frozen, so a list of
+    them can be read as the set it is.
+    """
+
+    kind: str
+    ref: str
+
+    @property
+    def spelled(self) -> str:
+        """`kind:ref` — the form `dg bind` takes and the views print."""
+        return f"{self.kind}:{self.ref}"
+
+
+def kind_fault(kind: object, of: str) -> str | None:
+    """Why `kind` is not `<domain>.<name>`, or None. `of` names the record
+    kind for the sentence — a probe's, a bind's."""
+    if not isinstance(kind, str):
+        return f"{of} kind is a string like \"prose.rule\""
+    domain, dot, name = kind.partition(".")
+    if not dot or not domain or not name:
+        return f"{of} kind is <domain>.<name> — {kind!r} does not name a domain"
+    if kind != kind.strip() or any(c.isspace() for c in kind):
+        return f"{of} kind carries no whitespace: {kind!r}"
+    return None
+
+
+def bind_fault(bind: object) -> str | None:
+    """Why `bind` is not a well-formed `{kind, ref}`, or None if it is.
+
+    The shape and nothing else, as `probe_fault` is for a probe: the core
+    checks that a bind names a domain and a non-empty ref, and reads the
+    ref no further — what it means is the domain's business.
+    """
+    if not isinstance(bind, dict):
+        return (f"a bind is an object {{\"kind\", \"ref\"}}, not "
+                f"{type(bind).__name__}")
+    extra = sorted(k for k in bind if k not in ("kind", "ref"))
+    if extra:
+        return (f"a bind carries only kind and ref — "
+                f"{', '.join(extra)} is not read by anything")
+    fault = kind_fault(bind.get("kind"), "a bind's")
+    if fault:
+        return fault
+    ref = bind.get("ref")
+    if not isinstance(ref, str) or not ref.strip():
+        return "a bind's ref is a non-empty string"
+    return None
+
+
+def spell_bind(text: str) -> dict:
+    """`kind:ref` as typed on a command line → `{kind, ref}`.
+
+    Split on the first colon: a kind has none (`kind_fault` says so), and a
+    ref may have any number. Not shape-checked here — `bind_fault` is asked
+    by every door, and this only unpacks the spelling.
+    """
+    kind, _, ref = text.partition(":")
+    return {"kind": kind, "ref": ref}
+
+
+def binds_from(raw, rid: str) -> list[Bind]:
+    """The stored `binds` list as records, refused at load if malformed —
+    `probes_from`'s twin, for the same reason."""
+    try:
+        return [Bind(**b) for b in (raw or [])]
+    except TypeError as exc:
+        raise ValueError(
+            f"{rid}: malformed binds entry — each needs a `kind` and a "
+            f"`ref`, and nothing else ({exc})") from None
+
+
+def binds_to(binds: list[Bind]) -> list[dict] | None:
+    return [{"kind": b.kind, "ref": b.ref} for b in binds] or None
+
+
+def binds_fault(binds: list[Bind]) -> list[str]:
+    """Every fault in a record's binds: each pair's shape, and a duplicate."""
+    out = []
+    seen = set()
+    for b in binds:
+        fault = bind_fault({"kind": b.kind, "ref": b.ref})
+        if fault:
+            out.append(fault)
+        elif b in seen:
+            out.append(f"bound to {b.spelled} twice — a bind is a set")
+        seen.add(b)
+    return out

@@ -126,6 +126,7 @@ def decisions(base: Graph, theirs: Graph) -> Derived:
     # close that settles it is among the edge ops.
     for vid in sorted(theirs.vertices):
         _probes(base.vertices.get(vid), theirs.vertices[vid], vid, "vertex", out)
+        _binds(base.vertices.get(vid), theirs.vertices[vid], vid, "vertex", out)
     for vid in sorted(theirs.vertices):
         out.ops.extend(edge_ops[vid])
 
@@ -163,6 +164,7 @@ def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
         # Before the status: a reprobe is refused on finished work, and the
         # `set_status DONE` that finishes it comes next.
         _probes(was, t, tid, "task", out)
+        _binds(was, t, tid, "task", out)
         _status(was, t, tid, out)
     _deps(base, theirs, out)
     for tid in sorted(theirs.tasks):
@@ -212,6 +214,22 @@ def _probes(was, now, rid: str, what: str, out: Derived) -> None:
     for p in now.probes[old:]:
         out.ops.append({"op": "reprobe", key: rid, "probe": p.criterion,
                         "date": p.date})
+
+
+def _binds(was, now, rid: str, what: str, out: Derived) -> None:
+    """`bind` / `unbind` per record, from the set difference — `_deps`
+    per source, for the record's address rather than its edges."""
+    old = set(was.binds) if was is not None else set()
+    new = set(now.binds)
+    key = "vertex" if what == "vertex" else "task"
+    gained = [b for b in now.binds if b not in old]
+    lost = sorted(old - new, key=lambda b: b.spelled)
+    if gained:
+        out.ops.append({"op": "bind", key: rid,
+                        "binds": [{"kind": b.kind, "ref": b.ref} for b in gained]})
+    if lost:
+        out.ops.append({"op": "unbind", key: rid,
+                        "binds": [{"kind": b.kind, "ref": b.ref} for b in lost]})
 
 
 def _reprobed_apart(mine, was, op: dict) -> bool:
@@ -467,6 +485,11 @@ CANNOT_CONFLICT = {
     # adding different ones is two facts, not two answers. A removal that no
     # longer applies is *inapplicable*, which is a different report.
     "add_edge": "an edge accumulates; two writers adding edges is two facts",
+    # A bind is that kind of thing and not a title (proposal C2): two clones
+    # binding different refs to one record is the union, and the union is
+    # what replaying both ops produces.
+    "bind": "a bind accumulates; two writers binding is two facts",
+    "unbind": "a removal that no longer applies is inapplicable, not contested",
     "remove_edge": "a removal that no longer applies is inapplicable, not contested",
     "add_dep": "an edge accumulates; two writers adding edges is two facts",
     "remove_dep": "a removal that no longer applies is inapplicable, not contested",
@@ -525,6 +548,8 @@ def _moved_here(mine, was, g, base, rid: str, children) -> str | None:
         return f"status moved here to {mine.status}"
     if len(mine.probes) != len(was.probes):
         return "a criterion was written for it here"
+    if set(mine.binds) - set(was.binds):
+        return "it was bound to something here"
     gained = sorted(set(children(g, rid)) - set(children(base, rid)))
     if gained:
         return (f"{', '.join(gained)} {'was' if len(gained) == 1 else 'were'} "

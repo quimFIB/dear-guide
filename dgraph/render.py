@@ -90,6 +90,9 @@ def _section(g: Graph, vid: str, _by=None, _into=None) -> str:
         f"- **Falsifier:** "
         f"{orgmd.to_markdown(e.falsifier if e else None, fmt=e.format if e else None) or NONE}"
     )
+    if v.binds:
+        out.append("- **Bound to:** "
+                   + ", ".join(f"`{b.spelled}`" for b in v.binds))
     if e is not None and e.probe:
         # Only when there is one, so a view of a store with no probes is
         # byte-identical to the view before the field existed and

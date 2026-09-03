@@ -102,6 +102,8 @@ CASES = [
     ([], ("undep", "D06", "--after", "D05")),
     ([], ("amend", "D05", "--title", "reworded")),
     ([], ("reprobe", "D05", "--probe", '{"kind": "prose.rule", "args": {}}')),
+    ([], ("bind", "D05", "rocq.constant:X")),
+    ([("bind", "D05", "rocq.constant:X")], ("unbind", "D05", "rocq.constant:X")),
     ([], ("rm", "D06", "--yes")),
     ([], ("task", "add", "--id", "T09", "--title", "x", "--area", "Alpha")),
     ([], ("task", "add", "--id", "T09", "--title", "x", "--area", "Alpha",
@@ -124,6 +126,9 @@ CASES = [
     ([], ("task", "amend", "T02", "--title", "reworded")),
     ([], ("task", "reprobe", "T02", "--probe",
           '{"kind": "prose.done", "args": {}}')),
+    ([], ("task", "bind", "T02", "rocq.file:a.v")),
+    ([("task", "bind", "T02", "rocq.file:a.v")],
+     ("task", "unbind", "T02", "rocq.file:a.v")),
     ([], ("task", "rm", "T03", "--yes")),
     # Across both stores, and therefore two writes — one per tray. That is the
     # rule rather than an exception to it: `dg apply` keeps the two batches

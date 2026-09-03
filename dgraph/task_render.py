@@ -111,6 +111,9 @@ def _section(tg: TaskGraph, tid: str, _adj=None) -> str:
         out.append(f"- **Because:** {', '.join(t.because)}")
     if t.evidence_for:
         out.append(f"- **Evidence for:** {t.evidence_for}")
+    if t.binds:
+        out.append("- **Bound to:** "
+                   + ", ".join(f"`{b.spelled}`" for b in t.binds))
     out.append("")
 
     if t.note:

@@ -20,12 +20,14 @@ from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import env, limits, project, ranges
-from dgraph.model import (CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED, Edge,
-                          Graph, Probe, Vertex, probe_fault, status_fault)
+from dgraph.model import (CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED, Bind,
+                          Edge, Graph, Probe, Vertex, bind_fault, probe_fault,
+                          status_fault)
 from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
-       "remove_vertex", "set_status", "set_fields", "reject", "reprobe"}
+       "remove_vertex", "set_status", "set_fields", "reject", "reprobe",
+       "bind", "unbind"}
 
 #: What `set_fields` may write, in **both** stores. One tuple, imported by
 #: `task_pending`, because a decision and a task differ in everything except
@@ -1151,6 +1153,11 @@ def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
         fault = probe_fault(op["probe"])
         if fault:
             raise ApplyError(f"probe: {fault}")
+    if op.get("op") in ("bind", "unbind"):
+        for b in op.get("binds") or ():
+            fault = bind_fault(b)
+            if fault:
+                raise ApplyError(f"bind: {fault}")
     # `set_status` is a **derived** op for decisions: `expand` and `repairs`
     # produce it, and both stamp `derived_from`. The single exception is
     # re-affirming a PROVISIONAL one, which `compose_confirm` composes and
@@ -1806,6 +1813,58 @@ def repairs(g: Graph) -> list[dict]:
 # ---- apply ---------------------------------------------------------------
 
 
+def bind_step(held: list[Bind], op: dict) -> list[Bind]:
+    """`held` after a `bind` or `unbind` op, for either store.
+
+    A `bind` adds what is not already held and says nothing about what is;
+    an `unbind` naming nothing held is refused, as `remove_edge` is, because
+    a removal that removes nothing is a claim about the record that the
+    record does not bear out. Naming some held and some not removes the
+    held ones — the same partial rule the edge has.
+    """
+    named = [Bind(kind=b["kind"], ref=b["ref"]) for b in op.get("binds") or ()]
+    if not named:
+        raise ApplyError(f"{op['op']} names no {{kind, ref}} pair: binds")
+    rid = op.get("vertex") or op.get("task")
+    if op["op"] == "bind":
+        return list(held) + [b for b in named if b not in held]
+    gone = set(named)
+    if not gone & set(held):
+        raise ApplyError(
+            f"{rid} is not bound to {', '.join(b.spelled for b in named)} — "
+            f"nothing to remove")
+    return [b for b in held if b not in gone]
+
+
+def compose_bind(g: Graph, *, vid: str, binds: list[dict],
+                 remove: bool = False) -> tuple[dict | None, list[str], list[str]]:
+    """`(op, fresh, already)` for binding `vid` — or unbinding, with `remove`.
+
+    `compose_dep`'s shape and for its reason: what was already held (or
+    already absent) is not a failure and not a no-op, it is something the
+    surface has to say. `op` is None when nothing would change.
+    """
+    if vid not in g.vertices:
+        raise ApplyError(f"unknown vertex {vid}")
+    for b in binds:
+        fault = bind_fault(b)
+        if fault:
+            raise ApplyError(fault)
+    held = {b.spelled for b in g.vertices[vid].binds}
+    spelled = [f"{b['kind']}:{b['ref']}" for b in binds]
+    if remove:
+        fresh = [s for s in spelled if s in held]
+        already = [s for s in spelled if s not in held]
+    else:
+        fresh = [s for s in spelled if s not in held]
+        already = [s for s in spelled if s in held]
+    if not fresh:
+        return None, fresh, already
+    op = {"op": "unbind" if remove else "bind", "vertex": vid,
+          "binds": [b for b, s in zip(binds, spelled) if s in fresh]}
+    return op, fresh, already
+
+
 def probe_entry(op: dict) -> Probe | None:
     """The appended entry an `add_vertex`, `add_task` or `reprobe` op writes.
 
@@ -2034,6 +2093,14 @@ def _apply_one(g: Graph, op: dict) -> None:
             summary=op.get("summary") or _clip(op["answer"]),
             from_source=op["from_source"],
         ))
+        return
+
+    if kind in ("bind", "unbind"):
+        # The union and the difference, the way `add_edge` and `remove_edge`
+        # take them — `probe.Bind` has the argument. Order is kept so the
+        # store reads as it was written; the set is what the ops mean.
+        v = g.vertices[vid]
+        v.binds = list(bind_step(v.binds, op))
         return
 
     if kind == "reprobe":

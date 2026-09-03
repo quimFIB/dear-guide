@@ -30,12 +30,12 @@ from tests.conftest import FIXTURE, TASK_FIXTURE
 #: asserting about a known one — so the example is now a name nothing in the
 #: proposal plans to use.
 SEAL = {"kind": "rocq.statement_unchanged", "args": {"sha": "abc"}}
-BINDS = [{"kind": "rocq.constant", "ref": "Closure.closed_under_step"}]
+STAMP = [{"kind": "rocq.constant", "ref": "Closure.closed_under_step"}]
 
 
 def _decisions() -> dict:
     raw = copy.deepcopy(FIXTURE)
-    raw["vertices"][0]["binds"] = BINDS
+    raw["vertices"][0]["stamp"] = STAMP
     raw["edges"][0]["seal"] = SEAL
     return raw
 
@@ -62,9 +62,9 @@ def test_an_unknown_edge_field_survives_a_load_and_a_save():
 def test_an_unknown_vertex_field_no_longer_crashes_the_loader():
     """The loud half: `Vertex(**v)` raised, and the gate denied every commit."""
     g = Graph.from_dict(_decisions())
-    assert g.vertices["D01"].extra == {"binds": BINDS}
+    assert g.vertices["D01"].extra == {"stamp": STAMP}
     assert next(v for v in g.to_dict()["vertices"]
-                if v["id"] == "D01")["binds"] == BINDS
+                if v["id"] == "D01")["stamp"] == STAMP
 
 
 def test_an_unknown_task_and_task_edge_field_survive():
@@ -106,7 +106,7 @@ def test_dg_check_names_every_field_as_a_warning_with_its_store(
     assert where == {"D01": "decision", "the edge from D01": "decision",
                      "T02": "task", "the precedes edge from T01": "task"}
     assert all(not v.blocking for v in found)
-    assert "`binds`" in next(v.message for v in found
+    assert "`stamp`" in next(v.message for v in found
                              if v.message.startswith("D01"))
     assert not [v for v in run() if v.blocking], "a legal store must commit"
 
@@ -122,7 +122,7 @@ def test_an_amend_and_a_close_keep_what_they_do_not_know():
          "falsifier": "f", "to": ["D06"]},
     ])
     assert out.vertices["D01"].title == "retitled"
-    assert out.vertices["D01"].extra == {"binds": BINDS}
+    assert out.vertices["D01"].extra == {"stamp": STAMP}
     assert out.active_edge("D01").extra == {"seal": SEAL}
 
 
@@ -154,7 +154,7 @@ def test_the_seam_reports_an_arriving_unknown_field_as_unexpressible():
     d = integrate.decisions(base, theirs)
     assert d.ops == [], "nothing about the store changed that an op can say"
     assert len(d.unexpressible) == 2
-    assert any(u.startswith("D01 arrives with `binds`") for u in d.unexpressible)
+    assert any(u.startswith("D01 arrives with `stamp`") for u in d.unexpressible)
     assert any(u.startswith("the edge from D01 arrives with `seal`")
                for u in d.unexpressible)
 
@@ -178,7 +178,7 @@ def test_import_refuses_what_load_carries(tmp_path):
     from dgraph.json_import import ShapeError, read
     path = tmp_path / "candidate.json"
     path.write_text(json.dumps(_decisions()))
-    with pytest.raises(ShapeError, match='decision D01 has "binds"'):
+    with pytest.raises(ShapeError, match='decision D01 has "stamp"'):
         read(path, "decisions")
 
 

@@ -22,9 +22,10 @@ from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import project
-from dgraph.probe import (Probe, probe_args_limit,  # noqa: F401 — re-exported
+from dgraph.probe import (Bind, Probe, bind_fault,  # noqa: F401 — re-exported
+                          binds_fault, binds_from, binds_to, probe_args_limit,
                           probe_entry_fault, probe_fault, probes_from,
-                          probes_to)
+                          probes_to, spell_bind)
 from dgraph.violation import Violation  # re-exported: callers import it from here
 from dgraph.violation import cycle_from
 
@@ -89,7 +90,8 @@ EDGE_FIELDS = ("answer", "falsifier", "source", "date", "summary",
 
 #: Every field a vertex record holds. `id`, `title`, `area` and `status` are
 #: required; the rest optional. Anything else is `Vertex.extra`.
-VERTEX_FIELDS = ("id", "title", "area", "status", "note", "format", "probes")
+VERTEX_FIELDS = ("id", "title", "area", "status", "note", "format", "probes",
+                 "binds")
 
 #: What a store written before 2026-09-03 spells a waiting vertex as. Folded to
 #: `OPEN` on load and never written again: whether a vertex waits is derived
@@ -155,6 +157,9 @@ class Vertex:
     #: on the edge, and this list is then the record of what the question was
     #: going to be judged by before it was.
     probes: list[Probe] = field(default_factory=list)
+    #: What this question is about, in a domain's terms — `probe.Bind` has
+    #: the argument. A set held as a list, written only by `bind`/`unbind`.
+    binds: list[Bind] = field(default_factory=list)
     #: Fields the store holds that this version of the tool does not read.
     #: Carried from load to save verbatim, and reported by `dg check` as
     #: `unknown_field`, a warning — from `check.py` and not from `validate`,
@@ -294,9 +299,10 @@ class Graph:
             areas=raw.get("areas", []),
             vertices={v["id"]: Vertex(
                 **{k: v[k] for k in VERTEX_FIELDS
-                   if k in v and k not in ("status", "probes")},
+                   if k in v and k not in ("status", "probes", "binds")},
                 status=fold_status(v["status"]),
                 probes=probes_from(v.get("probes"), v["id"]),
+                binds=binds_from(v.get("binds"), v["id"]),
                 extra={k: x for k, x in v.items() if k not in VERTEX_FIELDS})
                 for v in raw["vertices"]},
             edges=[
@@ -340,6 +346,7 @@ class Graph:
                         ("id", v.id), ("title", v.title), ("area", v.area),
                         ("status", v.status), ("note", v.note),
                         ("format", v.format), ("probes", probes_to(v.probes)),
+                        ("binds", binds_to(v.binds)),
                     ) if val is not None},
                     **v.extra,     # written back as read: see `Vertex.extra`
                 }
@@ -864,6 +871,8 @@ class Graph:
                 fault = probe_entry_fault(p)
                 if fault:
                     add("probe_wellformed", f"{vid}: {fault}")
+            for fault in binds_fault(vert.binds):
+                add("binding_wellformed", f"{vid}: {fault}")
             # There is no rule about a *waiting* vertex, and its absence is the
             # point: whether a vertex waits is `waiting_on`, read off the
             # edges, so nothing stored can disagree with it. `block_is_a_premise`

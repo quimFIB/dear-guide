@@ -455,6 +455,9 @@ dg dep   D07 --after D03           # a premise discovered later
 dg undep D07 --after D03           # ...and removing one
 dg reprobe D07 --probe '{"kind": "prose.rule", "args": {}}'   # a new rule for settling an open question; the old one stays
 dg task reprobe T14 --probe '...'  # ...a new definition of done, the same way
+dg bind D07 rocq.constant:Closure.closed_under_step   # what it is about, in a domain's terms; accumulates
+dg unbind D07 rocq.constant:Closure.closed_under_step # ...and the difference
+dg task bind T14 rocq.file:theories/Closure.v         # the same pair of ops, in the other store
 ```
 
 A **probe** is a typed criterion — `{"kind": "<domain>.<name>", "args":
@@ -465,6 +468,12 @@ it is *appended*: `--probe` on `dg add` and `dg task add` writes the first
 entry, `reprobe` adds a dated one, and nothing edits an entry in place — a
 criterion rewritten to match the evidence is not a criterion, and the date
 beside it is what lets a reader see that happen.
+
+A **bind** is an address, not a claim: `kind:ref` pairs saying what a record
+is *about* in a domain's terms, so a probe's domain can find its subject.
+`dg bind` and `dg unbind` (and `dg task bind` / `dg task unbind`) take the
+union and the difference the way `dep` and `undep` do, so two clones binding
+one record compose rather than contest, and `dg amend` never reaches them.
 
 `dg undep` edits a decided edge like a bare one. A decided edge's targets are
 the *graph's* — an `Edge` row carries the answer's payload and the child list
