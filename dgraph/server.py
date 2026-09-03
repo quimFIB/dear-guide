@@ -301,6 +301,9 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
             # panel must be able to say *why* something is not startable.
             "ready": tg.ready(tid),
             "blocked": tg.blocked(tid),
+            # Whether a definition of done still applies. Sent rather than
+            # decided in the page from a copy of `tasks.UNFINISHED` (shape 8).
+            "unfinished": tg.tasks[tid].unfinished,
             # What to call the live stop. Sent rather than decided in the
             # browser: `tasks.STOP_LABEL` is the one table, and a panel
             # picking its own word is how the three renderers came to disagree.

@@ -25,10 +25,11 @@ from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
 from dgraph import cross, editor, fanout, limits, pending, project, ranges, render, task_editor
+from dgraph import domains, probing
 from dgraph import integrate as integrate_mod
 from dgraph import task_pending, task_render
 from dgraph import query as _query
-from dgraph.model import Graph
+from dgraph.model import Graph, probe_fault, spell_bind
 from dgraph.model import rival_note as model_rival_note
 from dgraph.tasks import done_label
 from dgraph.tasks import ID_RE as TASK_ID_RE
@@ -70,9 +71,9 @@ WEB = "In a browser"
 LAYOUT = (
     (READ, ("show", "find", "brief", "node", "why/context", "tree", "path",
             "areas")),
-    (HONEST, ("check", "gate", "render")),
+    (HONEST, ("check", "probe", "gate", "render")),
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
-              "dep", "undep", "rm")),
+              "reprobe", "bind", "unbind", "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
     (STORE, ("init", "range", "import", "import-md", "export", "integrate",
              "incoming")),
@@ -104,8 +105,8 @@ T_STORE = "Starting a backlog, and moving one"
 TASK_LAYOUT = (
     (T_READ, ("node", "tree", "independent")),
     (T_HONEST, ("render",)),
-    (T_RECORD, ("add", "start", "park", "done", "drop", "amend", "link",
-                "unlink", "dep", "undep", "rm")),
+    (T_RECORD, ("add", "start", "park", "done", "drop", "amend", "reprobe",
+                "bind", "unbind", "link", "unlink", "dep", "undep", "rm")),
     (T_STAGE, ("pending", "drop-op", "clear")),
     (T_STORE, ("init", "import", "export")),
 )
@@ -1131,6 +1132,9 @@ def node(
             f"opens       {', '.join(e.to) or 'TERMINAL'}",
             "",
             f"falsifier   {_x(e.falsifier) or '—'}",
+            # Beside the falsifier it twins, and only when there is one: a
+            # store with no probes reads exactly as it did.
+            *([f"probe       {_x(_probe_line(e.probe))}"] if e.probe else []),
             f"source      {_x(e.source)}   ({e.date})",
             "", "[bold]Answer[/]", _x(e.answer),
         ]
@@ -1150,6 +1154,20 @@ def node(
         lines += [f"opens       {', '.join(g.children(vid)) or '—'}"]
         if v.note:
             lines += ["", "[bold]Note[/]", _x(v.note)]
+    if v.binds:
+        lines.append(f"bound to    {_x(', '.join(b.spelled for b in v.binds))}")
+    if v.rule:
+        lines += ["", "[bold]Rule for settling[/]", _x(v.rule)]
+    if v.probes:
+        # Every entry, the way a task's stops are drawn: the record is what
+        # this question was going to be judged by, and only the last is live
+        # — and only while the question is still open to be judged.
+        lines += ["", "[bold]Rule for settling (probe)[/]"]
+        for i, p in enumerate(v.probes):
+            tag = ("  [cyan](live)[/]"
+                   if i == len(v.probes) - 1 and not v.settled else "")
+            lines.append(f"  [dim]{p.date}[/]  "
+                         f"{_x(_probe_line(p.criterion))}{tag}")
     # Derived from the task store, stored nowhere: `decisions.json` never names
     # a task. Absent from `decision-graph.md` on purpose — that file is guarded
     # by `stale_view`, so a task count in it would mean filing a chore makes the
@@ -1663,6 +1681,102 @@ def check(
     con.print(f"[green]✓[/] {_sizes(proj)}, all invariants hold{tail}")
 
 
+@app.command(rich_help_panel=HONEST)
+def probe(
+    ids: list[str] = typer.Argument(None, metavar="[ID...]",
+                                    help="one or more records"),
+    provisional: bool = typer.Option(False, "--provisional",
+                                     help="every PROVISIONAL decision"),
+    area: str = typer.Option(None, "--area"),
+    since: str = typer.Option(None, "--since", metavar="DATE",
+                              help="records whose probe or answer is dated on "
+                                   "or after this ISO date. A rule or a "
+                                   "definition of done in prose alone carries "
+                                   "no date and is out of this scope — reach "
+                                   "it by id, --area or --all"),
+    all_: bool = typer.Option(False, "--all", help="everything, however many"),
+    timeout: float = typer.Option(domains.DEADLINE, "--timeout",
+                                  help="seconds per domain before its "
+                                       "answers are unjudged"),
+) -> None:
+    """Every pre-commitment, presented beside what it is judged against.
+
+    A falsifier beside the world as you know it; a PROVISIONAL decision
+    beside the premises whose edges are dated after its own; a task's
+    definition of done beside the work; an open question's rule beside the
+    outcomes of its evidence. Where an installed domain can judge a probe it
+    says so — `fired`, `holds` — and the exit code is `dg check`'s, non-zero
+    when anything fired. The built-in `prose` domain presents and never
+    judges, so on a plain install this is a reading and the verdict is the
+    command you run next: `dg reopen`, `dg confirm`, `dg task done`,
+    `dg decide`.
+
+    Reads both trays first: a record a staged op already names says so,
+    because the act a firing would produce is already composed. Bare, on a
+    store with more than a screen of pre-commitments, it asks for a scope.
+    """
+    proj = project.find()
+    if not proj.exists:
+        con.print(f"[red]no {project.STORE_NAME} or {project.TASKS_NAME} under "
+                  f"{proj.root}[/]")
+        raise typer.Exit(2)
+    g = Graph.load(proj.store) if proj.has_decisions else None
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    d_ops = pending.load(proj.pending) if g is not None else []
+    t_ops = pending.load(proj.task_pending) if tg is not None else []
+    every = probing.rows(g, tg, d_ops, t_ops)
+    scope = probing.Scope(ids=list(ids or []), provisional=provisional,
+                          area=area, since=since, all=all_)
+    unknown = [i for i in scope.ids
+               if not ((g and i in g.vertices) or (tg and i in tg.tasks))]
+    if unknown:
+        con.print(f"[red]unknown record(s): {', '.join(unknown)}[/]")
+        raise typer.Exit(1)
+    why = probing.ask_for_scope(every, scope)
+    if why:
+        con.print(f"[yellow]{_x(why)}[/]")
+        raise typer.Exit(2)
+    chosen = probing.select(every, g, scope) if scope.given else every
+    if not chosen:
+        con.print("[dim]nothing to present — no record in scope carries a "
+                  "falsifier, a rule, a definition of done or a probe[/]")
+        return
+    probing.judge(chosen, proj.root, timeout=timeout)
+    for r in chosen:
+        _probe_row(r)
+    counts = {v: sum(1 for r in chosen if r.verdict == v)
+              for v in ("fired", "holds", "unjudged")}
+    con.print(f"[bold]{len(chosen)} presented[/] · "
+              f"[red]fired {counts['fired']}[/] · "
+              f"[green]holds {counts['holds']}[/] · "
+              f"[dim]unjudged {counts['unjudged']}[/]")
+    if counts["fired"]:
+        raise typer.Exit(1)
+
+
+_SLOT_LABEL = {"edge": "falsifier", "vertex": "rule for settling",
+               "task": "done when"}
+
+
+def _probe_row(r: "probing.Row") -> None:
+    colour = {"fired": "red", "holds": "green"}.get(r.verdict, "dim")
+    head = (f"[cyan]{r.id}[/]  [{_style(r.status) if r.slot != 'task' else TASK_STYLE.get(r.status, 'white')}]"
+            f"{r.status}[/]  {_x(r.title)}")
+    con.print(head)
+    if r.text:
+        con.print(f"    {_SLOT_LABEL[r.slot]:<18}{_x(r.text)}")
+    if r.probe:
+        when = f"  [dim]({r.probe_date})[/]" if r.probe_date else ""
+        con.print(f"    {'probe':<18}{_x(_probe_line(r.probe))}{when}")
+    con.print(f"    {'verdict':<18}[{colour}]{r.verdict}[/]"
+              + (f"  {_x(r.sentence)}" if r.sentence and r.probe else ""))
+    for line in r.beside:
+        con.print(f"    [dim]{_x(line)}[/]")
+    if r.staged:
+        con.print(f"    [yellow]{_x(r.staged)}[/]")
+    con.print("")
+
+
 def _finding_line(p, *, fixed: bool = False) -> str:
     mark = "[green]✓[/]" if fixed else (
         "[red]✗[/]" if p.blocking else "[yellow]![/]")
@@ -1803,6 +1917,17 @@ def _compose(g: Graph, kind: str, **kw) -> list[dict]:
         raise typer.Exit(1) from None
 
 
+def _binds_line(op: dict) -> str:
+    return ", ".join(f"{b.get('kind')}:{b.get('ref')}"
+                     for b in op.get("binds") or ())
+
+
+def _probe_line(probe: dict) -> str:
+    """A probe on one line: its kind, then its args as compact JSON."""
+    return (f"{probe.get('kind')} "
+            f"{json.dumps(probe.get('args'), ensure_ascii=False, sort_keys=True)}")
+
+
 def _stage_close(g: Graph, op: dict) -> None:
     """Stage a close plus everything it implies, and say what was released.
 
@@ -1839,12 +1964,21 @@ def decide(
     opens: list[str] = typer.Option(None, "--opens", "-o",
                                     help="comma-separated ids"),
     summary: str = typer.Option(None, "--summary"),
+    probe: str = typer.Option(
+        None, "--probe",
+        help='The falsifier\'s mechanical twin, as JSON: {"kind": '
+             '"<domain>.<name>", "args": {...}}. Optional; archived with '
+             'the answer on reopen.'),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs). "
                                    "Set $DG_EDIT=1 to make this the default."),
 ) -> None:
     """Stage a decision. Prompts for anything not given as a flag."""
     g = _g()
+    # Read before the vertex is even looked up, for the reason the policy
+    # check below runs before anything is composed: a probe that cannot be
+    # staged should be refused before an answer is typed at the prompt.
+    probe_v = _probe(probe)
     # Judged against the store *plus* the staged ops: a staged reopen makes the
     # vertex decidable again, a staged add makes it exist, and a staged close
     # makes a second close a duplicate — the store alone gets all three wrong.
@@ -1895,15 +2029,20 @@ def decide(
     if _wants_editor(edit):
         seed = {k: val for k, val in (
             ("answer", answer), ("source", source), ("falsifier", falsifier),
-            ("summary", summary),
+            ("summary", summary), ("probe", probe_v),
             ("to", _ids(opens, "--opens") or None),
         ) if val}
         ops = _compose(eff, "close", vertex=vid, seed=seed)
         _stage_close(eff, ops[0])
         return
 
+    # The rule for settling, if one was written when the question was
+    # opened, read back before the answer is asked for (`D75`): the person
+    # answering sees what they said would settle it, before they settle it.
     con.print(Panel(f"[bold]{_x(v.title)}[/]\n\n"
-                    f"depends on {', '.join(eff.depends(vid)) or '—'}",
+                    f"depends on {', '.join(eff.depends(vid)) or '—'}"
+                    + (f"\n\n[dim]rule for settling:[/] {_x(v.rule)}"
+                       if v.rule else ""),
                     title=vid, border_style=_style(v.status)))
     answer = answer or _ask(
         "Answer (what was decided, and on what evidence)", "--answer/-a")
@@ -1928,7 +2067,31 @@ def decide(
     }
     if summary:
         op["summary"] = summary
+    if probe_v is not None:
+        op["probe"] = probe_v
     _stage_close(eff, op)
+
+
+def _probe(text: str | None) -> dict | None:
+    """`--probe`'s JSON, parsed and shape-checked, or None for no flag.
+
+    Exits rather than raising: the message names the flag, because the
+    sentence `probe_fault` returns is about a value and the person typed an
+    option.
+    """
+    if text is None:
+        return None
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        con.print(f"[red]--probe is not JSON: {_x(exc.msg)} at column "
+                  f"{exc.colno}[/]")
+        raise typer.Exit(1)
+    fault = probe_fault(value)
+    if fault:
+        con.print(f"[red]--probe: {_x(fault)}[/]")
+        raise typer.Exit(1)
+    return value
 
 
 @app.command(rich_help_panel=RECORD)
@@ -2182,11 +2345,19 @@ def add(
     status: str = typer.Option("OPEN", "--status"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what is undecided, and why"),
+    rule: str = typer.Option(
+        None, "--rule",
+        help="what would settle this, in prose — shown back at `dg decide`"),
+    probe: str = typer.Option(
+        None, "--probe",
+        help='The rule for settling this, as JSON: {"kind": "<domain>.<name>", '
+             '"args": {...}}. Appended, dated; `dg reprobe` changes it.'),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
     """Stage a new decision vertex."""
     g = _g()
+    probe_v = _probe(probe)
     # The effective graph: `--after` may name a vertex whose add is staged but
     # not applied, and an id already staged is as taken as an id in the store.
     eff = _eff(g)
@@ -2194,7 +2365,7 @@ def add(
     if _wants_editor(edit):
         seed = {k: v for k, v in (
             ("id", vid), ("title", title), ("area", area), ("status", status),
-            ("note", note),
+            ("note", note), ("rule", rule), ("probe", probe_v),
             ("after", _ids(after, "--after") or None),
         ) if v}
         ops = _compose(eff, "add_vertex", seed=seed, new_area=new_area)
@@ -2227,7 +2398,8 @@ def add(
     try:
         ops = pending.compose_add(eff, vid=vid, title=title, area=area,
                                   new_area=new_area, status=status,
-                                  after=parents, note=note, stored=g)
+                                  after=parents, note=note, probe=probe_v,
+                                  rule=rule, stored=g)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -2236,6 +2408,35 @@ def add(
     # half-staged one could be applied and pass.
     _stage_all(ops, against=eff, new_area=new_area)
     con.print(f"[green]staged[/] add {vid}")
+    _warn_stuck()
+
+
+@app.command(rich_help_panel=RECORD)
+def reprobe(
+    vid: str,
+    probe: str = typer.Option(
+        ..., "--probe",
+        help='The new rule for settling it, as JSON: {"kind": '
+             '"<domain>.<name>", "args": {...}}'),
+) -> None:
+    """Append a rule for settling an open question. The old one is kept.
+
+    Appended and dated rather than edited, because a criterion that can be
+    rewritten to match the evidence is not a criterion: `dg probe` shows the
+    date beside the act it would produce, so a rule written the day the
+    question was settled is visible to whoever reads the tray. Refused on a
+    settled question, whose criterion is the probe on its answer.
+    """
+    eff = _eff(_g())
+    try:
+        op = pending.compose_reprobe(eff, vid=vid, probe=_probe(probe))
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    _stage_all([op], against=eff)
+    n = len(eff.vertices[vid].probes) + 1
+    con.print(f"[green]staged[/] reprobe {vid}"
+              + (f" — entry {n}; the earlier {n - 1} stay" if n > 1 else ""))
     _warn_stuck()
 
 
@@ -2251,8 +2452,8 @@ CITED = ("[dim]citations of the old title elsewhere — commits, docs, a pasted 
 
 def _amended(record, op: dict) -> list[str]:
     """One line per field this op changes, old and new. Both stores' twin."""
-    return [f"{k:<7} {_x(getattr(record, k) or '—')} → {_x(op[k] or '—')}"
-            for k in pending.FIELDS if k in op]
+    return [f"{k:<9} {_x(getattr(record, k, None) or '—')} → {_x(op[k] or '—')}"
+            for k in pending.ALL_FIELDS if k in op]
 
 
 @app.command(rich_help_panel=RECORD)
@@ -2266,6 +2467,8 @@ def amend(
              "one that is in use"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what is undecided, and why"),
+    rule: str = typer.Option(None, "--rule",
+                             help="what would settle this, in prose"),
 ) -> None:
     """Correct how a decision is worded or filed: its title, area or note.
 
@@ -2288,7 +2491,8 @@ def amend(
         raise typer.Exit(1)
     op = {"op": "set_fields", "vertex": vid}
     op.update({k: v for k, v in (("title", title), ("area", area),
-                                 ("note", note)) if v is not None})
+                                 ("note", note), ("rule", rule))
+               if v is not None})
     lines = _amended(eff.vertices[vid], op)
     try:
         # `pending.vet` holds every rule — a blank title, an unknown area, an
@@ -2400,6 +2604,53 @@ def dep(
     if not fresh:
         return
     con.print(f"[green]staged[/] {vid} rests on {', '.join(fresh)}")
+    _warn_stuck()
+
+
+@app.command(rich_help_panel=RECORD)
+def bind(
+    vid: str,
+    binds: list[str] = typer.Argument(
+        ..., metavar="KIND:REF...",
+        help="what this question is about, in a domain's terms — "
+             "rocq.constant:Closure.closed_under_step"),
+) -> None:
+    """Record what a decision is about, in a domain's terms. Accumulates.
+
+    A bind is an address, not a claim: how a probe's domain finds its subject
+    and how a relation finds its endpoints. Written like an edge — the union
+    of what is held and what is named — so two clones binding one record
+    compose rather than contest, and `dg amend` does not reach it.
+    """
+    _bind_cmd(vid, binds, remove=False)
+
+
+@app.command(rich_help_panel=RECORD)
+def unbind(
+    vid: str,
+    binds: list[str] = typer.Argument(..., metavar="KIND:REF...",
+                                      help="the pairs to drop"),
+) -> None:
+    """Drop a bind. The difference, the way `dg undep` takes it."""
+    _bind_cmd(vid, binds, remove=True)
+
+
+def _bind_cmd(vid: str, binds: list[str], *, remove: bool) -> None:
+    eff = _eff(_g())
+    try:
+        op, fresh, already = pending.compose_bind(
+            eff, vid=vid, binds=[spell_bind(b) for b in binds], remove=remove)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    if already:
+        con.print(f"[dim]{'not bound to' if remove else 'already bound to'} "
+                  f"{_x(', '.join(already))}[/]")
+    if op is None:
+        return
+    _stage_all([op], against=eff)
+    con.print(f"[green]staged[/] {vid} {'unbound from' if remove else 'bound to'} "
+              f"{_x(', '.join(fresh))}")
     _warn_stuck()
 
 
@@ -2876,7 +3127,7 @@ def _fields_detail(o: dict) -> str:
     length preventing.
     """
     return ", ".join(f"{k} {_x(o[k] or '—')}"
-                     for k in pending.FIELDS if k in o)
+                     for k in pending.ALL_FIELDS if k in o)
 
 
 #: Areas the two stores already know, for the tray listings. Computed once per
@@ -2925,6 +3176,9 @@ def _area_cell(o: dict, known: set[str] | None = None) -> str:
 
 _PENDING_DETAIL = {
     "close": lambda o: _x((o.get("answer") or "")[:70]),
+    "reprobe": lambda o: _x(_probe_line(o.get("probe") or {})),
+    "bind": lambda o: "+ " + _x(_binds_line(o)),
+    "unbind": lambda o: "✗ " + _x(_binds_line(o)),
     "reopen": lambda o: _x(o.get("why", "")),
     "set_status": lambda o: f"→ {_x(o.get('status', '?'))}"
     + (f"  [dim](from {_x(o['derived_from'])})[/]" if o.get("derived_from") else ""),
@@ -3761,15 +4015,25 @@ def task_add(
     evidence_for: str = typer.Option(None, "--evidence-for",
                                      help="the decision this work will inform"),
     note: str = typer.Option(None, "--note", "-n"),
+    done_when: str = typer.Option(
+        None, "--done-when",
+        help="what finished looks like, in prose — shown back at `dg task done`"),
+    probe: str = typer.Option(
+        None, "--probe",
+        help='Its definition of done as a criterion, JSON: {"kind": '
+             '"<domain>.<name>", "args": {...}}. Appended, dated; '
+             '`dg task reprobe` changes it.'),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
     """Stage a new task."""
     tg = _teff(_tg())
+    probe_v = _probe(probe)
 
     if _wants_editor(edit):
         seed = {k: v for k, v in (
             ("id", tid), ("title", title), ("area", area), ("note", note),
+            ("done_when", done_when), ("probe", probe_v),
             ("because", because), ("evidence_for", evidence_for),
             ("after", _ids(after, "--after")),
             ("discovered_during", _ids(discovered_during, "--discovered-during")),
@@ -3805,7 +4069,7 @@ def task_add(
             tg, _decisions_eff_or_none(), tid=tid, title=title, area=area,
             new_area=new_area, after=parents, discovered_during=prompted,
             because=_ids(because, "--because"), evidence_for=evidence_for, note=note,
-            stored=_tg())
+            probe=probe_v, done_when=done_when, stored=_tg())
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -3964,6 +4228,8 @@ def task_amend(
              "one that is in use"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what this work involves"),
+    done_when: str = typer.Option(None, "--done-when",
+                                  help="what finished looks like, in prose"),
 ) -> None:
     """Correct how a task is worded or filed: its title, area or note.
 
@@ -3980,7 +4246,8 @@ def task_amend(
     _require_task(tid, tg)
     op = {"op": "set_fields", "task": tid}
     op.update({k: v for k, v in (("title", title), ("area", area),
-                                 ("note", note)) if v is not None})
+                                 ("note", note), ("done_when", done_when))
+               if v is not None})
     lines = _amended(tg.tasks[tid], op)
     # `_tstage` vets, and `task_pending.vet` holds every rule for the same
     # reason the decision store's does: the browser can post this op as data.
@@ -4197,6 +4464,77 @@ def task_park(
     _twarn_stuck()
 
 
+@task_app.command("bind", rich_help_panel=T_RECORD)
+def task_bind(
+    tid: str,
+    binds: list[str] = typer.Argument(..., metavar="KIND:REF...",
+                                      help="what this work is about, in a "
+                                           "domain's terms"),
+) -> None:
+    """Record what a task is about, in a domain's terms. `dg bind`'s twin."""
+    _task_bind_cmd(tid, binds, remove=False)
+
+
+@task_app.command("unbind", rich_help_panel=T_RECORD)
+def task_unbind(
+    tid: str,
+    binds: list[str] = typer.Argument(..., metavar="KIND:REF...",
+                                      help="the pairs to drop"),
+) -> None:
+    """Drop a bind from a task. `dg unbind`'s twin."""
+    _task_bind_cmd(tid, binds, remove=True)
+
+
+def _task_bind_cmd(tid: str, binds: list[str], *, remove: bool) -> None:
+    tg = _teff(_tg())
+    try:
+        op, fresh, already = task_pending.compose_bind(
+            tg, tid=tid, binds=[spell_bind(b) for b in binds], remove=remove)
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    if already:
+        con.print(f"[dim]{'not bound to' if remove else 'already bound to'} "
+                  f"{_x(', '.join(already))}[/]")
+    if op is None:
+        return
+    _tstage(op)
+    con.print(f"[green]staged[/] {tid} {'unbound from' if remove else 'bound to'} "
+              f"{_x(', '.join(fresh))}")
+    _twarn_stuck()
+
+
+@task_app.command("reprobe", rich_help_panel=T_RECORD)
+def task_reprobe(
+    tid: str,
+    probe: str = typer.Option(
+        ..., "--probe",
+        help='The new definition of done as a criterion, JSON: {"kind": '
+             '"<domain>.<name>", "args": {...}}'),
+) -> None:
+    """Append a definition of done for unfinished work. The old one is kept.
+
+    `dg reprobe`'s twin. Appended and dated so that a criterion rewritten
+    the day the work was finished is visible where the finish is judged;
+    refused on finished or abandoned work, where a definition written after
+    the fact would be the writer certifying its own result.
+    """
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    t = tg.tasks[tid]
+    if not t.unfinished:
+        con.print(f"[red]{tid} is {t.status} — a definition of done is "
+                  f"written before the work is finished[/]\n"
+                  f"[dim]`dg task start {tid}` first[/]")
+        raise typer.Exit(1)
+    _tstage({"op": "reprobe", "task": tid, "probe": _probe(probe),
+             "date": _date.today().isoformat()})
+    n = len(t.probes) + 1
+    con.print(f"[green]staged[/] reprobe {tid}"
+              + (f" — entry {n}; the earlier {n - 1} stay" if n > 1 else ""))
+    _twarn_stuck()
+
+
 @task_app.command("done", rich_help_panel=T_RECORD)
 def task_done(
     tid: str,
@@ -4225,6 +4563,10 @@ def task_done(
         _said_dialect(tg, tid)
         _twarn_stuck()
         return
+    if tg.tasks[tid].done_when:
+        # Read back before the outcome is asked for (`D75`): the result is
+        # written against what was said would count as finished.
+        con.print(f"[dim]done when:[/] {_x(tg.tasks[tid].done_when)}")
     outcome = outcome or _ask(
         "Outcome (what did this produce? a path, a PR, a note)", "--outcome/-o")
     _tstage({"op": "set_status", "task": tid, "status": "DONE",
@@ -4651,6 +4993,19 @@ def task_node(tid: str) -> None:
             tag = ("  [cyan](still parked)[/]" if now and t.parked
                    else "  [dim](abandoned here)[/]" if now else "")
             lines.append(f"  [dim]{k.date}[/]  {_x(k.why)}{tag}")
+    if t.binds:
+        lines.append(f"bound to    {_x(', '.join(b.spelled for b in t.binds))}")
+    if t.done_when:
+        lines += ["", "[bold]Done when[/]", _x(t.done_when)]
+    if t.probes:
+        # Drawn like the stops: every entry, the last tagged live while the
+        # work is still unfinished enough for a definition of done to apply.
+        lines += ["", "[bold]Definition of done (probe)[/]"]
+        for i, p in enumerate(t.probes):
+            tag = ("  [cyan](live)[/]"
+                   if i == len(t.probes) - 1 and t.unfinished else "")
+            lines.append(f"  [dim]{p.date}[/]  "
+                         f"{_x(_probe_line(p.criterion))}{tag}")
     if t.note:
         lines += ["", "[bold]Note[/]", _x(t.note)]
     con.print(Panel("\n".join(lines), title=tid,
@@ -4812,6 +5167,9 @@ def task_pending_cmd(
 
 _TASK_DETAIL = {
     "add_task": lambda o: _x(o.get("title", "")),
+    "reprobe": lambda o: _x(_probe_line(o.get("probe") or {})),
+    "bind": lambda o: "+ " + _x(_binds_line(o)),
+    "unbind": lambda o: "✗ " + _x(_binds_line(o)),
     # The kind is named, not implied: the whole point of storing it is that a
     # reader never has to know which relation an absence stands for, and a
     # review screen is where that matters most. Not bracketed — square brackets

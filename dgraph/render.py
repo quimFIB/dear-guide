@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 from dgraph import areas as _areas
 from dgraph import orgmd, project
 from dgraph.model import Edge, Graph, rival_note
@@ -70,6 +72,11 @@ def _index(g: Graph, _by=None) -> str:
     return "## Index\n\n" + "\n".join(rows) + "\n"
 
 
+def _probe_md(probe: dict) -> str:
+    args = json.dumps(probe.get("args"), ensure_ascii=False, sort_keys=True)
+    return f"`{probe.get('kind')}` `{args}`"
+
+
 def _section(g: Graph, vid: str, _by=None, _into=None) -> str:
     v = g.vertices[vid]
     e = g.active_edge(vid, _by)
@@ -83,6 +90,24 @@ def _section(g: Graph, vid: str, _by=None, _into=None) -> str:
         f"- **Falsifier:** "
         f"{orgmd.to_markdown(e.falsifier if e else None, fmt=e.format if e else None) or NONE}"
     )
+    if v.binds:
+        out.append("- **Bound to:** "
+                   + ", ".join(f"`{b.spelled}`" for b in v.binds))
+    if v.rule:
+        out.append(f"- **Rule:** {orgmd.to_markdown(v.rule, fmt=v.format)}")
+    if e is not None and e.probe:
+        # Only when there is one, so a view of a store with no probes is
+        # byte-identical to the view before the field existed and
+        # `stale_view` stays quiet. Compact JSON in code: a probe is data
+        # and its emphasis must not convert.
+        out.append(f"- **Probe:** {_probe_md(e.probe)}")
+    elif v.probes and not v.settled:
+        # The live rule for settling an open question, dated. Every entry
+        # is in the store; the view shows the one that applies, the way it
+        # shows one answer.
+        p = v.probe
+        out.append(f"- **Rule for settling:** {_probe_md(p.criterion)} "
+                   f"({p.date})")
     out.append("")
 
     if e is not None and e.decided:

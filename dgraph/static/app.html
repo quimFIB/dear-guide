@@ -1677,6 +1677,18 @@ function taskPanel(){
   if(c.evidence_for)
     h+=`<div>evidence for</div><div>${dgLink(c.evidence_for)}</div>`;
   if(x.done) h+=`<div>done</div><div>${esc(x.done)}</div>`;
+  /* As on the decision panel: the domains scaffold's fields, where present
+     (audit `N-F5`). `d.unfinished` comes from the server for the reason
+     `done_label` does. */
+  if(x.binds&&x.binds.length)
+    h+=`<div>bound to</div><div>${esc(x.binds.map(b=>`${b.kind}:${b.ref}`).join(", "))}</div>`;
+  if(x.done_when) h+=`<div>done when</div><div>${esc(x.done_when)}</div>`;
+  if(x.probes&&x.probes.length)
+    h+=`<div>done when (probe)</div><div>${x.probes.map((p,i)=>
+      `<span class="muted">${esc(p.date)}</span> ${esc(p.kind)} <span class="muted">${
+        esc(JSON.stringify(p.args))}</span>${
+        i===x.probes.length-1 && d.unfinished ? ' <span class="pill">live</span>' : ""}`
+      ).join("<br>")}</div>`;
   h+=`</div>`;
   if(x.note) h+=`<div class="answer muted">${mdFold(x.note, x.format)}</div>`;
   /* Every completion, and no status guard — the same reading as the stops
@@ -2177,7 +2189,9 @@ function edgeCard(e, children){
     <span class="edge-head">active edge<span class="when muted">${esc(e.date||"")}</span></span>
     <div class="kv">
       <div>opens</div><div>${idList(children, "TERMINAL")}</div>
-      <div>falsifier</div><div>${esc(e.falsifier||"—")}</div>
+      <div>falsifier</div><div>${esc(e.falsifier||"—")}</div>${
+      e.probe ? `<div>probe</div><div>${esc(e.probe.kind)} <span class="muted">${
+        esc(JSON.stringify(e.probe.args))}</span></div>` : ""}
       <div>source</div><div>${esc(e.source||"—")}</div>
     </div>
     <div class="answer">${mdFold(e.answer, e.format)}</div></section>`;
@@ -2371,6 +2385,21 @@ function panel(){
      vertex's own facts. Decided, they are part of an answer and move into its
      card — an edge's targets belong to the edge that declared them. */
   if(!decided) h+=`<div>opens</div><div>${idList(d.children)}</div>`;
+  /* The four fields the domains scaffold added, drawn where `dg node` draws
+     them and only where present, so a store with none reads as it did
+     (audit `N-F5`). The probe on a decided edge is in its card below. */
+  if(v.binds&&v.binds.length)
+    h+=`<div>bound to</div><div>${esc(v.binds.map(b=>`${b.kind}:${b.ref}`).join(", "))}</div>`;
+  if(v.rule) h+=`<div>rule</div><div>${esc(v.rule)}</div>`;
+  /* Every entry, the way a task's stops are drawn: the record is what this
+     question was going to be judged by, and only the last is live — and only
+     while the question is still open to be judged. */
+  if(v.probes&&v.probes.length)
+    h+=`<div>rule (probe)</div><div>${v.probes.map((p,i)=>
+      `<span class="muted">${esc(p.date)}</span> ${esc(p.kind)} <span class="muted">${
+        esc(JSON.stringify(p.args))}</span>${
+        i===v.probes.length-1 && !decided ? ' <span class="pill">live</span>' : ""}`
+      ).join("<br>")}</div>`;
   h+=`</div>`;
   /* Above the answer card, never below it: a reader who meets the caveat
      after the answer has already read the answer as *the* answer. Red rather
@@ -2669,6 +2698,14 @@ function opRow(o, i, kind, act){
         + (o.why?` <span class="muted">${esc(o.why.slice(0,50))}</span>`:"")
         + (o.derived_from?` <span class="muted">(from ${esc(o.derived_from)})</span>`:"")
     : o.op==="add_dep"||o.op==="remove_dep"?esc((o.after||[]).join(", "))
+    /* The three ops the domains scaffold added had no branch either, and fell
+       through to the same dump one pass after the comment below was written
+       (audit `N-F5`). A reprobe reads as the CLI prints it — kind, then args
+       as compact JSON; a bind as the pairs it adds or drops. */
+    : o.op==="reprobe"?`${esc((o.probe||{}).kind||"")} <span class="muted">${
+        esc(JSON.stringify((o.probe||{}).args||{}))}</span>`
+    : o.op==="bind"||o.op==="unbind"?`${o.op==="bind"?"+":"✗"} ${
+        esc((o.binds||[]).map(b=>`${b.kind}:${b.ref}`).join(", "))}`
     /* `add_vertex` and `add_task` had no branch and fell through to the JSON
        dump below, which put the area next to `saw`, `ref` and `by` in a cell
        built for a sentence — so the browser's failure and the CLI's were one

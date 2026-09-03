@@ -232,6 +232,7 @@ Two things to know before using them:
 | `dg areas` | counts by area and status, one table per store |
 | `dg export ID` | the same data as JSON, for machine reading. `dg import` reads it back unchanged — so it is the record alone, never the tray, the one reader that ignores staged ops |
 | `dg check` | every invariant, and it names the rule that broke. `--staged` judges the graph the tray would produce instead, as a diff: what the batch fixes, what it introduces, what stands either way |
+| `dg probe` | every pre-commitment beside what it is judged against — a falsifier, a PROVISIONAL decision beside the premises dated after it, a task's definition of done, an open question's rule beside its evidence. Asks for a scope (an id, `--provisional`, `--area`, `--since`, `--all`) past a screenful. On a plain install it presents and the verdict is the command you run next |
 | `dg import FILE` | adopt a `decisions.json` prepared elsewhere or exported from another project, refusing one that breaks invariants |
 | `dg import-md FILE` | rebuild a store from the `decision-graph.md` this tool generated. The recovery path when the *store* is the file that was lost |
 | `dg repair` | stage the PROVISIONAL marks a reopen would have derived. What `dg apply` names when a merge, a rebase or a second clone left a decision resting on a premise under review without saying so |
@@ -453,7 +454,27 @@ dg amend D07 --title "..."         # a typo'd or since-clarified wording
 dg task amend T14 --area Eval      # ...the same op, in the other store
 dg dep   D07 --after D03           # a premise discovered later
 dg undep D07 --after D03           # ...and removing one
+dg reprobe D07 --probe '{"kind": "prose.rule", "args": {}}'   # a new rule for settling an open question; the old one stays
+dg task reprobe T14 --probe '...'  # ...a new definition of done, the same way
+dg bind D07 rocq.constant:Closure.closed_under_step   # what it is about, in a domain's terms; accumulates
+dg unbind D07 rocq.constant:Closure.closed_under_step # ...and the difference
+dg task bind T14 rocq.file:theories/Closure.v         # the same pair of ops, in the other store
 ```
+
+A **probe** is a typed criterion — `{"kind": "<domain>.<name>", "args":
+{...}}` — that a domain could evaluate; the falsifier's mechanical twin. On a
+decision it travels with the answer (`dg decide --probe`) and is archived by
+`reopen` with everything else the answer said. On an open question or a task
+it is *appended*: `--probe` on `dg add` and `dg task add` writes the first
+entry, `reprobe` adds a dated one, and nothing edits an entry in place — a
+criterion rewritten to match the evidence is not a criterion, and the date
+beside it is what lets a reader see that happen.
+
+A **bind** is an address, not a claim: `kind:ref` pairs saying what a record
+is *about* in a domain's terms, so a probe's domain can find its subject.
+`dg bind` and `dg unbind` (and `dg task bind` / `dg task unbind`) take the
+union and the difference the way `dep` and `undep` do, so two clones binding
+one record compose rather than contest, and `dg amend` never reaches them.
 
 `dg undep` edits a decided edge like a bare one. A decided edge's targets are
 the *graph's* — an `Edge` row carries the answer's payload and the child list

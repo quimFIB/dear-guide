@@ -22,6 +22,10 @@ from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import project
+from dgraph.probe import (Bind, Probe, bind_fault,  # noqa: F401 — re-exported
+                          binds_fault, binds_from, binds_to, probe_args_limit,
+                          probe_entry_fault, probe_fault, probes_from,
+                          probes_to, spell_bind)
 from dgraph.violation import Violation  # re-exported: callers import it from here
 from dgraph.violation import cycle_from
 
@@ -42,6 +46,52 @@ def rival_note(n: int) -> str:
 
 SIMPLE_STATUSES = {"DECIDED", "OPEN", "REOPENED", "PROVISIONAL"}
 UNSETTLED = {"OPEN", "REOPENED"}
+
+#: What a decision *asserts*: the fields two answers are compared on, by
+#: `pending.already` when a close meets an edge already decided and by
+#: `integrate._same_answer` when an arriving store is read against a base.
+#: One tuple, because a field one of the two comparisons forgets is a
+#: difference that vanishes at integration.
+#: `probe` is in it because it is the falsifier's mechanical twin (`D71`):
+#: two closes that agree on every sentence and differ on what a machine would
+#: run to overturn them are two claims about what settles the question, and
+#: a seam that called them the same would keep one probe and drop the other
+#: with nothing recording the choice.
+CLAIM = ("answer", "falsifier", "source", "probe")
+
+#: Everything a `close` writes onto the active edge, a `reopen` archives onto
+#: the superseded copy and clears from the live one, and a `reject` files
+#: beside the answer that stood. `CLAIM` plus when and in what dialect.
+#:
+#: Read rather than restated by every site that copies a decision from one
+#: record to another — the apply path, the archive, the integration seam, the
+#: rejected-answer keepsake. Before this tuple existed each of those named the
+#: fields by hand, and a copy that names four fields **silently drops** a
+#: fifth: the store keeps loading, `dg check` says nothing, and the field is
+#: gone from the archive the day somebody adds one. A field added here is
+#: carried by all of them, and `tests/test_payload.py` pushes one value per
+#: field through every site to prove it.
+PAYLOAD = ("answer", "falsifier", "source", "date", "format", "probe")
+
+#: The bound on a probe's serialised `args`, in characters. The synopsis rule
+#: (`limits.TERSE_DEFAULT`) applied to the one payload field that is not
+#: prose: a probe's arguments are a fingerprint of an artefact — a hash, a
+#: path, a name — and never the artefact. A domain that needs more than this
+#: puts it in a file under the project and names the path, which is the rule
+#: every prose field already follows. Read from `env` rather than restated so
+#: the two doors cannot come to differ about what "too long" means.
+#:
+#: Every optional field an edge record holds in the store, in the order the
+#: file writes them. `from_dict` reads exactly these and `to_dict` writes
+#: exactly these; `json_import.SCHEMA` accepts exactly these. Anything else on
+#: a stored edge is `Edge.extra`.
+EDGE_FIELDS = ("answer", "falsifier", "source", "date", "summary",
+               "replaced_by", "why", "format", "from_source", "probe")
+
+#: Every field a vertex record holds. `id`, `title`, `area` and `status` are
+#: required; the rest optional. Anything else is `Vertex.extra`.
+VERTEX_FIELDS = ("id", "title", "area", "status", "note", "format", "probes",
+                 "binds", "rule")
 
 #: What a store written before 2026-09-03 spells a waiting vertex as. Folded to
 #: `OPEN` on load and never written again: whether a vertex waits is derived
@@ -101,6 +151,49 @@ class Vertex:
     status: str
     note: str | None = None  # prose for a vertex with no decision yet
     format: str | None = None  # the note's dialect: "org", else markdown
+    #: The rule for settling this question, in prose, written when it was
+    #: opened (`D75`): what evidence would count as an answer. Optional,
+    #: amendable like a note — it is the writer's own pre-commitment and
+    #: not a claim about the world — and shown back by `dg decide`, so the
+    #: person answering reads what they said would settle it before they
+    #: settle it. Its mechanical twin is `probes`.
+    rule: str | None = None
+    #: Every rule for settling this question that was written down, oldest
+    #: first, and never cleared — `Probe` has the argument. Meaningful while
+    #: the vertex is unsettled: the answer, once given, carries its own probe
+    #: on the edge, and this list is then the record of what the question was
+    #: going to be judged by before it was.
+    probes: list[Probe] = field(default_factory=list)
+    #: What this question is about, in a domain's terms — `probe.Bind` has
+    #: the argument. A set held as a list, written only by `bind`/`unbind`.
+    binds: list[Bind] = field(default_factory=list)
+    #: Fields the store holds that this version of the tool does not read.
+    #: Carried from load to save verbatim, and reported by `dg check` as
+    #: `unknown_field`, a warning — from `check.py` and not from `validate`,
+    #: for the reason `verbose_field` is: it is not a store invariant, and no
+    #: write path may consult it. **Never dropped and never crashed on.**
+    #:
+    #: The case is version skew, which is this tool's ordinary state: the
+    #: plugin cache does not refresh itself, so two clones of one graph run
+    #: two versions of `dg` for weeks at a time. Before this field existed an
+    #: older install did one of two things with a key it did not know, both
+    #: wrong: on an edge it silently dropped the key on its next save, so a
+    #: newer install's field vanished from the shared store with nothing to
+    #: say so; on a vertex it raised in the constructor, which is a blocking
+    #: `store_loads`, and the commit gate then denied **every commit in that
+    #: clone** until somebody upgraded. `from_source` went through the first
+    #: of those the week it was added. Carrying the key and naming it is the
+    #: only behaviour under which a store written by a newer tool is safe in
+    #: an older one — which is what lets a field be added at all.
+    #:
+    #: Not a place to put anything on purpose. A field the tool reads is a
+    #: field on the dataclass; this holds what it *cannot* read yet.
+    extra: dict = field(default_factory=dict)
+
+    @property
+    def probe(self) -> Probe | None:
+        """The live rule for settling: the last entry, or None."""
+        return self.probes[-1] if self.probes else None
 
     @property
     def base_status(self) -> str:
@@ -148,6 +241,21 @@ class Edge:
     #: "org" when composed through the editor, else markdown. `replaced_by` is
     #: written later by a different op and is deliberately not covered.
     format: str | None = None
+    #: The falsifier's mechanical twin (`D71`): `{"kind", "args"}`, a
+    #: criterion some domain could evaluate to say whether this answer has
+    #: been overturned. In `PAYLOAD`, so it is written by the close, archived
+    #: by a reopen with the answer it belonged to and cleared from the live
+    #: edge — a probe that outlived its answer would fire against a decision
+    #: nobody holds. Shape-checked by `probe_fault` and read no further here:
+    #: evaluating one is a domain's job (`dgraph.domains`, when it lands).
+    probe: dict | None = None
+    #: As `Vertex.extra`: what the store holds and this version cannot read,
+    #: carried verbatim and warned about. Stays on the live edge across a
+    #: reopen and is not copied to the archive, because what an unknown field
+    #: *means* under a reopen — a claim to archive, or an address to keep — is
+    #: exactly what this version does not know; the install that does know
+    #: puts the field in `PAYLOAD` and the archive follows.
+    extra: dict = field(default_factory=dict)
 
     @property
     def decided(self) -> bool:
@@ -191,24 +299,26 @@ class Graph:
                 f"duplicate vertex id(s): {', '.join(dupes)} — one entry per "
                 f"id; merge or renumber them by hand"
             )
+        # Known keys by name, everything else into `extra` — never `**v`,
+        # which is what made an unknown vertex key a crash (see `Vertex.extra`).
+        known_e = {"from", "to", "active", *EDGE_FIELDS}
         return cls(
             areas=raw.get("areas", []),
-            vertices={v["id"]: Vertex(**{**v, "status": fold_status(v["status"])})
-                      for v in raw["vertices"]},
+            vertices={v["id"]: Vertex(
+                **{k: v[k] for k in VERTEX_FIELDS
+                   if k in v and k not in ("status", "probes", "binds")},
+                status=fold_status(v["status"]),
+                probes=probes_from(v.get("probes"), v["id"]),
+                binds=binds_from(v.get("binds"), v["id"]),
+                extra={k: x for k, x in v.items() if k not in VERTEX_FIELDS})
+                for v in raw["vertices"]},
             edges=[
                 Edge(
                     src=e["from"],
                     to=list(e.get("to", [])),
                     active=e.get("active", True),
-                    answer=e.get("answer"),
-                    falsifier=e.get("falsifier"),
-                    source=e.get("source"),
-                    date=e.get("date"),
-                    summary=e.get("summary"),
-                    replaced_by=e.get("replaced_by"),
-                    why=e.get("why"),
-                    format=e.get("format"),
-                    from_source=e.get("from_source"),
+                    **{k: e.get(k) for k in EDGE_FIELDS},
+                    extra={k: x for k, x in e.items() if k not in known_e},
                 )
                 for e in raw["edges"]
             ],
@@ -217,11 +327,11 @@ class Graph:
     def to_dict(self) -> dict:
         def edge_dict(e: Edge) -> dict:
             d: dict = {"from": e.src, "to": e.to, "active": e.active}
-            for k in ("answer", "falsifier", "source", "date", "summary",
-                      "replaced_by", "why", "format", "from_source"):
+            for k in EDGE_FIELDS:
                 v = getattr(e, k)
                 if v is not None:
                     d[k] = v
+            d.update(e.extra)      # written back as read: see `Vertex.extra`
             return d
 
         # `areas` is a registry rather than a whitelist, so a record may
@@ -239,13 +349,14 @@ class Graph:
             "areas": self.areas,
             "vertices": [
                 {
-                    k: val
-                    for k, val in (
+                    **{k: val for k, val in (
                         ("id", v.id), ("title", v.title), ("area", v.area),
                         ("status", v.status), ("note", v.note),
-                        ("format", v.format),
-                    )
-                    if val is not None
+                        ("format", v.format), ("rule", v.rule),
+                        ("probes", probes_to(v.probes)),
+                        ("binds", binds_to(v.binds)),
+                    ) if val is not None},
+                    **v.extra,     # written back as read: see `Vertex.extra`
                 }
                 for v in verts
             ],
@@ -764,6 +875,12 @@ class Graph:
             fault = status_fault(vert.status, ids, of=vid)
             if fault:
                 add("status_legal", f"{vid}: {fault}")
+            for p in vert.probes:
+                fault = probe_entry_fault(p)
+                if fault:
+                    add("probe_wellformed", f"{vid}: {fault}")
+            for fault in binds_fault(vert.binds):
+                add("binding_wellformed", f"{vid}: {fault}")
             # There is no rule about a *waiting* vertex, and its absence is the
             # point: whether a vertex waits is `waiting_on`, read off the
             # edges, so nothing stored can disagree with it. `block_is_a_premise`
@@ -789,6 +906,14 @@ class Graph:
                     add("no_dangling_refs", f"edge {e.src} -> unknown vertex {t}")
                 if t == e.src:
                     add("no_dangling_refs", f"{e.src}: edge to itself")
+            if e.probe is not None:
+                # Every edge, archived ones included: a probe was checked at
+                # the door when it was staged, so one that fails here arrived
+                # by hand-edit or merge, and an archived probe is still the
+                # record of what a past answer pre-committed to.
+                fault = probe_fault(e.probe)
+                if fault:
+                    add("probe_wellformed", f"{e.src}: {fault}")
             if e.from_source is not None:
                 # A record of an answer this project did **not** take. It has
                 # to say whose it was and what it said, or it is an empty

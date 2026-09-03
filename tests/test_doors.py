@@ -1934,3 +1934,40 @@ def test_a_batched_new_area_is_stripped_from_every_op(tmp_path, monkeypatch):
         assert "new_area" not in op, f"not popped: {op}"
     for staged in pending.load(task_pending.path()):
         assert "new_area" not in staged, f"reached the tray: {staged}"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_browser_reads_a_reprobe_and_a_bind_off_the_op(tmp_path):
+    """The three ops the domains scaffold added fell through to the JSON
+    dump — `R-F7`'s shape, one pass later (audit `N-F5`)."""
+    rows = _oprow(tmp_path, [
+        {"op": "reprobe", "vertex": "D05",
+         "probe": {"kind": "prose.rule", "args": {"n": 1}},
+         "date": "2026-02-02", "ref": "abcd", "by": "scout"},
+        {"op": "bind", "vertex": "D05",
+         "binds": [{"kind": "rocq.constant", "ref": "X"}], "ref": "abce"},
+        {"op": "unbind", "task": "T02",
+         "binds": [{"kind": "rocq.file", "ref": "a.v"}], "ref": "abcf"},
+    ])
+    assert "prose.rule" in rows[0] and '{"n":1}' in rows[0]
+    assert "+ rocq.constant:X" in rows[1]
+    assert "✗ rocq.file:a.v" in rows[2]
+    for row in rows:
+        for bookkeeping in ('"ref"', '"by"', '"op"'):
+            assert bookkeeping not in row, f"the op is still dumped: {row}"
+
+
+def test_the_panels_draw_the_four_new_fields():
+    """The node panels name every field `dg node` prints: rule, done when,
+    binds, and the probe with its date (audit `N-F5`). A field × surface
+    matrix, read off the source; the browser check is recorded under
+    *checked and sound*."""
+    html = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    panel = html.split("function panel(){")[1].split("\nfunction ")[0]
+    task = html.split("function taskPanel(){")[1].split("\nfunction ")[0]
+    edge = html.split("function edgeCard(")[1].split("\nfunction ")[0]
+    for field in ("v.rule", "v.binds", "v.probes"):
+        assert field in panel, field
+    for field in ("x.done_when", "x.binds", "x.probes"):
+        assert field in task, field
+    assert "e.probe" in edge

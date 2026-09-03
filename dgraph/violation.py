@@ -36,6 +36,11 @@ Severity = Literal["error", "warning"]
 DECISION = "decision"
 TASK = "task"
 LINK = "link"
+#: A finding about the *world*, not a store: what a domain said when it
+#: evaluated a probe. Emitted by `dg probe` through `dgraph.domains` and by
+#: nothing `check.run` calls (R2: `dg check` output is a function of the
+#: store), so `check.ORIGIN` never learns a name with this origin.
+DOMAIN = "domain"
 
 #: Which store a finding is *about*, carried on the finding rather than
 #: inferred from its name. The commit gate names the broken store in its
@@ -45,9 +50,9 @@ LINK = "link"
 #: `tasks.json` in a project with no decision store at all was denied with
 #: "The decision graph is not valid" — and `store_loads`, emitted by all three
 #: validators, cannot be classified by any naming scheme at all.
-ORIGINS = (DECISION, TASK, LINK)
+ORIGINS = (DECISION, TASK, LINK, DOMAIN)
 
-Origin = Literal["decision", "task", "link"]
+Origin = Literal["decision", "task", "link", "domain"]
 
 
 @dataclass

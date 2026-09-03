@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 #: constantly in real answers — would stop being searchable. `status:OPEN` is
 #: one keystroke more and says what it means.
 PROSE = ("title", "note", "answer", "falsifier", "summary", "why", "outcome",
-         "source")
+         "source", "rule", "done_when")
 
 #: Fields whose values come from a closed vocabulary, and which therefore match
 #: **exactly** rather than as substrings. An id, a status and an area are things

@@ -39,8 +39,17 @@ CHECKS: tuple[str, ...] = (
     "no_orphans",
     "acyclic",
     "stale_view",
+    # the two domain slots, shape only (D71): a probe's `{kind, args}` and a
+    # bind's `{kind, ref}`. What a probe *says* about the world is never
+    # judged here — that is `dg probe`, and `domains.PROBES` is its list.
+    "probe_wellformed",
+    "binding_wellformed",
     # both stores; stamped where it is emitted, like `store_loads`
     "verbose_field",
+    # both stores: a field the store holds and this version cannot read,
+    # carried verbatim and named. A warning, for the reason `model.unknown_field`
+    # gives.
+    "unknown_field",
     # the task store; absent in most projects, checked only when present
     "task_ids_wellformed",
     "task_status_legal",
@@ -52,6 +61,8 @@ CHECKS: tuple[str, ...] = (
     "task_park_complete",
     "task_reading_complete",
     "task_reading_stale",
+    "task_probe_wellformed",
+    "task_binding_wellformed",
     "parked_holding_work",
     "task_done_before_prerequisite",
     "released_by_drop",
@@ -87,6 +98,8 @@ ORIGIN: dict[str, str] = {
     # stores, and splitting the name in two would make the rule twice as easy
     # to let rot in one of them.
     "verbose_field": "",
+    # As `verbose_field`: emitted by both validators, stamped by the caller.
+    "unknown_field": "",
     # Either tray; stamped where it is emitted, like `store_loads`.
     "tray_applies": "",
     "ids_wellformed": DECISION,
@@ -101,6 +114,8 @@ ORIGIN: dict[str, str] = {
     "no_orphans": DECISION,
     "acyclic": DECISION,
     "stale_view": DECISION,
+    "probe_wellformed": DECISION,
+    "binding_wellformed": DECISION,
     "task_ids_wellformed": TASK,
     "task_status_legal": TASK,
     "task_no_dangling_refs": TASK,
@@ -111,6 +126,8 @@ ORIGIN: dict[str, str] = {
     "task_park_complete": TASK,
     "task_reading_complete": TASK,
     "task_reading_stale": TASK,
+    "task_probe_wellformed": TASK,
+    "task_binding_wellformed": TASK,
     "parked_holding_work": TASK,
     "task_done_before_prerequisite": TASK,
     "released_by_drop": TASK,
@@ -329,6 +346,34 @@ def _verbose(rows: list[tuple[str, dict]], origin: str) -> list[Violation]:
     return out
 
 
+def _unknown(rows: list[tuple[str, dict]], origin: str) -> list[Violation]:
+    """`unknown_field` for one store's records, as `(where, extra)` pairs.
+
+    A field the store holds and this version cannot read — `Vertex.extra`,
+    `Edge.extra`, `Task.extra`, `TaskEdge.extra` — carried verbatim by the
+    loader and named here. **A warning, from here and never from either
+    `validate`**, for the reason `_verbose` gives: this is not a store
+    invariant. The store is legal and representable, the field is kept exactly
+    as written, and the reader is told there is something an install of this
+    version cannot interpret. Blocking would deny every commit in a clone
+    whose only fault is being a version behind, which is the failure `extra`
+    exists to end; and `apply_all` must not refuse to write a field it is
+    carrying for somebody else.
+
+    One finding per field rather than per record, unlike `_verbose`: two
+    unknown fields are two things a newer install means, and the remedy — run
+    that install — is the same, so listing both costs nothing and hides
+    nothing.
+    """
+    return [Violation(
+        "unknown_field",
+        f"{where} carries `{name}`, which this version of dg does not read — "
+        f"kept as written, never dropped; an install that reads it is the "
+        f"one to say what it means (`dg --version`)",
+        "warning", origin)
+        for where, extra in rows for name in sorted(extra)]
+
+
 def _link(proj: _project.Project, g: Graph | None = None,
           tg: TaskGraph | None = None) -> list[Violation]:
     """The cross-graph invariants, when the project has both stores.
@@ -414,6 +459,18 @@ def _tasks(proj: _project.Project, tg: TaskGraph | None = None, *,
                  "why": t.stops[-1].why if t.stops else None})
          for t in tg.tasks.values()],
         TASK)
+    problems += _unknown(
+        [(t.id, t.extra) for t in tg.tasks.values()]
+        + [(f"the {e.kind} edge from {e.src}", e.extra) for e in tg.edges]
+        # The three appended records carry what they cannot read the same
+        # way (`probe.split_known`); a probe's or a bind's carried key is
+        # not here, because `validate` refuses it as a shape fault.
+        + [(f"{t.id}'s {what} {i + 1}", k.extra)
+           for t in tg.tasks.values()
+           for what, rows in (("stop", t.stops), ("completion", t.completions),
+                              ("reading", t.readings))
+           for i, k in enumerate(rows)],
+        TASK)
 
     if not views:
         return problems
@@ -478,6 +535,10 @@ def _decisions(proj: _project.Project, g: Graph | None = None, *,
         + [(e.src, {"answer": e.answer, "falsifier": e.falsifier,
                     "summary": e.summary, "why": e.why})
            for e in g.edges if e.active],
+        DECISION)
+    problems += _unknown(
+        [(v.id, v.extra) for v in g.vertices.values()]
+        + [(f"the edge from {e.src}", e.extra) for e in g.edges],
         DECISION)
 
     if not views:

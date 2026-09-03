@@ -20,12 +20,14 @@ from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import env, limits, project, ranges
-from dgraph.model import (SIMPLE_STATUSES, UNSETTLED, Edge, Graph, Vertex,
+from dgraph.model import (CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED, Bind,
+                          Edge, Graph, Probe, Vertex, bind_fault, probe_fault,
                           status_fault)
 from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
-       "remove_vertex", "set_status", "set_fields", "reject"}
+       "remove_vertex", "set_status", "set_fields", "reject", "reprobe",
+       "bind", "unbind"}
 
 #: What `set_fields` may write, in **both** stores. One tuple, imported by
 #: `task_pending`, because a decision and a task differ in everything except
@@ -38,6 +40,22 @@ OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
 #: this whole model exists to refuse. A title and an area are not claims — a
 #: title is how a question is referred to, not something the question says.
 FIELDS = ("title", "area", "note", "format")
+
+#: The one prose pre-commitment each record kind carries beyond those four
+#: (`D75`): a decision's `rule` for settling, a task's `done_when`. Amendable
+#: like a note, because they are the writer's own wording of what would
+#: count and not a dated claim about what happened — so they join
+#: `set_fields` for the store that has them and are refused for the other.
+PROSE_OF = {"decision": ("rule",), "task": ("done_when",)}
+
+#: Every field `set_fields` may write in *either* store, for sites that see
+#: an op without knowing which store it is for — a tray listing, a report.
+ALL_FIELDS = FIELDS + PROSE_OF["decision"] + PROSE_OF["task"]
+
+
+def fields_of(record: str) -> tuple[str, ...]:
+    """What `set_fields` may write on a `decision` or a `task`."""
+    return FIELDS + PROSE_OF[record]
 
 #: Everything else a `set_fields` op may carry: which record it addresses, and
 #: the tray's own bookkeeping. Named so that any *other* key can be refused —
@@ -1142,6 +1160,20 @@ def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
                              of=op.get("vertex") or op.get("id"))
         if fault:
             raise ApplyError(fault)
+    # `_apply_one` above copied the probe onto the edge without reading it;
+    # `apply_all` would refuse the batch later, naming `probe_wellformed`
+    # against an op somebody else may by then have staged beside. Refused
+    # here, at the door, the way a status is.
+    if (op.get("op") in ("close", "reject", "add_vertex", "reprobe")
+            and op.get("probe") is not None):
+        fault = probe_fault(op["probe"])
+        if fault:
+            raise ApplyError(f"probe: {fault}")
+    if op.get("op") in ("bind", "unbind"):
+        for b in op.get("binds") or ():
+            fault = bind_fault(b)
+            if fault:
+                raise ApplyError(f"bind: {fault}")
     # `set_status` is a **derived** op for decisions: `expand` and `repairs`
     # produce it, and both stamp `derived_from`. The single exception is
     # re-affirming a PROVISIONAL one, which `compose_confirm` composes and
@@ -1157,7 +1189,7 @@ def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
         vet_fields(op, own=area_counts(g.areas, g.vertices.values()),
                    other=stored_area_counts(project.find().tasks),
                    record="decision", new_area=new_area,
-                   current={k: getattr(v, k) for k in FIELDS})
+                   current={k: getattr(v, k) for k in fields_of("decision")})
     if op.get("op") == "set_status" and "derived_from" not in op:
         if status != "DECIDED":
             raise ApplyError(
@@ -1223,17 +1255,18 @@ def vet_fields(op: dict, *, own: dict, other: dict, current: dict,
     # cannot write is told *that* rather than told it named nothing — the
     # caller reached for the field it meant and needs to hear why it is not
     # here, not that its op was empty.
-    extra = sorted(set(op) - set(FIELDS) - set(FIELD_KEYS))
+    fields = fields_of(record)
+    extra = sorted(set(op) - set(fields) - set(FIELD_KEYS))
     if extra:
         raise ApplyError(
             f"a {record} is not amended in {_and_(extra)} — this op writes "
-            f"{', '.join(FIELDS)} and nothing else. An answer, an outcome and "
+            f"{', '.join(fields)} and nothing else. An answer, an outcome and "
             f"a reason work stopped are dated records: they are superseded by "
             f"a new one, never edited")
-    named = [k for k in FIELDS if k in op]
+    named = [k for k in fields if k in op]
     if not named:
         raise ApplyError(
-            f"nothing to change — name at least one of {', '.join(FIELDS)}")
+            f"nothing to change — name at least one of {', '.join(fields)}")
     if "title" in op and not (op["title"] or "").strip():
         raise ApplyError(
             f"a {record} needs a title — it is what every other record, and "
@@ -1480,6 +1513,8 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
                 new_area: bool = False,
                 status: str = "OPEN", after: list[str] | None = None,
                 note: str | None = None,
+                probe: dict | None = None,
+                rule: str | None = None,
                 stored: Graph | None = None) -> list[dict]:
     """The op list that records a new decision, validated against `g`.
 
@@ -1556,11 +1591,40 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
         raise ApplyError(
             f"{fault}\n"
             f"one of {', '.join(sorted(SIMPLE_STATUSES))}")
+    if probe is not None:
+        fault = probe_fault(probe)
+        if fault:
+            raise ApplyError(f"--probe: {fault}")
     op = {"op": "add_vertex", "id": vid, "title": title,
           "area": area, "status": status}
     if note:
         op["note"] = note
+    if rule:
+        op["rule"] = rule
+    if probe is not None:
+        op["probe"] = probe
+        op["date"] = _date.today().isoformat()
     return [op] + [{"op": "add_edge", "from": p, "to": [vid]} for p in after]
+
+
+def compose_reprobe(g: Graph, *, vid: str, probe: dict) -> dict:
+    """The op that appends a rule for settling `vid`, checked against `g`.
+
+    The refusals `_apply_one` makes, said before staging and in the flag's
+    name — the same division `compose_add` draws for the area and the id.
+    """
+    if vid not in g.vertices:
+        raise ApplyError(f"unknown vertex {vid}")
+    v = g.vertices[vid]
+    if v.settled:
+        raise ApplyError(
+            f"{vid} is {v.status} — its criterion is the probe on its answer; "
+            f"`dg reopen {vid}` first if the question is open again")
+    fault = probe_fault(probe)
+    if fault:
+        raise ApplyError(f"--probe: {fault}")
+    return {"op": "reprobe", "vertex": vid, "probe": probe,
+            "date": _date.today().isoformat()}
 
 
 def compose_dep(g: Graph, *, vid: str,
@@ -1769,6 +1833,86 @@ def repairs(g: Graph) -> list[dict]:
 # ---- apply ---------------------------------------------------------------
 
 
+def bind_step(held: list[Bind], op: dict) -> list[Bind]:
+    """`held` after a `bind` or `unbind` op, for either store.
+
+    A `bind` adds what is not already held and says nothing about what is;
+    an `unbind` naming nothing held is refused, as `remove_edge` is, because
+    a removal that removes nothing is a claim about the record that the
+    record does not bear out. Naming some held and some not removes the
+    held ones — the same partial rule the edge has.
+    """
+    named = [Bind(kind=b["kind"], ref=b["ref"]) for b in op.get("binds") or ()]
+    if not named:
+        raise ApplyError(f"{op['op']} names no {{kind, ref}} pair: binds")
+    rid = op.get("vertex") or op.get("task")
+    if op["op"] == "bind":
+        return list(held) + [b for b in named if b not in held]
+    gone = set(named)
+    if not gone & set(held):
+        raise ApplyError(
+            f"{rid} is not bound to {', '.join(b.spelled for b in named)} — "
+            f"nothing to remove")
+    return [b for b in held if b not in gone]
+
+
+def compose_bind(g: Graph, *, vid: str, binds: list[dict],
+                 remove: bool = False) -> tuple[dict | None, list[str], list[str]]:
+    """`(op, fresh, already)` for binding `vid` — or unbinding, with `remove`.
+
+    `compose_dep`'s shape and for its reason: what was already held (or
+    already absent) is not a failure and not a no-op, it is something the
+    surface has to say. `op` is None when nothing would change.
+    """
+    if vid not in g.vertices:
+        raise ApplyError(f"unknown vertex {vid}")
+    for b in binds:
+        fault = bind_fault(b)
+        if fault:
+            raise ApplyError(fault)
+    held = {b.spelled for b in g.vertices[vid].binds}
+    spelled = [f"{b['kind']}:{b['ref']}" for b in binds]
+    if remove:
+        fresh = [s for s in spelled if s in held]
+        already = [s for s in spelled if s not in held]
+    else:
+        fresh = [s for s in spelled if s not in held]
+        already = [s for s in spelled if s in held]
+    if not fresh:
+        return None, fresh, already
+    op = {"op": "unbind" if remove else "bind", "vertex": vid,
+          "binds": [b for b, s in zip(binds, spelled) if s in fresh]}
+    return op, fresh, already
+
+
+def probe_entry(op: dict) -> Probe | None:
+    """The appended entry an `add_vertex`, `add_task` or `reprobe` op writes.
+
+    The *slot* probe — a rule for settling, a definition of done — and not
+    the edge payload's, which `_payload` reads off `PAYLOAD`. Its own
+    function so that the apply path reads the payload by the tuple and
+    nothing else by name, which `tests/test_payload.py` checks by reading
+    the source. Dated by the op, else today: the rule `close` uses.
+    """
+    probe = op.get("probe")
+    if not probe:
+        return None
+    return Probe(kind=probe["kind"], args=probe["args"],
+                 date=op.get("date") or _date.today().isoformat())
+
+
+def _payload(op: dict) -> dict:
+    """What a `close` or `reject` op writes onto an edge, by `PAYLOAD`.
+
+    `answer` and `source` are indexed rather than fetched: an op without them
+    is malformed, and a `KeyError` here is the same refusal the hand-written
+    version gave.
+    """
+    out = {k: op.get(k) for k in PAYLOAD}
+    out["answer"], out["source"] = op["answer"], op["source"]
+    return out
+
+
 def _apply_one(g: Graph, op: dict) -> None:
     kind = op.get("op")
     if kind not in OPS:
@@ -1783,6 +1927,10 @@ def _apply_one(g: Graph, op: dict) -> None:
             status=op.get("status", "OPEN"), note=op.get("note"),
             # the tag describes the note; without one it describes nothing
             format=op.get("format") if op.get("note") else None,
+            rule=op.get("rule"),
+            # The first entry of the appended list, dated by the op or today
+            # — the same date rule `close` uses for its payload.
+            probes=[e for e in (probe_entry(op),) if e is not None],
         )
         return
 
@@ -1864,7 +2012,8 @@ def _apply_one(g: Graph, op: dict) -> None:
         # benefit. What would reopen it: citations becoming resolvable.
         v = g.vertices[vid]
         _register(g, op.get("area"))
-        out = _dc_replace(v, **{k: op[k] for k in FIELDS if k in op})
+        out = _dc_replace(v, **{k: op[k] for k in fields_of("decision")
+                                if k in op})
         if not out.note:
             # The tag describes the note; without one it describes nothing.
             # `add_vertex` applies the same rule above, and this op is the only
@@ -1911,17 +2060,13 @@ def _apply_one(g: Graph, op: dict) -> None:
     if kind == "close":
         e = g.active_edge(vid)
         targets = sorted(set(op.get("to", [])) | set(e.to if e else []))
-        payload = dict(
-            answer=op["answer"], falsifier=op.get("falsifier"),
-            source=op["source"], date=op.get("date") or _date.today().isoformat(),
-            format=op.get("format"),
-        )
+        payload = _payload(op)
+        payload["date"] = payload["date"] or _date.today().isoformat()
         if e is None:
             g.edges.append(Edge(src=vid, to=targets, **payload))
         else:
             if e.decided:
-                same = (e.answer == op["answer"] and e.source == op["source"]
-                        and e.falsifier == op.get("falsifier"))
+                same = all(getattr(e, k) == op.get(k) for k in CLAIM)
                 raise already(vid, same, "decision")
             e.to = targets
             for k, v in payload.items():
@@ -1966,11 +2111,34 @@ def _apply_one(g: Graph, op: dict) -> None:
                 "a declined answer has to say where it came from: --from")
         g.edges.append(Edge(
             src=vid, to=sorted(op.get("to", [])), active=False,
-            answer=op["answer"], falsifier=op.get("falsifier"),
-            source=op["source"], date=op.get("date"),
+            **_payload(op),
             summary=op.get("summary") or _clip(op["answer"]),
-            format=op.get("format"), from_source=op["from_source"],
+            from_source=op["from_source"],
         ))
+        return
+
+    if kind in ("bind", "unbind"):
+        # The union and the difference, the way `add_edge` and `remove_edge`
+        # take them — `probe.Bind` has the argument. Order is kept so the
+        # store reads as it was written; the set is what the ops mean.
+        v = g.vertices[vid]
+        v.binds = list(bind_step(v.binds, op))
+        return
+
+    if kind == "reprobe":
+        # Appended, never assigned — `model.Probe` has the argument. Only
+        # while the question is unsettled: a settled one is judged by the
+        # probe on its answer, and writing a rule for settling under an
+        # answer already given would be a second criterion nothing reads.
+        v = g.vertices[vid]
+        if v.settled:
+            raise ApplyError(
+                f"{vid} is {v.status} — its criterion is the probe on its "
+                f"answer; `dg reopen {vid}` first if the question is open again")
+        entry = probe_entry(op)
+        if entry is None:
+            raise ApplyError(f"reprobing {vid} needs the criterion: --probe")
+        v.probes.append(entry)
         return
 
     if kind == "reopen":
@@ -1978,23 +2146,25 @@ def _apply_one(g: Graph, op: dict) -> None:
         if e is None or not e.decided:
             raise ApplyError(f"{vid} has no decision to reopen")
         # The answer is superseded; the dependency structure is not. The edge
-        # keeps its targets and loses only its payload.
+        # keeps its targets and loses only its payload — every field of it,
+        # read off `PAYLOAD` so that a field added there is archived and
+        # cleared here without this site being told.
+        archived = {k: getattr(e, k) for k in PAYLOAD}
+        # `format` is this op's dialect, covering the prose composed here —
+        # why and summary. The archived answer keeps no dialect of its own:
+        # `e.format` describes an answer this edge no longer owns, and a
+        # second field for it would be a schema change for the one place
+        # the two dialects differ (a single `*…*` span: bold in org,
+        # italic in markdown). The web panel renders the archived answer in
+        # this dialect and can be that much wrong about its emphasis.
+        archived["format"] = op.get("format")
         g.edges.append(Edge(
-            src=vid, to=list(e.to), active=False,
-            answer=e.answer, falsifier=e.falsifier, source=e.source,
-            date=e.date, summary=op.get("summary") or _clip(e.answer or ""),
+            src=vid, to=list(e.to), active=False, **archived,
+            summary=op.get("summary") or _clip(e.answer or ""),
             replaced_by=None, why=op["why"],
-            # `format` is this op's dialect, covering the prose composed here —
-            # why and summary. The archived answer keeps no dialect of its own:
-            # `e.format` describes an answer this edge no longer owns, and a
-            # second field for it would be a schema change for the one place
-            # the two dialects differ (a single `*…*` span: bold in org,
-            # italic in markdown). The web panel renders the archived answer in
-            # this dialect and can be that much wrong about its emphasis.
-            format=op.get("format"),
         ))
-        e.answer = e.falsifier = e.source = e.date = None
-        e.format = None
+        for k in PAYLOAD:
+            setattr(e, k, None)
         g.vertices[vid] = _dc_replace(
             g.vertices[vid], status="REOPENED",
             note=op.get("note") or op["why"], format=op.get("format"),

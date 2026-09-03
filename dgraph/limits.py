@@ -168,7 +168,8 @@ from dgraph.env import (BUDGET_ENV, EXEC_ENV, INFINITE, SILENT_DEFAULT,  # noqa:
 #:
 #: `title` is deliberately absent -- see the module docstring. So is `source`,
 #: which is the citation the fix asks for and would be self-defeating to judge.
-TERSE_FIELDS = ("answer", "falsifier", "note", "outcome", "why", "summary")
+TERSE_FIELDS = ("answer", "falsifier", "note", "outcome", "why", "summary",
+                "rule", "done_when")
 
 #: Where the development goes instead, per field. The refusal has to name the
 #: door this particular record already has, because "put it in a file" without
@@ -180,6 +181,8 @@ _TERSE_FIX = {
     "outcome": "name the file in the `--outcome`",
     "why": "name the file in the reason",
     "note": "name the file in the note",
+    "rule": "name the file in the rule",
+    "done_when": "name the file in the definition of done",
 }
 
 

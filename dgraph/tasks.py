@@ -64,11 +64,16 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as _dc_fields
 from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import project
+# The shape a task shares with a vertex, from the module that belongs to
+# neither: `tests/test_cross.py` keeps this file from importing `model`.
+from dgraph.probe import (Bind, Probe, binds_fault, binds_from, binds_to,
+                          probe_entry_fault, probes_from, probes_to,
+                          split_known)
 from dgraph.violation import Violation, cycle_from
 
 STATUSES = ("TODO", "DOING", "PARKED", "DONE", "DROPPED")
@@ -175,6 +180,10 @@ class Stop:
 
     why: str
     date: str
+    #: What the entry holds that this version does not name: carried, written
+    #: back, and warned about as `unknown_field` — `model.Vertex.extra` has
+    #: the argument, and `probe.split_known` is the one loader that fills it.
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -198,6 +207,8 @@ class Completion:
 
     date: str
     outcome: str
+    #: As `Stop.extra`.
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -229,6 +240,8 @@ class Reading:
     date: str
     note: str
     against: str
+    #: As `Stop.extra`.
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -238,6 +251,12 @@ class Task:
     area: str
     status: str = "TODO"
     note: str | None = None      # prose: what this involves, why it is parked
+    #: The definition of done, in prose, written when the work was filed
+    #: (`D75`): what finished looks like. Optional, amendable like the note,
+    #: and shown back by `dg task done` before the outcome is asked for, so
+    #: the result is written against what was said would count. Its
+    #: mechanical twin is `probes`.
+    done_when: str | None = None
     #: Every time this work was finished, oldest first, and never cleared.
     #: `done` and `outcome` read the last entry and are derived, not stored —
     #: see those properties for why. Held as a list because the pair used to be
@@ -280,6 +299,23 @@ class Task:
     #: happened stays happened. `cross.evidence_after_deciding` reads the last
     #: one as its baseline; nothing here interprets `against`.
     readings: list[Reading] = field(default_factory=list)
+    #: Every definition of done written for this work as a criterion a
+    #: domain could judge, oldest first, and never cleared — the fourth
+    #: append-only record, and `model.Probe` has the argument. The last is
+    #: live; `dg reprobe` appends and nothing else writes it.
+    probes: list[Probe] = field(default_factory=list)
+    #: What this work is about, in a domain's terms — `probe.Bind` has the
+    #: argument. A set held as a list, written only by `bind`/`unbind`.
+    binds: list[Bind] = field(default_factory=list)
+    #: What the store holds that this version cannot read, carried verbatim
+    #: and warned about by `dg check`. `model.Vertex.extra` has the argument;
+    #: this is the same field for the same reason.
+    extra: dict = field(default_factory=dict)
+
+    @property
+    def probe(self) -> Probe | None:
+        """The live definition of done as a criterion: the last, or None."""
+        return self.probes[-1] if self.probes else None
 
     def read_against(self, did: str) -> str | None:
         """The date this work was last read against `did`, if it ever was.
@@ -459,6 +495,13 @@ class TaskEdge:
     src: str
     to: list[str]
     kind: str
+    #: As `Task.extra`.
+    extra: dict = field(default_factory=dict)
+
+
+#: What a task record may hold, by name. Everything else is `Task.extra`.
+TASK_FIELDS = (frozenset(f.name for f in _dc_fields(Task)) - {"extra"}
+               | {"done", "outcome", "why"})   # legacy spellings `_task` handles
 
 
 def _fold_because(raw) -> list[str]:
@@ -477,10 +520,15 @@ def _task(raw: dict) -> Task:
     """One stored task. Only `parks` needs building; everything else is scalar.
 
     A malformed park entry is refused at load rather than in `validate`, for
-    the reason a duplicate id is: `Park(**p)` on a dict missing `why` raises
-    somewhere unhelpful, and a park silently dropped here would be invisible by
-    the time anything could report it — which is the one thing an archived
-    record must never be.
+    the reason a duplicate id is: a dict missing `why` cannot become a record
+    without inventing one, and a park silently dropped here would be invisible
+    by the time anything could report it — which is the one thing an archived
+    record must never be. A key the entry carries that this version does not
+    name is the other case, and it is **not** refused: `probe.split_known`
+    carries it into the record's `extra`, `dg check` names it as
+    `unknown_field`, and the save writes it back — `Cls(**entry)` used to
+    crash on it, which put a clone one version behind where `D76` took the
+    whole store out of.
     """
     fields = dict(raw)
     if "why" in fields:
@@ -495,14 +543,13 @@ def _task(raw: dict) -> Task:
             f'"stops": [{{"why": …, "date": "YYYY-MM-DD"}}]; `git log -p` has '
             f"the date"
         )
-    stops = fields.pop("stops", [])
-    try:
-        fields["stops"] = [Stop(**k) for k in stops]
-    except TypeError as exc:
-        raise ValueError(
-            f"{raw.get('id', '?')}: malformed stops entry — each needs a "
-            f"`why` and a `date`, and nothing else ({exc})"
-        ) from None
+    rid = raw.get("id", "?")
+    # Each appended record through the one loader: a missing key is refused
+    # here, a key this version does not name is carried (`probe.split_known`).
+    fields["stops"] = [
+        Stop(**named, extra=extra) for named, extra in
+        (split_known(k, ("why", "date"), rid, "stops", "a `why` and a `date`")
+         for k in fields.pop("stops", []))]
     completions = fields.pop("completions", [])
     legacy = [fields.pop(f, None) for f in ("done", "outcome")]
     if any(v is not None for v in legacy) and not completions:
@@ -513,25 +560,25 @@ def _task(raw: dict) -> Task:
         # so that `validate` can go on reporting it — refusing the load would
         # make the one command that names the fault unable to run.
         completions = [{"date": legacy[0] or "", "outcome": legacy[1] or ""}]
-    try:
-        fields["completions"] = [Completion(**c) for c in completions]
-    except TypeError as exc:
-        raise ValueError(
-            f"{raw.get('id', '?')}: malformed completions entry — each needs "
-            f"a `date` and an `outcome`, and nothing else ({exc})"
-        ) from None
-    readings = fields.pop("readings", [])
-    try:
-        fields["readings"] = [Reading(**k) for k in readings]
-    except TypeError as exc:
-        raise ValueError(
-            f"{raw.get('id', '?')}: malformed readings entry — each needs a "
-            f"`date`, a `note` and an `against`, and nothing else ({exc})"
-        ) from None
+    fields["completions"] = [
+        Completion(**named, extra=extra) for named, extra in
+        (split_known(c, ("date", "outcome"), rid, "completions",
+                     "a `date` and an `outcome`") for c in completions)]
+    fields["probes"] = probes_from(fields.pop("probes", []), rid)
+    fields["binds"] = binds_from(fields.pop("binds", []), rid)
+    fields["readings"] = [
+        Reading(**named, extra=extra) for named, extra in
+        (split_known(k, ("date", "note", "against"), rid, "readings",
+                     "a `date`, a `note` and an `against`")
+         for k in fields.pop("readings", []))]
     # `because` became a list. A store written before then held a scalar, so it
     # is folded rather than refused, the same way the two-scalar completion was:
     # nothing has to be invented.
     fields["because"] = _fold_because(fields.pop("because", None))
+    # Known keys by name, everything else carried: never `Task(**raw)`, which
+    # made an unknown key a crash at load. See `model.Vertex.extra`.
+    fields["extra"] = {k: fields.pop(k) for k in list(fields)
+                       if k not in TASK_FIELDS}
     return Task(**fields)
 
 
@@ -551,7 +598,9 @@ def _edge(i: int, e: dict) -> TaskEdge:
             f'written before edge kinds existed holds only prerequisites: add '
             f'"kind": "precedes" to each edge.'
         )
-    return TaskEdge(src=e["from"], to=list(e.get("to", [])), kind=e["kind"])
+    return TaskEdge(src=e["from"], to=list(e.get("to", [])), kind=e["kind"],
+                    extra={k: v for k, v in e.items()
+                           if k not in ("from", "to", "kind")})
 
 
 @dataclass
@@ -598,32 +647,37 @@ class TaskGraph:
             "areas": self.areas,
             "tasks": [
                 {
-                    k: val
+                    **{k: val
                     for k, val in (
                         ("id", t.id), ("title", t.title), ("area", t.area),
                         ("status", t.status), ("note", t.note),
+                        ("done_when", t.done_when),
                         # `t.completions`, not `t.done`/`t.outcome`: those are
                         # status-gated, so serializing through them would drop
                         # the record of finished work the moment it restarted.
-                        ("completions", [{"date": c.date, "outcome": c.outcome}
+                        ("completions", [{"date": c.date, "outcome": c.outcome,
+                                          **c.extra}
                                          for c in t.completions] or None),
                         # Absent rather than `[]` when there is none, matching
                         # every other field here: the store stays readable, and
                         # work that never stopped says so by silence.
-                        ("stops", [{"why": k.why, "date": k.date}
+                        ("stops", [{"why": k.why, "date": k.date, **k.extra}
                                    for k in t.stops] or None),
                         ("format", t.format), ("because", t.because or None),
                         ("evidence_for", t.evidence_for),
                         ("readings", [{"date": r.date, "note": r.note,
-                                       "against": r.against}
+                                       "against": r.against, **r.extra}
                                       for r in t.readings] or None),
+                        ("probes", probes_to(t.probes)),
+                        ("binds", binds_to(t.binds)),
                     )
-                    if val is not None
+                    if val is not None},
+                    **t.extra,     # written back as read: see `Task.extra`
                 }
                 for t in rows
             ],
             "edges": [
-                {"from": e.src, "to": sorted(e.to), "kind": e.kind}
+                {"from": e.src, "to": sorted(e.to), "kind": e.kind, **e.extra}
                 for e in sorted(self.edges, key=lambda e: (e.src, e.kind))
                 if e.to
             ],
@@ -798,6 +852,7 @@ class TaskGraph:
                     f"{', '.join(STATUSES)}")
 
         for e in self.edges:
+
             # Checked before the id checks below, which are kind-agnostic and
             # so keep working on an edge whose kind is nonsense — one bad field
             # should not suppress every other finding about the same edge.
@@ -861,6 +916,12 @@ class TaskGraph:
                            if t.evidence_for else "evidence for nothing now")
                         + f" — the record stands, but it covers nothing",
                         "warning")
+            for p in t.probes:
+                fault = probe_entry_fault(p)
+                if fault:
+                    add("task_probe_wellformed", f"{tid}: {fault}")
+            for fault in binds_fault(t.binds):
+                add("task_binding_wellformed", f"{tid}: {fault}")
             for c in t.completions:
                 if not c.date or not c.outcome:
                     add("task_done_complete",

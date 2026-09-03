@@ -192,6 +192,14 @@ def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
                         seed.get("evidence_for", ""))
         + editor._field("Note", "Optional prose: what this involves, or what "
                                 "is unclear about it.", seed.get("note", ""))
+        + editor._field("Done when", "Optional. What finished looks like, in "
+                                     "prose — read back at `dg task done`.",
+                        seed.get("done_when", ""))
+        + editor._field("Probe",
+                        "Optional. Its definition of done as a criterion, "
+                        'JSON:\n{"kind": "<domain>.<name>", "args": {...}}. '
+                        "Appended and dated; `dg task reprobe` changes it.",
+                        editor._probe_text(seed.get("probe")))
         + "\n* Context\n** Areas in use\n"
         + ("".join(f"   - {a}  ({n})\n" for a, n in
                    areas.counts(tg.areas, tg.tasks.values()).items())
@@ -243,6 +251,7 @@ def render_done(tg: TaskGraph, g: Graph | None, tid: str,
             "What did this produce? A path, a PR, a measurement — enough that\n"
             "somebody who did not do the work can find what it left behind.\n"
             "Full org is fine."
+            + (f"\nDone when: {t.done_when}" if t.done_when else "")
             + (f"\nNote: {tid} still waits on {', '.join(waiting)}."
                if waiting else ""),
             seed.get("outcome", ""))
@@ -252,7 +261,7 @@ def render_done(tg: TaskGraph, g: Graph | None, tid: str,
 
 ALLOWED = {
     "add_task": {"id", "title", "area", "after", "discovered during",
-                 "because", "evidence for", "note"},
+                 "because", "evidence for", "note", "probe", "done when"},
     "set_status": {"outcome"},
 }
 
@@ -360,6 +369,11 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
     ef_raw = f.get("evidence for", "").strip()
     if ef_raw:
         op["evidence_for"] = _premise(g, ef_raw, "Evidence for")
+    if f.get("done when", "").strip():
+        op["done_when"] = f["done when"].strip()
+    if f.get("probe", "").strip():
+        op["probe"] = editor._parse_probe(f["probe"])
+        op["date"] = _date.today().isoformat()
     ops = [_org(op)]
     # One group, in the order the CLI stages them: the task, then its edges.
     # A task landing without them is not a partial batch something refuses —

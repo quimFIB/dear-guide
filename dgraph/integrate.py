@@ -49,14 +49,14 @@ import copy
 import json
 from dataclasses import dataclass, field
 
-from dgraph.model import Graph
+from dgraph.model import CLAIM, PAYLOAD, Graph
 from dgraph.tasks import TaskGraph
 
 #: The fields `set_fields` carries, in the order a report reads best. Imported
 #: rather than restated: an op that writes a field this list forgets is a
 #: difference that vanishes at integration, which is the union failure mode
 #: reappearing inside the mechanism built to replace it.
-from dgraph.pending import FIELDS
+from dgraph.pending import ALL_FIELDS, FIELDS, fields_of
 
 
 @dataclass
@@ -98,6 +98,7 @@ def decisions(base: Graph, theirs: Graph) -> Derived:
         out.ops.append({"op": "add_vertex", "id": vid, "title": v.title,
                         "area": v.area, "status": v.status,
                         **({"note": v.note} if v.note else {}),
+                        **({"rule": v.rule} if v.rule else {}),
                         **({"format": v.format} if v.format else {})})
 
     # Edges first, into a list of their own, so that `_fields` can be told
@@ -117,6 +118,16 @@ def decisions(base: Graph, theirs: Graph) -> Derived:
     for vid in sorted(set(base.vertices) & set(theirs.vertices)):
         _fields(base.vertices[vid], theirs.vertices[vid], vid, "vertex", out,
                 skip=("note", "format") if vid in settled else ())
+    for vid in sorted(theirs.vertices):
+        _unknown(base.vertices.get(vid), theirs.vertices[vid], vid, out)
+        was, now = base.active_edge(vid), theirs.active_edge(vid)
+        if now is not None:
+            _unknown(was, now, f"the edge from {vid}", out)
+    # The reprobes are inside `edge_ops`, placed by `_edges` between the
+    # reopens and the close — see there for why neither *before the edges*
+    # nor *after them* is right. Binds have no such order to keep.
+    for vid in sorted(theirs.vertices):
+        _binds(base.vertices.get(vid), theirs.vertices[vid], vid, "vertex", out)
     for vid in sorted(theirs.vertices):
         out.ops.extend(edge_ops[vid])
 
@@ -138,6 +149,7 @@ def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
         out.ops.append({"op": "add_task", "id": tid, "title": t.title,
                         "area": t.area,
                         **({"note": t.note} if t.note else {}),
+                        **({"done_when": t.done_when} if t.done_when else {}),
                         **({"because": t.because} if t.because else {}),
                         **({"evidence_for": t.evidence_for}
                            if t.evidence_for else {})})
@@ -151,10 +163,14 @@ def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
             # ops for one act and read, in the tray, as two.
             _fields(was, t, tid, "task", out)
             _links(was, t, tid, out)
+        _binds(was, t, tid, "task", out)
+        # The reprobes are placed by `_status`, between the restart that made
+        # the work unfinished and the finish that ended it — see there.
         _status(was, t, tid, out)
     _deps(base, theirs, out)
     for tid in sorted(theirs.tasks):
         _readings(base.tasks.get(tid), theirs.tasks[tid], tid, out)
+        _unknown(base.tasks.get(tid), theirs.tasks[tid], tid, out)
     for tid in sorted(set(base.tasks) - set(theirs.tasks)):
         out.ops.append({"op": "remove_task", "task": tid, "mode": "sever"})
     return out
@@ -163,9 +179,75 @@ def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
 # ---- the pieces ----------------------------------------------------------
 
 
+def _unknown(was, now, rid: str, out: Derived) -> None:
+    """A field this version cannot read, arriving changed: unexpressible.
+
+    `extra` travels by load and save and never by an op — no op writes a
+    field the tool does not know — so a contribution that added or changed
+    one cannot be replayed here, and the honest report is the one this
+    module gives for everything it cannot say. It arrives as a store that
+    `dg check` warns about as `unknown_field`, which is the same fact read
+    from the other side.
+    """
+    before = was.extra if was is not None else {}
+    changed = sorted(k for k in set(before) | set(now.extra)
+                     if before.get(k) != now.extra.get(k))
+    if changed:
+        out.unexpressible.append(
+            f"{rid} arrives with {', '.join(f'`{k}`' for k in changed)}, "
+            f"which this version of dg does not read — carried by a load, "
+            f"never by an op, so it cannot be adopted here; the install that "
+            f"reads it is the one to bring it in")
+
+
+def _reprobes(was, now, rid: str, what: str) -> list[dict]:
+    """`reprobe` per probe entry that is new. The append-only record the two
+    stores share.
+
+    Like `stops`, `completions` and `readings`, an entry is a dated act, so
+    a list that grew is that many acts and each carries its own date. A
+    record the base did not have arrives with every entry this way rather
+    than inside its `add_*` op, so that one derivation serves both cases
+    and the tray reads each criterion as the act it was. Returned rather
+    than appended, because *where* they go is the caller's problem and
+    differs by store: `_edges` puts them between the reopens and the close,
+    `_status` interleaves them with the finishes by date.
+    """
+    old = len(was.probes) if was is not None else 0
+    key = "vertex" if what == "vertex" else "task"
+    return [{"op": "reprobe", key: rid, "probe": p.criterion, "date": p.date}
+            for p in now.probes[old:]]
+
+
+def _binds(was, now, rid: str, what: str, out: Derived) -> None:
+    """`bind` / `unbind` per record, from the set difference — `_deps`
+    per source, for the record's address rather than its edges."""
+    old = set(was.binds) if was is not None else set()
+    new = set(now.binds)
+    key = "vertex" if what == "vertex" else "task"
+    gained = [b for b in now.binds if b not in old]
+    lost = sorted(old - new, key=lambda b: b.spelled)
+    if gained:
+        out.ops.append({"op": "bind", key: rid,
+                        "binds": [{"kind": b.kind, "ref": b.ref} for b in gained]})
+    if lost:
+        out.ops.append({"op": "unbind", key: rid,
+                        "binds": [{"kind": b.kind, "ref": b.ref} for b in lost]})
+
+
+def _reprobed_apart(mine, was, op: dict) -> bool:
+    """Whether this clone appended a criterion since the base that differs
+    from the one arriving. Two writers writing the same rule is not a
+    conflict; two writing different rules for one record is the case the
+    "last entry is live" reading cannot settle by itself."""
+    return (len(mine.probes) > len(was.probes)
+            and mine.probes[-1].criterion != op.get("probe"))
+
+
 def _fields(was, now, rid: str, what: str, out: Derived, skip=()) -> None:
     """`set_fields` for the wording that changed. Nothing where none did."""
-    changed = {f: getattr(now, f) for f in FIELDS
+    changed = {f: getattr(now, f)
+               for f in fields_of("decision" if what == "vertex" else "task")
                if f not in skip
                and getattr(was, f, None) != getattr(now, f, None)}
     if changed:
@@ -194,6 +276,20 @@ def _edges(base: Graph, theirs: Graph, vid: str, out: Derived) -> None:
                         **({"summary": e.summary} if e.summary else {}),
                         **({"format": e.format} if e.format else {})})
 
+    # The rules for settling this question that were written since the base,
+    # **after the reopens and before the close**. A reprobe is refused on a
+    # settled question, so every entry was written while the question was
+    # open: after any reopen that made it so, before any close that ended
+    # it. This used to be derived before every edge op, on the argument that
+    # the close is among them — one direction of two, and a clone that
+    # reopened a question and then wrote its rule arrived with the reopen
+    # adopted and the rule quarantined as inapplicable, under a message
+    # telling the reader to run the reopen that sat one line below. Audit
+    # `N-F1`. No date is consulted: the structural order is legal for every
+    # history the ops can produce.
+    out.ops.extend(_reprobes(base.vertices.get(vid), theirs.vertices[vid],
+                             vid, "vertex"))
+
     if now is None:
         if was is not None and was.to:
             out.ops.append({"op": "remove_edge", "from": vid,
@@ -201,12 +297,11 @@ def _edges(base: Graph, theirs: Graph, vid: str, out: Derived) -> None:
         return
 
     if now.decided and not _same_answer(was, now):
-        out.ops.append({"op": "close", "vertex": vid, "answer": now.answer,
-                        "source": now.source, "to": sorted(now.to),
-                        **({"falsifier": now.falsifier}
-                           if now.falsifier else {}),
-                        **({"date": now.date} if now.date else {}),
-                        **({"format": now.format} if now.format else {})})
+        # Every `PAYLOAD` field the edge carries, and none it does not: a
+        # field named here by hand is one this seam drops the day it is added.
+        out.ops.append({"op": "close", "vertex": vid, "to": sorted(now.to),
+                        **{k: getattr(now, k) for k in PAYLOAD
+                           if getattr(now, k) is not None}})
         return
 
     # A bare edge: the targets are all it holds, so a difference in them is an
@@ -227,8 +322,7 @@ def _same_answer(was, now) -> bool:
     handled beside this and `replaced_by` is written later by a different act.
     """
     return was is not None and was.decided and all(
-        getattr(was, f) == getattr(now, f)
-        for f in ("answer", "falsifier", "source"))
+        getattr(was, f) == getattr(now, f) for f in CLAIM)
 
 
 def _links(was, now, tid: str, out: Derived) -> None:
@@ -257,6 +351,7 @@ def _status(was, now, tid: str, out: Derived) -> None:
     old_stops = list(was.stops) if was is not None else []
     old_done = list(was.completions) if was is not None else []
     prior = was.status if was is not None else "TODO"
+    ops: list[dict] = []
 
     for k in now.stops[len(old_stops):]:
         # PARKED or DROPPED — the status says which, and only the last entry
@@ -264,8 +359,8 @@ def _status(was, now, tid: str, out: Derived) -> None:
         # has since come back from.
         kind = now.status if k is now.stops[-1] and now.status in (
             "PARKED", "DROPPED") else "PARKED"
-        out.ops.append({"op": "set_status", "task": tid, "status": kind,
-                        "why": k.why, "date": k.date})
+        ops.append({"op": "set_status", "task": tid, "status": kind,
+                    "why": k.why, "date": k.date})
         prior = kind
     for c in now.completions[len(old_done):]:
         if prior == "DONE":
@@ -273,9 +368,9 @@ def _status(was, now, tid: str, out: Derived) -> None:
             # the restart that produced it. Recovering *which* status it was
             # picked back up into is not possible from the record; DOING is
             # the one the command offers.
-            out.ops.append({"op": "set_status", "task": tid, "status": "DOING"})
-        out.ops.append({"op": "set_status", "task": tid, "status": "DONE",
-                        "outcome": c.outcome, "done": c.date})
+            ops.append({"op": "set_status", "task": tid, "status": "DOING"})
+        ops.append({"op": "set_status", "task": tid, "status": "DONE",
+                    "outcome": c.outcome, "done": c.date})
         prior = "DONE"
 
     if now.status != prior:
@@ -283,10 +378,40 @@ def _status(was, now, tid: str, out: Derived) -> None:
             out.unexpressible.append(
                 f"{tid} arrives {now.status} with no reason recorded — "
                 f"`task_park_complete` refuses it, and no op can invent one")
+            out.ops.extend(_with_reprobes(ops, _reprobes(was, now, tid, "task")))
             return
-        out.ops.append({"op": "set_status", "task": tid,
-                        "status": now.status,
-                        **({"note": now.note} if now.note else {})})
+        ops.append({"op": "set_status", "task": tid,
+                    "status": now.status,
+                    **({"note": now.note} if now.note else {})})
+    out.ops.extend(_with_reprobes(ops, _reprobes(was, now, tid, "task")))
+
+
+def _with_reprobes(ops: list[dict], reprobes: list[dict]) -> list[dict]:
+    """The status ops with each reprobe placed before the first finish —
+    a `DONE` or a `DROPPED` — dated on or after it, else at the end.
+
+    A definition of done is refused on finished work, so every entry was
+    written while the work was unfinished: after the restart that made it
+    so and before the finish that ended it. The restart carries no date (the
+    record does not keep one) and the finish does, so the finish is what the
+    reprobe is placed against; a restart always precedes its finish in `ops`,
+    so *before the finish* is also *after the restart*. Same day counts as
+    before, which is the only order the store could have produced. The
+    entries keep their own order, so the list that lands is the list that
+    was written whatever the interleaving. Before this, every reprobe was
+    derived ahead of every status op and a rule written after a restart was
+    refused against the base's `DONE` (audit `N-F1`).
+    """
+    out: list[dict] = []
+    i = 0
+    for op in ops:
+        if op.get("status") in ("DONE", "DROPPED"):
+            when = op.get("done") or op.get("date") or ""
+            while i < len(reprobes) and reprobes[i]["date"] <= when:
+                out.append(reprobes[i])
+                i += 1
+        out.append(op)
+    return out + reprobes[i:]
 
 
 def _readings(was, now, tid: str, out: Derived) -> None:
@@ -409,6 +534,11 @@ CANNOT_CONFLICT = {
     # adding different ones is two facts, not two answers. A removal that no
     # longer applies is *inapplicable*, which is a different report.
     "add_edge": "an edge accumulates; two writers adding edges is two facts",
+    # A bind is that kind of thing and not a title (proposal C2): two clones
+    # binding different refs to one record is the union, and the union is
+    # what replaying both ops produces.
+    "bind": "a bind accumulates; two writers binding is two facts",
+    "unbind": "a removal that no longer applies is inapplicable, not contested",
     "remove_edge": "a removal that no longer applies is inapplicable, not contested",
     "add_dep": "an edge accumulates; two writers adding edges is two facts",
     "remove_dep": "a removal that no longer applies is inapplicable, not contested",
@@ -460,11 +590,15 @@ def _moved_here(mine, was, g, base, rid: str, children) -> str | None:
     `D07`'s own row at all, and the arriving removal takes the question with it
     and leaves the child a root. Nothing in the fields would have said so.
     """
-    for f in FIELDS:
-        if getattr(mine, f) != getattr(was, f):
+    for f in ALL_FIELDS:
+        if getattr(mine, f, None) != getattr(was, f, None):
             return f"{f} changed here"
     if mine.status != was.status:
         return f"status moved here to {mine.status}"
+    if len(mine.probes) != len(was.probes):
+        return "a criterion was written for it here"
+    if set(mine.binds) - set(was.binds):
+        return "it was bound to something here"
     gained = sorted(set(children(g, rid)) - set(children(base, rid)))
     if gained:
         return (f"{', '.join(gained)} {'was' if len(gained) == 1 else 'were'} "
@@ -500,7 +634,7 @@ def _contest_decision(g: Graph, base: Graph, op: dict):
         # Moved here *and* to somewhere else. Two writers making the same edit
         # is not a conflict, and reporting it as one puts a question to a
         # person whose two answers are identical.
-        moved = [f for f in FIELDS
+        moved = [f for f in fields_of("decision")
                  if f in op and getattr(mine, f) != getattr(was, f)
                  and getattr(mine, f) != op[f]]
         if moved:
@@ -517,6 +651,10 @@ def _contest_decision(g: Graph, base: Graph, op: dict):
                 and mine.status != op.get("status")):
             return vid, (f"{vid} status differs — here {mine.status}, "
                          f"arriving {op.get('status')}")
+    if kind == "reprobe" and _reprobed_apart(mine, was, op):
+        return vid, (f"{vid} was given a rule for settling here too — "
+                     f"{mine.probes[-1].kind} against "
+                     f"{(op.get('probe') or {}).get('kind')}")
     if kind == "close":
         e, e_was = g.active_edge(vid), base.active_edge(vid)
         mine_answer = e.answer if e is not None and e.decided else None
@@ -545,13 +683,17 @@ def _contest_task(tg: TaskGraph, base: TaskGraph, op: dict):
             return tid, f"{tid} is removed there, and {why}"
     if kind == "set_fields":
         # See `_contest_decision`: the same edit made twice is not a conflict.
-        moved = [f for f in FIELDS
+        moved = [f for f in fields_of("task")
                  if f in op and getattr(mine, f) != getattr(was, f)
                  and getattr(mine, f) != op[f]]
         if moved:
             f = moved[0]
             return tid, (f"{tid} {f} differs — here {getattr(mine, f)!r}, "
                          f"arriving {op[f]!r}")
+    if kind == "reprobe" and _reprobed_apart(mine, was, op):
+        return tid, (f"{tid} was given a definition of done here too — "
+                     f"{mine.probes[-1].kind} against "
+                     f"{(op.get('probe') or {}).get('kind')}")
     if kind == "set_status":
         # **The same three lines `set_fields` uses, on the field that matters
         # most.** `_contest`'s docstring gives the rule — *two writers changing
@@ -623,7 +765,17 @@ def _walk(g, base, ops: list[dict], store: str,
 
     for i, op in enumerate(ops):
         contested = None
-        hit = _contest(probe, base, op, store)
+        # Judged against `g` — the clone's store as it stands — and not the
+        # probe. `_contest` asks whether *this clone* moved the thing since
+        # the base; the probe also holds every arriving op that has landed so
+        # far, so judged against it a second arriving op on one record read
+        # as the first one's disagreement: a restart followed by a finish was
+        # *status differs — here DOING, arriving DONE* on a task this clone
+        # never touched, and two rules for settling written in one clone
+        # contested each other. The probe stays what it is for: whether the
+        # op *applies*, and what the ones after it are expanded against.
+        # Audit `N-F8`.
+        hit = _contest(g, base, op, store)
         if hit is not None:
             rid, why = hit
             contested = Finding("contested", store, i, rid, why, op=op)
@@ -1147,10 +1299,8 @@ def _keepsake(op: dict, raw: dict) -> dict | None:
     """
     if op.get("op") != "close":
         return None
-    return {"op": "reject", "vertex": op["vertex"], "answer": op["answer"],
-            "source": op["source"], "to": op.get("to", []),
-            "falsifier": op.get("falsifier"), "date": op.get("date"),
-            "format": op.get("format"),
+    return {"op": "reject", "vertex": op["vertex"], "to": op.get("to", []),
+            **{k: op.get(k) for k in PAYLOAD},
             "from_source": raw.get("source", "another writer")}
 
 

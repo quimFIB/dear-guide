@@ -57,6 +57,15 @@ dg-agent = "dgraph.agent_cli:main"
 [project.entry-points.pytest11]
 dear-guide = "dgraph.testing"
 
+# A domain is a distribution registered here under the prefix it claims, and
+# `dgraph.domains` discovers it lazily by the prefix of a probe's `kind`. The
+# built-in `prose` domain is registered the same way so that a third-party
+# one has an example to copy — but the core also knows it without any entry
+# point at all, since a plain install must present a prose probe with no
+# distribution metadata to hand.
+[project.entry-points."dgraph.domains"]
+prose = "dgraph.domains:PROSE"
+
 # The test modules import each other's helpers (`from tests.conftest import
 # bare`), which needs the repo root importable. `python -m pytest` puts it there
 # by accident of how `-m` works; the bare `pytest` console script does not, so

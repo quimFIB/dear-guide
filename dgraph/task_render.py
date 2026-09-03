@@ -18,6 +18,7 @@ generated file that churns is one nobody reads a diff of.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from dgraph import areas as _areas
@@ -110,6 +111,12 @@ def _section(tg: TaskGraph, tid: str, _adj=None) -> str:
         out.append(f"- **Because:** {', '.join(t.because)}")
     if t.evidence_for:
         out.append(f"- **Evidence for:** {t.evidence_for}")
+    if t.binds:
+        out.append("- **Bound to:** "
+                   + ", ".join(f"`{b.spelled}`" for b in t.binds))
+    if t.done_when:
+        out.append(f"- **Done when:** "
+                   f"{orgmd.to_markdown(t.done_when, fmt=t.format)}")
     out.append("")
 
     if t.note:
@@ -149,6 +156,17 @@ def _section(tg: TaskGraph, tid: str, _adj=None) -> str:
             f"{k.date} — {orgmd.to_markdown(k.why, fmt=t.format)}"
             + (f" **({label.lower()})**" if label and i == last else "")
             for i, k in enumerate(t.stops)))
+    if t.probes:
+        # The fourth append-only record, drawn like the other three. Code
+        # spans, not prose: a probe is data and its emphasis must not convert.
+        if out[-1] != "":
+            out.append("")
+        last = len(t.probes) - 1
+        out.append("*Definition of done:* " + " · ".join(
+            f"{p.date} — `{p.kind}` "
+            f"`{json.dumps(p.args, ensure_ascii=False, sort_keys=True)}`"
+            + (" **(live)**" if t.unfinished and i == last else "")
+            for i, p in enumerate(t.probes)))
     return "\n".join(out).rstrip("\n") + "\n"
 
 

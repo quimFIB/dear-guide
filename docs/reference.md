@@ -73,6 +73,54 @@ the point:
   now free: dropping says yes and releases it, parking says no and holds it.
 - **An unconnected task is ordinary.** An unconnected decision is a smell.
 
+### Pre-commitments — what would settle it, written before it is settled
+
+Every closed decision already carries one: its **falsifier**. Two optional
+prose fields extend the idea to the records that are not yet settled, and a
+typed slot beside each lets installed code judge it (`D71`, `D75`):
+
+- **`rule`** on an open vertex — what evidence would count as an answer.
+  Written at `dg add --rule`, amendable like a note, and read back by
+  `dg decide` before the answer is asked for.
+- **`done_when`** on a task — what finished looks like. Written at
+  `dg task add --done-when`, amendable like a note, and read back by
+  `dg task done` before the outcome is asked for.
+- **`probe`** — the mechanical twin of any of the three: `{"kind":
+  "<domain>.<name>", "args": {...}}`. On a decision it travels in the
+  answer's payload (`dg decide --probe`) and is archived by `reopen` with
+  everything else the answer said. On an open vertex or a task it is
+  **appended**, dated, by `dg reprobe` / `dg task reprobe`, and nothing
+  edits an entry in place: a criterion rewritten to match the evidence is
+  not a criterion, and the date beside it is what lets a reader see that
+  happen. `args` is bounded at the synopsis limit — a fingerprint of an
+  artefact, never the artefact.
+- **`binds`** — what a record is *about*, in a domain's terms: `kind:ref`
+  pairs written by `dg bind` / `dg unbind` (and the task twins), which take
+  the union and the difference the way `dep` and `undep` do. An address,
+  not a claim: two clones binding one record compose rather than contest,
+  and `dg amend` never reaches it.
+
+The `kind` prefix names a **domain**: a Python distribution registered
+under the `dgraph.domains` entry-point group, discovered lazily when a probe
+with that prefix is evaluated. The core checks the shape and reads no
+further — the store never carries a command the core runs, and a prefix
+nothing installed claims is a warning, never an import error. **The
+built-in domain is `prose`, and it never evaluates**: its answer is the
+presentation, and the verdict is the command you run next. No other domain
+ships.
+
+`dg probe` is the one door onto evaluation. It presents every
+pre-commitment beside what it is judged against — a falsifier beside the
+world; a PROVISIONAL decision beside the ancestors whose edges are dated
+after its own, labelled as the heuristic it is; a definition of done beside
+the work; a rule beside the outcomes of its evidence — and says what any
+installed domain made of each: `fired`, `holds`, or `unjudged`. Its exit
+code is `dg check`'s, non-zero when anything fired; it reads both trays
+first, so a record a staged op already names says so; and it never writes.
+`dg check` never evaluates a probe — its output is a function of the store
+— and judges only the two shapes. The pytest plugin evaluates probes only
+under `--decision-graph-probe`.
+
 ### Areas — the vocabulary, in both stores
 
 An area is a **label on a record**, not a schema, and the two stores share the
@@ -179,6 +227,16 @@ dg find --subgraph --derived 'id:D04'    # ...plus what the whole graph says of 
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg amend  D06 --title "..."              # correct a wording; nothing else is touched
+dg add --id D40 --rule "…" --probe '{…}' # ...an open question born with its rule for settling, prose and/or typed
+dg reprobe D40 --probe '{"kind":"prose.rule","args":{}}'   # a new typed rule; the old one stays, dated
+dg bind D40 rocq.constant:Closure.closed   # what it is about, in a domain's terms; accumulates
+dg unbind D40 rocq.constant:Closure.closed # ...and the difference
+dg task add --id T20 --done-when "…"     # work born with its definition of done
+dg task reprobe T20 --probe '{…}'        # ...or a typed one, appended like the vertex's
+dg task bind T20 rocq.file:theories/X.v  # the same pair of ops, in the other store
+dg probe D40                             # a pre-commitment beside what it is judged against
+dg probe --provisional                   # ...every PROVISIONAL decision beside the premises dated after it
+dg probe --all                           # ...everything; bare, past a screenful, it asks for a scope
 dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
 dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds
@@ -357,7 +415,9 @@ has both. Every rule prints its own name, so a refusal is greppable.
 **The decisions.** Well-formed unique IDs · legal statuses · no dangling edge
 references · at most one active edge per vertex · every `DECIDED` vertex has a
 date, source, falsifier and decision edge · `OPEN` vertices carry no answer · no
-`DECIDED` vertex resting on an unsettled premise · acyclic. Two warnings: an
+`DECIDED` vertex resting on an unsettled premise · acyclic · every probe is
+`{kind, args}` with a dotted kind and bounded args, every bind a `{kind,
+ref}` pair, and no record is bound to one pair twice. Two warnings: an
 orphan, and a vertex left `PROVISIONAL` once its premises are settled again.
 (There is no rule about a *waiting* vertex: what it waits on is read off its
 edges, so nothing stored can disagree with it.)
@@ -368,7 +428,7 @@ completion with a date and an outcome, and did not finish before its own
 prerequisite · a `PARKED`
 or `DROPPED` task records why · a reading records its date, note and the
 decision it was read against, and is reported if the link it named has since
-moved. Three warnings, each about what stopping work left behind: something
+moved · its probes and binds are well-formed, as a decision's are. Three warnings, each about what stopping work left behind: something
 released only because a prerequisite was abandoned, something orphaned by that
 abandonment, and parked work holding up something unfinished.
 
