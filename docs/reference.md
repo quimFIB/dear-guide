@@ -175,6 +175,7 @@ dg find 'is:decidable' --ids             # ...ids alone, for a pipe
 dg find 'brute force' --active           # ...skipping answers since overturned
 dg find --subgraph 'id:D04'              # the subgraph D04 induces, both stores
 dg find --subgraph --hops 1 'id:D04'     # ...D04 and its neighbours only
+dg find --subgraph --derived 'id:D04'    # ...plus what the whole graph says of each
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg amend  D06 --title "..."              # correct a wording; nothing else is touched

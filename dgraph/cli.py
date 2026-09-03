@@ -722,6 +722,12 @@ def find(
                              help="Grow the subgraph N hops from the matches. "
                                   "Default: the whole connected cone. 0 is the "
                                   "matches alone."),
+    derived: bool = typer.Option(False, "--derived",
+                                 help="With --subgraph: add what the whole "
+                                      "graph says of each record in the slice "
+                                      "-- status, what it waits on, whether it "
+                                      "is decidable or ready -- under its own "
+                                      "key, beside the stores."),
     # `None` and not `20`, so `--subgraph` can tell a limit somebody typed from
     # the default it would otherwise refuse; the report path fills 20 in below.
     limit: int = typer.Option(None, "--limit", "-n", metavar="N",
@@ -753,9 +759,12 @@ def find(
 
     `--subgraph` makes the matches a *seed* rather than the answer, and prints
     the subgraph they induce as `{decisions, tasks}` — plus `boundary`, naming
-    whatever the slice still mentions and no longer contains. The growth walks
-    both stores as one digraph, so seeding a decision reaches the work resting
-    on it.
+    whatever the slice still mentions and no longer contains, and the record
+    and field that mentioned it. The growth walks both stores as one digraph,
+    so seeding a decision reaches the work resting on it. The slice is a
+    store, so it says nothing a cut record cannot support — a task whose
+    premise was trimmed reads as startable; `--derived` adds what the *whole*
+    graph says of each record, under its own key.
 
     Exit 1 means the query was fine and nothing matched. Exit 2 means it could
     not be answered as asked — a bad term, an unknown field, a predicate whose
@@ -776,6 +785,11 @@ def find(
         con.print("[red]--hops needs --subgraph[/]\n"
                   "[dim]it says how far to grow the slice; without one there "
                   "is nothing to grow[/]")
+        raise typer.Exit(2)
+    if derived and not subgraph:
+        con.print("[red]--derived needs --subgraph[/]\n"
+                  "[dim]it annotates a slice with what the whole graph says; "
+                  "the report already is the whole graph[/]")
         raise typer.Exit(2)
     if subgraph:
         # The slice is one JSON object, so the report's flags have nothing to
@@ -862,7 +876,7 @@ def find(
             for rid in (*cut.decisions, *cut.tasks):
                 print(rid)
         else:
-            print(json.dumps(cross.slice_stores(g, tg, cut),
+            print(json.dumps(cross.slice_stores(g, tg, cut, derived=derived),
                              indent=2, ensure_ascii=False))
         # Empty in, empty out -- and the exit code says which question came
         # back empty, the same as it does for a report.

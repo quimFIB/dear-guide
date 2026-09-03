@@ -1793,12 +1793,18 @@ def test_the_slice_keeps_an_answer_whose_targets_were_all_trimmed(both):
     assert any(e.get("answer") == "The root answer." for e in edges)
 
 
-def test_the_slice_says_what_it_had_to_cut(both):
+def test_the_slice_says_what_it_had_to_cut_and_from_where(both):
     """`boundary` is how a neighbourhood admits to being one, rather than
-    presenting itself as the whole graph."""
+    presenting itself as the whole graph — and it names the record and field
+    each cut came from, so a reader can tell which record the cut changed
+    (audit `U-F2`, `D69`)."""
     g, tg = _pair(both)
     out = cross.slice_stores(g, tg, cross.induced(g, tg, ["D01"], depth=0))
-    assert "D02" in out["boundary"] and "D03" in out["boundary"]
+    assert out["boundary"]["D02"] == ["D01.to"] and out["boundary"]["D03"] == ["D01.to"]
+    out = cross.slice_stores(g, tg, cross.induced(g, tg, ["T03"], depth=0))
+    # T02 -> T03 is an edge *into* the slice from outside; the slice does not
+    # name T02 anywhere, so it is not boundary — only what T03 itself names is.
+    assert out["boundary"] == {"D05": ["T03.because"]}
 
 
 def test_a_slice_loads_back_and_validates_at_every_depth(both):
@@ -1909,4 +1915,89 @@ def test_the_report_default_limit_is_still_twenty(run_cli):
     the report must not have lost its default on the way."""
     res = run_cli("find", "id:D01")
     assert res.exit_code == 0 and "1 match" in res.output
+
+
+SEEDS = [f"D0{i}" for i in range(1, 7)] + [f"T0{i}" for i in range(1, 5)]
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+@pytest.mark.parametrize("depth", [0, 1, 2, None])
+def test_every_slice_is_a_store(linked, seed, depth):
+    """Audit `U-F1`: the docstring said *two stores, not two dictionaries* and
+    the test seeded D01 alone; D06 at `--hops 0` failed `dg check` with its
+    `BLOCKED:D05` naming a vertex the cut had trimmed. `D68` removed the stored
+    status; this seeds every record at every depth so the claim is checked as
+    widely as it is made."""
+    g, tg = _pair(linked)
+    out = cross.slice_stores(g, tg, cross.induced(g, tg, [seed], depth=depth))
+    sub, subt = Graph.from_dict(out["decisions"]), TaskGraph.from_dict(out["tasks"])
+    bad = [v for v in (*sub.validate(), *subt.validate())
+           if getattr(v, "severity", "error") == "error"]
+    assert not bad, f"seed={seed} depth={depth}: {bad}"
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+@pytest.mark.parametrize("depth", [0, 1, 2, None])
+def test_boundary_names_everything_the_slice_still_names(linked, seed, depth):
+    """Every id a slice still names in any field — an edge target, `because`,
+    `evidence_for`, a reading's `against` — is contained or in `boundary`."""
+    g, tg = _pair(linked)
+    out = cross.slice_stores(g, tg, cross.induced(g, tg, [seed], depth=depth))
+    ids = {v["id"] for v in out["decisions"]["vertices"]} | {t["id"] for t in out["tasks"]["tasks"]}
+    named = set()
+    for e in out["decisions"]["edges"]:
+        named.update(e["to"])
+    for t in out["tasks"]["tasks"]:
+        named.update(t.get("because", []))
+        if t.get("evidence_for"):
+            named.add(t["evidence_for"])
+        named.update(r["against"] for r in t.get("readings", []))
+    for e in out["tasks"]["edges"]:
+        named.update(e["to"])
+    assert not (named - ids) - set(out.get("boundary", {})), (seed, depth)
+    # ...and every boundary entry names a record that is in the slice.
+    for cut_id, wheres in out.get("boundary", {}).items():
+        assert cut_id not in ids
+        assert all(w.split(".")[0] in ids for w in wheres), (cut_id, wheres)
+
+
+def test_the_bare_slice_calls_trimmed_work_ready_and_the_derived_layer_does_not(both):
+    """Audit `U-F2`, and `D69`'s two layers. T03 waits on the open D05. Sliced
+    alone it is a task with no premise, and the store's own reading calls it
+    ready — true of the slice, false of the graph. `derived` says what the
+    whole graph says, and marks D05 as outside."""
+    g, tg = _pair(both)
+    cut = cross.induced(g, tg, ["T03"], depth=0)
+    bare = cross.slice_stores(g, tg, cut)
+    assert "derived" not in bare
+    assert TaskGraph.from_dict(bare["tasks"]).ready("T03")        # the slice's reading
+    out = cross.slice_stores(g, tg, cut, derived=True)
+    t03 = out["derived"]["tasks"]["T03"]
+    assert t03["ready"] is False and t03["gated_by"] == "D05"
+    assert t03["because"] == ["D05"] and "D05" in t03["outside"]
+    assert t03["waiting_on"] == ["T02"] and "T02" in t03["outside"]
+    # The layer is beside the stores, never in them: the store objects are
+    # byte-identical with and without it, and load back the same.
+    assert out["tasks"] == bare["tasks"] and out["decisions"] == bare["decisions"]
+
+
+def test_the_derived_layer_says_what_a_decision_waits_on_outside_the_slice(both):
+    g, tg = _pair(both)
+    out = cross.slice_stores(g, tg, cross.induced(g, tg, ["D06"], depth=0), derived=True)
+    d06 = out["derived"]["decisions"]["D06"]
+    assert d06 == {"status": "OPEN", "waiting_on": ["D05"], "awaiting_evidence": [],
+                   "decidable": False, "outside": ["D05"]}
+    # Nothing in the slice names D05 any more (the edge into D06 came from
+    # outside), so there is no boundary — the derived layer is the only tell.
+    assert "boundary" not in out
+
+
+def test_dg_find_subgraph_derived_flag(run_cli):
+    res = run_cli("find", "--subgraph", "--hops", "0", "--derived", "id:T03")
+    assert res.exit_code == 0, res.output
+    out = json.loads(res.stdout)
+    assert out["derived"]["tasks"]["T03"]["ready"] is False
+    assert out["boundary"]["D05"] == ["T03.because"]
+    res = run_cli("find", "--derived", "id:T03")
+    assert res.exit_code == 2 and "--derived needs --subgraph" in res.output
 

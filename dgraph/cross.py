@@ -1020,8 +1020,10 @@ def _bridge_note(node: str, prev: str, cur: str, down: dict,
 
 
 def slice_stores(g: Graph | None, tg: TaskGraph | None,
-                 cut: Induced) -> dict:
-    """The slice as two stores, plus what it had to cut to close them.
+                 cut: Induced, *, derived: bool = False) -> dict:
+    """The slice as two stores, plus what it had to cut to close them — and,
+    on request, a separate layer of what the *whole* graph says about each
+    record in it (`D69`).
 
     **A decision's answer lives on its edge**, so an edge whose `from` is in
     the slice is kept even when every target it names was trimmed away. Drop it
@@ -1031,10 +1033,14 @@ def slice_stores(g: Graph | None, tg: TaskGraph | None,
     one goes and nothing is lost; that asymmetry is the stores' own, not a
     choice made here.
 
-    `boundary` is every id the slice still names but no longer contains, and it
-    fills up two ways. The obvious one is a bounded horizon: `--subgraph=1` has
-    an edge of the world, and this is how the slice admits to having one rather
-    than presenting a neighbourhood as if it were the whole graph.
+    `boundary` is every id the slice still names but no longer contains, each
+    mapped to the records and fields that named it — `"D05": ["D04.to",
+    "T03.because"]` — so a reader can tell not just that something was cut but
+    *which record the cut changed*: the task whose premise went is the task
+    the slice now calls startable. It fills up two ways. The obvious one is a
+    bounded horizon: `--hops 1` has an edge of the world, and this is how the
+    slice admits to having one rather than presenting a neighbourhood as if it
+    were the whole graph.
 
     The other is provenance, and it survives even an unbounded cone. The union
     walk follows `unblocks` and not `prompted`, for the reason `_union_edges`
@@ -1045,11 +1051,24 @@ def slice_stores(g: Graph | None, tg: TaskGraph | None,
     exactly the edges the acyclicity proof knows about. Reporting it is what
     keeps "your slice mentions T37 and does not contain it" a fact the reader
     is told rather than one they discover.
-    """
-    ids, boundary = cut.ids, set()
 
-    def keep(names) -> list[str]:
-        boundary.update(n for n in names if n not in ids)
+    **The bare slice says nothing a cut record cannot support.** Trim T03's
+    premise and T03 is a task with no premise, which the store's own readers
+    will call ready; that is true of the slice and false of the graph, and it
+    is the price of the slice being a store at all. `derived` is the other
+    layer: with it, `out["derived"]` carries what the whole graph says of each
+    record — status, what it waits on with the outside ids marked, whether it
+    is decidable or ready — under its own key and never inside a store object,
+    so a loaded slice cannot become a stored derivative (shape 7) and the two
+    layers stay tellable apart by shape. The page has always worked this way
+    unannounced: its `derived` is whole-store and the focus chip filters ids.
+    """
+    ids, boundary = cut.ids, {}
+
+    def keep(names, where: str) -> list[str]:
+        for n in names:
+            if n not in ids:
+                boundary.setdefault(n, []).append(where)
         return [n for n in names if n in ids]
 
     out: dict = {}
@@ -1058,7 +1077,7 @@ def slice_stores(g: Graph | None, tg: TaskGraph | None,
         out["decisions"] = {
             "areas": d["areas"],
             "vertices": [v for v in d["vertices"] if v["id"] in ids],
-            "edges": [{**e, "to": keep(e["to"])}
+            "edges": [{**e, "to": keep(e["to"], f"{e['from']}.to")}
                       for e in d["edges"] if e["from"] in ids],
         }
     if tg is not None:
@@ -1069,22 +1088,76 @@ def slice_stores(g: Graph | None, tg: TaskGraph | None,
                 continue
             row = dict(row)
             if row.get("because"):
-                row["because"] = keep(row["because"]) or None
+                row["because"] = keep(row["because"], f"{row['id']}.because") or None
                 if row["because"] is None:
                     del row["because"]
             if row.get("evidence_for"):
-                if row["evidence_for"] not in ids:
-                    boundary.add(row["evidence_for"])
+                if not keep([row["evidence_for"]], f"{row['id']}.evidence_for"):
                     del row["evidence_for"]
+            # A reading is an archived record and stays; what it was read
+            # against is still an id the slice names, so it is reported.
+            for r in row.get("readings") or ():
+                keep([r["against"]], f"{row['id']}.readings")
             rows.append(row)
         out["tasks"] = {
             "areas": t["areas"],
             "tasks": rows,
             "edges": [dict(e, to=kept) for e in t["edges"]
-                      if e["from"] in ids and (kept := keep(e["to"]))],
+                      if e["from"] in ids
+                      and (kept := keep(e["to"], f"{e['from']}.{e['kind']}"))],
         }
     if boundary:
-        out["boundary"] = sorted(boundary)
+        out["boundary"] = {k: sorted(set(v)) for k, v in sorted(boundary.items())}
+    if derived:
+        out["derived"] = _derived_layer(g, tg, ids)
+    return out
+
+
+def _derived_layer(g: Graph | None, tg: TaskGraph | None, ids: set) -> dict:
+    """What the whole graph says about each record in the slice.
+
+    Computed on the stores as loaded, before any cut, and keyed by id beside
+    the stores rather than written into them. Every field here is one the
+    tool derives for its own readings — `waiting_on`, `decidable`, `ready`,
+    `gated_by` — so the layer cannot say something no surface says; and each
+    list of ids says which of them are `outside` the slice, which is the fact
+    the bare slice loses.
+    """
+    out: dict = {}
+    if g is not None:
+        into = g._reverse()
+        rev = reverse(tg) if tg is not None else None
+        dec = {}
+        for vid in sorted(v for v in ids if v in g.vertices):
+            v = g.vertices[vid]
+            waiting = g.waiting_on(vid, into)
+            awaiting = pending_evidence(tg, vid, rev) if tg is not None else []
+            dec[vid] = {
+                "status": v.status,
+                "waiting_on": waiting,
+                "awaiting_evidence": awaiting,
+                "decidable": not v.settled and not waiting and not awaiting,
+                "outside": sorted(x for x in (*waiting, *awaiting) if x not in ids),
+            }
+        out["decisions"] = dec
+    if tg is not None:
+        adj = tg._adjacency()
+        tasks = {}
+        for tid in sorted(t for t in ids if t in tg.tasks):
+            t = tg.tasks[tid]
+            waiting = tg.waiting_on(tid, adj)
+            gate = gated_by(tg, g, tid) if g is not None else None
+            named = [*waiting, *t.because, *([t.evidence_for] if t.evidence_for else [])]
+            tasks[tid] = {
+                "status": t.status,
+                "waiting_on": waiting,
+                "because": list(t.because),
+                "evidence_for": t.evidence_for,
+                "gated_by": gate,
+                "ready": (ready(tg, g, tid) if g is not None else tg.ready(tid, adj)),
+                "outside": sorted({x for x in named if x not in ids}),
+            }
+        out["tasks"] = tasks
     return out
 
 

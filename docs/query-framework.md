@@ -520,7 +520,7 @@ check.
 
     dg find QUERY [--decisions | --tasks] [--active] [--ids]
                   [--full | --json | --limit N]        # the report
-                  [--subgraph [--hops N]]             # or the slice
+                  [--subgraph [--hops N] [--derived]] # or the slice
 
 Both stores by default, with a labelled section each:
 
@@ -623,10 +623,28 @@ trimmed away**: a decision's answer lives on its edge, so dropping the edge
 would hand back a D04 with no answer, the slice saying *still open* about
 something that is decided. Task edges carry no payload beyond their kind, so
 there the empty one goes. Whatever the slice still names but no longer contains
-comes back under `boundary` — a neighbourhood admitting to being one, rather
-than presenting itself as the whole graph. `boundary` is non-empty for a
-bounded `--hops`, and also for a `prompted` edge leaving the cone, since the
-union follows dependency and provenance is not one.
+comes back under `boundary`, each cut id mapped to the records and fields that
+named it:
+
+    "boundary": {"D05": ["D04.to", "T03.because"]}
+
+A neighbourhood admitting to being one, rather than presenting itself as the
+whole graph — and saying *which record* each cut changed. `boundary` can be
+non-empty for a bounded `--hops`, and is for a `prompted` edge leaving even an
+unbounded cone, since the union follows dependency and provenance is not one.
+
+**Two layers, told apart by shape.** The bare slice is a valid store, and a
+store says nothing a cut record cannot support: trim T03's premise and T03 is
+a task with no premise, which `dg` over the slice will call ready — true of
+the slice, false of the graph. `--derived` is the other layer. It adds, under
+its own `derived` key and never inside a store object, what the *whole* graph
+says of each record in the slice: its status, what it waits on with the
+`outside` ids marked, whether a decision is decidable or awaiting evidence,
+whether a task is ready and what gates it. So *what must settle before D06 is
+decidable* is answered by the slice's structure plus this layer, and a
+whole-graph fact can never be loaded back as a record field. The page has
+always worked this way without saying so: its `derived` is whole-store and
+the focus chip only filters ids.
 
 `--active` arrived after the rest, with the archive. `answer:`, `falsifier:` and
 `source:` read a decision's **superseded** edges as well as its active one, and
