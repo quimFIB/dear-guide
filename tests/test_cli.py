@@ -2229,3 +2229,47 @@ def test_check_staged_counts_unchanged_warnings_rather_than_listing_them(
     assert "the tray changes nothing `dg check` reports" in out
     assert "unchanged (1)" in out and "1 warning(s)" in out
     assert "D99 is connected to nothing" not in out
+
+
+# ---- T48 · tree, node and path read the store plus the tray (D70) ----------
+#
+# `show` and `find` already did; these three printed the record alone, so a
+# vertex an agent had proposed was in `dg show` and absent from `dg tree`, and
+# `dg node` on it said *unknown vertex*. Same helper, same marking, same
+# fallback — and `export` stays store-only on purpose (`D77`).
+
+def test_tree_node_and_path_show_what_is_staged_and_say_so(run, store):
+    assert run("add", "--id", "D07", "--title", "staged and unapplied",
+               "--area", "Alpha", "--after", "D03").exit_code == 0
+    out = run("tree").output
+    assert "D07" in out and "staged" in out
+    out = run("node", "D07").output
+    assert "staged and unapplied" in out and "staged" in out
+    res = run("path", "D01", "D07")          # D01 → D03 → D07, the last hop staged
+    assert res.exit_code == 0 and "D07" in res.output and "staged" in res.output
+    # an applied record is not marked, and a tree with nothing staged says nothing
+    assert "staged" not in run("node", "D01").output
+    run("clear")
+    assert "staged" not in run("tree").output
+
+
+def test_tree_node_and_path_print_the_record_when_the_tray_will_not_preview(run, store):
+    (store / ".dgraph-pending.json").write_text(
+        json.dumps([{"op": "add_edge", "from": "D99", "to": ["D01"],
+                     "active": True}]), encoding="utf-8")
+    for args in (("tree",), ("node", "D01"), ("path", "D01", "D04")):
+        res = run(*args)
+        assert res.exit_code == 0, args
+        assert "no longer apply cleanly" in res.output, args
+        assert "dg pending" in res.output, args
+    assert "Root question" in run("node", "D01").output
+
+
+def test_export_is_the_record_and_never_the_tray(run, store):
+    """`D77`: export is what `dg import` reads back, so a proposal must not
+    arrive in another project as a stored fact."""
+    assert run("add", "--id", "D07", "--title", "staged", "--area",
+               "Alpha").exit_code == 0
+    payload = json.loads(run("export").output)
+    assert "D07" not in {v["id"] for v in payload["vertices"]}
+    assert run("export", "D07").exit_code == 1

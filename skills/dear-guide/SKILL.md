@@ -225,12 +225,12 @@ Two things to know before using them:
 | `dg brief` | what matters right now: the frontier, anything provisional, staged work, validity |
 | `dg show` | the frontier — everything still open or blocked, one line each |
 | `dg find QUERY` | decisions and work by what they *say* — the only reading that starts from a word rather than the frontier or an id. `dg find 'is:decidable'`, `dg find 'under:D04 is:unsettled'`, `--ids` to pipe. `answer:`/`falsifier:`/`source:` read superseded edges too and label a hit `superseded answer`; `--active` narrows them to what stands |
-| `dg node ID` | one decision in full, each superseded edge with its own targets, falsifier, source and archived answer. `--active` for the answer that stands, which says how many records it left out |
+| `dg node ID` | one decision in full, each superseded edge with its own targets, falsifier, source and archived answer. `--active` for the answer that stands, which says how many records it left out. Reads the store plus the tray, as `dg show` does, and marks what is only staged |
 | `dg context ID` | the chain of premises it rests on. Takes a `T` id too; `--full` for the answers, sources and falsifiers |
-| `dg path A B` | the chain of evidence between two decisions |
-| `dg tree` | the graph as a tree |
+| `dg path A B` | the chain of evidence between two decisions, through staged edges too, the hop marked |
+| `dg tree` | the graph as a tree, staged vertices marked |
 | `dg areas` | counts by area and status, one table per store |
-| `dg export ID` | the same data as JSON, for machine reading. `dg import` reads it back unchanged |
+| `dg export ID` | the same data as JSON, for machine reading. `dg import` reads it back unchanged — so it is the record alone, never the tray, the one reader that ignores staged ops |
 | `dg check` | every invariant, and it names the rule that broke. `--staged` judges the graph the tray would produce instead, as a diff: what the batch fixes, what it introduces, what stands either way |
 | `dg import FILE` | adopt a `decisions.json` prepared elsewhere or exported from another project, refusing one that breaks invariants |
 | `dg import-md FILE` | rebuild a store from the `decision-graph.md` this tool generated. The recovery path when the *store* is the file that was lost |

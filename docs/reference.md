@@ -159,13 +159,13 @@ dg import prepared.json                  # or adopt one prepared elsewhere
 dg                                       # the frontier: what is still open
 dg show --full                           # ...as a table, with nothing clipped
 dg brief                                 # ...plus provisional work, staging, validity
-dg node D06                              # one decision in full, reversals and all
+dg node D06                              # one decision in full, reversals and all; staged, it says so
 dg why D06                               # ...and the chain of premises underneath it
 dg why D06 --full                        # ...with every answer, source and falsifier
 dg context D06                           # the same command, its other name
 dg context T14                           # the same for a piece of work
-dg path D01 D09                          # the chain of evidence between two
-dg tree                                  # the DAG
+dg path D01 D09                          # the chain of evidence between two, staged hops marked
+dg tree                                  # the DAG, store plus tray, staged vertices marked
 dg areas                                 # counts by area, in both stores
 dg areas rename Corpus corpus            # refile everything in one area under another
 dg areas prune                           # drop registered areas holding nothing
@@ -210,7 +210,7 @@ dg check --staged                        # ...as `dg apply` would leave them: wh
 dg serve                                 # web app on 127.0.0.1:8765
 dg edit <id>                             # revise a staged op
 dg drop <id>                             # unstage one op
-dg export                                # the graph as JSON; `dg import` reads it back
+dg export                                # the graph as JSON; `dg import` reads it back -- the record alone, never the tray
 ```
 
 

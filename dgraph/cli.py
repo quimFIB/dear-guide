@@ -1044,14 +1044,21 @@ def _did_you_mean(q, lenses) -> None:
 
 @app.command(rich_help_panel=READ)
 def tree(root: str = typer.Argument(None, help="Vertex to root at")) -> None:
-    """The DAG as a tree, from the roots or from one vertex."""
-    g = _g()
+    """The DAG as a tree, from the roots or from one vertex.
+
+    The store plus the tray, with what came from the tray marked — the
+    reading `show` and `find` already give (`D70`, T48): a question an agent
+    has proposed is in the frontier and was absent from the tree, which is
+    the two readers disagreeing about what exists.
+    """
+    g, staged, fell_back = _reading(_g())
     seen: set[str] = set()
 
     def add(parent: Tree, vid: str) -> None:
         v = g.vertices[vid]
         label = (f"[bold]{vid}[/] {_x(v.title)} "
-                 f"[{_style(v.status)}]{v.status}[/]")
+                 f"[{_style(v.status)}]{v.status}[/]"
+                 + (" [dim](staged)[/]" if vid in staged else ""))
         if vid in seen:
             parent.add(label + " [dim](above)[/]")
             return
@@ -1067,6 +1074,8 @@ def tree(root: str = typer.Argument(None, help="Vertex to root at")) -> None:
             raise typer.Exit(1)
         add(top, r)
     con.print(top)
+    if fell_back:
+        _say_fell_back("dg pending", "dg drop <id>")
 
 
 @app.command(rich_help_panel=READ)
@@ -1082,8 +1091,12 @@ def node(
     targets, falsifier, source and archived answer, because a reversal is an
     edge with a payload like any other. `--active` prints only the answer that
     currently stands, and says how many records it left out.
+
+    Read off the store plus the tray, as `show` is (`D70`, T48): a vertex
+    whose add is staged is shown, and says so, rather than being *unknown*
+    to this command and present in the frontier.
     """
-    g = _g()
+    g, staged, fell_back = _reading(_g())
     if vid not in g.vertices:
         con.print(f"[red]unknown vertex {vid}[/]")
         raise typer.Exit(1)
@@ -1091,7 +1104,12 @@ def node(
     e = g.active_edge(vid)
     lines = [
         f"[bold]{_x(v.title)}[/]", "",
-        f"status      {_tag(v)}",
+        f"status      {_tag(v)}"
+        # Beside the status, because the status is what the tray changed:
+        # a row reading DECIDED for a close nobody applied is the tray
+        # asserting itself as the record.
+        + ("  [dim](staged — proposed in the tray, not applied)[/]"
+           if vid in staged else ""),
         f"area        {_x(v.area)}",
         f"depends on  {', '.join(g.depends(vid)) or '—'}",
     ]
@@ -1196,25 +1214,36 @@ def node(
             if h.to:
                 lines.append(f"    would open  {', '.join(h.to)}")
     con.print(Panel("\n".join(lines), title=vid, border_style=_style(v.status)))
+    if fell_back:
+        _say_fell_back("dg pending", "dg drop <id>")
 
 
 @app.command(rich_help_panel=READ)
 def path(a: str, b: str) -> None:
-    """The chain of evidence linking two decisions."""
-    g = _g()
+    """The chain of evidence linking two decisions.
+
+    Over the store plus the tray (`D70`, T48), so a chain that runs through
+    a staged edge is found and the hop is marked.
+    """
+    g, staged, fell_back = _reading(_g())
     p = g.path(a, b)
     if not p:
         con.print(f"[yellow]no decision path from {a} to {b}[/]")
+        if fell_back:
+            _say_fell_back("dg pending", "dg drop <id>")
         raise typer.Exit(1)
     for i, vid in enumerate(p):
         v = g.vertices[vid]
         con.print(f"[bold]{vid}[/] {_x(v.title)} "
-                  f"[{_style(v.status)}]{v.status}[/]")
+                  f"[{_style(v.status)}]{v.status}[/]"
+                  + (" [dim](staged)[/]" if vid in staged else ""))
         if i < len(p) - 1:
             e = g.active_edge(vid)
             first = (e.answer or "").strip().split("\n")[0] if e else ""
             con.print(f"  [dim]│ {_x(first)}[/]")
             con.print("  [dim]▼[/]")
+    if fell_back:
+        _say_fell_back("dg pending", "dg drop <id>")
 
 
 @app.command(rich_help_panel=READ)
@@ -2961,7 +2990,15 @@ def edit_cmd(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
 def export(
     vid: str = typer.Argument(None, help="Scope to one decision"),
 ) -> None:
-    """Dump the graph as JSON. Read-only; what `dgraph.el` reads for navigation."""
+    """Dump the graph as JSON. Read-only; what `dgraph.el` reads for navigation.
+
+    **The store alone, never the tray** — the one reader that does not take
+    `_reading` (`D77`). This is what `dg import` reads back, so a proposal
+    in the tray would arrive in another project as a stored fact, which is
+    the tray asserting itself as the record. A reader that needs the
+    proposals visible has `dg show`, `dg tree`, `dg node`, `dg path` and
+    `dg find`, each of which marks them.
+    """
     from dgraph.server import graph_payload
     g = _g()
     payload = graph_payload(g)
