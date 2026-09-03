@@ -48,7 +48,12 @@ UNSETTLED = {"OPEN", "REOPENED"}
 #: `integrate._same_answer` when an arriving store is read against a base.
 #: One tuple, because a field one of the two comparisons forgets is a
 #: difference that vanishes at integration.
-CLAIM = ("answer", "falsifier", "source")
+#: `probe` is in it because it is the falsifier's mechanical twin (`D71`):
+#: two closes that agree on every sentence and differ on what a machine would
+#: run to overturn them are two claims about what settles the question, and
+#: a seam that called them the same would keep one probe and drop the other
+#: with nothing recording the choice.
+CLAIM = ("answer", "falsifier", "source", "probe")
 
 #: Everything a `close` writes onto the active edge, a `reopen` archives onto
 #: the superseded copy and clears from the live one, and a `reject` files
@@ -62,14 +67,32 @@ CLAIM = ("answer", "falsifier", "source")
 #: gone from the archive the day somebody adds one. A field added here is
 #: carried by all of them, and `tests/test_payload.py` pushes one value per
 #: field through every site to prove it.
-PAYLOAD = ("answer", "falsifier", "source", "date", "format")
+PAYLOAD = ("answer", "falsifier", "source", "date", "format", "probe")
+
+#: The bound on a probe's serialised `args`, in characters. The synopsis rule
+#: (`limits.TERSE_DEFAULT`) applied to the one payload field that is not
+#: prose: a probe's arguments are a fingerprint of an artefact — a hash, a
+#: path, a name — and never the artefact. A domain that needs more than this
+#: puts it in a file under the project and names the path, which is the rule
+#: every prose field already follows. Read from `env` rather than restated so
+#: the two doors cannot come to differ about what "too long" means.
+#:
+def probe_args_limit() -> int:
+    """`limits.TERSE_DEFAULT`, fetched when asked.
+
+    Imported inside rather than at the top: `env` is host policy, and
+    `model` learning nothing about hosts is a boundary worth one local
+    import.
+    """
+    from dgraph.env import TERSE_DEFAULT
+    return TERSE_DEFAULT
 
 #: Every optional field an edge record holds in the store, in the order the
 #: file writes them. `from_dict` reads exactly these and `to_dict` writes
 #: exactly these; `json_import.SCHEMA` accepts exactly these. Anything else on
 #: a stored edge is `Edge.extra`.
 EDGE_FIELDS = ("answer", "falsifier", "source", "date", "summary",
-               "replaced_by", "why", "format", "from_source")
+               "replaced_by", "why", "format", "from_source", "probe")
 
 #: Every field a vertex record holds. `id`, `title`, `area` and `status` are
 #: required; the rest optional. Anything else is `Vertex.extra`.
@@ -89,6 +112,53 @@ _FOLDED_STATUS = "BLOCKED"
 def fold_status(status: str) -> str:
     """`BLOCKED:<id>` and bare `BLOCKED` become `OPEN`; anything else is itself."""
     return "OPEN" if status.partition(":")[0] == _FOLDED_STATUS else status
+
+
+def probe_fault(probe: object) -> str | None:
+    """Why `probe` is not a well-formed criterion, or None if it is.
+
+    The whole of what the core checks about a probe, and the one
+    implementation of it: `Graph.validate` (`probe_wellformed`, blocking),
+    `pending.vet` for an op arriving as data, `dg decide --probe` and the
+    editor's `** Probe` field all ask this and print the sentence it returns.
+    Three doors with three copies is how `status_fault` got its docstring.
+
+    The shape is `{"kind": "<domain>.<name>", "args": {...}}` and nothing
+    else (`D71`): `kind` a string with a dot separating a non-empty domain
+    prefix from a non-empty name, `args` an object, and no third key — a key
+    the core carried without a name would be one a domain came to rely on
+    and nothing checked. `args` is read no further than its serialised
+    length, bounded at `probe_args_limit()`: what is inside it is the
+    domain's business, how much of it there is is the store's.
+    """
+    if not isinstance(probe, dict):
+        return (f"a probe is an object {{\"kind\", \"args\"}}, not "
+                f"{type(probe).__name__}")
+    extra = sorted(k for k in probe if k not in ("kind", "args"))
+    if extra:
+        return (f"a probe carries only kind and args — "
+                f"{', '.join(extra)} is not read by anything")
+    kind = probe.get("kind")
+    if not isinstance(kind, str):
+        return "a probe's kind is a string like \"prose.rule\""
+    domain, dot, name = kind.partition(".")
+    if not dot or not domain or not name:
+        return (f"a probe's kind is <domain>.<name> — {kind!r} does not name "
+                f"a domain")
+    if kind != kind.strip() or any(c.isspace() for c in kind):
+        return f"a probe's kind carries no whitespace: {kind!r}"
+    args = probe.get("args")
+    if not isinstance(args, dict):
+        return ("a probe's args is an object, even an empty one — "
+                f"{type(args).__name__} is not")
+    size = len(json.dumps(args, ensure_ascii=False, separators=(",", ":")))
+    cap = probe_args_limit()
+    if size > cap:
+        return (f"a probe's args serialise to {size} characters, over the "
+                f"{cap} the store holds — args are a fingerprint of an "
+                f"artefact, not the artefact; put it in a file under the "
+                f"project and name the path")
+    return None
 
 
 def status_fault(status: str, ids, of: str | None = None) -> str | None:
@@ -202,6 +272,14 @@ class Edge:
     #: "org" when composed through the editor, else markdown. `replaced_by` is
     #: written later by a different op and is deliberately not covered.
     format: str | None = None
+    #: The falsifier's mechanical twin (`D71`): `{"kind", "args"}`, a
+    #: criterion some domain could evaluate to say whether this answer has
+    #: been overturned. In `PAYLOAD`, so it is written by the close, archived
+    #: by a reopen with the answer it belonged to and cleared from the live
+    #: edge — a probe that outlived its answer would fire against a decision
+    #: nobody holds. Shape-checked by `probe_fault` and read no further here:
+    #: evaluating one is a domain's job (`dgraph.domains`, when it lands).
+    probe: dict | None = None
     #: As `Vertex.extra`: what the store holds and this version cannot read,
     #: carried verbatim and warned about. Stays on the live edge across a
     #: reopen and is not copied to the archive, because what an unknown field
@@ -848,6 +926,14 @@ class Graph:
                     add("no_dangling_refs", f"edge {e.src} -> unknown vertex {t}")
                 if t == e.src:
                     add("no_dangling_refs", f"{e.src}: edge to itself")
+            if e.probe is not None:
+                # Every edge, archived ones included: a probe was checked at
+                # the door when it was staged, so one that fails here arrived
+                # by hand-edit or merge, and an archived probe is still the
+                # record of what a past answer pre-committed to.
+                fault = probe_fault(e.probe)
+                if fault:
+                    add("probe_wellformed", f"{e.src}: {fault}")
             if e.from_source is not None:
                 # A record of an answer this project did **not** take. It has
                 # to say whose it was and what it said, or it is an empty

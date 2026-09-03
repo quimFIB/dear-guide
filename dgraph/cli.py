@@ -28,7 +28,7 @@ from dgraph import cross, editor, fanout, limits, pending, project, ranges, rend
 from dgraph import integrate as integrate_mod
 from dgraph import task_pending, task_render
 from dgraph import query as _query
-from dgraph.model import Graph
+from dgraph.model import Graph, probe_fault
 from dgraph.model import rival_note as model_rival_note
 from dgraph.tasks import done_label
 from dgraph.tasks import ID_RE as TASK_ID_RE
@@ -1113,6 +1113,9 @@ def node(
             f"opens       {', '.join(e.to) or 'TERMINAL'}",
             "",
             f"falsifier   {_x(e.falsifier) or '—'}",
+            # Beside the falsifier it twins, and only when there is one: a
+            # store with no probes reads exactly as it did.
+            *([f"probe       {_x(_probe_line(e.probe))}"] if e.probe else []),
             f"source      {_x(e.source)}   ({e.date})",
             "", "[bold]Answer[/]", _x(e.answer),
         ]
@@ -1774,6 +1777,12 @@ def _compose(g: Graph, kind: str, **kw) -> list[dict]:
         raise typer.Exit(1) from None
 
 
+def _probe_line(probe: dict) -> str:
+    """A probe on one line: its kind, then its args as compact JSON."""
+    return (f"{probe.get('kind')} "
+            f"{json.dumps(probe.get('args'), ensure_ascii=False, sort_keys=True)}")
+
+
 def _stage_close(g: Graph, op: dict) -> None:
     """Stage a close plus everything it implies, and say what was released.
 
@@ -1810,12 +1819,21 @@ def decide(
     opens: list[str] = typer.Option(None, "--opens", "-o",
                                     help="comma-separated ids"),
     summary: str = typer.Option(None, "--summary"),
+    probe: str = typer.Option(
+        None, "--probe",
+        help='The falsifier\'s mechanical twin, as JSON: {"kind": '
+             '"<domain>.<name>", "args": {...}}. Optional; archived with '
+             'the answer on reopen.'),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs). "
                                    "Set $DG_EDIT=1 to make this the default."),
 ) -> None:
     """Stage a decision. Prompts for anything not given as a flag."""
     g = _g()
+    # Read before the vertex is even looked up, for the reason the policy
+    # check below runs before anything is composed: a probe that cannot be
+    # staged should be refused before an answer is typed at the prompt.
+    probe_v = _probe(probe)
     # Judged against the store *plus* the staged ops: a staged reopen makes the
     # vertex decidable again, a staged add makes it exist, and a staged close
     # makes a second close a duplicate — the store alone gets all three wrong.
@@ -1866,7 +1884,7 @@ def decide(
     if _wants_editor(edit):
         seed = {k: val for k, val in (
             ("answer", answer), ("source", source), ("falsifier", falsifier),
-            ("summary", summary),
+            ("summary", summary), ("probe", probe_v),
             ("to", _ids(opens, "--opens") or None),
         ) if val}
         ops = _compose(eff, "close", vertex=vid, seed=seed)
@@ -1899,7 +1917,31 @@ def decide(
     }
     if summary:
         op["summary"] = summary
+    if probe_v is not None:
+        op["probe"] = probe_v
     _stage_close(eff, op)
+
+
+def _probe(text: str | None) -> dict | None:
+    """`--probe`'s JSON, parsed and shape-checked, or None for no flag.
+
+    Exits rather than raising: the message names the flag, because the
+    sentence `probe_fault` returns is about a value and the person typed an
+    option.
+    """
+    if text is None:
+        return None
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        con.print(f"[red]--probe is not JSON: {_x(exc.msg)} at column "
+                  f"{exc.colno}[/]")
+        raise typer.Exit(1)
+    fault = probe_fault(value)
+    if fault:
+        con.print(f"[red]--probe: {_x(fault)}[/]")
+        raise typer.Exit(1)
+    return value
 
 
 @app.command(rich_help_panel=RECORD)

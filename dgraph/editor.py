@@ -22,6 +22,7 @@ convert for display; see `dgraph/orgmd.py`.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -31,7 +32,7 @@ from datetime import date as _date
 from pathlib import Path
 
 from dgraph import areas, pending, project, ranges
-from dgraph.model import Graph, status_fault
+from dgraph.model import Graph, probe_fault, status_fault
 
 ELISP = Path(__file__).resolve().parent / "elisp" / "dgraph.el"
 
@@ -244,6 +245,11 @@ def render_close(g: Graph, vid: str, seed: dict | None = None) -> str:
                           "and stay regardless of the box.", "\n".join(boxes))
         + _field("Summary", "Optional. Short label, used if this answer is ever "
                             "superseded.", seed.get("summary", ""))
+        + _field("Probe",
+                 "Optional. The falsifier's mechanical twin, as JSON:\n"
+                 '{"kind": "<domain>.<name>", "args": {...}}. Archived with '
+                 "the answer on reopen.",
+                 _probe_text(seed.get("probe")))
         + "\n" + _context(g, vid)
     )
 
@@ -476,7 +482,7 @@ def _meta(text: str) -> dict[str, str]:
 
 
 ALLOWED = {
-    "close": {"answer", "source", "falsifier", "opens", "summary"},
+    "close": {"answer", "source", "falsifier", "opens", "summary", "probe"},
     "reopen": {"why", "summary"},
     "add_vertex": {"id", "title", "area", "status", "after", "note"},
 }
@@ -570,7 +576,33 @@ def _parse_close(g: Graph, meta: dict, f: dict, raw: dict) -> list[dict]:
         )
     if f.get("summary", "").strip():
         op["summary"] = f["summary"].strip()
+    if f.get("probe", "").strip():
+        op["probe"] = _parse_probe(f["probe"])
     return [op]
+
+
+def _probe_text(probe: dict | None) -> str:
+    """A probe as the buffer shows it: pretty JSON, or nothing."""
+    return (json.dumps(probe, indent=2, ensure_ascii=False, sort_keys=True)
+            if probe else "")
+
+
+def _parse_probe(text: str) -> dict:
+    """`** Probe`'s body back into a value, refused by the field's name.
+
+    JSON rather than org, because a probe is a typed value a domain reads
+    and not prose a person does: the buffer shows it as data so what is
+    saved is exactly what was shown.
+    """
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise EditorError(f"Probe is not JSON: {exc.msg} at line {exc.lineno}, "
+                          f"column {exc.colno}")
+    fault = probe_fault(value)
+    if fault:
+        raise EditorError(f"Probe: {fault}")
+    return value
 
 
 def _parse_reopen(meta: dict, f: dict) -> list[dict]:

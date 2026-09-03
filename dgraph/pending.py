@@ -21,7 +21,7 @@ from pathlib import Path
 from dgraph import areas as _areas
 from dgraph import env, limits, project, ranges
 from dgraph.model import (CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED, Edge,
-                          Graph, Vertex, status_fault)
+                          Graph, Vertex, probe_fault, status_fault)
 from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
@@ -1142,6 +1142,14 @@ def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
                              of=op.get("vertex") or op.get("id"))
         if fault:
             raise ApplyError(fault)
+    # `_apply_one` above copied the probe onto the edge without reading it;
+    # `apply_all` would refuse the batch later, naming `probe_wellformed`
+    # against an op somebody else may by then have staged beside. Refused
+    # here, at the door, the way a status is.
+    if op.get("op") in ("close", "reject") and op.get("probe") is not None:
+        fault = probe_fault(op["probe"])
+        if fault:
+            raise ApplyError(f"probe: {fault}")
     # `set_status` is a **derived** op for decisions: `expand` and `repairs`
     # produce it, and both stamp `derived_from`. The single exception is
     # re-affirming a PROVISIONAL one, which `compose_confirm` composes and

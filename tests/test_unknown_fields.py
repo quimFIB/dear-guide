@@ -25,20 +25,24 @@ from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
 from tests.conftest import FIXTURE, TASK_FIXTURE
 
-PROBE = {"kind": "rocq.statement_unchanged", "args": {"sha": "abc"}}
+#: A field no version reads. It was `probe` until `probe` landed on the edge
+#: (T50), at which point the test that proves an unknown field survives was
+#: asserting about a known one — so the example is now a name nothing in the
+#: proposal plans to use.
+SEAL = {"kind": "rocq.statement_unchanged", "args": {"sha": "abc"}}
 BINDS = [{"kind": "rocq.constant", "ref": "Closure.closed_under_step"}]
 
 
 def _decisions() -> dict:
     raw = copy.deepcopy(FIXTURE)
     raw["vertices"][0]["binds"] = BINDS
-    raw["edges"][0]["probe"] = PROBE
+    raw["edges"][0]["seal"] = SEAL
     return raw
 
 
 def _tasks() -> dict:
     raw = copy.deepcopy(TASK_FIXTURE)
-    raw["tasks"][1]["probe"] = PROBE
+    raw["tasks"][1]["seal"] = SEAL
     raw["edges"][0]["weight"] = 3
     return raw
 
@@ -49,10 +53,10 @@ def _tasks() -> dict:
 def test_an_unknown_edge_field_survives_a_load_and_a_save():
     """The silent half of the old behaviour: it used to vanish here."""
     g = Graph.from_dict(_decisions())
-    assert g.active_edge("D01").extra == {"probe": PROBE}
+    assert g.active_edge("D01").extra == {"seal": SEAL}
     out = g.to_dict()
     assert next(e for e in out["edges"] if e["from"] == "D01"
-                and e["active"])["probe"] == PROBE
+                and e["active"])["seal"] == SEAL
 
 
 def test_an_unknown_vertex_field_no_longer_crashes_the_loader():
@@ -65,10 +69,10 @@ def test_an_unknown_vertex_field_no_longer_crashes_the_loader():
 
 def test_an_unknown_task_and_task_edge_field_survive():
     tg = TaskGraph.from_dict(_tasks())
-    assert tg.tasks["T02"].extra == {"probe": PROBE}
+    assert tg.tasks["T02"].extra == {"seal": SEAL}
     assert tg.edges[0].extra == {"weight": 3}
     out = tg.to_dict()
-    assert next(t for t in out["tasks"] if t["id"] == "T02")["probe"] == PROBE
+    assert next(t for t in out["tasks"] if t["id"] == "T02")["seal"] == SEAL
     assert next(e for e in out["edges"] if e["from"] == "T01")["weight"] == 3
 
 
@@ -119,7 +123,7 @@ def test_an_amend_and_a_close_keep_what_they_do_not_know():
     ])
     assert out.vertices["D01"].title == "retitled"
     assert out.vertices["D01"].extra == {"binds": BINDS}
-    assert out.active_edge("D01").extra == {"probe": PROBE}
+    assert out.active_edge("D01").extra == {"seal": SEAL}
 
 
 def test_a_reopen_keeps_the_field_on_the_live_edge_and_archives_none():
@@ -129,7 +133,7 @@ def test_a_reopen_keeps_the_field_on_the_live_edge_and_archives_none():
     out = pending.apply_all(g, pending.expand(
         g, {"op": "reopen", "vertex": "D01", "why": "moved"}))
     live = out.active_edge("D01")
-    assert live.answer is None and live.extra == {"probe": PROBE}
+    assert live.answer is None and live.extra == {"seal": SEAL}
     assert all(e.extra == {} for e in out.history("D01"))
 
 
@@ -138,7 +142,7 @@ def test_a_task_status_change_keeps_the_field():
     out = task_pending.apply_all(tg, [
         {"op": "set_status", "task": "T02", "status": "DOING"}])
     assert out.tasks["T02"].status == "DOING"
-    assert out.tasks["T02"].extra == {"probe": PROBE}
+    assert out.tasks["T02"].extra == {"seal": SEAL}
 
 
 # ---- cannot travel as an op, and says so ------------------------------------
@@ -151,12 +155,12 @@ def test_the_seam_reports_an_arriving_unknown_field_as_unexpressible():
     assert d.ops == [], "nothing about the store changed that an op can say"
     assert len(d.unexpressible) == 2
     assert any(u.startswith("D01 arrives with `binds`") for u in d.unexpressible)
-    assert any(u.startswith("the edge from D01 arrives with `probe`")
+    assert any(u.startswith("the edge from D01 arrives with `seal`")
                for u in d.unexpressible)
 
     d = integrate.tasks(TaskGraph.from_dict(TASK_FIXTURE),
                         TaskGraph.from_dict(_tasks()))
-    assert any(u.startswith("T02 arrives with `probe`") for u in d.unexpressible)
+    assert any(u.startswith("T02 arrives with `seal`") for u in d.unexpressible)
 
 
 def test_an_unchanged_unknown_field_is_not_reported():

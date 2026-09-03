@@ -21,9 +21,11 @@ from dgraph.json_import import SCHEMA, read
 from dgraph.model import CLAIM, EDGE_FIELDS, PAYLOAD, Graph
 from tests.conftest import FIXTURE
 
-#: One recognisable value per field. `date` and `format` have to be legal.
+#: One recognisable value per field. `date`, `format` and `probe` have to be
+#: legal; `probe` is the one that is not a string.
 VALUES = {"answer": "A-value", "falsifier": "F-value", "source": "S-value",
-          "date": "2026-02-02", "format": "org"}
+          "date": "2026-02-02", "format": "org",
+          "probe": {"kind": "prose.rule", "args": {"n": 1}}}
 
 
 def test_the_tuples_nest():
@@ -58,13 +60,13 @@ def test_a_reject_files_every_field():
     g = pending.apply_all(Graph.from_dict(FIXTURE), [_close()])
     out = pending.apply_all(g, [{
         "op": "reject", "vertex": "D05", "to": ["D06"],
-        **{k: v + "-theirs" if k not in ("date", "format") else v
+        **{k: v + "-theirs" if k in CLAIM and isinstance(v, str) else v
            for k, v in VALUES.items()},
         "from_source": "elsewhere"}])
     r = out.rejected("D05")[0]
     assert r.answer == "A-value-theirs" and r.falsifier == "F-value-theirs"
     assert r.source == "S-value-theirs" and r.date == VALUES["date"]
-    assert r.format == VALUES["format"]
+    assert r.format == VALUES["format"] and r.probe == VALUES["probe"]
 
 
 def test_the_seam_derives_a_close_carrying_every_field():
@@ -111,9 +113,9 @@ def test_no_site_names_a_payload_field_by_hand():
     allowed to stay: `payload["date"]` defaulting to today, and the
     contribution's own `raw.get("source")`."""
     import re
-    copied = re.compile(r'op(\.get\(|\[)"(falsifier|source|date)"'
-                        r'|(?<![\w_])(falsifier|source|date)=(?!=)'
-                        r'|getattr\([^,]+, "(falsifier|source|date)"')
+    copied = re.compile(r'op(\.get\(|\[)"(falsifier|source|date|probe)"'
+                        r'|(?<![\w_])(falsifier|source|date|probe)=(?!=)'
+                        r'|getattr\([^,]+, "(falsifier|source|date|probe)"')
     sites = [pending._apply_one, integrate._edges, integrate._keepsake,
              integrate._same_answer]
     for fn in sites:

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 from dgraph import areas as _areas
 from dgraph import orgmd, project
 from dgraph.model import Edge, Graph, rival_note
@@ -83,6 +85,14 @@ def _section(g: Graph, vid: str, _by=None, _into=None) -> str:
         f"- **Falsifier:** "
         f"{orgmd.to_markdown(e.falsifier if e else None, fmt=e.format if e else None) or NONE}"
     )
+    if e is not None and e.probe:
+        # Only when there is one, so a view of a store with no probes is
+        # byte-identical to the view before the field existed and
+        # `stale_view` stays quiet. Compact JSON in code: a probe is data
+        # and its emphasis must not convert.
+        args = json.dumps(e.probe.get("args"), ensure_ascii=False,
+                          sort_keys=True)
+        out.append(f"- **Probe:** `{e.probe.get('kind')}` `{args}`")
     out.append("")
 
     if e is not None and e.decided:
