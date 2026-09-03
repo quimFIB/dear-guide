@@ -5544,6 +5544,10 @@ def import_md(
 
 @app.command(rich_help_panel=WEB)
 def serve(
+    action: str = typer.Argument(None, metavar="[stop|status]",
+                                 help="A word for `--stop` or `--status`. "
+                                      "Overrides --detach, so a fixed "
+                                      "`dg serve --detach` line can carry it."),
     port: int = typer.Option(8765, "--port", "-p"),
     detach: bool = typer.Option(False, "--detach", "-d",
                                 help="Start it in the background and return."),
@@ -5557,8 +5561,22 @@ def serve(
     its own session, prints the URL and returns — so a coding-agent session can
     open the app without giving up its own prompt. It is idempotent: run twice,
     the second run reports the first one's URL.
+
+    `stop` and `status` as bare words are the flags again, and they win over
+    `--detach`. That exists for one caller: a slash command's `!` line is a
+    fixed string with the user's words appended, so `/dg:serve` runs
+    `dg serve --detach $ARGUMENTS` and `/dg:serve stop` has to mean *stop*
+    rather than *start, and here is a word*. Anything else after `serve` is
+    refused, since a misspelt `stpo` would otherwise start a server.
     """
     from dgraph import server
+    if action is not None:
+        if action not in ("stop", "status"):
+            con.print(f"[red]`dg serve {_x(action)}`: the words are `stop` and "
+                      f"`status`[/]\n[dim]to start one in the background, "
+                      f"`dg serve --detach`[/]")
+            raise typer.Exit(2)
+        stop, status, detach = action == "stop", action == "status", False
     if sum([detach, stop, status]) > 1:
         con.print("[red]--detach, --stop and --status are three different "
                   "questions; ask one[/]")

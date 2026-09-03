@@ -174,7 +174,7 @@ from the prefix the install put on the link.
 | `/dg:tasks` | `/dg-tasks` | the backlog, with the cross-graph reading of what each piece waits on |
 | `/dg:find <query>` | `/dg-find <query>` | decisions and work by what they *say* — the only reading that starts from a word |
 | `/dg:context <id> [--full]` | `/dg-context <id>` | the chain of premises a decision or a task rests on |
-| `/dg:serve` | `/dg-serve` | the graphs in a browser |
+| `/dg:serve` `[stop\|status]` | `/dg-serve` | the graphs in a browser; `stop` closes it |
 | `/dg:fanout` | `/dg-fanout` | who holds a name, what each is holding, and what is staged — before running several agents against one graph |
 | `/dg:version` | `/dg-version` | the commit the installed `dg` is from — beta has no release number to print |
 
@@ -247,7 +247,9 @@ reads well.
 **`/dg:serve` returns immediately.** `dg serve` blocks forever, so a command file
 that ran it would hang the session; `dg serve --detach` starts it in its own
 session, prints the URL and exits. It is idempotent — run it twice and the
-second run reports the first one's URL — and `dg serve --stop` ends it.
+second run reports the first one's URL — and `/dg:serve stop` ends it: the
+word rides the same fixed line as `dg serve --detach stop` and wins over the
+flag, so the command can close what it opened. `/dg:serve status` asks.
 
 ## The skill
 

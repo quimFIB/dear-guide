@@ -430,6 +430,16 @@ def test_command_never_runs_a_blocking_command(path):
             assert "--detach" in m or "--stop" in m or "--status" in m, m
 
 
+def test_the_serve_command_carries_its_argument_into_the_shell_line():
+    """`/dg:serve stop` has to reach `dg serve`, and the only way a slash
+    command's `!` line varies is `$ARGUMENTS` inside it. Before this the
+    arguments landed in the prose and the line started a server regardless."""
+    text = next(p for p in COMMANDS if p.stem == "serve").read_text()
+    line = re.search(r"!`([^`]+)`", text).group(1)
+    assert line.split()[:3] == ["dg", "serve", "--detach"] and "$ARGUMENTS" in line
+    assert "[stop|status]" in frontmatter(text).get("argument-hint", "")
+
+
 @pytest.mark.parametrize("target", ["commands", "skills"])
 def test_the_host_accepts_what_we_ship(target):
     """Claude Code's own validator, run against the components.

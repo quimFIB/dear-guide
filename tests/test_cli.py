@@ -2126,3 +2126,30 @@ def test_an_absent_id_flag_is_still_absent(run, store):
     assert run("apply").exit_code == 0
     g = Graph.load(store / "decisions.json")
     assert [e.src for e in g.edges if "D50" in e.to] == []
+
+
+# ---- `dg serve` as words, for the slash command -------------------------
+#
+# `/dg:serve` runs a fixed `dg serve --detach $ARGUMENTS`, so the only way a
+# person can stop the server from the command is for a trailing word to mean
+# `--stop` and to win over `--detach`. Before this, `/dg:serve stop` started a
+# server and handed the model the word.
+
+
+def test_serve_stop_as_a_word_overrides_detach(run):
+    res = run("serve", "--detach", "stop")
+    assert res.exit_code == 0, res.output
+    assert "nothing to stop" in res.output and "started" not in res.output
+
+
+def test_serve_status_as_a_word_overrides_detach(run):
+    res = run("serve", "--detach", "status")
+    assert res.exit_code == 1 and "not running" in res.output
+    assert "started" not in res.output
+
+
+def test_serve_refuses_a_word_it_does_not_know_rather_than_starting(run):
+    """A misspelling must not start a server: `stpo` is refused, exit 2."""
+    res = run("serve", "--detach", "stpo")
+    assert res.exit_code == 2 and "stop" in res.output and "status" in res.output
+
