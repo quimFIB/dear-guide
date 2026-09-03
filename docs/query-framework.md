@@ -518,8 +518,9 @@ check.
 
 ## The command
 
-    dg find QUERY [--decisions | --tasks] [--full] [--json] [--ids] [--limit N]
-                  [--active] [--subgraph [--hops N]]
+    dg find QUERY [--decisions | --tasks] [--active] [--ids]
+                  [--full | --json | --limit N]        # the report
+                  [--subgraph [--hops N]]             # or the slice
 
 Both stores by default, with a labelled section each:
 
@@ -588,7 +589,16 @@ both stores, as one JSON object:
                                                  # edges among them
 
 `--hops 0` is the literal induced subgraph, and the other depths are that plus
-growth. The default is the whole connected cone.
+growth. The default is the whole connected cone. A negative count is refused,
+by `cross.induced` itself, so the browser's `/api/find` refuses it in the same
+words.
+
+`--subgraph` replaces the report, so the report's flags — `--full`, `--json`,
+`--limit` — are **refused** with it rather than ignored, for the reason `--hops`
+alone is refused: a flag accepted and ignored is the mistake a run cannot show
+you. Two compose: `--ids` prints the slice's ids, one per line, and `--active`
+narrows what *seeds* to what still stands. The slice itself always carries
+superseded edges, because it is a store and a store keeps its history.
 
 **The growth walks both stores as one digraph** — decision→decision,
 task→task, `because` and `evidence_for` — which is the same union

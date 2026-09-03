@@ -638,12 +638,16 @@ async function runFocus(){
   if(seq !== FSEQ) return;              /* an older seed, answered late */
   if(r.fault || !r.subgraph){
     /* The chip keeps its text and the canvas keeps its previous slice: a typo
-       mid-edit must not blank the graph out from under the person typing. */
-    FOCUS = null;
+       mid-edit must not blank the graph out from under the person typing. So
+       `FOCUS` is left exactly as it was and nothing is re-laid out — only the
+       note and the underline change. It used to null `FOCUS` and relayout,
+       which drew the *whole* graph re-fitted on every transiently invalid
+       keystroke (audit `U-F5`). A seed that matches nothing is not a fault:
+       that is a result, and the empty canvas below is the honest drawing. */
     FNOTE = "\u26a0 " + (r.fault || "no slice");
     $("#focusNote").textContent = FNOTE;
     $("#focusQ").classList.add("bad");
-    relayout(); return;
+    return;
   }
   const sg = r.subgraph;
   FOCUS = {seed, hops, ids: new Set([...sg.decisions, ...sg.tasks]),

@@ -1870,3 +1870,43 @@ def test_find_payload_without_the_parameter_carries_no_slice(both):
     """Absent and empty differ: no `subgraph` at all is the plain filter."""
     from dgraph import server
     assert "subgraph" not in server.find_payload("id:D01")
+
+
+def test_a_negative_hop_count_is_refused_below_both_doors(both):
+    """Audit `U-F3`: the CLI refused `--hops -1` and the API answered
+    `subgraph=-1` as if it were 0. The bound lives in `induced`, so a door
+    that forgets to check inherits the refusal instead of a wrong answer."""
+    g, tg = _pair(both)
+    with pytest.raises(ValueError):
+        cross.induced(g, tg, ["D01"], depth=-1)
+
+
+def test_dg_find_negative_hops_is_refused(run_cli):
+    res = run_cli("find", "--subgraph", "--hops", "-1", "id:D01")
+    assert res.exit_code == 2
+    assert "starts at 0" in res.output
+
+
+@pytest.mark.parametrize("flag", [["--json"], ["--full"], ["--limit", "3"], ["-n", "3"]])
+def test_report_flags_under_subgraph_are_refused_not_ignored(run_cli, flag):
+    """Audit `U-F4`: the commit refused `--hops` alone because *a flag that is
+    accepted and ignored is the one mistake a run cannot show you*, then
+    accepted three of its own under `--subgraph` and ignored them."""
+    res = run_cli("find", "--subgraph", *flag, "id:D01")
+    assert res.exit_code == 2, res.output
+    assert "nothing under --subgraph" in res.output
+
+
+def test_ids_and_active_compose_with_subgraph(run_cli):
+    """The two that do something: `--ids` prints the slice's ids, `--active`
+    narrows what seeds. Neither is refused."""
+    assert run_cli("find", "--subgraph", "--hops", "0", "--ids", "id:D01").exit_code == 0
+    assert run_cli("find", "--subgraph", "--hops", "0", "--active", "id:D01").exit_code == 0
+
+
+def test_the_report_default_limit_is_still_twenty(run_cli):
+    """`--limit` became optional so `--subgraph` could tell typed from default;
+    the report must not have lost its default on the way."""
+    res = run_cli("find", "id:D01")
+    assert res.exit_code == 0 and "1 match" in res.output
+

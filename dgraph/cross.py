@@ -909,6 +909,12 @@ def induced(g: Graph | None, tg: TaskGraph | None, seeds,
     counting per store would make a task one hop from D04 on the joined view
     and unreachable on the decisions view, from the same number.
     """
+    if depth is not None and depth < 0:
+        # Refused here and not at the doors: the CLI refused `--hops -1` and
+        # the API accepted `subgraph=-1` and answered as if it were 0, which is
+        # two doors onto one act refusing different things (audit `U-F3`).
+        # One check below both, and a door that forgets inherits it.
+        raise ValueError("depth counts hops, so it starts at 0")
     down, up = union_adjacency(g, tg)
     decisions = set(g.vertices) if g is not None else set()
     tasks = set(tg.tasks) if tg is not None else set()

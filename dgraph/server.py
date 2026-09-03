@@ -977,8 +977,14 @@ class Handler(BaseHTTPRequestHandler):
                                 "fault": f"subgraph takes a hop count, "
                                          f"not `{raw}`"})
                     return
-                self._json(find_payload(fq.get("q", [""])[0], hops,
-                                        subgraph=raw is not None))
+                try:
+                    self._json(find_payload(fq.get("q", [""])[0], hops,
+                                            subgraph=raw is not None))
+                except ValueError as exc:
+                    # A negative count. `cross.induced` refuses it, so this
+                    # door and `dg find --hops` cannot disagree about the bound.
+                    self._json({"query": fq.get("q", [""])[0],
+                                "fault": f"subgraph {exc}"})
             elif urlparse(self.path).path == "/api/context":
                 self._json(context_payload(parse_qs(
                     urlparse(self.path).query).get("id", [""])[0]))

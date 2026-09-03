@@ -1478,3 +1478,11 @@ def test_the_page_binds_both_new_controls(srv, store):
         assert drawn in page, f"{drawn} is not drawn"
         assert listener in page, f"{drawn} is drawn and nothing listens for it"
     assert "in one act" in page, "a row no longer says it is part of an act"
+
+
+def test_find_subgraph_refuses_a_negative_hop_count_as_a_fault(srv, store):
+    """Audit `U-F3`: `subgraph=-1` answered the seed set, where `dg find
+    --hops -1` exits 2. Both now hear it from `cross.induced`."""
+    code, d = jreq(srv, "/api/find?q=id:D01&subgraph=-1")
+    assert code == 200 and "starts at 0" in d["fault"] and "subgraph" not in d
+

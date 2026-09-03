@@ -723,8 +723,11 @@ def find(
                              help="Grow the subgraph N hops from the matches. "
                                   "Default: the whole connected cone. 0 is the "
                                   "matches alone."),
-    limit: int = typer.Option(20, "--limit", "-n",
-                              help="Rows per section before summarising."),
+    # `None` and not `20`, so `--subgraph` can tell a limit somebody typed from
+    # the default it would otherwise refuse; the report path fills 20 in below.
+    limit: int = typer.Option(None, "--limit", "-n", metavar="N",
+                              help="Rows per section before summarising "
+                                   "(default 20)."),
 ) -> None:
     """Find decisions and work by what they say.
 
@@ -775,10 +778,23 @@ def find(
                   "[dim]it says how far to grow the slice; without one there "
                   "is nothing to grow[/]")
         raise typer.Exit(2)
-    if hops is not None and hops < 0:
-        con.print("[red]--hops counts hops, so it starts at 0[/]\n"
-                  "[dim]`--subgraph` with no --hops is the whole cone[/]")
-        raise typer.Exit(2)
+    if subgraph:
+        # The slice is one JSON object, so the report's flags have nothing to
+        # act on — and a flag that is accepted and ignored is the mistake
+        # `--hops` alone is refused for, two checks up. `--ids` composes
+        # (the slice's ids) and `--active` narrows the *seed*, as its help
+        # says; the three below would be silently dropped (audit `U-F4`).
+        idle = [f for f, on in (("--json", as_json), ("--full", full),
+                                ("--limit", limit is not None)) if on]
+        if idle:
+            con.print(f"[red]{' and '.join(idle)} do{'es' if len(idle) == 1 else ''} "
+                      f"nothing under --subgraph[/]\n"
+                      "[dim]the slice is one JSON object, both stores; "
+                      "`--ids` for its ids, `--active` to seed from what "
+                      "still stands[/]")
+            raise typer.Exit(2)
+    if limit is None:
+        limit = 20
     if limit < 1:
         # `--limit 0` used to print a count and a "… 2 more" line with no rows
         # above it, and `--limit -1` silently dropped the *last* row — Python's
@@ -835,8 +851,14 @@ def find(
         # question through `find_payload`, and a slice that differed between
         # the two surfaces would be this tool disagreeing with itself about
         # what "connected to D04" means.
-        cut = cross.induced(g, tg, [r for rows in found.values() for r in rows],
-                             depth=hops)
+        try:
+            cut = cross.induced(g, tg, [r for rows in found.values() for r in rows],
+                                depth=hops)
+        except ValueError as exc:
+            # `induced` owns the bound; this door only says it in its own voice.
+            con.print(f"[red]--hops {_x(str(exc))}[/]\n"
+                      "[dim]`--subgraph` with no --hops is the whole cone[/]")
+            raise typer.Exit(2) from None
         if ids:
             for rid in (*cut.decisions, *cut.tasks):
                 print(rid)
