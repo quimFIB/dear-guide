@@ -283,3 +283,90 @@ def test_one_finding_per_record_however_many_fields_are_long(store, g):
     e.answer = e.falsifier = VERBOSE
     g.save()
     assert len([v for v in run() if v.check == "verbose_field"]) == 1
+
+
+# ---- `dg check --staged`: what apply would leave -------------------------
+
+
+def test_staged_leaves_the_view_checks_out_of_both_sides(store, g):
+    """A view is generated from the store, so it is stale against the
+    previewed graph by construction; reporting that would blame every batch
+    for a file `dg apply` regenerates on the way."""
+    from dgraph.check import staged
+    before, after = staged()
+    assert [v.check for v in run()] == ["stale_view"]
+    assert before == [] and after == []
+
+
+def test_staged_is_the_record_twice_when_nothing_is_staged(store, g):
+    from dgraph.check import diff, staged
+    write(g)
+    bad = Graph.load()
+    bad.active_edge("D01").falsifier = None
+    bad.save()
+    before, after = staged()
+    assert before and [v.check for v in before] == [v.check for v in after]
+    fixed, introduced, kept = diff(before, after)
+    assert (fixed, introduced) == ([], []) and len(kept) == len(after)
+
+
+def test_a_tray_that_will_not_preview_is_a_blocking_finding(store, g):
+    """Not `_reading`'s fallback: here the failed preview *is* the answer —
+    `dg apply` would refuse — and the stored findings carry across as what
+    would remain."""
+    import json
+    from dgraph.check import diff, staged
+    write(g)
+    (store / ".dgraph-pending.json").write_text(json.dumps([
+        {"op": "close", "vertex": "D77", "answer": "a", "source": "s",
+         "falsifier": "f", "opens": [], "date": "2026-09-03"}]))
+    before, after = staged()
+    fixed, introduced, kept = diff(before, after)
+    assert fixed == [] and kept == before
+    assert [v.check for v in introduced] == ["tray_applies"]
+    assert introduced[0].blocking and introduced[0].origin == "decision"
+    assert "D77" in introduced[0].message
+    assert "`dg pending`" in introduced[0].message
+    # ...and `run` is untouched by it: the record is still the record.
+    assert [v.check for v in run()] == []
+
+
+def test_a_task_tray_that_will_not_preview_names_the_task_verbs(
+        store, task_store, g):
+    import json
+    from dgraph.check import staged
+    write(g)
+    (store / ".dgraph-task-pending.json").write_text(json.dumps([
+        {"op": "set_status", "task": "T99", "status": "DONE"}]))
+    _, after = staged()
+    hit = next(v for v in after if v.check == "tray_applies")
+    assert hit.origin == "task"
+    assert "`dg task pending`" in hit.message
+    assert "`dg task drop-op <id>`" in hit.message
+
+
+def test_staged_judges_the_link_across_both_previewed_stores(
+        store, task_store, g, monkeypatch):
+    """The page used to judge each previewed store on its own, so a staged
+    link to a decision that does not exist — the one thing `dg apply` refuses
+    outright — was the one thing it could not show."""
+    import json
+    from dgraph.check import diff, staged
+    write(g)
+    (store / ".dgraph-task-pending.json").write_text(json.dumps([
+        {"op": "set_link", "task": "T02", "because": ["D77"]}]))
+    before, after = staged()
+    _, introduced, _ = diff(before, after)
+    assert "link_resolves" in {v.check for v in introduced}
+    assert all(v.origin == "link" for v in introduced
+               if v.check == "link_resolves")
+
+
+def test_diff_keys_on_check_and_message():
+    from dgraph.check import diff
+    from dgraph.model import Violation
+    a = Violation("no_orphans", "D01 is connected to nothing", "warning")
+    b = Violation("no_orphans", "D02 is connected to nothing", "warning")
+    c = Violation("acyclic", "cycle D01 -> D02 -> D01")
+    fixed, introduced, kept = diff([a, c], [b, c])
+    assert fixed == [a] and introduced == [b] and kept == [c]

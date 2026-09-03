@@ -794,7 +794,15 @@ clipped answer is exactly the constraint a fresh context will get wrong.
 
 ```sh
 dg check                    # every invariant; names the rule that broke
+dg check --staged           # the graph the tray would produce, as a diff against the record
 ```
+
+Bare `dg check` reads the record and nothing else, and that is what the commit
+gate and the pytest plugin read too — so a staged fix can never pass a broken
+store. `--staged` asks the other question: what would `dg apply` leave? It
+answers as a diff — what the batch fixes, what it introduces, what stands
+either way — and a tray that no longer applies is reported as the blocking
+finding it is, since then the answer is that `dg apply` would refuse.
 
 In CI, one file gets you a test per rule, with nothing to keep in sync:
 

@@ -1605,7 +1605,12 @@ def gate(
 
 
 @app.command(rich_help_panel=HONEST)
-def check() -> None:
+def check(
+    staged: bool = typer.Option(
+        False, "--staged",
+        help="judge the graph the staged ops would produce, as a diff "
+             "against the record: what the tray fixes, what it introduces"),
+) -> None:
     """Run every invariant, plus the markdown staleness check."""
     proj = project.find()
     if not proj.exists:
@@ -1617,22 +1622,86 @@ def check() -> None:
                   f"[dim]run `dg init` or `dg task init` there, or pass "
                   f"--project PATH[/]")
         raise typer.Exit(2)
+    if staged:
+        _check_staged(proj)
+        return
     problems = _check.run(proj)
     for p in problems:
-        con.print(f"[{'red' if p.blocking else 'yellow'}]"
-                  f"{'✗' if p.blocking else '!'}[/] {_x(p)}")
+        con.print(_finding_line(p))
     if any(p.blocking for p in problems):
         raise typer.Exit(1)
-    # Counted per store that actually exists — a project may have either.
+    tail = f", {len(problems)} warning(s)" if problems else ""
+    con.print(f"[green]✓[/] {_sizes(proj)}, all invariants hold{tail}")
+
+
+def _finding_line(p, *, fixed: bool = False) -> str:
+    mark = "[green]✓[/]" if fixed else (
+        "[red]✗[/]" if p.blocking else "[yellow]![/]")
+    return f"{mark} {_x(p)}"
+
+
+def _sizes(proj, g: Graph | None = None, tg: TaskGraph | None = None) -> str:
+    """Counted per store that actually exists — a project may have either."""
     sizes = []
     if proj.has_decisions:
-        g = Graph.load(proj.store)
+        g = g if g is not None else Graph.load(proj.store)
         sizes.append(f"{len(g.vertices)} vertices, {len(g.edges)} edges")
     if proj.has_tasks:
-        tg = TaskGraph.load(proj.tasks)
+        tg = tg if tg is not None else TaskGraph.load(proj.tasks)
         sizes.append(f"{len(tg.tasks)} tasks")
-    tail = f", {len(problems)} warning(s)" if problems else ""
-    con.print(f"[green]✓[/] {'; '.join(sizes)}, all invariants hold{tail}")
+    return "; ".join(sizes)
+
+
+def _check_staged(proj) -> None:
+    """`dg check --staged`: what `dg apply` would leave, as a diff.
+
+    Three groups, and the order is what a person reading before an apply
+    wants: what the tray fixes, what it introduces, what it leaves alone. The
+    last is printed as errors in full and warnings as a count — those are
+    exactly what bare `dg check` lists, and repeating seventeen warnings under
+    a heading that says they have not changed is how the eye learns to skip
+    the two lines above it that have.
+
+    The exit code is that of the previewed graph, not of the diff: a batch
+    that leaves an old error standing still leaves `dg apply` refusing, and a
+    zero here would say otherwise. `_reading`'s fallback does not apply — see
+    `check.staged` for why a tray that will not preview is a finding here.
+    """
+    d_ops = len(pending.load(proj.pending)) if proj.has_decisions else 0
+    t_ops = len(pending.load(proj.task_pending)) if proj.has_tasks else 0
+    if not d_ops and not t_ops:
+        con.print("[dim]nothing is staged, so the record is the whole answer "
+                  "— this is `dg check`[/]")
+        check(staged=False)
+        return
+    before, after = _check.staged(proj)
+    fixed, introduced, kept = _check.diff(before, after)
+    con.print(f"[bold]STAGED[/]  {d_ops} decision op(s), {t_ops} task op(s) "
+              f"[dim]— `dg pending`, `dg task pending`[/]")
+    if fixed:
+        con.print(f"[bold]would fix[/] ({len(fixed)})")
+        for p in fixed:
+            con.print("  " + _finding_line(p, fixed=True))
+    if introduced:
+        con.print(f"[bold]would introduce[/] ({len(introduced)})")
+        for p in introduced:
+            con.print("  " + _finding_line(p))
+    if not fixed and not introduced:
+        con.print("[dim]the tray changes nothing `dg check` reports[/]")
+    kept_errors = [p for p in kept if p.blocking]
+    kept_warnings = len(kept) - len(kept_errors)
+    if kept:
+        con.print(f"[bold]unchanged[/] ({len(kept)})"
+                  + (f" [dim]— {kept_warnings} warning(s) `dg check` "
+                     f"already lists[/]" if kept_warnings else ""))
+        for p in kept_errors:
+            con.print("  " + _finding_line(p))
+    if any(p.blocking for p in after):
+        con.print("[red]✗[/] as staged, `dg apply` would refuse the batch")
+        raise typer.Exit(1)
+    warnings = sum(1 for p in after if not p.blocking)
+    tail = f", {warnings} warning(s)" if warnings else ""
+    con.print(f"[green]✓[/] as staged, all invariants hold{tail}")
 
 
 # ---- editing -------------------------------------------------------------

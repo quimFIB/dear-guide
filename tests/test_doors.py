@@ -1104,6 +1104,22 @@ def test_the_staged_list_answers_what_apply_would_judge(srv, unsound):
         "the staged batch should leave fewer findings than the store has"
 
 
+def test_the_staged_list_is_what_check_staged_prints(srv, store, g):
+    """One reading through both doors: the page's staged list carries the
+    link checks and a tray that will not preview, which judging each
+    previewed store on its own could not show."""
+    cli(store, "render")
+    (store / ".dgraph-pending.json").write_text(json.dumps([
+        {"op": "close", "vertex": "D77", "answer": "a", "source": "s",
+         "falsifier": "f", "opens": [], "date": "2026-09-03"}]))
+    body = get(srv, "/api/check")
+    assert body["stored"] == []
+    assert [f["check"] for f in body["staged"]] == ["tray_applies"]
+    assert body["staged"][0]["origin"] == "decision"
+    out = runner.invoke(app, ["--project", str(store), "check", "--staged"])
+    assert out.exit_code == 1 and "[tray_applies]" in out.output
+
+
 def test_repair_stages_the_same_ops_through_both_doors(srv, unsound, store):
     code, res = post(srv, "/api/repair", {})
     assert code == 200, res

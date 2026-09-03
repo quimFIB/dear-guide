@@ -231,7 +231,7 @@ Two things to know before using them:
 | `dg tree` | the graph as a tree |
 | `dg areas` | counts by area and status, one table per store |
 | `dg export ID` | the same data as JSON, for machine reading. `dg import` reads it back unchanged |
-| `dg check` | every invariant, and it names the rule that broke |
+| `dg check` | every invariant, and it names the rule that broke. `--staged` judges the graph the tray would produce instead, as a diff: what the batch fixes, what it introduces, what stands either way |
 | `dg import FILE` | adopt a `decisions.json` prepared elsewhere or exported from another project, refusing one that breaks invariants |
 | `dg import-md FILE` | rebuild a store from the `decision-graph.md` this tool generated. The recovery path when the *store* is the file that was lost |
 | `dg repair` | stage the PROVISIONAL marks a reopen would have derived. What `dg apply` names when a merge, a rebase or a second clone left a decision resting on a premise under review without saying so |
@@ -559,9 +559,13 @@ them with `dg pending` before anything else. If they are yours, `dg apply`; if
 you did not stage them, they belong to whoever did — say so and let them decide,
 because applying somebody else's half-composed batch writes a decision they had
 not finished making, and this tool deliberately makes a decision hard to take
-back. **`dg check` cannot see this at all** — it reports every invariant holding
-while the ops sit in the tray. `dg pending` and `dg brief` are the two readings
-that show it.
+back. **Bare `dg check` cannot see this at all** — it reports every invariant
+holding while the ops sit in the tray, and that is deliberate: the gate reads
+it, and a broken store must not pass because the tray happens to mend it.
+`dg pending` and `dg brief` are the readings that show the ops; `dg check
+--staged` says what applying them would leave — what they fix, what they
+introduce — which is the thing to read before `dg apply` when the batch is
+not yours.
 
 **`warn` — a generated view has fallen behind its store.** Not a refusal either;
 the commit proceeds and you are told once on the way past. `dg render` (or

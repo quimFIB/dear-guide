@@ -539,14 +539,25 @@ def check_payload() -> dict:
     proj = project.find()
     stored = [_finding(v) for v in check.run(proj)]
     staged: list[dict] = []
-    if proj.has_decisions and pending.load():
-        eff = pending.preview(Graph.load())
-        staged += [_finding(v) for v in eff.validate()]
-    if proj.has_tasks and pending.load(task_pending.path()):
-        teff = task_pending.preview(TaskGraph.load(proj.tasks))
-        staged += [_finding(v) for v in teff.validate()]
-    fixable = (len(pending.repairs(pending.preview(Graph.load())))
-               if proj.has_decisions else 0)
+    if ((proj.has_decisions and pending.load(proj.pending))
+            or (proj.has_tasks and pending.load(proj.task_pending))):
+        # The same reading `dg check --staged` prints: both trays, the link
+        # checks included, and a tray that will not preview reported as a
+        # finding rather than raised. Before this the page judged each
+        # previewed store on its own, so a staged link to a missing decision
+        # — the one thing `dg apply` refuses outright — was the one thing
+        # this list could not show.
+        staged = [_finding(v) for v in check.staged(proj)[1]]
+    fixable = 0
+    if proj.has_decisions:
+        try:
+            fixable = len(pending.repairs(pending.preview(Graph.load())))
+        except (pending.ApplyError, OSError, ValueError):
+            # A tray that will not preview is already in `staged` above as a
+            # finding; a 500 here would hide that list behind the one
+            # condition it exists to report. Nothing can be repaired on top
+            # of a batch that does not apply, so 0 is the true count.
+            pass
     return {"stored": stored, "staged": staged, "repairs": fixable}
 
 

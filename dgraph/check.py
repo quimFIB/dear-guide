@@ -8,17 +8,25 @@ no second opinion about what "valid" means.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from dgraph import limits
 from dgraph import project as _project
 from dgraph import render
 from dgraph.model import Graph, Violation
 from dgraph.violation import DECISION, LINK, TASK, tag
 
+if TYPE_CHECKING:  # `dgraph.tasks` is imported lazily below, where it is used
+    from dgraph.tasks import TaskGraph
+
 #: Every check this tool can emit. Parametrising over this rather than over
 #: observed violations means a clean graph still runs one test per rule, so a
 #: check that silently stops firing is visible.
 CHECKS: tuple[str, ...] = (
     "store_loads",
+    # the tray, under `--staged` only: a batch that will not preview is the
+    # answer to "what would apply leave", and the answer is that it refuses
+    "tray_applies",
     "ids_wellformed",
     "status_legal",
     "no_dangling_refs",
@@ -79,6 +87,8 @@ ORIGIN: dict[str, str] = {
     # stores, and splitting the name in two would make the rule twice as easy
     # to let rot in one of them.
     "verbose_field": "",
+    # Either tray; stamped where it is emitted, like `store_loads`.
+    "tray_applies": "",
     "ids_wellformed": DECISION,
     "status_legal": DECISION,
     "no_dangling_refs": DECISION,
@@ -148,7 +158,11 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
         problems += _tasks(proj) if proj.has_tasks else []
         if proj.has_decisions and proj.has_tasks:
             problems += _link(proj)
+    return _belt(problems)
 
+
+def _belt(problems: list[Violation]) -> list[Violation]:
+    """The second belt, shared by `run` and `staged`."""
     # The second belt. Everything above is stamped where it was read; this
     # catches a finding that reached here by some path that was not.
     problems = [p if p.origin is not None or not ORIGIN.get(p.check)
@@ -163,6 +177,119 @@ def run(proj: _project.Project | None = None) -> list[Violation]:
             f"internal: checks emitted but not declared in CHECKS: {unknown}",
         ))
     return problems
+
+
+def staged(proj: _project.Project | None = None,
+           ) -> tuple[list[Violation], list[Violation]]:
+    """The findings as the store sits, and as `dg apply` would leave it.
+
+    `run` answers *is the record valid*, and that reading is load-bearing: the
+    commit gate, the pytest plugin and `dg brief` all take it, and none of them
+    may be told a broken store is fine because the tray happens to mend it. So
+    this is a second function and not a flag on the first — `D70`. It returns
+    the pair so a caller can say what the tray *changes*, which is the reading
+    a person wants before applying: what it fixes, what it introduces, and what
+    it leaves alone. `diff` computes those three from the pair.
+
+    The stored side is `run` with the view checks left out. A view is
+    generated from the store, so it is stale against the previewed graph by
+    construction, and reporting that as something the tray would introduce
+    would blame every batch for a file that `dg apply` regenerates on the way.
+
+    A tray that will not preview is reported as a blocking `tray_applies`, not
+    hidden behind a fallback. `cli._reading` falls back to the store because a
+    reader refusing to print is the opposite of useful; here the failed preview
+    *is* the answer — `dg apply` would refuse — and the stored findings for
+    that side are carried across unchanged, since that is what would remain.
+
+    Both graphs are read under one lock with both trays, so the link is judged
+    across a matched pair, as in `run`.
+    """
+    from dgraph import pending, task_pending
+    from dgraph.tasks import TaskGraph
+
+    proj = proj or _project.find()
+    if not proj.exists:
+        only = run(proj)
+        return only, list(only)
+
+    before: list[Violation] = []
+    after: list[Violation] = []
+    g = eg = tg = etg = None
+    with _project.stores(proj):
+        if proj.has_decisions:
+            try:
+                g = Graph.load(proj.store)
+            except Exception as exc:
+                v = Violation("store_loads",
+                              f"{proj.store} could not be read: {exc}",
+                              origin=DECISION)
+                before.append(v)
+                after.append(v)
+            else:
+                mine = _decisions(proj, g, views=False)
+                before += mine
+                try:
+                    eg = pending.preview(g, proj.pending)
+                except (pending.ApplyError, OSError, ValueError) as exc:
+                    after += mine
+                    after.append(_tray_applies(
+                        "dg pending", "dg drop <id>", exc, DECISION))
+                else:
+                    after += _decisions(proj, eg, views=False)
+        if proj.has_tasks:
+            try:
+                tg = TaskGraph.load(proj.tasks)
+            except Exception as exc:
+                v = Violation("store_loads",
+                              f"{proj.tasks} could not be read: {exc}",
+                              origin=TASK)
+                before.append(v)
+                after.append(v)
+            else:
+                mine = _tasks(proj, tg, views=False)
+                before += mine
+                try:
+                    etg = task_pending.preview(tg, proj.task_pending)
+                except (pending.ApplyError, OSError, ValueError) as exc:
+                    after += mine
+                    after.append(_tray_applies(
+                        "dg task pending", "dg task drop-op <id>", exc, TASK))
+                else:
+                    after += _tasks(proj, etg, views=False)
+        if g is not None and tg is not None:
+            before += _link(proj, g, tg)
+            # A side whose tray would not preview is judged as it sits.
+            after += _link(proj, eg if eg is not None else g,
+                           etg if etg is not None else tg)
+    return _belt(before), _belt(after)
+
+
+def _tray_applies(review: str, drop: str, exc: Exception,
+                  origin: str) -> Violation:
+    return Violation(
+        "tray_applies",
+        f"the staged ops no longer apply cleanly, so `dg apply` would refuse "
+        f"them: {exc} — `{review}` to review, `{drop}` or `dg edit <id>` to fix",
+        origin=origin,
+    )
+
+
+def diff(before: list[Violation], after: list[Violation],
+         ) -> tuple[list[Violation], list[Violation], list[Violation]]:
+    """`(fixed, introduced, kept)` — what the tray changes, keyed the way
+    `pending.introduced` keys it, on `(check, message)`.
+
+    `kept` is drawn from `after` rather than `before` so its origins are those
+    of the graph the caller is reporting on; the two agree by construction.
+    """
+    key = lambda v: (v.check, v.message)  # noqa: E731
+    was = {key(v) for v in before}
+    now = {key(v) for v in after}
+    fixed = [v for v in before if key(v) not in now]
+    introduced = [v for v in after if key(v) not in was]
+    kept = [v for v in after if key(v) in was]
+    return fixed, introduced, kept
 
 
 def _verbose(rows: list[tuple[str, dict]], origin: str) -> list[Violation]:
@@ -202,19 +329,21 @@ def _verbose(rows: list[tuple[str, dict]], origin: str) -> list[Violation]:
     return out
 
 
-def _link(proj: _project.Project) -> list[Violation]:
+def _link(proj: _project.Project, g: Graph | None = None,
+          tg: TaskGraph | None = None) -> list[Violation]:
     """The cross-graph invariants, when the project has both stores.
 
     Silent if either store is unreadable: `_decisions`/`_tasks` have already
     reported that as a blocking `store_loads`, and a second complaint about the
-    same file helps nobody.
+    same file helps nobody. `staged` passes the graphs it already holds — the
+    previewed pair — and the judgement is the same.
     """
     from dgraph import cross
     from dgraph.tasks import TaskGraph
 
     try:
-        g = Graph.load(proj.store)
-        tg = TaskGraph.load(proj.tasks)
+        g = g if g is not None else Graph.load(proj.store)
+        tg = tg if tg is not None else TaskGraph.load(proj.tasks)
     except Exception:
         return []
     try:
@@ -228,7 +357,8 @@ def _link(proj: _project.Project) -> list[Violation]:
         )]
 
 
-def _tasks(proj: _project.Project) -> list[Violation]:
+def _tasks(proj: _project.Project, tg: TaskGraph | None = None, *,
+           views: bool = True) -> list[Violation]:
     """The task store's own invariants, plus its view staleness.
 
     An *absent* `tasks.json` is silence — the overwhelming majority of projects
@@ -236,16 +366,21 @@ def _tasks(proj: _project.Project) -> list[Violation]:
     absence. An *unreadable* one is a blocking violation, following the
     `store_loads` precedent: a state the tool cannot read is not a state it may
     vouch for.
+
+    `tg` is the graph to judge when the caller already holds one — `staged`
+    passes the previewed store — and `views=False` leaves the view check out,
+    for the reason `staged` gives.
     """
     from dgraph import task_render
     from dgraph.tasks import TaskGraph
 
-    try:
-        tg = TaskGraph.load(proj.tasks)
-    except Exception as exc:
-        return [Violation("store_loads",
-                          f"{proj.tasks} could not be read: {exc}",
-                          origin=TASK)]
+    if tg is None:
+        try:
+            tg = TaskGraph.load(proj.tasks)
+        except Exception as exc:
+            return [Violation("store_loads",
+                              f"{proj.tasks} could not be read: {exc}",
+                              origin=TASK)]
 
     try:
         problems = tag(tg.validate(), TASK)
@@ -280,6 +415,9 @@ def _tasks(proj: _project.Project) -> list[Violation]:
          for t in tg.tasks.values()],
         TASK)
 
+    if not views:
+        return problems
+
     # A warning, for the reason `_decisions` gives at length below.
     if not proj.task_view.exists():
         problems.append(Violation(
@@ -307,13 +445,17 @@ def _tasks(proj: _project.Project) -> list[Violation]:
     return problems
 
 
-def _decisions(proj: _project.Project) -> list[Violation]:
-    try:
-        g = Graph.load(proj.store)
-    except Exception as exc:  # malformed JSON, bad shape
-        return [Violation("store_loads",
-                          f"{proj.store} could not be read: {exc}",
-                          origin=DECISION)]
+def _decisions(proj: _project.Project, g: Graph | None = None, *,
+               views: bool = True) -> list[Violation]:
+    """The decision store's own invariants, plus its view staleness. `g` and
+    `views` as in `_tasks`."""
+    if g is None:
+        try:
+            g = Graph.load(proj.store)
+        except Exception as exc:  # malformed JSON, bad shape
+            return [Violation("store_loads",
+                              f"{proj.store} could not be read: {exc}",
+                              origin=DECISION)]
 
     try:
         problems = tag(g.validate(), DECISION)
@@ -337,6 +479,9 @@ def _decisions(proj: _project.Project) -> list[Violation]:
                     "summary": e.summary, "why": e.why})
            for e in g.edges if e.active],
         DECISION)
+
+    if not views:
+        return problems
 
     # **A warning, not an error**, and the severity is the whole argument.
     #

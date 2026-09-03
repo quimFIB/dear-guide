@@ -206,6 +206,7 @@ dg apply --mine                          # ...only what this writer staged
 dg apply --agent b                       # ...only what ONE named writer staged
 dg clear --agent b                       # turn one writer's proposal down
 dg check                                 # every invariant
+dg check --staged                        # ...as `dg apply` would leave them: what the tray fixes and introduces
 dg serve                                 # web app on 127.0.0.1:8765
 dg edit <id>                             # revise a staged op
 dg drop <id>                             # unstage one op

@@ -2153,3 +2153,79 @@ def test_serve_refuses_a_word_it_does_not_know_rather_than_starting(run):
     res = run("serve", "--detach", "stpo")
     assert res.exit_code == 2 and "stop" in res.output and "status" in res.output
 
+
+
+# ---- dg check --staged ----------------------------------------------------
+
+
+def _with_orphan(store):
+    """The fixture graph plus a floating OPEN vertex, view rendered."""
+    bad = Graph.load(store / "decisions.json")
+    bad.vertices["D99"] = replace(bad.vertices["D01"], id="D99",
+                                  title="Floating", status="OPEN")
+    bad.save(store / "decisions.json")
+    write(bad, store / "decision-graph.md")
+
+
+def test_check_staged_says_what_the_tray_fixes_and_introduces(run, store, g):
+    """The reading a person wants before applying, as a diff against the
+    record rather than a second full list to compare by eye."""
+    _with_orphan(store)
+    assert run("dep", "D99", "--after", "D01").exit_code == 0   # connects it
+    assert run("add", "--id", "D98", "--title", "Loose",
+               "--area", "Alpha").exit_code == 0                # and floats one
+    res = run("check", "--staged")
+    assert res.exit_code == 0, res.output
+    out = res.output
+    assert out.index("would fix") < out.index("D99 is connected to nothing")
+    assert out.index("would introduce") < out.index("D98 is connected to nothing")
+    assert "as staged, all invariants hold" in out
+    # The record has not moved, and bare `check` still says what it said.
+    assert "D99 is connected to nothing" in run("check").output
+
+
+def test_check_staged_is_the_bare_reading_when_nothing_is_staged(run, store, g):
+    res = run("check", "--staged")
+    assert res.exit_code == 0
+    assert "nothing is staged" in res.output
+    assert "[stale_view]" in res.output           # the whole answer, views included
+
+
+def test_check_staged_exits_nonzero_when_an_old_error_stands(run, store, g):
+    """The exit code is the previewed graph's, not the diff's: a batch that
+    leaves an old error standing still leaves `dg apply` refusing."""
+    write(g)
+    raw = json.loads((store / "decisions.json").read_text())
+    raw["vertices"].append(
+        {"id": "D07", "title": "Bad", "area": "Alpha", "status": "WOBBLY"})
+    (store / "decisions.json").write_text(json.dumps(raw))
+    assert run("add", "--id", "D98", "--title", "Loose", "--area", "Alpha",
+               "--after", "D01").exit_code == 0
+    res = run("check", "--staged")
+    assert res.exit_code == 1
+    assert "unchanged" in res.output
+    assert "[status_legal]" in res.output          # an unchanged error is listed
+    assert "[stale_view]" not in res.output        # a view is never the tray's fault
+    assert "`dg apply` would refuse" in res.output
+
+
+def test_check_staged_reports_a_tray_that_will_not_preview(run, store, g):
+    write(g)
+    (store / ".dgraph-pending.json").write_text(json.dumps([
+        {"op": "close", "vertex": "D77", "answer": "a", "source": "s",
+         "falsifier": "f", "opens": [], "date": "2026-09-03"}]))
+    res = run("check", "--staged")
+    assert res.exit_code == 1
+    assert "[tray_applies]" in res.output and "D77" in res.output
+    assert run("check").exit_code == 0             # the record is still clean
+
+
+def test_check_staged_counts_unchanged_warnings_rather_than_listing_them(
+        run, store, g):
+    _with_orphan(store)
+    assert run("add", "--id", "D98", "--title", "Loose", "--area", "Alpha",
+               "--after", "D01").exit_code == 0
+    out = run("check", "--staged").output
+    assert "the tray changes nothing `dg check` reports" in out
+    assert "unchanged (1)" in out and "1 warning(s)" in out
+    assert "D99 is connected to nothing" not in out
