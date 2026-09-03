@@ -85,7 +85,7 @@ each item is waiting for:
 
 ```
 FRONTIER  4 not settled of 4   OPEN 4
-  D01  OPEN  Exact or approximate search?         ·  decidable now
+  D01  OPEN  Exact or approximate search?         ·  decidable now · unblocks D02, D03
   D02  OPEN  Which distance metric?               ·  waits D01
   D03  OPEN  How are queries spread across core…  ·  waits D01 · unblocks D04
   D04  OPEN  How does the index absorb new docu…  ·  waits D03

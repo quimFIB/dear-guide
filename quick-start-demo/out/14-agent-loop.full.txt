@@ -52,8 +52,8 @@ $ dg-agent list
 ┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━┓
 ┃ Name          ┃ Since      ┃ Staged ┃ Holding ┃ Budget         ┃ Seen ┃
 ┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━┩
-│ agile-azimuth │ 2026-09-02 │ 0      │ —       │ 30m (29m left) │ 5s   │
-│ agile-bearing │ 2026-09-02 │ 1      │ —       │ SPENT +1s      │ 3s   │
+│ agile-azimuth │ 2026-09-03 │ 0      │ —       │ 30m (29m left) │ 5s   │
+│ agile-bearing │ 2026-09-03 │ 1      │ —       │ SPENT +1s      │ 3s   │
 └───────────────┴────────────┴────────┴─────────┴────────────────┴──────┘
 `dg-agent expire` hands back what the spent ones hold
 7002 of 7004 names free
@@ -86,7 +86,7 @@ $ dg task node T05
 │ found doing T01                                                                              │
 │                                                                                              │
 │ Stopped                                                                                      │
-│   2026-09-02  budget spent: agile-bearing was given 2s and was stopped at it  (still parked) │
+│   2026-09-03  budget spent: agile-bearing was given 2s and was stopped at it  (still parked) │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 # For an agent nobody was watching, expire is the backstop; then prune the idle names.
 $ dg-agent expire

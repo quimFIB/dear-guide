@@ -16,11 +16,11 @@ $ dg apply
 ✓ applied 4 op(s) → decisions.json; the view is regenerated on demand with `dg render`
 $ dg
 FRONTIER  5 not settled of 8   OPEN 4  PROVISIONAL 3  REOPENED 1
-  D01  REOPENED  What is the note store format?                ·  decidable now · storage
-  D03  OPEN      Which embedding model backs semantic search?  ·  evidence T06 · search
-  D06  OPEN      What happens when the index is corrupted?     ·  evidence T04 · storage
-  D07  OPEN      How is ranking tuned once embeddings exist?   ·  waits D03 · search
-  D08  OPEN      How do two machines share one notes folder?   ·  waits D01 · sync
+  D01  REOPENED  What is the note store format?                ·  decidable now · unblocks D08
+  D03  OPEN      Which embedding model backs semantic search?  ·  evidence T06 · unblocks D07
+  D06  OPEN      What happens when the index is corrupted?     ·  evidence T04
+  D07  OPEN      How is ranking tuned once embeddings exist?   ·  waits D03
+  D08  OPEN      How do two machines share one notes folder?   ·  waits D01
 
 RESTING ON A PREMISE UNDER REVIEW  3
   D02  PROVISIONAL  How are notes indexed for search?  ·  D01 · search
@@ -33,10 +33,10 @@ Record what gets settled with `dg` -- see the dear-guide skill.
 
 FRONTIER (5) -- not settled
   D01  REOPENED  What is the note store format?  [storage]
-       decidable now
+       decidable now; unblocks D08
        note: three users report the same note edited on two machines in one day; two…
   D03  OPEN      Which embedding model backs semantic search?  [search]
-       waiting on evidence from T06
+       waiting on evidence from T06; unblocks D07
   D06  OPEN      What happens when the index is corrupted?  [storage]
        waiting on evidence from T04
   D07  OPEN      How is ranking tuned once embeddings exist?  [search]
@@ -108,7 +108,7 @@ $ dg node D01
 │ opens       D02, D05, D08                                                                    │
 │                                                                                              │
 │ falsifier   the journal needs a schema migration, or a note needs more than one file         │
-│ source      issues/41, 44, 45   (2026-09-02)                                                 │
+│ source      issues/41, 44, 45   (2026-09-03)                                                 │
 │                                                                                              │
 │ Answer                                                                                       │
 │ Still plain markdown files, one per note — plus a per-machine journal beside them for        │

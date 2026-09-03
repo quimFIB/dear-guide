@@ -66,3 +66,61 @@ terminal, unharvested, unsettled
   is:nonsense
   ^
 [exit 2]
+# The matches as a seed rather than the answer: the slice they induce, as two stores. boundary names what the slice still mentions and no longer holds, and from where. A slice says nothing a cut record cannot support -- D03 alone awaits nothing -- so --derived adds what the whole graph says of each record, beside the stores and never inside them.
+$ dg find --subgraph --hops 0 --derived id:D03
+{
+  "decisions": {
+    "areas": [
+      "storage",
+      "search",
+      "ux",
+      "sync"
+    ],
+    "vertices": [
+      {
+        "id": "D03",
+        "title": "Which embedding model backs semantic search?",
+        "area": "search",
+        "status": "OPEN"
+      }
+    ],
+    "edges": [
+      {
+        "from": "D03",
+        "to": [],
+        "active": true
+      }
+    ]
+  },
+  "tasks": {
+    "areas": [
+      "storage",
+      "search",
+      "ux",
+      "sync"
+    ],
+    "tasks": [],
+    "edges": []
+  },
+  "boundary": {
+    "D07": [
+      "D03.to"
+    ]
+  },
+  "derived": {
+    "decisions": {
+      "D03": {
+        "status": "OPEN",
+        "waiting_on": [],
+        "awaiting_evidence": [
+          "T06"
+        ],
+        "decidable": false,
+        "outside": [
+          "T06"
+        ]
+      }
+    },
+    "tasks": {}
+  }
+}

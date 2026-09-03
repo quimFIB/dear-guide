@@ -5,7 +5,7 @@ Record what gets settled with `dg` -- see the dear-guide skill.
 
 FRONTIER (4) -- not settled
   D03  OPEN  Which embedding model backs semantic search?  [search]
-       waiting on evidence from T06
+       waiting on evidence from T06; unblocks D07
   D06  OPEN  What happens when the index is corrupted?  [storage]
        waiting on evidence from T04
   D07  OPEN  How is ranking tuned once embeddings exist?  [search]

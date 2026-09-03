@@ -29,11 +29,11 @@ $ dg apply
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
 $ dg
 FRONTIER  5 not settled of 8   DECIDED 3  OPEN 4  REOPENED 1
-  D03  OPEN      Which embedding model backs semantic se…  ·  evidence T06 · search
-  D04  REOPENED  Where does the index live?                ·  decidable now · storage
-  D06  OPEN      What happens when the index is corrupte…  ·  waits D04 · evidence T04 · storage
-  D07  OPEN      How is ranking tuned once embeddings ex…  ·  waits D03 · search
-  D08  OPEN      How do two machines share one notes fol…  ·  decidable now · sync
+  D03  OPEN      Which embedding model backs semantic search?  ·  evidence T06 · unblocks D07
+  D04  REOPENED  Where does the index live?                    ·  decidable now · unblocks D06
+  D06  OPEN      What happens when the index is corrupted?     ·  waits D04 · evidence T04
+  D07  OPEN      How is ranking tuned once embeddings exist?   ·  waits D03
+  D08  OPEN      How do two machines share one notes folder?   ·  decidable now
   `dg show --full` for the table, nothing clipped
 $ dg check
 ! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
@@ -71,7 +71,7 @@ $ dg node D04
 │ opens       D06                                                                              │
 │                                                                                              │
 │ falsifier   a user needs the index to travel with the notes, as on a USB stick               │
-│ source      issues/52   (2026-09-02)                                                         │
+│ source      issues/52   (2026-09-03)                                                         │
 │                                                                                              │
 │ Answer                                                                                       │
 │ In the user's cache directory, keyed by a hash of the notes folder's path. Never inside the  │
@@ -116,7 +116,7 @@ RESTS ON (3) — nearest premise last
        path. Never inside the synced folder.
        falsifier:
          a user needs the index to travel with the notes, as on a USB stick
-       source: issues/52  ·  2026-09-02
+       source: issues/52  ·  2026-09-03
 
 WORK
   because of this: T09

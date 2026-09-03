@@ -586,10 +586,16 @@ def _show_listing(g: Graph, att: list[dict],
         if ev.get(r.id):
             # An open decision with a spike still running is not decidable now.
             aside.append("evidence " + ", ".join(ev[r.id]))
+        if not aside:
+            # Before `unblocks`, which is about *other* rows: whether this one
+            # can be picked up is the first thing the line owes its reader, and
+            # a decidable vertex that happens to release something is still
+            # decidable. It used to be printed only when nothing else was,
+            # which was right while `unblocks` was rare and wrong once it named
+            # every child this is the last premise of.
+            aside.append("decidable now")
         if r.unblocks:
             aside.append("unblocks " + ", ".join(r.unblocks))
-        if not aside:
-            aside.append("decidable now")
         # Last, so it qualifies what the rest of the line said rather than
         # replacing it: this row is a proposal, and `decidable now` about one
         # nobody has applied would be an invitation to act on the tray.

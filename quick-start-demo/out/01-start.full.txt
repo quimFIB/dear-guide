@@ -26,4 +26,4 @@ decisions.json.lock
 tasks.json.lock
 # And the other direction: the export round-trips, derived blocks and all.
 $ dg export
-{"areas": ["storage"], "vertices": [{"id": "D01", "title": "What is the note store format?", "area": "storage", "status": "OPEN"}], "edges": [], "derived": {"D01": {"depends": [], "provisional_because": [], "depth": 0, "children": [], "history": [], "rival_answers": null, "declined": []}}, "frontier": ["D01"], "next_id": "D02", "next_id_fault": null, "contested": {}}
+{"areas": ["storage"], "vertices": [{"id": "D01", "title": "What is the note store format?", "area": "storage", "status": "OPEN"}], "edges": [], "derived": {"D01": {"depends": [], "waiting_on": [], "provisional_because": [], "depth": 0, "children": [], "history": [], "rival_answers": null, "declined": []}}, "frontier": ["D01"], "next_id": "D02", "next_id_fault": null, "contested": {}}

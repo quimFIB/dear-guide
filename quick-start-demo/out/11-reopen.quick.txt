@@ -15,11 +15,11 @@ $ dg apply
 ✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
 $ dg
 FRONTIER  5 not settled of 8   DECIDED 2  OPEN 4  PROVISIONAL 1  REOPENED 1
-  D02  REOPENED  How are notes indexed for search?          ·  decidable now · search
-  D03  OPEN      Which embedding model backs semantic sea…  ·  waits D02 · evidence T06 · search
-  D06  OPEN      What happens when the index is corrupted?  ·  evidence T04 · storage
-  D07  OPEN      How is ranking tuned once embeddings exi…  ·  waits D03 · search
-  D08  OPEN      How do two machines share one notes fold…  ·  decidable now · sync
+  D02  REOPENED  How are notes indexed for search?         ·  decidable now · unblocks D03
+  D03  OPEN      Which embedding model backs semantic se…  ·  waits D02 · evidence T06 · unblocks D07
+  D06  OPEN      What happens when the index is corrupte…  ·  evidence T04
+  D07  OPEN      How is ranking tuned once embeddings ex…  ·  waits D03
+  D08  OPEN      How do two machines share one notes fol…  ·  decidable now
 
 RESTING ON A PREMISE UNDER REVIEW  1
   D04  PROVISIONAL  Where does the index live?  ·  D02 · storage

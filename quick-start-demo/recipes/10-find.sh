@@ -25,6 +25,8 @@ full() {
   note "Exit 1 is a fact worth trusting: nothing in the store says that. Exit 2 is a question the tool could not answer as asked."
   run dg find zebra
   run dg find 'is:nonsense'
+  note "The matches as a seed rather than the answer: the slice they induce, as two stores. boundary names what the slice still mentions and no longer holds, and from where. A slice says nothing a cut record cannot support -- D03 alone awaits nothing -- so --derived adds what the whole graph says of each record, beside the stores and never inside them."
+  run dg find --subgraph --hops 0 --derived 'id:D03'
 }
 
 layer "$@"

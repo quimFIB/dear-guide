@@ -17,7 +17,7 @@ $ dg node D08
 │ opens       TERMINAL                                                                         │
 │                                                                                              │
 │ falsifier   a user asks for notelit to resolve a conflict it did not cause                   │
-│ source      discussion   (2026-09-02)                                                        │
+│ source      discussion   (2026-09-03)                                                        │
 │                                                                                              │
 │ Answer                                                                                       │
 │ The notes folder is synced by whatever the user already uses; notelit never syncs.           │

@@ -171,13 +171,20 @@ RECIPES: dict[str, dict] = {
                    "the same answer the frontier commands give. Nothing is ranked, nothing fuzzy.",
         read_full="Superseded answers are searched too, since a reversal is often the only place a "
                   "rejected approach is written down. Exit 1 means nothing in the store says that, "
-                  "a fact worth trusting; exit 2 means the question could not be answered as asked.",
+                  "a fact worth trusting; exit 2 means the question could not be answered as asked. "
+                  "<code>--subgraph</code> turns the matches into a seed and prints the slice they "
+                  "induce as two stores: <code>boundary</code> names what the slice still mentions "
+                  "and no longer holds, per record, and <code>--derived</code> adds what the whole "
+                  "graph says of each record &mdash; beside the stores, never inside them, so a "
+                  "loaded slice cannot mistake a whole-graph fact for one of its own fields.",
         hl_quick=[(r"D06\s+OPEN\s+What happens when the index is corrupted", "matched on its title"),
                   (r"^TASKS\s+3 match", None)],
         hl_full=[(r"superseded answer:", "the rejected approach, still findable"),
                  (r"^\[exit 1\]", "nothing matched"),
                  (r"^no predicate `is:nonsense`", None),
-                 (r"^\[exit 2\]", "could not be asked that way")],
+                 (r"^\[exit 2\]", "could not be asked that way"),
+                 (r'"boundary"', "what the slice names and does not hold, and from where"),
+                 (r'"outside"', "the whole graph's fact, beside the store")],
     ),
     "11-reopen": dict(
         read_quick="Reopening supersedes the answer and keeps it. Every decided descendant now "
