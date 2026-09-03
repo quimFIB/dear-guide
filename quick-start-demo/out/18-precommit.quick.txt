@@ -1,0 +1,24 @@
+# An open question born with its rule for settling: prose, and a typed twin beside it.
+$ dg add --id D09 --area sync --title 'Which edit wins when two machines change one note?' --after D08 --rule 'a week of the team'\''s own notes syncing with no edit lost' --probe '{"kind": "prose.rule", "args": {"text": "seven days, zero lost edits"}}'
+staged add D09
+$ dg apply
+✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+# Work born with its definition of done, as evidence for that question.
+$ dg task add --id T12 --area sync --title 'Run two machines against one folder for a week' --evidence-for D09 --done-when 'seven days, zero lost edits, the log in bench/sync-week.md'
+staged add T12
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+# Every pre-commitment, beside what it will be judged against. Nothing judges it: the verdict is the command you run next.
+$ dg probe D09 T12
+D09  OPEN  Which edit wins when two machines change one note?
+    rule for settling a week of the team's own notes syncing with no edit lost
+    probe             prose.rule {"text": "seven days, zero lost edits"}  (2026-09-03)
+    verdict           unjudged  seven days, zero lost edits
+    T12 TODO
+
+T12  TODO  Run two machines against one folder for a week
+    done when         seven days, zero lost edits, the log in bench/sync-week.md
+    verdict           unjudged
+    todo
+
+2 presented · fired 0 · holds 0 · unjudged 2

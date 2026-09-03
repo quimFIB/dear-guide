@@ -1,0 +1,24 @@
+$ dg add --id D09 --area sync --title 'Which edit wins when two machines change one note?' --after D08
+staged add D09
+# Nothing applied. Every reader shows the store plus the tray, and says which rows are only proposed.
+$ dg tree D08
+decision graph
+└── D08 How do two machines share one notes folder? OPEN
+    └── D09 Which edit wins when two machines change one note? OPEN (staged)
+$ dg node D09
+╭──────────────────────────────────────────── D09 ─────────────────────────────────────────────╮
+│ Which edit wins when two machines change one note?                                           │
+│                                                                                              │
+│ status      OPEN  (staged — proposed in the tray, not applied)                               │
+│ area        sync                                                                             │
+│ depends on  D08                                                                              │
+│ opens       —                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+$ dg show
+FRONTIER  5 not settled of 9   DECIDED 4  OPEN 5
+  D03  OPEN  Which embedding model backs semantic search?        ·  evidence T06 · unblocks D07
+  D06  OPEN  What happens when the index is corrupted?           ·  evidence T04
+  D07  OPEN  How is ranking tuned once embeddings exist?         ·  waits D03
+  D08  OPEN  How do two machines share one notes folder?         ·  decidable now · unblocks D09
+  D09  OPEN  Which edit wins when two machines change one note?  ·  waits D08 · staged
+  `dg show --full` for the table, nothing clipped

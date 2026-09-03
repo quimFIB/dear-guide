@@ -267,8 +267,12 @@ earns its place by being on some nodes and not others.
 ## Deciding
 
 Click a vertex. The panel shows everything known about it — status, premises,
-what it opens, the answer with its falsifier and source, and any superseded
-answers with what overturned them.
+what it opens, the answer with its falsifier and source (and its probe, where
+the answer carries one), any superseded answers with what overturned them,
+and for an open question its rule for settling, typed or in prose, and what
+it is bound to. A task's panel likewise shows its definition of done. The
+trays below read a `reprobe` as its criterion and a `bind` as the pairs it
+adds.
 
 Any single field longer than about 400 characters is **folded** behind
 *show all · N chars*, and clicking it opens and closes the field. That is a

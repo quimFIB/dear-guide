@@ -32,6 +32,7 @@ PARTS = {
     "ask": ("Ask", "Frontiers, reasoning, and the backlog"),
     "agents": ("Agents", "Letting agents develop a task from the graph"),
     "extra": ("Beyond", "Two more things people ask for"),
+    "annex": ("Annex", "Pre-commitments a machine could read, and what a reader shows of the tray"),
 }
 
 RECIPES: dict[str, dict] = {
@@ -308,6 +309,54 @@ RECIPES: dict[str, dict] = {
                   (r"^adopted 2 op\(s\)", None)],
         hl_full=[(r"contested", "two answers to one question"),
                  (r"--take <ref>.*--keep <ref>", "the three ways out")],
+    ),
+    "18-precommit": dict(
+        read_quick="Every closed decision already carries a falsifier. The same idea now reaches the "
+                   "records that are not settled yet — a <em>rule</em> for settling an open "
+                   "question, a <em>definition of done</em> on a task — and beside any of the three "
+                   "sits an optional typed twin, a <em>probe</em>: <code>{kind, args}</code>, "
+                   "something installed code could judge. <code>dg probe</code> presents each "
+                   "beside what it will be judged against. Only the <code>prose</code> domain "
+                   "ships, and it presents without judging, so the verdict is still the command "
+                   "you run next.",
+        read_full="A probe on an open question or a task is appended and dated, never edited — a "
+                  "criterion rewritten to match the evidence is not a criterion, and the date beside "
+                  "it is what lets a reader see that happen. A <em>bind</em> says what a record is "
+                  "about in some domain's terms and accumulates like an edge. The core checks a "
+                  "probe's shape and nothing else: a kind nobody installed claims is presented and "
+                  "never an error, and <code>dg check</code> never evaluates anything, so a commit "
+                  "hook's verdict does not depend on what the hook's machine has installed.",
+        hl_quick=[(r"^staged add D09", None),
+                  (r"rule for settling\s+a week of the team", "prose, read back at dg decide"),
+                  (r"probe\s+prose\.rule", "its typed twin, dated"),
+                  (r"done when\s+seven days", "read back at dg task done"),
+                  (r"verdict\s+unjudged", "nothing here judges; you do")],
+        hl_full=[(r"entry 2; the earlier 1 stay", "appended, never edited"),
+                 (r"bound to\s+notelit\.module:sync", "an address, not a claim"),
+                 (r"\(live\)", "the last entry is the one that applies"),
+                 (r"^--probe: a probe's kind is <domain>\.<name>", "the shape, refused at the door"),
+                 (r"no installed domain claims `rocq\.`", "presented, not evaluated, never an error"),
+                 (r"still under review: D02", None),
+                 (r"settled again since this was decided \(by the dates, a heuristic\)", "a heuristic, labelled as one"),
+                 (r"\[probe_wellformed\]|all invariants hold", "the check reads the store and never the world")],
+    ),
+    "19-staged-readers": dict(
+        read_quick="Nothing reaches a store until <code>dg apply</code>. Until then every reader — "
+                   "the frontier, the tree, one node, a path, a search — shows the store <em>plus</em> "
+                   "the tray and marks what came from it, because a proposal has to be visible as one.",
+        read_full="Two things read the store alone, on purpose. <code>dg export</code> is what "
+                  "<code>dg import</code> reads back, so a proposal must never arrive in another "
+                  "project as a stored fact. <code>dg check</code> is what the commit gate runs, so a "
+                  "staged fix can never make a broken store pass; <code>--staged</code> is how you ask "
+                  "what the tray would leave, as a diff.",
+        hl_quick=[(r"D09 .*\(staged\)", "in the tree, marked"),
+                  (r"staged — proposed in the tray, not applied", "and on the node itself"),
+                  (r"D09\s+OPEN.*staged", "and in the frontier")],
+        hl_full=[(r"D09 .*\(staged\)", "the last hop of the chain"),
+                 (r"^unknown vertex D09", "export: the record alone"),
+                 (r"^✓ .*all invariants hold", "the store, as the gate sees it"),
+                 (r"^✓ as staged, all invariants hold", "the graph the tray would produce, judged"),
+                 (r"^✓ applied", None)],
     ),
 }
 
@@ -1268,7 +1317,7 @@ def page() -> str:
                'A dashed task outline means blocked; solid means ready. Click any command in a transcript to see the graph as it stood after it.</p>')
 
     app.append('<h2 id="made">How this page was made</h2>'
-               '<p class="read">Seventeen scripts under <code>quick-start-demo/recipes/</code>, each two functions, <code>quick</code> and <code>full</code>, '
+               '<p class="read">Nineteen scripts under <code>quick-start-demo/recipes/</code>, each two functions, <code>quick</code> and <code>full</code>, '
                'run by <code>run.sh</code> against a fresh copy of the seed. The runner captures each function\'s transcript and exports both stores after every command; '
                '<code>build.py</code> turns those into this file, so no command, output line or picture here was typed by hand. '
                'The highlighted lines are regular expressions that <code>tests/test_quick_start_demo.py</code> asserts against a fresh run, '

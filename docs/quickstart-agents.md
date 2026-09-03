@@ -347,7 +347,7 @@ lost.
   agents on it, seven runnable scenes, for what this page states and cannot
   show: what a second writer does to you, which of it `dg` refuses, which of
   it it merely reports, and which of it is left to you.
-- [`quick-start-demo/`](../quick-start-demo/) — the cookbook: seventeen worked
+- [`quick-start-demo/`](../quick-start-demo/) — the cookbook: nineteen worked
   examples, each a real transcript, with an overview of who is who in a fan-out
   and the two ways of running one.
 - [How it works, and why](how-it-works.md) — what the agent is maintaining.

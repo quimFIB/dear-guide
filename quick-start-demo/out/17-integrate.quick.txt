@@ -1,11 +1,11 @@
 $ dg integrate colleague/master
-2 op(s) from colleague/master against d5c9f10e67e6 — 2 clean, 0 contested, 0 blocking
+2 op(s) from colleague/master against 443d867286a4 — 2 clean, 0 contested, 0 blocking
 
 touched 2 record(s): D08, D09
 nothing contested — every op applies and the result is valid
 quarantined in .dgraph-incoming.json — nothing is staged and nothing is written
 $ dg incoming
-2 op(s) from colleague/master against d5c9f10e67e6
+2 op(s) from colleague/master against 443d867286a4
     d0  add_vertex  Which files does sync ignore?
     d1  add_edge  → D09
 
@@ -13,14 +13,14 @@ $ dg incoming
 <ref> --as <id>` where the two answers turn out to be to different questions; then `--adopt`. 
 `--discard` refuses the whole contribution.
 $ dg incoming --adopt
-2 op(s) from colleague/master against d5c9f10e67e6
+2 op(s) from colleague/master against 443d867286a4
     d0  add_vertex  Which files does sync ignore?
     d1  add_edge  → D09
 adopted 2 op(s) — `dg pending` to review, `dg apply` to write
 $ dg pending
 STAGED  2 op(s)
-  0  mxyq  add_vertex  D09  Which files does sync ignore? [sync]
-  1  fkxz  add_edge    D08  → D09
+  0  gbar  add_vertex  D09  Which files does sync ignore? [sync]
+  1  qdkz  add_edge    D08  → D09
 `dg apply` to write, `dg drop <id>` to unstage
   `dg pending --full` for the table, nothing clipped
 $ dg apply

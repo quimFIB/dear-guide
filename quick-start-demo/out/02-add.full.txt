@@ -5,11 +5,11 @@ $ dg add --id D10 --area sync --title 'Is the index file one of them?' --after D
 staged add D10
 $ dg pending
 STAGED  5 op(s)
-  0  hpgk  add_vertex  D09  Which files does sync ignore? [sync]
-  1  ntem  add_edge    D08  → D09
-  2  zggj  add_vertex  D10  Is the index file one of them? [sync]
-  3  jreu  add_edge    D09  → D10
-  4  tgbj  add_edge    D04  → D10
+  0  mnhp  add_vertex  D09  Which files does sync ignore? [sync]
+  1  uamq  add_edge    D08  → D09
+  2  uxxu  add_vertex  D10  Is the index file one of them? [sync]
+  3  xgte  add_edge    D09  → D10
+  4  mbua  add_edge    D04  → D10
 `dg apply` to write, `dg drop <id>` to unstage
   `dg pending --full` for the table, nothing clipped
 $ dg pending --full
@@ -17,29 +17,29 @@ $ dg pending --full
 ┏━━━┳━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ # ┃ id   ┃ Op         ┃ Vertex ┃ Area ┃ Detail                         ┃
 ┡━━━╇━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ 0 │ hpgk │ add_vertex │ D09    │ sync │ Which files does sync ignore?  │
-│ 1 │ ntem │ add_edge   │ D08    │      │ → D09                          │
-│ 2 │ zggj │ add_vertex │ D10    │ sync │ Is the index file one of them? │
-│ 3 │ jreu │ add_edge   │ D09    │      │ → D10                          │
-│ 4 │ tgbj │ add_edge   │ D04    │      │ → D10                          │
+│ 0 │ mnhp │ add_vertex │ D09    │ sync │ Which files does sync ignore?  │
+│ 1 │ uamq │ add_edge   │ D08    │      │ → D09                          │
+│ 2 │ uxxu │ add_vertex │ D10    │ sync │ Is the index file one of them? │
+│ 3 │ xgte │ add_edge   │ D09    │      │ → D10                          │
+│ 4 │ mbua │ add_edge   │ D04    │      │ → D10                          │
 └───┴──────┴────────────┴────────┴──────┴────────────────────────────────┘
 `dg apply` to write, `dg drop <id>` to unstage
 # Position or short id both address a staged op. Drop the second question.
 $ dg drop 2
 ✗ nothing dropped
-zggj was staged together with 2 other op(s), as one act: jreu add_edge, tgbj add_edge
+uxxu was staged together with 2 other op(s), as one act: xgte add_edge, mbua add_edge
 Removing it alone would leave the rest to be applied as though they meant something they do not.
 Drop the whole act, or leave it whole and turn it down with `clear`.
 `dg drop 2 --group` removes the whole act
 [exit 1]
 $ dg drop 2 --group
-dropped zggj: add_vertex D10  Is the index file one of them?
-dropped jreu: add_edge D09  → D10
-dropped tgbj: add_edge D04  → D10
+dropped uxxu: add_vertex D10  Is the index file one of them?
+dropped xgte: add_edge D09  → D10
+dropped mbua: add_edge D04  → D10
 $ dg pending
 STAGED  2 op(s)
-  0  hpgk  add_vertex  D09  Which files does sync ignore? [sync]
-  1  ntem  add_edge    D08  → D09
+  0  mnhp  add_vertex  D09  Which files does sync ignore? [sync]
+  1  uamq  add_edge    D08  → D09
 `dg apply` to write, `dg drop <id>` to unstage
   `dg pending --full` for the table, nothing clipped
 $ dg clear

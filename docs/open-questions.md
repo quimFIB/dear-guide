@@ -152,7 +152,13 @@ arguments they are rather than as a list of limitations.
 - **Whether the store stays per-repo.** Probably: decisions are about a codebase.
   A cross-project view would need a different addressing scheme.
 - **Whether the falsifier can be checked rather than merely recorded.** A
-  falsifier nobody revisits is a comment. Nothing here reads them back.
+  falsifier nobody revisits is a comment. *Read back now, judged not yet:*
+  `dg probe` presents every falsifier — and every rule for settling and
+  definition of done — beside what it is judged against, and each can carry a
+  typed `probe` that installed code could evaluate. Only the `prose` domain
+  ships, and it presents without judging, so the verdict is still the command
+  you run next. What stays open is whether an evaluating domain is ever
+  written against the seam; `reference.md` § *Pre-commitments* has the shape.
 - **Whether the unrecorded-decision nag is worth trying behind a flag**, and
   whether `decision-graph.md` should eventually be org rather than markdown.
 

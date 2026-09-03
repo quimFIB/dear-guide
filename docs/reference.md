@@ -173,7 +173,7 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG` |
 | `.dgraph-capture/` | a fan-out's recording, if one is running — scratch, and gitignored with the rest |
-| `quick-start-demo/` | **start here** — [the cookbook](../quick-start-demo/index.html): seventeen worked examples of *how do I do that with dear-guide?*, every line a real transcript, with the graph drawn beside each step |
+| `quick-start-demo/` | **start here** — [the cookbook](../quick-start-demo/index.html): nineteen worked examples of *how do I do that with dear-guide?*, every line a real transcript, with the graph drawn beside each step |
 | `demo/` | a runnable graph holding one of every record this keeps, served in the web app, and a walkthrough over it |
 | `demo-agentic/` | three agents and a day's work on one graph, as seven scenes — what several writers cost, and what the tool does about it |
 | `docs/` | [how it works](how-it-works.md), then quick starts: the [CLI](quickstart-cli.md), the [web app](quickstart-web.md), the [agent plugin](quickstart-agents.md) and [a whole session with it](session-walkthrough.md); plus this page, [composing in an editor](emacs.md), [the design behind `dg find`](query-framework.md) and [what is still open](open-questions.md) |
@@ -421,6 +421,14 @@ ref}` pair, and no record is bound to one pair twice. Two warnings: an
 orphan, and a vertex left `PROVISIONAL` once its premises are settled again.
 (There is no rule about a *waiting* vertex: what it waits on is read off its
 edges, so nothing stored can disagree with it.)
+
+**Both stores**, two more warnings and never errors: a prose field that
+outgrew the synopsis limit (`verbose_field`), and a field this version of
+`dg` does not read (`unknown_field`) — carried exactly as written and saved
+back, never dropped, so a store written by a newer install is safe in an
+older one; the warning names the field and the remedy is to run the install
+that reads it. A probe entry or a bind carrying a key nobody reads is the
+exception, refused as a shape fault: a criterion's shape is closed.
 
 **The work.** The same well-formedness — ids, statuses, no dangling reference,
 acyclic — plus: an edge says which kind it is · a `DONE` task has a

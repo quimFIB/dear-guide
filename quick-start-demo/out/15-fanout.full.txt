@@ -215,8 +215,8 @@ agile-azimuth ▸ $ dg add --id D09 --area ux --title 'Should search paginate?' 
 staged add D09
 $ dg pending
 STAGED  2 op(s)
-  0  wqsj  add_vertex  D09  Should search paginate? [ux]   ·  by agile-azimuth
-  1  bdgk  add_edge    D05  → D09                           ·  by agile-azimuth
+  0  rted  add_vertex  D09  Should search paginate? [ux]   ·  by agile-azimuth
+  1  vdpc  add_edge    D05  → D09                           ·  by agile-azimuth
 staged by  agile-azimuth 2
   `dg pending --agent <name>` for one writer alone
 `dg apply` to write, `dg drop <id>` to unstage

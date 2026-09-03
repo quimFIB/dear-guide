@@ -1,0 +1,35 @@
+$ dg add --id D09 --area sync --title 'Which edit wins when two machines change one note?' --after D08
+staged add D09
+# A chain that runs through a staged edge is found, and the hop is marked.
+$ dg path D01 D09
+D01 What is the note store format? DECIDED
+  │ Plain markdown files on disk, one note per file. The folder is the database.
+  ▼
+D08 How do two machines share one notes folder? OPEN
+  │ 
+  ▼
+D09 Which edit wins when two machines change one note? OPEN (staged)
+# One reader ignores the tray on purpose: export is what import reads back, so a proposal must never arrive elsewhere as a stored fact.
+$ dg export D09
+unknown vertex D09
+[exit 1]
+# The check is store-only too, and --staged is how you ask what the tray would leave: what it fixes, what it introduces.
+$ dg check
+✓ 8 vertices, 6 edges; 11 tasks, all invariants hold
+$ dg check --staged
+STAGED  2 decision op(s), 0 task op(s) — `dg pending`, `dg task pending`
+the tray changes nothing `dg check` reports
+✓ as staged, all invariants hold
+# The tray itself, and the store it would produce, are two different things a reader can tell apart.
+$ dg pending
+STAGED  2 op(s)
+  0  sajv  add_vertex  D09  Which edit wins when two machines change one note? [sync]
+  1  rktm  add_edge    D08  → D09
+`dg apply` to write, `dg drop <id>` to unstage
+  `dg pending --full` for the table, nothing clipped
+$ dg apply
+✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg tree D08
+decision graph
+└── D08 How do two machines share one notes folder? OPEN
+    └── D09 Which edit wins when two machines change one note? OPEN

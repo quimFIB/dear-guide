@@ -2,7 +2,7 @@
 
 A reference of worked examples, as one self-contained page:
 [`index.html`](index.html). It answers *how do I do that with dear-guide?*
-seventeen times, each answer a real transcript against one small synthetic
+nineteen times, each answer a real transcript against one small synthetic
 project with a picture of the graph beside it.
 
 ```sh
@@ -19,6 +19,7 @@ into the same project; open it only where you want more.
 | **Ask** | the frontier · why a decision is where it is · the backlog and moving work · find by what it says · a fact arrives · changing an answer · keeping it honest |
 | **Agents** | one agent works the frontier · which tasks can run at once, and several agents in one tray · what a session gets from the plugin |
 | **Beyond** | bringing a colleague's clone in |
+| **Annex** | what would settle it, written so a machine could read it · what a reader shows while something is staged |
 
 ## Everything on the page ran
 

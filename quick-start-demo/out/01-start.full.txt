@@ -7,7 +7,7 @@ $ cat prepared.json
 $ dg import prepared.json
 ✗ not imported
 prepared.json: decision D01 has "owner", which a decision does not have. The fields are: id, 
-title, area, status (required), note, format.
+title, area, status (required), note, format, probes, binds, rule.
 [exit 1]
 $ dg import prepared.json
 ! [no_orphans] (warning) D01 is connected to nothing

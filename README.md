@@ -80,8 +80,9 @@ independent: track only decisions, only work, or both.
 A **decision** is a question the project must answer, with an explicit status —
 `DECIDED` · `OPEN` · `REOPENED` · `PROVISIONAL`. Answering one
 requires a **falsifier**: what evidence would overturn it, written before that
-evidence arrives. Dependency is the graph structure, never a stored field, and
-a reversal is kept forever rather than deleted.
+evidence arrives — and read back, not only recorded: `dg probe` presents every
+one beside what it is judged against. Dependency is the graph structure, never
+a stored field, and a reversal is kept forever rather than deleted.
 
 A **task** is a unit of work — `TODO` · `DOING` · `PARKED` · `DONE` ·
 `DROPPED`. Blocked-ness is derived from the edges, so there is no status to go
@@ -101,7 +102,7 @@ contradicting itself.
 
 | | |
 |---|---|
-| [**The cookbook**](quick-start-demo/index.html) | seventeen worked examples of *how do I do that?*, every line a real transcript, with the graph drawn beside each step. **Start here.** |
+| [**The cookbook**](quick-start-demo/index.html) | nineteen worked examples of *how do I do that?*, every line a real transcript, with the graph drawn beside each step. **Start here.** |
 | [How it works, and why](docs/how-it-works.md) | one project's decisions from first question to first reversal — the orientation, not a manual |
 | [The CLI](docs/quickstart-cli.md) | the commands in the order you meet them |
 | [The web app](docs/quickstart-web.md) | `dg serve`: the DAG, the trays, and what stays in the terminal |

@@ -10,7 +10,7 @@ $ dg apply
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
 $ git commit -qam 'settle D08 here'
 $ dg integrate colleague/master
-1 op(s) from colleague/master against 4920ba5405db — 0 clean, 1 contested, 0 blocking
+1 op(s) from colleague/master against 0731b27ef0d1 — 0 clean, 1 contested, 0 blocking
 
 contested — it applies, but this graph says otherwise. Only a person can say which is right.
   d0  D08 was answered here too — 'A per-machine journal, merged on open.' against "notelit 
@@ -20,7 +20,7 @@ syncs nothing; the folder is the user's…"
 touched 1 record(s): D08
 quarantined in .dgraph-incoming.json — nothing is staged and nothing is written
 $ dg incoming
-1 op(s) from colleague/master against 4920ba5405db
+1 op(s) from colleague/master against 0731b27ef0d1
   open  d0  D08 was answered here too — 'A per-machine journal, merged on open.' against 
 "notelit syncs nothing; the folder is the user's…"
         D08 already has a decided edge — reopen it first
