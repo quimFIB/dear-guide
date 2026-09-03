@@ -253,3 +253,25 @@ def test_node_and_the_views_show_binds_only_where_there_are_some(run, store,
     assert "- **Bound to:** `rocq.file:theories/Closure.v`" in task_render.render(tg)
     run("task", "bind", tid, "rocq.file:theories/Closure.v"); run("apply")
     assert "bound to    rocq.file:theories/Closure.v" in run("task", "node", tid).output
+
+
+# ---- N02 · a key inside a bind loads and is refused at check ---------------
+
+def test_a_key_inside_a_bind_loads_and_is_refused_at_check_on_both_stores():
+    raw = copy.deepcopy(FIXTURE)
+    raw["vertices"][4]["binds"] = [{"kind": "rocq.constant", "ref": "X",
+                                    "since": "2026"}]
+    g = Graph.from_dict(raw)                       # no crash (audit N-F2)
+    assert g.vertices["D05"].binds[0].spelled == "rocq.constant:X"
+    found = [v for v in g.validate() if v.check == "binding_wellformed"]
+    assert len(found) == 1 and found[0].blocking and "since" in found[0].message
+    assert g.to_dict()["vertices"][4]["binds"][0]["since"] == "2026"
+
+    traw = copy.deepcopy(TASK_FIXTURE)
+    traw["tasks"][0]["binds"] = [{"kind": "rocq.file", "ref": "a.v", "since": "x"}]
+    tg = TaskGraph.from_dict(traw)
+    tfound = [v for v in tg.validate() if v.check == "task_binding_wellformed"]
+    assert len(tfound) == 1 and tfound[0].blocking
+    assert tg.to_dict()["tasks"][0]["binds"][0]["since"] == "x"
+    # the set reading ignores what it cannot read: still one bind, still equal
+    assert tg.tasks[traw["tasks"][0]["id"]].binds[0] == Bind("rocq.file", "a.v")

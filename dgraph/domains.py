@@ -93,9 +93,12 @@ class Result:
 
     `sentence` is what a person reads — for `prose`, the presentation itself.
     `payload` is for `decide`: the fields a `close` would carry, where a
-    domain can supply them. Neither is a store field, and the sentence passes
-    through `limits.refuse_verbose` before it can become a `--why` (R4, as
-    reconciled: a domain's sentence cannot carry a file into a commit).
+    domain can supply them. Neither is a store field. The sentence
+    **must pass** `limits.refuse_verbose` on the day a `--why` is composed from it
+    (R4, as reconciled: a domain's sentence cannot carry a file into a
+    commit) — nothing composes one yet, the door only presents, and
+    `tests/test_probe_door.py` holds this sentence to saying so rather than
+    claiming a bound no code applies (audit `N-F6`).
     """
 
     verdict: Verdict

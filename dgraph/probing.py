@@ -15,10 +15,15 @@ thing a reader would check it against:
 
 Built over one `by_src`, one reverse index and one `provisional_causes` for
 the whole listing, never an accessor per record (proposal E4), and read
-against both trays first: a record a staged op already names is shown with
-that op's label, since the act a firing would produce is already composed
-(proposal C7). Nothing here writes; the door produces a listing and, one
-day, ops — R3 is `domains.evaluate`'s.
+against both trays first: a record a staged op already names says so, and
+says which of two things that op is — **the act a firing would produce**
+(a reopen or a confirm on a decision, a close on an open question, a finish
+on a task), in which case `--stage` has nothing to compose (proposal C7); or
+merely an op that names the record, a dep or a retitle, which is worth a
+line and changes nothing. The two used to read the same, so a staged
+dependency would have read as a firing already acted on (audit `N-F4`).
+Nothing here writes; the door produces a listing and, one day, ops — R3 is
+`domains.evaluate`'s.
 """
 
 from __future__ import annotations
@@ -56,6 +61,7 @@ class Row:
     staged: str | None = None       # the label of a staged op naming it
     verdict: str = "unjudged"
     sentence: str = ""
+    area: str | None = None         # the record's own area, for `--area`
 
     @property
     def kind(self) -> str:
@@ -104,14 +110,16 @@ def rows(g: Graph | None, tg: TaskGraph | None,
                                                  because.get(vid, []), by_src)
                 out.append(Row(vid, "edge", v.title, v.status,
                                e.falsifier or "", e.probe, beside=beside,
-                               staged=staged_d.get(vid)))
+                               staged=_label("edge", staged_d.get(vid, [])),
+                               area=v.area))
             elif not v.settled and (v.rule or v.probe):
                 p = v.probe
                 out.append(Row(vid, "vertex", v.title, v.status, v.rule or "",
                                p.criterion if p else None,
                                p.date if p else None,
                                beside=evidence.get(vid, []),
-                               staged=staged_d.get(vid)))
+                               staged=_label("vertex", staged_d.get(vid, [])),
+                               area=v.area))
     if tg is not None:
         staged_t = _staged(t_ops or [], ("task", "from", "id"))
         for tid in sorted(tg.tasks):
@@ -122,7 +130,9 @@ def rows(g: Graph | None, tg: TaskGraph | None,
                           + (f" — {_clip(t.note)}" if t.note else "")]
                 out.append(Row(tid, "task", t.title, t.status, t.done_when or "",
                                p.criterion if p else None, p.date if p else None,
-                               beside=beside, staged=staged_t.get(tid)))
+                               beside=beside,
+                               staged=_label("task", staged_t.get(tid, [])),
+                               area=t.area))
     return out
 
 
@@ -180,15 +190,38 @@ def findings(selected: list[Row]):
 # ---- the pieces ------------------------------------------------------------
 
 
-def _staged(ops: list[dict], keys: tuple[str, ...]) -> dict[str, str]:
-    """`record -> label` for every staged op naming a record."""
-    out: dict[str, str] = {}
+def _staged(ops: list[dict], keys: tuple[str, ...]) -> dict[str, list[tuple[int, dict]]]:
+    """`record -> [(index, op), …]` for every staged op naming a record."""
+    out: dict[str, list[tuple[int, dict]]] = {}
     for i, op in enumerate(ops):
         for k in keys:
             rid = op.get(k)
             if isinstance(rid, str):
-                out.setdefault(rid, f"{op.get('op')} staged as op {i}")
+                out.setdefault(rid, []).append((i, op))
     return out
+
+
+def _is_act(slot: str, op: dict) -> bool:
+    """Whether a staged `op` is the act a firing on this slot would produce
+    — the thing `--stage` would otherwise compose (proposal C7)."""
+    kind, status = op.get("op"), op.get("status")
+    if slot == "edge":
+        return kind == "reopen" or (kind == "set_status" and status == "DECIDED")
+    if slot == "vertex":
+        return kind == "close"
+    return kind == "set_status" and status == "DONE"
+
+
+def _label(slot: str, named: list[tuple[int, dict]]) -> str | None:
+    """The line a row prints about the tray: the act if one is staged,
+    else the first op that merely names the record."""
+    if not named:
+        return None
+    for i, op in named:
+        if _is_act(slot, op):
+            return f"{op.get('op')} staged as op {i}"
+    i, op = named[0]
+    return f"named by a staged {op.get('op')} (op {i}) — not the act a firing would produce"
 
 
 def _evidence(tg: TaskGraph | None) -> dict[str, list[str]]:
@@ -253,9 +286,10 @@ def _provisional_beside(g: Graph, vid: str, e, later: list[str],
 
 
 def _area(r: Row, g: Graph | None) -> str | None:
-    if r.slot == "task" or g is None:
-        return getattr(r, "_area", None)
-    return g.vertices[r.id].area if r.id in g.vertices else None
+    """The row's own area, filled in by `rows` for both stores. It used to
+    be read off the decision graph, so `--area` reached no task (audit
+    `N-F3`)."""
+    return r.area
 
 
 def _date_of(r: Row, g: Graph | None) -> str | None:

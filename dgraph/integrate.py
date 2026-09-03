@@ -123,10 +123,10 @@ def decisions(base: Graph, theirs: Graph) -> Derived:
         was, now = base.active_edge(vid), theirs.active_edge(vid)
         if now is not None:
             _unknown(was, now, f"the edge from {vid}", out)
-    # Before the edges: a reprobe is refused on a settled question, and the
-    # close that settles it is among the edge ops.
+    # The reprobes are inside `edge_ops`, placed by `_edges` between the
+    # reopens and the close — see there for why neither *before the edges*
+    # nor *after them* is right. Binds have no such order to keep.
     for vid in sorted(theirs.vertices):
-        _probes(base.vertices.get(vid), theirs.vertices[vid], vid, "vertex", out)
         _binds(base.vertices.get(vid), theirs.vertices[vid], vid, "vertex", out)
     for vid in sorted(theirs.vertices):
         out.ops.extend(edge_ops[vid])
@@ -163,10 +163,9 @@ def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
             # ops for one act and read, in the tray, as two.
             _fields(was, t, tid, "task", out)
             _links(was, t, tid, out)
-        # Before the status: a reprobe is refused on finished work, and the
-        # `set_status DONE` that finishes it comes next.
-        _probes(was, t, tid, "task", out)
         _binds(was, t, tid, "task", out)
+        # The reprobes are placed by `_status`, between the restart that made
+        # the work unfinished and the finish that ended it — see there.
         _status(was, t, tid, out)
     _deps(base, theirs, out)
     for tid in sorted(theirs.tasks):
@@ -201,7 +200,7 @@ def _unknown(was, now, rid: str, out: Derived) -> None:
             f"reads it is the one to bring it in")
 
 
-def _probes(was, now, rid: str, what: str, out: Derived) -> None:
+def _reprobes(was, now, rid: str, what: str) -> list[dict]:
     """`reprobe` per probe entry that is new. The append-only record the two
     stores share.
 
@@ -209,13 +208,15 @@ def _probes(was, now, rid: str, what: str, out: Derived) -> None:
     a list that grew is that many acts and each carries its own date. A
     record the base did not have arrives with every entry this way rather
     than inside its `add_*` op, so that one derivation serves both cases
-    and the tray reads each criterion as the act it was.
+    and the tray reads each criterion as the act it was. Returned rather
+    than appended, because *where* they go is the caller's problem and
+    differs by store: `_edges` puts them between the reopens and the close,
+    `_status` interleaves them with the finishes by date.
     """
     old = len(was.probes) if was is not None else 0
     key = "vertex" if what == "vertex" else "task"
-    for p in now.probes[old:]:
-        out.ops.append({"op": "reprobe", key: rid, "probe": p.criterion,
-                        "date": p.date})
+    return [{"op": "reprobe", key: rid, "probe": p.criterion, "date": p.date}
+            for p in now.probes[old:]]
 
 
 def _binds(was, now, rid: str, what: str, out: Derived) -> None:
@@ -274,6 +275,20 @@ def _edges(base: Graph, theirs: Graph, vid: str, out: Derived) -> None:
                         "why": e.why or "reopened elsewhere",
                         **({"summary": e.summary} if e.summary else {}),
                         **({"format": e.format} if e.format else {})})
+
+    # The rules for settling this question that were written since the base,
+    # **after the reopens and before the close**. A reprobe is refused on a
+    # settled question, so every entry was written while the question was
+    # open: after any reopen that made it so, before any close that ended
+    # it. This used to be derived before every edge op, on the argument that
+    # the close is among them — one direction of two, and a clone that
+    # reopened a question and then wrote its rule arrived with the reopen
+    # adopted and the rule quarantined as inapplicable, under a message
+    # telling the reader to run the reopen that sat one line below. Audit
+    # `N-F1`. No date is consulted: the structural order is legal for every
+    # history the ops can produce.
+    out.ops.extend(_reprobes(base.vertices.get(vid), theirs.vertices[vid],
+                             vid, "vertex"))
 
     if now is None:
         if was is not None and was.to:
@@ -336,6 +351,7 @@ def _status(was, now, tid: str, out: Derived) -> None:
     old_stops = list(was.stops) if was is not None else []
     old_done = list(was.completions) if was is not None else []
     prior = was.status if was is not None else "TODO"
+    ops: list[dict] = []
 
     for k in now.stops[len(old_stops):]:
         # PARKED or DROPPED — the status says which, and only the last entry
@@ -343,8 +359,8 @@ def _status(was, now, tid: str, out: Derived) -> None:
         # has since come back from.
         kind = now.status if k is now.stops[-1] and now.status in (
             "PARKED", "DROPPED") else "PARKED"
-        out.ops.append({"op": "set_status", "task": tid, "status": kind,
-                        "why": k.why, "date": k.date})
+        ops.append({"op": "set_status", "task": tid, "status": kind,
+                    "why": k.why, "date": k.date})
         prior = kind
     for c in now.completions[len(old_done):]:
         if prior == "DONE":
@@ -352,9 +368,9 @@ def _status(was, now, tid: str, out: Derived) -> None:
             # the restart that produced it. Recovering *which* status it was
             # picked back up into is not possible from the record; DOING is
             # the one the command offers.
-            out.ops.append({"op": "set_status", "task": tid, "status": "DOING"})
-        out.ops.append({"op": "set_status", "task": tid, "status": "DONE",
-                        "outcome": c.outcome, "done": c.date})
+            ops.append({"op": "set_status", "task": tid, "status": "DOING"})
+        ops.append({"op": "set_status", "task": tid, "status": "DONE",
+                    "outcome": c.outcome, "done": c.date})
         prior = "DONE"
 
     if now.status != prior:
@@ -362,10 +378,40 @@ def _status(was, now, tid: str, out: Derived) -> None:
             out.unexpressible.append(
                 f"{tid} arrives {now.status} with no reason recorded — "
                 f"`task_park_complete` refuses it, and no op can invent one")
+            out.ops.extend(_with_reprobes(ops, _reprobes(was, now, tid, "task")))
             return
-        out.ops.append({"op": "set_status", "task": tid,
-                        "status": now.status,
-                        **({"note": now.note} if now.note else {})})
+        ops.append({"op": "set_status", "task": tid,
+                    "status": now.status,
+                    **({"note": now.note} if now.note else {})})
+    out.ops.extend(_with_reprobes(ops, _reprobes(was, now, tid, "task")))
+
+
+def _with_reprobes(ops: list[dict], reprobes: list[dict]) -> list[dict]:
+    """The status ops with each reprobe placed before the first finish —
+    a `DONE` or a `DROPPED` — dated on or after it, else at the end.
+
+    A definition of done is refused on finished work, so every entry was
+    written while the work was unfinished: after the restart that made it
+    so and before the finish that ended it. The restart carries no date (the
+    record does not keep one) and the finish does, so the finish is what the
+    reprobe is placed against; a restart always precedes its finish in `ops`,
+    so *before the finish* is also *after the restart*. Same day counts as
+    before, which is the only order the store could have produced. The
+    entries keep their own order, so the list that lands is the list that
+    was written whatever the interleaving. Before this, every reprobe was
+    derived ahead of every status op and a rule written after a restart was
+    refused against the base's `DONE` (audit `N-F1`).
+    """
+    out: list[dict] = []
+    i = 0
+    for op in ops:
+        if op.get("status") in ("DONE", "DROPPED"):
+            when = op.get("done") or op.get("date") or ""
+            while i < len(reprobes) and reprobes[i]["date"] <= when:
+                out.append(reprobes[i])
+                i += 1
+        out.append(op)
+    return out + reprobes[i:]
 
 
 def _readings(was, now, tid: str, out: Derived) -> None:
@@ -719,7 +765,17 @@ def _walk(g, base, ops: list[dict], store: str,
 
     for i, op in enumerate(ops):
         contested = None
-        hit = _contest(probe, base, op, store)
+        # Judged against `g` — the clone's store as it stands — and not the
+        # probe. `_contest` asks whether *this clone* moved the thing since
+        # the base; the probe also holds every arriving op that has landed so
+        # far, so judged against it a second arriving op on one record read
+        # as the first one's disagreement: a restart followed by a finish was
+        # *status differs — here DOING, arriving DONE* on a task this clone
+        # never touched, and two rules for settling written in one clone
+        # contested each other. The probe stays what it is for: whether the
+        # op *applies*, and what the ones after it are expanded against.
+        # Audit `N-F8`.
+        hit = _contest(g, base, op, store)
         if hit is not None:
             rid, why = hit
             contested = Finding("contested", store, i, rid, why, op=op)

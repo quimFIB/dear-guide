@@ -72,7 +72,8 @@ from dgraph import project
 # The shape a task shares with a vertex, from the module that belongs to
 # neither: `tests/test_cross.py` keeps this file from importing `model`.
 from dgraph.probe import (Bind, Probe, binds_fault, binds_from, binds_to,
-                          probe_entry_fault, probes_from, probes_to)
+                          probe_entry_fault, probes_from, probes_to,
+                          split_known)
 from dgraph.violation import Violation, cycle_from
 
 STATUSES = ("TODO", "DOING", "PARKED", "DONE", "DROPPED")
@@ -179,6 +180,10 @@ class Stop:
 
     why: str
     date: str
+    #: What the entry holds that this version does not name: carried, written
+    #: back, and warned about as `unknown_field` — `model.Vertex.extra` has
+    #: the argument, and `probe.split_known` is the one loader that fills it.
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -202,6 +207,8 @@ class Completion:
 
     date: str
     outcome: str
+    #: As `Stop.extra`.
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -233,6 +240,8 @@ class Reading:
     date: str
     note: str
     against: str
+    #: As `Stop.extra`.
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -511,10 +520,15 @@ def _task(raw: dict) -> Task:
     """One stored task. Only `parks` needs building; everything else is scalar.
 
     A malformed park entry is refused at load rather than in `validate`, for
-    the reason a duplicate id is: `Park(**p)` on a dict missing `why` raises
-    somewhere unhelpful, and a park silently dropped here would be invisible by
-    the time anything could report it — which is the one thing an archived
-    record must never be.
+    the reason a duplicate id is: a dict missing `why` cannot become a record
+    without inventing one, and a park silently dropped here would be invisible
+    by the time anything could report it — which is the one thing an archived
+    record must never be. A key the entry carries that this version does not
+    name is the other case, and it is **not** refused: `probe.split_known`
+    carries it into the record's `extra`, `dg check` names it as
+    `unknown_field`, and the save writes it back — `Cls(**entry)` used to
+    crash on it, which put a clone one version behind where `D76` took the
+    whole store out of.
     """
     fields = dict(raw)
     if "why" in fields:
@@ -529,14 +543,13 @@ def _task(raw: dict) -> Task:
             f'"stops": [{{"why": …, "date": "YYYY-MM-DD"}}]; `git log -p` has '
             f"the date"
         )
-    stops = fields.pop("stops", [])
-    try:
-        fields["stops"] = [Stop(**k) for k in stops]
-    except TypeError as exc:
-        raise ValueError(
-            f"{raw.get('id', '?')}: malformed stops entry — each needs a "
-            f"`why` and a `date`, and nothing else ({exc})"
-        ) from None
+    rid = raw.get("id", "?")
+    # Each appended record through the one loader: a missing key is refused
+    # here, a key this version does not name is carried (`probe.split_known`).
+    fields["stops"] = [
+        Stop(**named, extra=extra) for named, extra in
+        (split_known(k, ("why", "date"), rid, "stops", "a `why` and a `date`")
+         for k in fields.pop("stops", []))]
     completions = fields.pop("completions", [])
     legacy = [fields.pop(f, None) for f in ("done", "outcome")]
     if any(v is not None for v in legacy) and not completions:
@@ -547,24 +560,17 @@ def _task(raw: dict) -> Task:
         # so that `validate` can go on reporting it — refusing the load would
         # make the one command that names the fault unable to run.
         completions = [{"date": legacy[0] or "", "outcome": legacy[1] or ""}]
-    try:
-        fields["completions"] = [Completion(**c) for c in completions]
-    except TypeError as exc:
-        raise ValueError(
-            f"{raw.get('id', '?')}: malformed completions entry — each needs "
-            f"a `date` and an `outcome`, and nothing else ({exc})"
-        ) from None
-    fields["probes"] = probes_from(fields.pop("probes", []),
-                                   raw.get("id", "?"))
-    fields["binds"] = binds_from(fields.pop("binds", []), raw.get("id", "?"))
-    readings = fields.pop("readings", [])
-    try:
-        fields["readings"] = [Reading(**k) for k in readings]
-    except TypeError as exc:
-        raise ValueError(
-            f"{raw.get('id', '?')}: malformed readings entry — each needs a "
-            f"`date`, a `note` and an `against`, and nothing else ({exc})"
-        ) from None
+    fields["completions"] = [
+        Completion(**named, extra=extra) for named, extra in
+        (split_known(c, ("date", "outcome"), rid, "completions",
+                     "a `date` and an `outcome`") for c in completions)]
+    fields["probes"] = probes_from(fields.pop("probes", []), rid)
+    fields["binds"] = binds_from(fields.pop("binds", []), rid)
+    fields["readings"] = [
+        Reading(**named, extra=extra) for named, extra in
+        (split_known(k, ("date", "note", "against"), rid, "readings",
+                     "a `date`, a `note` and an `against`")
+         for k in fields.pop("readings", []))]
     # `because` became a list. A store written before then held a scalar, so it
     # is folded rather than refused, the same way the two-scalar completion was:
     # nothing has to be invented.
@@ -649,17 +655,18 @@ class TaskGraph:
                         # `t.completions`, not `t.done`/`t.outcome`: those are
                         # status-gated, so serializing through them would drop
                         # the record of finished work the moment it restarted.
-                        ("completions", [{"date": c.date, "outcome": c.outcome}
+                        ("completions", [{"date": c.date, "outcome": c.outcome,
+                                          **c.extra}
                                          for c in t.completions] or None),
                         # Absent rather than `[]` when there is none, matching
                         # every other field here: the store stays readable, and
                         # work that never stopped says so by silence.
-                        ("stops", [{"why": k.why, "date": k.date}
+                        ("stops", [{"why": k.why, "date": k.date, **k.extra}
                                    for k in t.stops] or None),
                         ("format", t.format), ("because", t.because or None),
                         ("evidence_for", t.evidence_for),
                         ("readings", [{"date": r.date, "note": r.note,
-                                       "against": r.against}
+                                       "against": r.against, **r.extra}
                                       for r in t.readings] or None),
                         ("probes", probes_to(t.probes)),
                         ("binds", binds_to(t.binds)),

@@ -16,7 +16,7 @@ through `env`, for the bound on `args`.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def probe_args_limit() -> int:
@@ -45,12 +45,20 @@ class Probe:
     supervisor reads — visible, not prevented.
 
     Three fields: the criterion's two, and the date. Not who, for the reason
-    `Stop` gives.
+    `Stop` gives. `extra` is what the entry holds that this version does not
+    name — carried and written back, never dropped and never crashed on
+    (`Vertex.extra` has the argument, `D76`), and **refused by `validate`**
+    as a blocking `probe_wellformed`, because a probe's shape is closed
+    (`D71`): a key the core carried without a name would be one a domain came
+    to rely on. Refused at check rather than at load so that the store still
+    answers every other command in a clone one version behind, which is the
+    difference between a commit the gate denies and a clone nothing can run.
     """
 
     kind: str
     args: dict
     date: str
+    extra: dict = field(default_factory=dict)
 
     @property
     def criterion(self) -> dict:
@@ -58,33 +66,67 @@ class Probe:
         return {"kind": self.kind, "args": self.args}
 
 
-def probes_from(raw, rid: str) -> list[Probe]:
-    """The stored `probes` list as records, refused at load if malformed.
+def split_known(raw: object, known: tuple[str, ...], rid: str,
+                what: str, needs: str) -> tuple[dict, dict]:
+    """`(named, extra)` for one appended entry: the keys `known` names, and
+    everything else — carried, never dropped and never crashed on.
 
-    Refused here rather than in `validate`, as a malformed `stops` entry
-    is: `Probe(**p)` on a dict missing `date` raises somewhere unhelpful,
-    and an entry dropped here would be invisible by the time anything could
-    report it. Shared by both stores, since the field is the same shape on
-    a task and a vertex and a second copy would drift.
+    The one loader for every appended record in both stores — a probe, a
+    bind, and the task store's stops, completions and readings — so that
+    they all draw the line in the same place: an entry that is **not an
+    object**, or one **missing** a key it needs, is refused here, at load,
+    as `tasks._task` argues (an entry dropped here would be invisible by the
+    time anything could report it, and a date is not something a loader may
+    invent); an entry carrying a key this version does not name **loads**,
+    and what is then said about the key is the record's own rule —
+    `unknown_field`, a warning, for a stop or a reading; `probe_wellformed`,
+    blocking, for a probe. Before this existed each of the five did
+    `Cls(**entry)`, which made a key from a newer version a crash in an
+    older one: the pre-`D76` failure, one level below the record.
     """
-    try:
-        return [Probe(**p) for p in (raw or [])]
-    except TypeError as exc:
+    if not isinstance(raw, dict):
         raise ValueError(
-            f"{rid}: malformed probes entry — each needs a `kind`, an "
-            f"`args` and a `date`, and nothing else ({exc})") from None
+            f"{rid}: malformed {what} entry — each is an object with "
+            f"{needs}, not {type(raw).__name__}")
+    missing = [k for k in known if k not in raw]
+    if missing:
+        raise ValueError(
+            f"{rid}: malformed {what} entry — each needs {needs} "
+            f"({', '.join(missing)} missing)")
+    return ({k: raw[k] for k in known},
+            {k: v for k, v in raw.items() if k not in known})
+
+
+def probes_from(raw, rid: str) -> list[Probe]:
+    """The stored `probes` list as records — `split_known` says what is
+    refused at load and what is carried. Shared by both stores, since the
+    field is the same shape on a task and a vertex and a second copy would
+    drift.
+    """
+    out = []
+    for p in raw or []:
+        named, extra = split_known(p, ("kind", "args", "date"), rid,
+                                   "probes", "a `kind`, an `args` and a `date`")
+        out.append(Probe(**named, extra=extra))
+    return out
 
 
 def probes_to(probes: list[Probe]) -> list[dict] | None:
-    """The stored form: absent rather than `[]` where there are none."""
-    return [{"kind": p.kind, "args": p.args, "date": p.date}
+    """The stored form: absent rather than `[]` where there are none, and
+    what was carried written back after what was read."""
+    return [{"kind": p.kind, "args": p.args, "date": p.date, **p.extra}
             for p in probes] or None
 
 
 def probe_entry_fault(p: Probe) -> str | None:
-    """`probe_fault` on an appended entry, plus its date."""
+    """`probe_fault` on an appended entry, plus its date and the keys it
+    carries that nothing reads — the same sentence `probe_fault` gives for
+    a third key on the edge's probe, so the three doors are one."""
     if not p.date:
         return "a probes entry is missing its date"
+    if p.extra:
+        return (f"a probes entry carries only kind, args and date — "
+                f"{', '.join(sorted(p.extra))} is not read by anything")
     return probe_fault(p.criterion)
 
 
@@ -148,11 +190,15 @@ class Bind:
 
     On the vertex rather than the edge because the subject persists across
     reversals, and an edge is remade by every reopen. Frozen, so a list of
-    them can be read as the set it is.
+    them can be read as the set it is — and `extra`, what the pair carries
+    that this version does not name, is outside that reading: carried and
+    written back as `Probe.extra` is, refused by `validate` as
+    `binding_wellformed`, and never part of what makes two binds the same.
     """
 
     kind: str
     ref: str
+    extra: dict = field(default_factory=dict, compare=False, hash=False)
 
     @property
     def spelled(self) -> str:
@@ -208,26 +254,28 @@ def spell_bind(text: str) -> dict:
 
 
 def binds_from(raw, rid: str) -> list[Bind]:
-    """The stored `binds` list as records, refused at load if malformed —
-    `probes_from`'s twin, for the same reason."""
-    try:
-        return [Bind(**b) for b in (raw or [])]
-    except TypeError as exc:
-        raise ValueError(
-            f"{rid}: malformed binds entry — each needs a `kind` and a "
-            f"`ref`, and nothing else ({exc})") from None
+    """The stored `binds` list as records — `probes_from`'s twin, through
+    the same `split_known`."""
+    out = []
+    for b in raw or []:
+        named, extra = split_known(b, ("kind", "ref"), rid, "binds",
+                                   "a `kind` and a `ref`")
+        out.append(Bind(**named, extra=extra))
+    return out
 
 
 def binds_to(binds: list[Bind]) -> list[dict] | None:
-    return [{"kind": b.kind, "ref": b.ref} for b in binds] or None
+    return [{"kind": b.kind, "ref": b.ref, **b.extra} for b in binds] or None
 
 
 def binds_fault(binds: list[Bind]) -> list[str]:
-    """Every fault in a record's binds: each pair's shape, and a duplicate."""
+    """Every fault in a record's binds: each pair's shape — a carried key
+    included, which `bind_fault` refuses as it would on an op — and a
+    duplicate."""
     out = []
     seen = set()
     for b in binds:
-        fault = bind_fault({"kind": b.kind, "ref": b.ref})
+        fault = bind_fault({"kind": b.kind, "ref": b.ref, **b.extra})
         if fault:
             out.append(fault)
         elif b in seen:

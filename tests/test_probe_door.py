@@ -199,3 +199,49 @@ def test_dg_probe_writes_nothing(run, store):
     run("probe", "--all")
     assert (store / "decisions.json").read_bytes() == before
     assert pending.load(store / ".dgraph-pending.json") == []
+
+
+# ---- N03 · the scopes and the label say what they do -----------------------
+
+def test_area_reaches_a_task_and_the_row_carries_its_area(run, store, task_store):
+    tg = TaskGraph.from_dict(TASK_FIXTURE)
+    tid = next(t for t in tg.tasks if tg.tasks[t].unfinished)
+    area = tg.tasks[tid].area
+    tg = task_pending.apply_all(tg, [
+        {"op": "set_fields", "task": tid, "done_when": "tests pass"}])
+    (task_store / "tasks.json").write_text(json.dumps(tg.to_dict()))
+    rows = probing.rows(None, tg)
+    assert [r.area for r in rows] == [area]
+    chosen = probing.select(rows, None, probing.Scope(area=area))
+    assert [r.id for r in chosen] == [tid]                      # audit N-F3
+    res = run("probe", "--area", area)
+    assert res.exit_code == 0 and tid in res.stdout
+
+
+def test_the_staged_label_tells_the_act_from_any_other_op(run, store):
+    run("dep", "D06", "--after", "D01")
+    res = run("probe", "D01")
+    assert "named by a staged add_edge" in res.stdout               # audit N-F4
+    assert "add_edge staged" not in res.stdout
+    # a row named by both shows the act, not the first op that named it
+    run("reopen", "D01", "--why", "moved", "--yes")
+    res = run("probe", "D01")
+    assert "reopen staged as op 1" in res.stdout
+    assert "named by" not in res.stdout
+
+
+def test_a_task_row_names_only_a_finishing_op_as_its_act(run, store, task_store):
+    run("task", "amend", "T02", "--done-when", "tests pass"); run("apply")
+    run("task", "start", "T02")
+    assert "named by a staged set_status" in run("probe", "T02").stdout
+    run("task", "done", "T02", "--outcome", "out")
+    out = run("probe", "T02").stdout
+    assert "set_status staged as op 1" in out and "named by" not in out
+
+
+def test_the_result_docstring_promises_nothing_the_code_does_not_do():
+    """`refuse_verbose` is not applied to a domain's sentence today — nothing
+    composes a `--why` from one — so the docstring says *must*, not *passes*
+    (audit N-F6). When `--stage` lands, this test is the one to invert."""
+    doc = domains.Result.__doc__
+    assert "must pass" in doc and "passes through" not in doc

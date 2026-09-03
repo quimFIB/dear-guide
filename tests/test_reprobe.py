@@ -333,3 +333,118 @@ def test_the_views_show_a_probe_only_where_there_is_one(store, task_store):
     tg = task_pending.apply_all(tg, [
         {"op": "reprobe", "task": tid, "probe": ONE, "date": "2026-01-01"}])
     assert "*Definition of done:* 2026-01-01 — `prose.rule`" in task_render.render(tg)
+
+
+
+# ---- N01 · the seam replays a reprobe in the order it happened -------------
+#
+# `_probes` used to run before the edge ops and before the status ops, on the
+# argument that a reprobe is refused on a settled question and the close is
+# among the edge ops — one direction of two. Reopen a question and then write
+# its rule, and the other clone adopted the reopen and quarantined the rule as
+# inapplicable, telling the reader to run the reopen it had just adopted.
+# Audit `N-F1`. Every legal order that contains a reprobe, on both stores.
+
+def _decided_base():
+    return Graph.from_dict(FIXTURE)
+
+
+CLOSE = {"op": "close", "vertex": "D04", "answer": "again", "source": "s",
+         "falsifier": "f", "to": ["D05"]}
+REOPEN = {"op": "reopen", "vertex": "D04", "why": "moved"}
+RP_D = lambda p, d: {"op": "reprobe", "vertex": "D04", "probe": p, "date": d}
+
+
+@pytest.mark.parametrize("sequence", [
+    [{"op": "reprobe", "vertex": "D05", "probe": ONE, "date": "2026-02-01"},
+     {"op": "close", "vertex": "D05", "answer": "a", "source": "s",
+      "falsifier": "f", "to": ["D06"]}],                    # reprobe, close
+    [REOPEN, RP_D(ONE, "2026-02-02")],                       # reopen, reprobe
+    [REOPEN, RP_D(ONE, "2026-02-02"), CLOSE],                # reopen, reprobe, close
+    [REOPEN, RP_D(ONE, "2026-02-02"), RP_D(TWO, "2026-02-03"), CLOSE],
+    [{"op": "add_vertex", "id": "D07", "title": "q", "area": "Alpha",
+      "probe": ONE, "date": "2026-02-02"},
+     {"op": "reprobe", "vertex": "D07", "probe": TWO, "date": "2026-02-03"}],
+], ids=["reprobe-close", "reopen-reprobe", "reopen-reprobe-close",
+        "reopen-two-reprobes-close", "new-vertex-two-entries"])
+def test_the_seam_replays_every_legal_decision_order_with_a_reprobe(sequence):
+    base = _decided_base()
+    theirs = pending.apply_all(base, sequence)
+    ops = integrate.decisions(base, theirs).ops
+    replay = pending.apply_all(base, ops)
+    for vid in theirs.vertices:
+        assert replay.vertices[vid].probes == theirs.vertices[vid].probes, vid
+        assert replay.vertices[vid].status == theirs.vertices[vid].status
+    rep = integrate.plan(base, None, base, None, theirs, None)
+    assert not rep.inapplicable and not rep.contested, rep.inapplicable
+
+
+def _task_base():
+    return TaskGraph.from_dict(TASK_FIXTURE)
+
+
+T_RP = lambda t, p, d: {"op": "reprobe", "task": t, "probe": p, "date": d}
+T_DONE = lambda t, d: {"op": "set_status", "task": t, "status": "DONE",
+                       "outcome": "out", "done": d}
+T_DOING = lambda t: {"op": "set_status", "task": t, "status": "DOING"}
+
+
+@pytest.mark.parametrize("sequence", [
+    [T_RP("T02", ONE, "2026-02-01"), T_DONE("T02", "2026-02-05")],   # reprobe, done
+    [T_DOING("T01"), T_RP("T01", ONE, "2026-02-02")],               # restart, reprobe
+    [T_DOING("T01"), T_RP("T01", ONE, "2026-02-02"), T_DONE("T01", "2026-02-03")],
+    [T_RP("T02", ONE, "2026-02-01"), T_DONE("T02", "2026-02-02"), T_DOING("T02"),
+     T_RP("T02", TWO, "2026-02-03"), T_DONE("T02", "2026-02-04")],
+    [T_RP("T02", ONE, "2026-02-01"),
+     {"op": "set_status", "task": "T02", "status": "DROPPED", "why": "no",
+      "date": "2026-02-02"}],                                        # reprobe, drop
+    [T_RP("T02", ONE, "2026-02-05"), T_DONE("T02", "2026-02-05")],   # same day
+], ids=["reprobe-done", "restart-reprobe", "restart-reprobe-done",
+        "done-restart-reprobe-done", "reprobe-drop", "same-day"])
+def test_the_seam_replays_every_legal_task_order_with_a_reprobe(sequence):
+    base = _task_base()
+    theirs = task_pending.apply_all(base, sequence)
+    ops = integrate.tasks(base, theirs).ops
+    replay = task_pending.apply_all(base, ops)
+    for tid in theirs.tasks:
+        assert replay.tasks[tid].probes == theirs.tasks[tid].probes, tid
+        assert replay.tasks[tid].status == theirs.tasks[tid].status
+    rep = integrate.plan(None, base, None, base, None, theirs)
+    assert not rep.inapplicable and not rep.contested, rep.inapplicable
+
+
+# ---- N02 · a key inside a slot is refused at check, not at load ------------
+#
+# `Probe(**p)` on an entry carrying a key this version does not name raised
+# at load — the pre-`D76` crash, one level below the record `extra` protects:
+# nothing answered, and `store_loads` denied every commit in the clone. The
+# edge's probe was refused by `validate` instead. One door now: the entry
+# loads, the key is carried and written back, and `validate` refuses it as
+# blocking `probe_wellformed`, which is what the proposal decided a probe's
+# shape is (`D71`) — closed, and checked. Audit `N-F2`.
+
+def test_a_key_inside_a_probes_entry_loads_and_is_refused_at_check_on_both_stores():
+    raw = copy.deepcopy(FIXTURE)
+    raw["vertices"][4]["probes"] = [{**ONE, "date": "2026-01-01", "who": "me"}]
+    g = Graph.from_dict(raw)                       # no crash
+    assert g.vertices["D05"].probe.criterion == ONE
+    found = [v for v in g.validate() if v.check == "probe_wellformed"]
+    assert len(found) == 1 and found[0].blocking and "who" in found[0].message
+    assert g.to_dict()["vertices"][4]["probes"][0]["who"] == "me"   # carried
+
+    traw = copy.deepcopy(TASK_FIXTURE)
+    traw["tasks"][0]["probes"] = [{**ONE, "date": "2026-01-01", "who": "me"}]
+    tg = TaskGraph.from_dict(traw)
+    tfound = [v for v in tg.validate() if v.check == "task_probe_wellformed"]
+    assert len(tfound) == 1 and tfound[0].blocking and "who" in tfound[0].message
+    assert tg.to_dict()["tasks"][0]["probes"][0]["who"] == "me"
+
+
+def test_a_missing_key_in_a_probes_entry_is_still_refused_at_load():
+    raw = copy.deepcopy(FIXTURE)
+    raw["vertices"][4]["probes"] = [{"kind": "prose.rule", "date": "d"}]
+    with pytest.raises(ValueError, match="D05: malformed probes entry"):
+        Graph.from_dict(raw)
+    raw["vertices"][4]["probes"] = ["not an object"]
+    with pytest.raises(ValueError, match="D05: malformed probes entry"):
+        Graph.from_dict(raw)

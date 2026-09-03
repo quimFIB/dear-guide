@@ -1660,8 +1660,11 @@ def probe(
                                      help="every PROVISIONAL decision"),
     area: str = typer.Option(None, "--area"),
     since: str = typer.Option(None, "--since", metavar="DATE",
-                              help="records whose pre-commitment is dated on "
-                                   "or after this ISO date"),
+                              help="records whose probe or answer is dated on "
+                                   "or after this ISO date. A rule or a "
+                                   "definition of done in prose alone carries "
+                                   "no date and is out of this scope — reach "
+                                   "it by id, --area or --all"),
     all_: bool = typer.Option(False, "--all", help="everything, however many"),
     timeout: float = typer.Option(domains.DEADLINE, "--timeout",
                                   help="seconds per domain before its "

@@ -461,7 +461,15 @@ def _tasks(proj: _project.Project, tg: TaskGraph | None = None, *,
         TASK)
     problems += _unknown(
         [(t.id, t.extra) for t in tg.tasks.values()]
-        + [(f"the {e.kind} edge from {e.src}", e.extra) for e in tg.edges],
+        + [(f"the {e.kind} edge from {e.src}", e.extra) for e in tg.edges]
+        # The three appended records carry what they cannot read the same
+        # way (`probe.split_known`); a probe's or a bind's carried key is
+        # not here, because `validate` refuses it as a shape fault.
+        + [(f"{t.id}'s {what} {i + 1}", k.extra)
+           for t in tg.tasks.values()
+           for what, rows in (("stop", t.stops), ("completion", t.completions),
+                              ("reading", t.readings))
+           for i, k in enumerate(rows)],
         TASK)
 
     if not views:
