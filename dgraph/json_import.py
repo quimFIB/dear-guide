@@ -78,7 +78,7 @@ SCHEMA = {
         "collection": "vertices",
         "record": "decision",
         "required": ("id", "title", "area", "status"),
-        "optional": ("note", "format"),
+        "optional": ("note", "format", "probes"),
         "edge_required": ("from",),
         # The store's own list, so a field added to `Edge` is accepted here
         # the same day. This door still *refuses* a key outside it, and that
@@ -102,7 +102,7 @@ SCHEMA = {
         # warns of, arriving through the door it was written to guard.
         "optional": ("status", "note", "completions", "done", "outcome",
                      "why", "format", "because", "evidence_for", "stops",
-                     "readings"),
+                     "readings", "probes"),
         "edge_required": ("from",),
         # `kind` is required by the store and deliberately not checked here:
         # `tasks._edge` refuses an absent one with a message that also names

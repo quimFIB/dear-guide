@@ -101,6 +101,7 @@ CASES = [
     ([], ("dep", "D06", "--after", "D01,D02")),
     ([], ("undep", "D06", "--after", "D05")),
     ([], ("amend", "D05", "--title", "reworded")),
+    ([], ("reprobe", "D05", "--probe", '{"kind": "prose.rule", "args": {}}')),
     ([], ("rm", "D06", "--yes")),
     ([], ("task", "add", "--id", "T09", "--title", "x", "--area", "Alpha")),
     ([], ("task", "add", "--id", "T09", "--title", "x", "--area", "Alpha",
@@ -121,6 +122,8 @@ CASES = [
     ([], ("task", "link", "T02", "--evidence-for", "D05")),
     ([], ("task", "unlink", "T01", "--because", "D01")),
     ([], ("task", "amend", "T02", "--title", "reworded")),
+    ([], ("task", "reprobe", "T02", "--probe",
+          '{"kind": "prose.done", "args": {}}')),
     ([], ("task", "rm", "T03", "--yes")),
     # Across both stores, and therefore two writes — one per tray. That is the
     # rule rather than an exception to it: `dg apply` keeps the two batches

@@ -21,11 +21,11 @@ from pathlib import Path
 from dgraph import areas as _areas
 from dgraph import env, limits, project, ranges
 from dgraph.model import (CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED, Edge,
-                          Graph, Vertex, probe_fault, status_fault)
+                          Graph, Probe, Vertex, probe_fault, status_fault)
 from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
-       "remove_vertex", "set_status", "set_fields", "reject"}
+       "remove_vertex", "set_status", "set_fields", "reject", "reprobe"}
 
 #: What `set_fields` may write, in **both** stores. One tuple, imported by
 #: `task_pending`, because a decision and a task differ in everything except
@@ -1146,7 +1146,8 @@ def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
     # `apply_all` would refuse the batch later, naming `probe_wellformed`
     # against an op somebody else may by then have staged beside. Refused
     # here, at the door, the way a status is.
-    if op.get("op") in ("close", "reject") and op.get("probe") is not None:
+    if (op.get("op") in ("close", "reject", "add_vertex", "reprobe")
+            and op.get("probe") is not None):
         fault = probe_fault(op["probe"])
         if fault:
             raise ApplyError(f"probe: {fault}")
@@ -1488,6 +1489,7 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
                 new_area: bool = False,
                 status: str = "OPEN", after: list[str] | None = None,
                 note: str | None = None,
+                probe: dict | None = None,
                 stored: Graph | None = None) -> list[dict]:
     """The op list that records a new decision, validated against `g`.
 
@@ -1564,11 +1566,38 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
         raise ApplyError(
             f"{fault}\n"
             f"one of {', '.join(sorted(SIMPLE_STATUSES))}")
+    if probe is not None:
+        fault = probe_fault(probe)
+        if fault:
+            raise ApplyError(f"--probe: {fault}")
     op = {"op": "add_vertex", "id": vid, "title": title,
           "area": area, "status": status}
     if note:
         op["note"] = note
+    if probe is not None:
+        op["probe"] = probe
+        op["date"] = _date.today().isoformat()
     return [op] + [{"op": "add_edge", "from": p, "to": [vid]} for p in after]
+
+
+def compose_reprobe(g: Graph, *, vid: str, probe: dict) -> dict:
+    """The op that appends a rule for settling `vid`, checked against `g`.
+
+    The refusals `_apply_one` makes, said before staging and in the flag's
+    name — the same division `compose_add` draws for the area and the id.
+    """
+    if vid not in g.vertices:
+        raise ApplyError(f"unknown vertex {vid}")
+    v = g.vertices[vid]
+    if v.settled:
+        raise ApplyError(
+            f"{vid} is {v.status} — its criterion is the probe on its answer; "
+            f"`dg reopen {vid}` first if the question is open again")
+    fault = probe_fault(probe)
+    if fault:
+        raise ApplyError(f"--probe: {fault}")
+    return {"op": "reprobe", "vertex": vid, "probe": probe,
+            "date": _date.today().isoformat()}
 
 
 def compose_dep(g: Graph, *, vid: str,
@@ -1777,6 +1806,22 @@ def repairs(g: Graph) -> list[dict]:
 # ---- apply ---------------------------------------------------------------
 
 
+def probe_entry(op: dict) -> Probe | None:
+    """The appended entry an `add_vertex`, `add_task` or `reprobe` op writes.
+
+    The *slot* probe — a rule for settling, a definition of done — and not
+    the edge payload's, which `_payload` reads off `PAYLOAD`. Its own
+    function so that the apply path reads the payload by the tuple and
+    nothing else by name, which `tests/test_payload.py` checks by reading
+    the source. Dated by the op, else today: the rule `close` uses.
+    """
+    probe = op.get("probe")
+    if not probe:
+        return None
+    return Probe(kind=probe["kind"], args=probe["args"],
+                 date=op.get("date") or _date.today().isoformat())
+
+
 def _payload(op: dict) -> dict:
     """What a `close` or `reject` op writes onto an edge, by `PAYLOAD`.
 
@@ -1803,6 +1848,9 @@ def _apply_one(g: Graph, op: dict) -> None:
             status=op.get("status", "OPEN"), note=op.get("note"),
             # the tag describes the note; without one it describes nothing
             format=op.get("format") if op.get("note") else None,
+            # The first entry of the appended list, dated by the op or today
+            # — the same date rule `close` uses for its payload.
+            probes=[e for e in (probe_entry(op),) if e is not None],
         )
         return
 
@@ -1986,6 +2034,22 @@ def _apply_one(g: Graph, op: dict) -> None:
             summary=op.get("summary") or _clip(op["answer"]),
             from_source=op["from_source"],
         ))
+        return
+
+    if kind == "reprobe":
+        # Appended, never assigned — `model.Probe` has the argument. Only
+        # while the question is unsettled: a settled one is judged by the
+        # probe on its answer, and writing a rule for settling under an
+        # answer already given would be a second criterion nothing reads.
+        v = g.vertices[vid]
+        if v.settled:
+            raise ApplyError(
+                f"{vid} is {v.status} — its criterion is the probe on its "
+                f"answer; `dg reopen {vid}` first if the question is open again")
+        entry = probe_entry(op)
+        if entry is None:
+            raise ApplyError(f"reprobing {vid} needs the criterion: --probe")
+        v.probes.append(entry)
         return
 
     if kind == "reopen":

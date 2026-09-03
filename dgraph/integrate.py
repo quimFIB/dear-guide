@@ -122,6 +122,10 @@ def decisions(base: Graph, theirs: Graph) -> Derived:
         was, now = base.active_edge(vid), theirs.active_edge(vid)
         if now is not None:
             _unknown(was, now, f"the edge from {vid}", out)
+    # Before the edges: a reprobe is refused on a settled question, and the
+    # close that settles it is among the edge ops.
+    for vid in sorted(theirs.vertices):
+        _probes(base.vertices.get(vid), theirs.vertices[vid], vid, "vertex", out)
     for vid in sorted(theirs.vertices):
         out.ops.extend(edge_ops[vid])
 
@@ -156,6 +160,9 @@ def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
             # ops for one act and read, in the tray, as two.
             _fields(was, t, tid, "task", out)
             _links(was, t, tid, out)
+        # Before the status: a reprobe is refused on finished work, and the
+        # `set_status DONE` that finishes it comes next.
+        _probes(was, t, tid, "task", out)
         _status(was, t, tid, out)
     _deps(base, theirs, out)
     for tid in sorted(theirs.tasks):
@@ -188,6 +195,32 @@ def _unknown(was, now, rid: str, out: Derived) -> None:
             f"which this version of dg does not read — carried by a load, "
             f"never by an op, so it cannot be adopted here; the install that "
             f"reads it is the one to bring it in")
+
+
+def _probes(was, now, rid: str, what: str, out: Derived) -> None:
+    """`reprobe` per probe entry that is new. The append-only record the two
+    stores share.
+
+    Like `stops`, `completions` and `readings`, an entry is a dated act, so
+    a list that grew is that many acts and each carries its own date. A
+    record the base did not have arrives with every entry this way rather
+    than inside its `add_*` op, so that one derivation serves both cases
+    and the tray reads each criterion as the act it was.
+    """
+    old = len(was.probes) if was is not None else 0
+    key = "vertex" if what == "vertex" else "task"
+    for p in now.probes[old:]:
+        out.ops.append({"op": "reprobe", key: rid, "probe": p.criterion,
+                        "date": p.date})
+
+
+def _reprobed_apart(mine, was, op: dict) -> bool:
+    """Whether this clone appended a criterion since the base that differs
+    from the one arriving. Two writers writing the same rule is not a
+    conflict; two writing different rules for one record is the case the
+    "last entry is live" reading cannot settle by itself."""
+    return (len(mine.probes) > len(was.probes)
+            and mine.probes[-1].criterion != op.get("probe"))
 
 
 def _fields(was, now, rid: str, what: str, out: Derived, skip=()) -> None:
@@ -490,6 +523,8 @@ def _moved_here(mine, was, g, base, rid: str, children) -> str | None:
             return f"{f} changed here"
     if mine.status != was.status:
         return f"status moved here to {mine.status}"
+    if len(mine.probes) != len(was.probes):
+        return "a criterion was written for it here"
     gained = sorted(set(children(g, rid)) - set(children(base, rid)))
     if gained:
         return (f"{', '.join(gained)} {'was' if len(gained) == 1 else 'were'} "
@@ -542,6 +577,10 @@ def _contest_decision(g: Graph, base: Graph, op: dict):
                 and mine.status != op.get("status")):
             return vid, (f"{vid} status differs — here {mine.status}, "
                          f"arriving {op.get('status')}")
+    if kind == "reprobe" and _reprobed_apart(mine, was, op):
+        return vid, (f"{vid} was given a rule for settling here too — "
+                     f"{mine.probes[-1].kind} against "
+                     f"{(op.get('probe') or {}).get('kind')}")
     if kind == "close":
         e, e_was = g.active_edge(vid), base.active_edge(vid)
         mine_answer = e.answer if e is not None and e.decided else None
@@ -577,6 +616,10 @@ def _contest_task(tg: TaskGraph, base: TaskGraph, op: dict):
             f = moved[0]
             return tid, (f"{tid} {f} differs — here {getattr(mine, f)!r}, "
                          f"arriving {op[f]!r}")
+    if kind == "reprobe" and _reprobed_apart(mine, was, op):
+        return tid, (f"{tid} was given a definition of done here too — "
+                     f"{mine.probes[-1].kind} against "
+                     f"{(op.get('probe') or {}).get('kind')}")
     if kind == "set_status":
         # **The same three lines `set_fields` uses, on the field that matters
         # most.** `_contest`'s docstring gives the rule — *two writers changing

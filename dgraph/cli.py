@@ -72,7 +72,7 @@ LAYOUT = (
             "areas")),
     (HONEST, ("check", "gate", "render")),
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
-              "dep", "undep", "rm")),
+              "reprobe", "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
     (STORE, ("init", "range", "import", "import-md", "export", "integrate",
              "incoming")),
@@ -104,7 +104,7 @@ T_STORE = "Starting a backlog, and moving one"
 TASK_LAYOUT = (
     (T_READ, ("node", "tree", "independent")),
     (T_HONEST, ("render",)),
-    (T_RECORD, ("add", "start", "park", "done", "drop", "amend", "link",
+    (T_RECORD, ("add", "start", "park", "done", "drop", "amend", "reprobe", "link",
                 "unlink", "dep", "undep", "rm")),
     (T_STAGE, ("pending", "drop-op", "clear")),
     (T_STORE, ("init", "import", "export")),
@@ -1135,6 +1135,16 @@ def node(
         lines += [f"opens       {', '.join(g.children(vid)) or '—'}"]
         if v.note:
             lines += ["", "[bold]Note[/]", _x(v.note)]
+    if v.probes:
+        # Every entry, the way a task's stops are drawn: the record is what
+        # this question was going to be judged by, and only the last is live
+        # — and only while the question is still open to be judged.
+        lines += ["", "[bold]Rule for settling[/]"]
+        for i, p in enumerate(v.probes):
+            tag = ("  [cyan](live)[/]"
+                   if i == len(v.probes) - 1 and not v.settled else "")
+            lines.append(f"  [dim]{p.date}[/]  "
+                         f"{_x(_probe_line(p.criterion))}{tag}")
     # Derived from the task store, stored nowhere: `decisions.json` never names
     # a task. Absent from `decision-graph.md` on purpose — that file is guarded
     # by `stale_view`, so a task count in it would mean filing a chore makes the
@@ -2195,11 +2205,16 @@ def add(
     status: str = typer.Option("OPEN", "--status"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what is undecided, and why"),
+    probe: str = typer.Option(
+        None, "--probe",
+        help='The rule for settling this, as JSON: {"kind": "<domain>.<name>", '
+             '"args": {...}}. Appended, dated; `dg reprobe` changes it.'),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
     """Stage a new decision vertex."""
     g = _g()
+    probe_v = _probe(probe)
     # The effective graph: `--after` may name a vertex whose add is staged but
     # not applied, and an id already staged is as taken as an id in the store.
     eff = _eff(g)
@@ -2207,7 +2222,7 @@ def add(
     if _wants_editor(edit):
         seed = {k: v for k, v in (
             ("id", vid), ("title", title), ("area", area), ("status", status),
-            ("note", note),
+            ("note", note), ("probe", probe_v),
             ("after", _ids(after, "--after") or None),
         ) if v}
         ops = _compose(eff, "add_vertex", seed=seed, new_area=new_area)
@@ -2240,7 +2255,8 @@ def add(
     try:
         ops = pending.compose_add(eff, vid=vid, title=title, area=area,
                                   new_area=new_area, status=status,
-                                  after=parents, note=note, stored=g)
+                                  after=parents, note=note, probe=probe_v,
+                                  stored=g)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -2249,6 +2265,35 @@ def add(
     # half-staged one could be applied and pass.
     _stage_all(ops, against=eff, new_area=new_area)
     con.print(f"[green]staged[/] add {vid}")
+    _warn_stuck()
+
+
+@app.command(rich_help_panel=RECORD)
+def reprobe(
+    vid: str,
+    probe: str = typer.Option(
+        ..., "--probe",
+        help='The new rule for settling it, as JSON: {"kind": '
+             '"<domain>.<name>", "args": {...}}'),
+) -> None:
+    """Append a rule for settling an open question. The old one is kept.
+
+    Appended and dated rather than edited, because a criterion that can be
+    rewritten to match the evidence is not a criterion: `dg probe` shows the
+    date beside the act it would produce, so a rule written the day the
+    question was settled is visible to whoever reads the tray. Refused on a
+    settled question, whose criterion is the probe on its answer.
+    """
+    eff = _eff(_g())
+    try:
+        op = pending.compose_reprobe(eff, vid=vid, probe=_probe(probe))
+    except pending.ApplyError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    _stage_all([op], against=eff)
+    n = len(eff.vertices[vid].probes) + 1
+    con.print(f"[green]staged[/] reprobe {vid}"
+              + (f" — entry {n}; the earlier {n - 1} stay" if n > 1 else ""))
     _warn_stuck()
 
 
@@ -2938,6 +2983,7 @@ def _area_cell(o: dict, known: set[str] | None = None) -> str:
 
 _PENDING_DETAIL = {
     "close": lambda o: _x((o.get("answer") or "")[:70]),
+    "reprobe": lambda o: _x(_probe_line(o.get("probe") or {})),
     "reopen": lambda o: _x(o.get("why", "")),
     "set_status": lambda o: f"→ {_x(o.get('status', '?'))}"
     + (f"  [dim](from {_x(o['derived_from'])})[/]" if o.get("derived_from") else ""),
@@ -3766,15 +3812,22 @@ def task_add(
     evidence_for: str = typer.Option(None, "--evidence-for",
                                      help="the decision this work will inform"),
     note: str = typer.Option(None, "--note", "-n"),
+    probe: str = typer.Option(
+        None, "--probe",
+        help='Its definition of done as a criterion, JSON: {"kind": '
+             '"<domain>.<name>", "args": {...}}. Appended, dated; '
+             '`dg task reprobe` changes it.'),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
     """Stage a new task."""
     tg = _teff(_tg())
+    probe_v = _probe(probe)
 
     if _wants_editor(edit):
         seed = {k: v for k, v in (
             ("id", tid), ("title", title), ("area", area), ("note", note),
+            ("probe", probe_v),
             ("because", because), ("evidence_for", evidence_for),
             ("after", _ids(after, "--after")),
             ("discovered_during", _ids(discovered_during, "--discovered-during")),
@@ -3810,7 +3863,7 @@ def task_add(
             tg, _decisions_eff_or_none(), tid=tid, title=title, area=area,
             new_area=new_area, after=parents, discovered_during=prompted,
             because=_ids(because, "--because"), evidence_for=evidence_for, note=note,
-            stored=_tg())
+            probe=probe_v, stored=_tg())
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -4199,6 +4252,37 @@ def task_park(
     _tstage({"op": "set_status", "task": tid, "status": "PARKED",
              "why": why, "date": _date.today().isoformat()})
     con.print(f"[green]staged[/] {tid} → PARKED")
+    _twarn_stuck()
+
+
+@task_app.command("reprobe", rich_help_panel=T_RECORD)
+def task_reprobe(
+    tid: str,
+    probe: str = typer.Option(
+        ..., "--probe",
+        help='The new definition of done as a criterion, JSON: {"kind": '
+             '"<domain>.<name>", "args": {...}}'),
+) -> None:
+    """Append a definition of done for unfinished work. The old one is kept.
+
+    `dg reprobe`'s twin. Appended and dated so that a criterion rewritten
+    the day the work was finished is visible where the finish is judged;
+    refused on finished or abandoned work, where a definition written after
+    the fact would be the writer certifying its own result.
+    """
+    tg = _teff(_tg())
+    _require_task(tid, tg)
+    t = tg.tasks[tid]
+    if not t.unfinished:
+        con.print(f"[red]{tid} is {t.status} — a definition of done is "
+                  f"written before the work is finished[/]\n"
+                  f"[dim]`dg task start {tid}` first[/]")
+        raise typer.Exit(1)
+    _tstage({"op": "reprobe", "task": tid, "probe": _probe(probe),
+             "date": _date.today().isoformat()})
+    n = len(t.probes) + 1
+    con.print(f"[green]staged[/] reprobe {tid}"
+              + (f" — entry {n}; the earlier {n - 1} stay" if n > 1 else ""))
     _twarn_stuck()
 
 
@@ -4656,6 +4740,15 @@ def task_node(tid: str) -> None:
             tag = ("  [cyan](still parked)[/]" if now and t.parked
                    else "  [dim](abandoned here)[/]" if now else "")
             lines.append(f"  [dim]{k.date}[/]  {_x(k.why)}{tag}")
+    if t.probes:
+        # Drawn like the stops: every entry, the last tagged live while the
+        # work is still unfinished enough for a definition of done to apply.
+        lines += ["", "[bold]Definition of done[/]"]
+        for i, p in enumerate(t.probes):
+            tag = ("  [cyan](live)[/]"
+                   if i == len(t.probes) - 1 and t.unfinished else "")
+            lines.append(f"  [dim]{p.date}[/]  "
+                         f"{_x(_probe_line(p.criterion))}{tag}")
     if t.note:
         lines += ["", "[bold]Note[/]", _x(t.note)]
     con.print(Panel("\n".join(lines), title=tid,
@@ -4817,6 +4910,7 @@ def task_pending_cmd(
 
 _TASK_DETAIL = {
     "add_task": lambda o: _x(o.get("title", "")),
+    "reprobe": lambda o: _x(_probe_line(o.get("probe") or {})),
     # The kind is named, not implied: the whole point of storing it is that a
     # reader never has to know which relation an absence stands for, and a
     # review screen is where that matters most. Not bracketed — square brackets

@@ -20,6 +20,7 @@ sees the new status. Nothing to compute, nothing to leave inconsistent.
 from __future__ import annotations
 
 import copy
+from datetime import date as _date
 from collections.abc import Callable
 from pathlib import Path
 
@@ -27,15 +28,15 @@ from dgraph import project, ranges
 from dgraph.pending import (FIELDS, ApplyError, already,
                             area_counts, owner, refuse_area,
                             stored_area_counts, vet_fields)
-from dgraph.pending import _register
-from dgraph.model import Graph
+from dgraph.pending import _register, probe_entry
+from dgraph.model import Graph, probe_fault
 from dgraph.tasks import (ID_RE, KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
                           Completion, Reading, Stop, Task, TaskEdge,
                           TaskGraph, _fold_because, matches)
 from dgraph.violation import Violation
 
 OPS = {"add_task", "add_dep", "remove_dep", "remove_task", "set_status",
-       "set_link", "read_evidence", "set_fields"}
+       "set_link", "read_evidence", "set_fields", "reprobe"}
 
 #: An extra validator over a proposed task graph — see `apply_all`.
 Checker = Callable[[TaskGraph], list[Violation]]
@@ -77,7 +78,28 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             format=op.get("format") if op.get("note") else None,
             because=_fold_because(op.get("because")),
             evidence_for=op.get("evidence_for"),
+            # `pending._apply_one`'s twin: the first appended entry.
+            probes=[e for e in (probe_entry(op),) if e is not None],
         )
+        return
+
+    if kind == "reprobe":
+        # Appended, never assigned — `model.Probe` has the argument. Only on
+        # unfinished work: a definition of done written after the work is
+        # DONE is the writer certifying its own result one op removed, which
+        # is the case D15 excluded `done` to prevent (proposal C3).
+        tid = op["task"]
+        if tid not in tg.tasks:
+            raise ApplyError(f"unknown task {tid!r}")
+        t = tg.tasks[tid]
+        if not t.unfinished:
+            raise ApplyError(
+                f"{tid} is {t.status} — a definition of done is written "
+                f"before the work is finished; `dg task start {tid}` first")
+        entry = probe_entry(op)
+        if entry is None:
+            raise ApplyError(f"reprobing {tid} needs the criterion: --probe")
+        t.probes.append(entry)
         return
 
     if kind in ("add_dep", "remove_dep"):
@@ -611,6 +633,7 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
                 because: list[str] | None = None,
                 evidence_for: str | None = None,
                 note: str | None = None,
+                probe: dict | None = None,
                 stored: TaskGraph | None = None) -> list[dict]:
     """The op list that records a new task, validated against `tg`.
 
@@ -683,6 +706,10 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
     for others, kind in rels:
         check_relation(tg, tid, others, kind)
 
+    if probe is not None:
+        fault = probe_fault(probe)
+        if fault:
+            raise ApplyError(f"--probe: {fault}")
     op = {"op": "add_task", "id": tid, "title": title, "area": area}
     if note:
         op["note"] = note
@@ -690,6 +717,9 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
         op["because"] = list(because)
     if evidence_for:
         op["evidence_for"] = evidence_for
+    if probe is not None:
+        op["probe"] = probe
+        op["date"] = _date.today().isoformat()
     ops = [op]
     for others, kind in rels:
         ops += relation_ops(tg, tid, others, kind)[0]
@@ -739,6 +769,12 @@ def vet(tg: TaskGraph, op: dict, *, new_area: bool = False) -> None:
     status = op.get("status")
     if status is not None and status not in STATUSES:
         raise ApplyError(f"illegal status {status!r} — one of {', '.join(STATUSES)}")
+    # `pending.vet`'s twin: the shape is refused at the door, in one sentence,
+    # rather than by `apply` against a batch somebody else may share by then.
+    if op.get("op") in ("add_task", "reprobe") and op.get("probe") is not None:
+        fault = probe_fault(op["probe"])
+        if fault:
+            raise ApplyError(f"probe: {fault}")
     if op.get("op") == "set_fields":
         t = tg.tasks[op["task"]]
         vet_fields(op, own=area_counts(tg.areas, tg.tasks.values()),

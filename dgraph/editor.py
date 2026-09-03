@@ -350,6 +350,11 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
                  ", ".join(seed.get("after", [])) if seed.get("after") else "")
         + _field("Note", "Optional prose for a decision with no answer yet.",
                  seed.get("note", ""))
+        + _field("Probe",
+                 "Optional. The rule for settling this, as JSON:\n"
+                 '{"kind": "<domain>.<name>", "args": {...}}. Appended and '
+                 "dated; `dg reprobe` changes it.",
+                 _probe_text(seed.get("probe")))
         + "\n* Context\n** Areas in use\n"
         + ("".join(f"   - {a}  ({n})\n" for a, n in
                    areas.counts(g.areas, g.vertices.values()).items())
@@ -484,7 +489,7 @@ def _meta(text: str) -> dict[str, str]:
 ALLOWED = {
     "close": {"answer", "source", "falsifier", "opens", "summary", "probe"},
     "reopen": {"why", "summary"},
-    "add_vertex": {"id", "title", "area", "status", "after", "note"},
+    "add_vertex": {"id", "title", "area", "status", "after", "note", "probe"},
 }
 
 
@@ -645,6 +650,9 @@ def _parse_add(g: Graph, f: dict, *, new_area: bool = False) -> list[dict]:
     if f.get("note", "").strip():
         op["note"] = f["note"].strip()
         op["format"] = "org"
+    if f.get("probe", "").strip():
+        op["probe"] = _parse_probe(f["probe"])
+        op["date"] = _date.today().isoformat()
     ops = [op]
     parents = [p.strip() for p in f.get("after", "").split(",") if p.strip()]
     for parent in parents:

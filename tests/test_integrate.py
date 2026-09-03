@@ -788,7 +788,7 @@ def test_every_op_kind_is_contestable_or_argued_not_to_be():
     than checking them. `D50` is that gap; `D48` moved these two across.
     """
     ruled = {"close", "set_fields", "set_status",
-             "remove_vertex", "remove_task"}
+             "remove_vertex", "remove_task", "reprobe"}
     every = pending.OPS | task_pending.OPS
     unjudged = every - ruled - set(integrate.CANNOT_CONFLICT)
     assert not unjudged, (

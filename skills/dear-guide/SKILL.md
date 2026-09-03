@@ -453,7 +453,18 @@ dg amend D07 --title "..."         # a typo'd or since-clarified wording
 dg task amend T14 --area Eval      # ...the same op, in the other store
 dg dep   D07 --after D03           # a premise discovered later
 dg undep D07 --after D03           # ...and removing one
+dg reprobe D07 --probe '{"kind": "prose.rule", "args": {}}'   # a new rule for settling an open question; the old one stays
+dg task reprobe T14 --probe '...'  # ...a new definition of done, the same way
 ```
+
+A **probe** is a typed criterion — `{"kind": "<domain>.<name>", "args":
+{...}}` — that a domain could evaluate; the falsifier's mechanical twin. On a
+decision it travels with the answer (`dg decide --probe`) and is archived by
+`reopen` with everything else the answer said. On an open question or a task
+it is *appended*: `--probe` on `dg add` and `dg task add` writes the first
+entry, `reprobe` adds a dated one, and nothing edits an entry in place — a
+criterion rewritten to match the evidence is not a criterion, and the date
+beside it is what lets a reader see that happen.
 
 `dg undep` edits a decided edge like a bare one. A decided edge's targets are
 the *graph's* — an `Edge` row carries the answer's payload and the child list

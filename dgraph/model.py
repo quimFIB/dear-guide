@@ -22,6 +22,9 @@ from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import project
+from dgraph.probe import (Probe, probe_args_limit,  # noqa: F401 — re-exported
+                          probe_entry_fault, probe_fault, probes_from,
+                          probes_to)
 from dgraph.violation import Violation  # re-exported: callers import it from here
 from dgraph.violation import cycle_from
 
@@ -77,16 +80,6 @@ PAYLOAD = ("answer", "falsifier", "source", "date", "format", "probe")
 #: every prose field already follows. Read from `env` rather than restated so
 #: the two doors cannot come to differ about what "too long" means.
 #:
-def probe_args_limit() -> int:
-    """`limits.TERSE_DEFAULT`, fetched when asked.
-
-    Imported inside rather than at the top: `env` is host policy, and
-    `model` learning nothing about hosts is a boundary worth one local
-    import.
-    """
-    from dgraph.env import TERSE_DEFAULT
-    return TERSE_DEFAULT
-
 #: Every optional field an edge record holds in the store, in the order the
 #: file writes them. `from_dict` reads exactly these and `to_dict` writes
 #: exactly these; `json_import.SCHEMA` accepts exactly these. Anything else on
@@ -96,7 +89,7 @@ EDGE_FIELDS = ("answer", "falsifier", "source", "date", "summary",
 
 #: Every field a vertex record holds. `id`, `title`, `area` and `status` are
 #: required; the rest optional. Anything else is `Vertex.extra`.
-VERTEX_FIELDS = ("id", "title", "area", "status", "note", "format")
+VERTEX_FIELDS = ("id", "title", "area", "status", "note", "format", "probes")
 
 #: What a store written before 2026-09-03 spells a waiting vertex as. Folded to
 #: `OPEN` on load and never written again: whether a vertex waits is derived
@@ -112,53 +105,6 @@ _FOLDED_STATUS = "BLOCKED"
 def fold_status(status: str) -> str:
     """`BLOCKED:<id>` and bare `BLOCKED` become `OPEN`; anything else is itself."""
     return "OPEN" if status.partition(":")[0] == _FOLDED_STATUS else status
-
-
-def probe_fault(probe: object) -> str | None:
-    """Why `probe` is not a well-formed criterion, or None if it is.
-
-    The whole of what the core checks about a probe, and the one
-    implementation of it: `Graph.validate` (`probe_wellformed`, blocking),
-    `pending.vet` for an op arriving as data, `dg decide --probe` and the
-    editor's `** Probe` field all ask this and print the sentence it returns.
-    Three doors with three copies is how `status_fault` got its docstring.
-
-    The shape is `{"kind": "<domain>.<name>", "args": {...}}` and nothing
-    else (`D71`): `kind` a string with a dot separating a non-empty domain
-    prefix from a non-empty name, `args` an object, and no third key — a key
-    the core carried without a name would be one a domain came to rely on
-    and nothing checked. `args` is read no further than its serialised
-    length, bounded at `probe_args_limit()`: what is inside it is the
-    domain's business, how much of it there is is the store's.
-    """
-    if not isinstance(probe, dict):
-        return (f"a probe is an object {{\"kind\", \"args\"}}, not "
-                f"{type(probe).__name__}")
-    extra = sorted(k for k in probe if k not in ("kind", "args"))
-    if extra:
-        return (f"a probe carries only kind and args — "
-                f"{', '.join(extra)} is not read by anything")
-    kind = probe.get("kind")
-    if not isinstance(kind, str):
-        return "a probe's kind is a string like \"prose.rule\""
-    domain, dot, name = kind.partition(".")
-    if not dot or not domain or not name:
-        return (f"a probe's kind is <domain>.<name> — {kind!r} does not name "
-                f"a domain")
-    if kind != kind.strip() or any(c.isspace() for c in kind):
-        return f"a probe's kind carries no whitespace: {kind!r}"
-    args = probe.get("args")
-    if not isinstance(args, dict):
-        return ("a probe's args is an object, even an empty one — "
-                f"{type(args).__name__} is not")
-    size = len(json.dumps(args, ensure_ascii=False, separators=(",", ":")))
-    cap = probe_args_limit()
-    if size > cap:
-        return (f"a probe's args serialise to {size} characters, over the "
-                f"{cap} the store holds — args are a fingerprint of an "
-                f"artefact, not the artefact; put it in a file under the "
-                f"project and name the path")
-    return None
 
 
 def status_fault(status: str, ids, of: str | None = None) -> str | None:
@@ -203,6 +149,12 @@ class Vertex:
     status: str
     note: str | None = None  # prose for a vertex with no decision yet
     format: str | None = None  # the note's dialect: "org", else markdown
+    #: Every rule for settling this question that was written down, oldest
+    #: first, and never cleared — `Probe` has the argument. Meaningful while
+    #: the vertex is unsettled: the answer, once given, carries its own probe
+    #: on the edge, and this list is then the record of what the question was
+    #: going to be judged by before it was.
+    probes: list[Probe] = field(default_factory=list)
     #: Fields the store holds that this version of the tool does not read.
     #: Carried from load to save verbatim, and reported by `dg check` as
     #: `unknown_field`, a warning — from `check.py` and not from `validate`,
@@ -225,6 +177,11 @@ class Vertex:
     #: Not a place to put anything on purpose. A field the tool reads is a
     #: field on the dataclass; this holds what it *cannot* read yet.
     extra: dict = field(default_factory=dict)
+
+    @property
+    def probe(self) -> Probe | None:
+        """The live rule for settling: the last entry, or None."""
+        return self.probes[-1] if self.probes else None
 
     @property
     def base_status(self) -> str:
@@ -336,8 +293,10 @@ class Graph:
         return cls(
             areas=raw.get("areas", []),
             vertices={v["id"]: Vertex(
-                **{k: v[k] for k in VERTEX_FIELDS if k in v and k != "status"},
+                **{k: v[k] for k in VERTEX_FIELDS
+                   if k in v and k not in ("status", "probes")},
                 status=fold_status(v["status"]),
+                probes=probes_from(v.get("probes"), v["id"]),
                 extra={k: x for k, x in v.items() if k not in VERTEX_FIELDS})
                 for v in raw["vertices"]},
             edges=[
@@ -380,7 +339,7 @@ class Graph:
                     **{k: val for k, val in (
                         ("id", v.id), ("title", v.title), ("area", v.area),
                         ("status", v.status), ("note", v.note),
-                        ("format", v.format),
+                        ("format", v.format), ("probes", probes_to(v.probes)),
                     ) if val is not None},
                     **v.extra,     # written back as read: see `Vertex.extra`
                 }
@@ -901,6 +860,10 @@ class Graph:
             fault = status_fault(vert.status, ids, of=vid)
             if fault:
                 add("status_legal", f"{vid}: {fault}")
+            for p in vert.probes:
+                fault = probe_entry_fault(p)
+                if fault:
+                    add("probe_wellformed", f"{vid}: {fault}")
             # There is no rule about a *waiting* vertex, and its absence is the
             # point: whether a vertex waits is `waiting_on`, read off the
             # edges, so nothing stored can disagree with it. `block_is_a_premise`

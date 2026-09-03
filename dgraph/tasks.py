@@ -69,6 +69,9 @@ from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import project
+# The shape a task shares with a vertex, from the module that belongs to
+# neither: `tests/test_cross.py` keeps this file from importing `model`.
+from dgraph.probe import Probe, probe_entry_fault, probes_from, probes_to
 from dgraph.violation import Violation, cycle_from
 
 STATUSES = ("TODO", "DOING", "PARKED", "DONE", "DROPPED")
@@ -280,10 +283,20 @@ class Task:
     #: happened stays happened. `cross.evidence_after_deciding` reads the last
     #: one as its baseline; nothing here interprets `against`.
     readings: list[Reading] = field(default_factory=list)
+    #: Every definition of done written for this work as a criterion a
+    #: domain could judge, oldest first, and never cleared — the fourth
+    #: append-only record, and `model.Probe` has the argument. The last is
+    #: live; `dg reprobe` appends and nothing else writes it.
+    probes: list[Probe] = field(default_factory=list)
     #: What the store holds that this version cannot read, carried verbatim
     #: and warned about by `dg check`. `model.Vertex.extra` has the argument;
     #: this is the same field for the same reason.
     extra: dict = field(default_factory=dict)
+
+    @property
+    def probe(self) -> Probe | None:
+        """The live definition of done as a criterion: the last, or None."""
+        return self.probes[-1] if self.probes else None
 
     def read_against(self, did: str) -> str | None:
         """The date this work was last read against `did`, if it ever was.
@@ -531,6 +544,8 @@ def _task(raw: dict) -> Task:
             f"{raw.get('id', '?')}: malformed completions entry — each needs "
             f"a `date` and an `outcome`, and nothing else ({exc})"
         ) from None
+    fields["probes"] = probes_from(fields.pop("probes", []),
+                                   raw.get("id", "?"))
     readings = fields.pop("readings", [])
     try:
         fields["readings"] = [Reading(**k) for k in readings]
@@ -634,6 +649,7 @@ class TaskGraph:
                         ("readings", [{"date": r.date, "note": r.note,
                                        "against": r.against}
                                       for r in t.readings] or None),
+                        ("probes", probes_to(t.probes)),
                     )
                     if val is not None},
                     **t.extra,     # written back as read: see `Task.extra`
@@ -880,6 +896,10 @@ class TaskGraph:
                            if t.evidence_for else "evidence for nothing now")
                         + f" — the record stands, but it covers nothing",
                         "warning")
+            for p in t.probes:
+                fault = probe_entry_fault(p)
+                if fault:
+                    add("task_probe_wellformed", f"{tid}: {fault}")
             for c in t.completions:
                 if not c.date or not c.outcome:
                     add("task_done_complete",
