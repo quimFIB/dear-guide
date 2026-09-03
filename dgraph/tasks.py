@@ -242,6 +242,12 @@ class Task:
     area: str
     status: str = "TODO"
     note: str | None = None      # prose: what this involves, why it is parked
+    #: The definition of done, in prose, written when the work was filed
+    #: (`D75`): what finished looks like. Optional, amendable like the note,
+    #: and shown back by `dg task done` before the outcome is asked for, so
+    #: the result is written against what was said would count. Its
+    #: mechanical twin is `probes`.
+    done_when: str | None = None
     #: Every time this work was finished, oldest first, and never cleared.
     #: `done` and `outcome` read the last entry and are derived, not stored —
     #: see those properties for why. Held as a list because the pair used to be
@@ -639,6 +645,7 @@ class TaskGraph:
                     for k, val in (
                         ("id", t.id), ("title", t.title), ("area", t.area),
                         ("status", t.status), ("note", t.note),
+                        ("done_when", t.done_when),
                         # `t.completions`, not `t.done`/`t.outcome`: those are
                         # status-gated, so serializing through them would drop
                         # the record of finished work the moment it restarted.

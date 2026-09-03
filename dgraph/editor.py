@@ -179,6 +179,10 @@ def _context(g: Graph, vid: str) -> str:
     out.append(f"   depends on {', '.join(deps) or '—'} · opens {', '.join(kids) or '—'}")
     if v.note:
         out.append(_quote(v.note))
+    if v.rule:
+        # Read back where the answer is composed (`D75`).
+        out.append("   rule for settling:")
+        out.append(_quote(v.rule, "      "))
 
     chain = _ctx.chain(g, vid)
     by_id = {p.id: p for p in chain}
@@ -350,6 +354,8 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
                  ", ".join(seed.get("after", [])) if seed.get("after") else "")
         + _field("Note", "Optional prose for a decision with no answer yet.",
                  seed.get("note", ""))
+        + _field("Rule", "Optional. What would settle this, in prose — read "
+                         "back at `dg decide`.", seed.get("rule", ""))
         + _field("Probe",
                  "Optional. The rule for settling this, as JSON:\n"
                  '{"kind": "<domain>.<name>", "args": {...}}. Appended and '
@@ -489,7 +495,8 @@ def _meta(text: str) -> dict[str, str]:
 ALLOWED = {
     "close": {"answer", "source", "falsifier", "opens", "summary", "probe"},
     "reopen": {"why", "summary"},
-    "add_vertex": {"id", "title", "area", "status", "after", "note", "probe"},
+    "add_vertex": {"id", "title", "area", "status", "after", "note", "probe",
+                   "rule"},
 }
 
 
@@ -650,6 +657,8 @@ def _parse_add(g: Graph, f: dict, *, new_area: bool = False) -> list[dict]:
     if f.get("note", "").strip():
         op["note"] = f["note"].strip()
         op["format"] = "org"
+    if f.get("rule", "").strip():
+        op["rule"] = f["rule"].strip()
     if f.get("probe", "").strip():
         op["probe"] = _parse_probe(f["probe"])
         op["date"] = _date.today().isoformat()

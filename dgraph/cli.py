@@ -25,6 +25,7 @@ from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
 from dgraph import cross, editor, fanout, limits, pending, project, ranges, render, task_editor
+from dgraph import domains, probing
 from dgraph import integrate as integrate_mod
 from dgraph import task_pending, task_render
 from dgraph import query as _query
@@ -70,7 +71,7 @@ WEB = "In a browser"
 LAYOUT = (
     (READ, ("show", "find", "brief", "node", "why/context", "tree", "path",
             "areas")),
-    (HONEST, ("check", "gate", "render")),
+    (HONEST, ("check", "probe", "gate", "render")),
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
               "reprobe", "bind", "unbind", "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
@@ -1137,11 +1138,13 @@ def node(
             lines += ["", "[bold]Note[/]", _x(v.note)]
     if v.binds:
         lines.append(f"bound to    {_x(', '.join(b.spelled for b in v.binds))}")
+    if v.rule:
+        lines += ["", "[bold]Rule for settling[/]", _x(v.rule)]
     if v.probes:
         # Every entry, the way a task's stops are drawn: the record is what
         # this question was going to be judged by, and only the last is live
         # — and only while the question is still open to be judged.
-        lines += ["", "[bold]Rule for settling[/]"]
+        lines += ["", "[bold]Rule for settling (probe)[/]"]
         for i, p in enumerate(v.probes):
             tag = ("  [cyan](live)[/]"
                    if i == len(v.probes) - 1 and not v.settled else "")
@@ -1649,6 +1652,99 @@ def check(
     con.print(f"[green]✓[/] {_sizes(proj)}, all invariants hold{tail}")
 
 
+@app.command(rich_help_panel=HONEST)
+def probe(
+    ids: list[str] = typer.Argument(None, metavar="[ID...]",
+                                    help="one or more records"),
+    provisional: bool = typer.Option(False, "--provisional",
+                                     help="every PROVISIONAL decision"),
+    area: str = typer.Option(None, "--area"),
+    since: str = typer.Option(None, "--since", metavar="DATE",
+                              help="records whose pre-commitment is dated on "
+                                   "or after this ISO date"),
+    all_: bool = typer.Option(False, "--all", help="everything, however many"),
+    timeout: float = typer.Option(domains.DEADLINE, "--timeout",
+                                  help="seconds per domain before its "
+                                       "answers are unjudged"),
+) -> None:
+    """Every pre-commitment, presented beside what it is judged against.
+
+    A falsifier beside the world as you know it; a PROVISIONAL decision
+    beside the premises whose edges are dated after its own; a task's
+    definition of done beside the work; an open question's rule beside the
+    outcomes of its evidence. Where an installed domain can judge a probe it
+    says so — `fired`, `holds` — and the exit code is `dg check`'s, non-zero
+    when anything fired. The built-in `prose` domain presents and never
+    judges, so on a plain install this is a reading and the verdict is the
+    command you run next: `dg reopen`, `dg confirm`, `dg task done`,
+    `dg decide`.
+
+    Reads both trays first: a record a staged op already names says so,
+    because the act a firing would produce is already composed. Bare, on a
+    store with more than a screen of pre-commitments, it asks for a scope.
+    """
+    proj = project.find()
+    if not proj.exists:
+        con.print(f"[red]no {project.STORE_NAME} or {project.TASKS_NAME} under "
+                  f"{proj.root}[/]")
+        raise typer.Exit(2)
+    g = Graph.load(proj.store) if proj.has_decisions else None
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    d_ops = pending.load(proj.pending) if g is not None else []
+    t_ops = pending.load(proj.task_pending) if tg is not None else []
+    every = probing.rows(g, tg, d_ops, t_ops)
+    scope = probing.Scope(ids=list(ids or []), provisional=provisional,
+                          area=area, since=since, all=all_)
+    unknown = [i for i in scope.ids
+               if not ((g and i in g.vertices) or (tg and i in tg.tasks))]
+    if unknown:
+        con.print(f"[red]unknown record(s): {', '.join(unknown)}[/]")
+        raise typer.Exit(1)
+    why = probing.ask_for_scope(every, scope)
+    if why:
+        con.print(f"[yellow]{_x(why)}[/]")
+        raise typer.Exit(2)
+    chosen = probing.select(every, g, scope) if scope.given else every
+    if not chosen:
+        con.print("[dim]nothing to present — no record in scope carries a "
+                  "falsifier, a rule, a definition of done or a probe[/]")
+        return
+    probing.judge(chosen, proj.root, timeout=timeout)
+    for r in chosen:
+        _probe_row(r)
+    counts = {v: sum(1 for r in chosen if r.verdict == v)
+              for v in ("fired", "holds", "unjudged")}
+    con.print(f"[bold]{len(chosen)} presented[/] · "
+              f"[red]fired {counts['fired']}[/] · "
+              f"[green]holds {counts['holds']}[/] · "
+              f"[dim]unjudged {counts['unjudged']}[/]")
+    if counts["fired"]:
+        raise typer.Exit(1)
+
+
+_SLOT_LABEL = {"edge": "falsifier", "vertex": "rule for settling",
+               "task": "done when"}
+
+
+def _probe_row(r: "probing.Row") -> None:
+    colour = {"fired": "red", "holds": "green"}.get(r.verdict, "dim")
+    head = (f"[cyan]{r.id}[/]  [{_style(r.status) if r.slot != 'task' else TASK_STYLE.get(r.status, 'white')}]"
+            f"{r.status}[/]  {_x(r.title)}")
+    con.print(head)
+    if r.text:
+        con.print(f"    {_SLOT_LABEL[r.slot]:<18}{_x(r.text)}")
+    if r.probe:
+        when = f"  [dim]({r.probe_date})[/]" if r.probe_date else ""
+        con.print(f"    {'probe':<18}{_x(_probe_line(r.probe))}{when}")
+    con.print(f"    {'verdict':<18}[{colour}]{r.verdict}[/]"
+              + (f"  {_x(r.sentence)}" if r.sentence and r.probe else ""))
+    for line in r.beside:
+        con.print(f"    [dim]{_x(line)}[/]")
+    if r.staged:
+        con.print(f"    [yellow]{_x(r.staged)}[/]")
+    con.print("")
+
+
 def _finding_line(p, *, fixed: bool = False) -> str:
     mark = "[green]✓[/]" if fixed else (
         "[red]✗[/]" if p.blocking else "[yellow]![/]")
@@ -1908,8 +2004,13 @@ def decide(
         _stage_close(eff, ops[0])
         return
 
+    # The rule for settling, if one was written when the question was
+    # opened, read back before the answer is asked for (`D75`): the person
+    # answering sees what they said would settle it, before they settle it.
     con.print(Panel(f"[bold]{_x(v.title)}[/]\n\n"
-                    f"depends on {', '.join(eff.depends(vid)) or '—'}",
+                    f"depends on {', '.join(eff.depends(vid)) or '—'}"
+                    + (f"\n\n[dim]rule for settling:[/] {_x(v.rule)}"
+                       if v.rule else ""),
                     title=vid, border_style=_style(v.status)))
     answer = answer or _ask(
         "Answer (what was decided, and on what evidence)", "--answer/-a")
@@ -2212,6 +2313,9 @@ def add(
     status: str = typer.Option("OPEN", "--status"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what is undecided, and why"),
+    rule: str = typer.Option(
+        None, "--rule",
+        help="what would settle this, in prose — shown back at `dg decide`"),
     probe: str = typer.Option(
         None, "--probe",
         help='The rule for settling this, as JSON: {"kind": "<domain>.<name>", '
@@ -2229,7 +2333,7 @@ def add(
     if _wants_editor(edit):
         seed = {k: v for k, v in (
             ("id", vid), ("title", title), ("area", area), ("status", status),
-            ("note", note), ("probe", probe_v),
+            ("note", note), ("rule", rule), ("probe", probe_v),
             ("after", _ids(after, "--after") or None),
         ) if v}
         ops = _compose(eff, "add_vertex", seed=seed, new_area=new_area)
@@ -2263,7 +2367,7 @@ def add(
         ops = pending.compose_add(eff, vid=vid, title=title, area=area,
                                   new_area=new_area, status=status,
                                   after=parents, note=note, probe=probe_v,
-                                  stored=g)
+                                  rule=rule, stored=g)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -2316,8 +2420,8 @@ CITED = ("[dim]citations of the old title elsewhere — commits, docs, a pasted 
 
 def _amended(record, op: dict) -> list[str]:
     """One line per field this op changes, old and new. Both stores' twin."""
-    return [f"{k:<7} {_x(getattr(record, k) or '—')} → {_x(op[k] or '—')}"
-            for k in pending.FIELDS if k in op]
+    return [f"{k:<9} {_x(getattr(record, k, None) or '—')} → {_x(op[k] or '—')}"
+            for k in pending.ALL_FIELDS if k in op]
 
 
 @app.command(rich_help_panel=RECORD)
@@ -2331,6 +2435,8 @@ def amend(
              "one that is in use"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what is undecided, and why"),
+    rule: str = typer.Option(None, "--rule",
+                             help="what would settle this, in prose"),
 ) -> None:
     """Correct how a decision is worded or filed: its title, area or note.
 
@@ -2353,7 +2459,8 @@ def amend(
         raise typer.Exit(1)
     op = {"op": "set_fields", "vertex": vid}
     op.update({k: v for k, v in (("title", title), ("area", area),
-                                 ("note", note)) if v is not None})
+                                 ("note", note), ("rule", rule))
+               if v is not None})
     lines = _amended(eff.vertices[vid], op)
     try:
         # `pending.vet` holds every rule — a blank title, an unknown area, an
@@ -2988,7 +3095,7 @@ def _fields_detail(o: dict) -> str:
     length preventing.
     """
     return ", ".join(f"{k} {_x(o[k] or '—')}"
-                     for k in pending.FIELDS if k in o)
+                     for k in pending.ALL_FIELDS if k in o)
 
 
 #: Areas the two stores already know, for the tray listings. Computed once per
@@ -3868,6 +3975,9 @@ def task_add(
     evidence_for: str = typer.Option(None, "--evidence-for",
                                      help="the decision this work will inform"),
     note: str = typer.Option(None, "--note", "-n"),
+    done_when: str = typer.Option(
+        None, "--done-when",
+        help="what finished looks like, in prose — shown back at `dg task done`"),
     probe: str = typer.Option(
         None, "--probe",
         help='Its definition of done as a criterion, JSON: {"kind": '
@@ -3883,7 +3993,7 @@ def task_add(
     if _wants_editor(edit):
         seed = {k: v for k, v in (
             ("id", tid), ("title", title), ("area", area), ("note", note),
-            ("probe", probe_v),
+            ("done_when", done_when), ("probe", probe_v),
             ("because", because), ("evidence_for", evidence_for),
             ("after", _ids(after, "--after")),
             ("discovered_during", _ids(discovered_during, "--discovered-during")),
@@ -3919,7 +4029,7 @@ def task_add(
             tg, _decisions_eff_or_none(), tid=tid, title=title, area=area,
             new_area=new_area, after=parents, discovered_during=prompted,
             because=_ids(because, "--because"), evidence_for=evidence_for, note=note,
-            probe=probe_v, stored=_tg())
+            probe=probe_v, done_when=done_when, stored=_tg())
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -4078,6 +4188,8 @@ def task_amend(
              "one that is in use"),
     note: str = typer.Option(None, "--note", "-n",
                              help="what this work involves"),
+    done_when: str = typer.Option(None, "--done-when",
+                                  help="what finished looks like, in prose"),
 ) -> None:
     """Correct how a task is worded or filed: its title, area or note.
 
@@ -4094,7 +4206,8 @@ def task_amend(
     _require_task(tid, tg)
     op = {"op": "set_fields", "task": tid}
     op.update({k: v for k, v in (("title", title), ("area", area),
-                                 ("note", note)) if v is not None})
+                                 ("note", note), ("done_when", done_when))
+               if v is not None})
     lines = _amended(tg.tasks[tid], op)
     # `_tstage` vets, and `task_pending.vet` holds every rule for the same
     # reason the decision store's does: the browser can post this op as data.
@@ -4410,6 +4523,10 @@ def task_done(
         _said_dialect(tg, tid)
         _twarn_stuck()
         return
+    if tg.tasks[tid].done_when:
+        # Read back before the outcome is asked for (`D75`): the result is
+        # written against what was said would count as finished.
+        con.print(f"[dim]done when:[/] {_x(tg.tasks[tid].done_when)}")
     outcome = outcome or _ask(
         "Outcome (what did this produce? a path, a PR, a note)", "--outcome/-o")
     _tstage({"op": "set_status", "task": tid, "status": "DONE",
@@ -4838,10 +4955,12 @@ def task_node(tid: str) -> None:
             lines.append(f"  [dim]{k.date}[/]  {_x(k.why)}{tag}")
     if t.binds:
         lines.append(f"bound to    {_x(', '.join(b.spelled for b in t.binds))}")
+    if t.done_when:
+        lines += ["", "[bold]Done when[/]", _x(t.done_when)]
     if t.probes:
         # Drawn like the stops: every entry, the last tagged live while the
         # work is still unfinished enough for a definition of done to apply.
-        lines += ["", "[bold]Definition of done[/]"]
+        lines += ["", "[bold]Definition of done (probe)[/]"]
         for i, p in enumerate(t.probes):
             tag = ("  [cyan](live)[/]"
                    if i == len(t.probes) - 1 and t.unfinished else "")

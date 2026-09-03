@@ -56,7 +56,7 @@ from dgraph.tasks import TaskGraph
 #: rather than restated: an op that writes a field this list forgets is a
 #: difference that vanishes at integration, which is the union failure mode
 #: reappearing inside the mechanism built to replace it.
-from dgraph.pending import FIELDS
+from dgraph.pending import ALL_FIELDS, FIELDS, fields_of
 
 
 @dataclass
@@ -98,6 +98,7 @@ def decisions(base: Graph, theirs: Graph) -> Derived:
         out.ops.append({"op": "add_vertex", "id": vid, "title": v.title,
                         "area": v.area, "status": v.status,
                         **({"note": v.note} if v.note else {}),
+                        **({"rule": v.rule} if v.rule else {}),
                         **({"format": v.format} if v.format else {})})
 
     # Edges first, into a list of their own, so that `_fields` can be told
@@ -148,6 +149,7 @@ def tasks(base: TaskGraph, theirs: TaskGraph) -> Derived:
         out.ops.append({"op": "add_task", "id": tid, "title": t.title,
                         "area": t.area,
                         **({"note": t.note} if t.note else {}),
+                        **({"done_when": t.done_when} if t.done_when else {}),
                         **({"because": t.because} if t.because else {}),
                         **({"evidence_for": t.evidence_for}
                            if t.evidence_for else {})})
@@ -243,7 +245,8 @@ def _reprobed_apart(mine, was, op: dict) -> bool:
 
 def _fields(was, now, rid: str, what: str, out: Derived, skip=()) -> None:
     """`set_fields` for the wording that changed. Nothing where none did."""
-    changed = {f: getattr(now, f) for f in FIELDS
+    changed = {f: getattr(now, f)
+               for f in fields_of("decision" if what == "vertex" else "task")
                if f not in skip
                and getattr(was, f, None) != getattr(now, f, None)}
     if changed:
@@ -541,8 +544,8 @@ def _moved_here(mine, was, g, base, rid: str, children) -> str | None:
     `D07`'s own row at all, and the arriving removal takes the question with it
     and leaves the child a root. Nothing in the fields would have said so.
     """
-    for f in FIELDS:
-        if getattr(mine, f) != getattr(was, f):
+    for f in ALL_FIELDS:
+        if getattr(mine, f, None) != getattr(was, f, None):
             return f"{f} changed here"
     if mine.status != was.status:
         return f"status moved here to {mine.status}"
@@ -585,7 +588,7 @@ def _contest_decision(g: Graph, base: Graph, op: dict):
         # Moved here *and* to somewhere else. Two writers making the same edit
         # is not a conflict, and reporting it as one puts a question to a
         # person whose two answers are identical.
-        moved = [f for f in FIELDS
+        moved = [f for f in fields_of("decision")
                  if f in op and getattr(mine, f) != getattr(was, f)
                  and getattr(mine, f) != op[f]]
         if moved:
@@ -634,7 +637,7 @@ def _contest_task(tg: TaskGraph, base: TaskGraph, op: dict):
             return tid, f"{tid} is removed there, and {why}"
     if kind == "set_fields":
         # See `_contest_decision`: the same edit made twice is not a conflict.
-        moved = [f for f in FIELDS
+        moved = [f for f in fields_of("task")
                  if f in op and getattr(mine, f) != getattr(was, f)
                  and getattr(mine, f) != op[f]]
         if moved:

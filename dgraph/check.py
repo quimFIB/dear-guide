@@ -39,6 +39,11 @@ CHECKS: tuple[str, ...] = (
     "no_orphans",
     "acyclic",
     "stale_view",
+    # the two domain slots, shape only (D71): a probe's `{kind, args}` and a
+    # bind's `{kind, ref}`. What a probe *says* about the world is never
+    # judged here — that is `dg probe`, and `domains.PROBES` is its list.
+    "probe_wellformed",
+    "binding_wellformed",
     # both stores; stamped where it is emitted, like `store_loads`
     "verbose_field",
     # both stores: a field the store holds and this version cannot read,
@@ -56,6 +61,8 @@ CHECKS: tuple[str, ...] = (
     "task_park_complete",
     "task_reading_complete",
     "task_reading_stale",
+    "task_probe_wellformed",
+    "task_binding_wellformed",
     "parked_holding_work",
     "task_done_before_prerequisite",
     "released_by_drop",
@@ -107,6 +114,8 @@ ORIGIN: dict[str, str] = {
     "no_orphans": DECISION,
     "acyclic": DECISION,
     "stale_view": DECISION,
+    "probe_wellformed": DECISION,
+    "binding_wellformed": DECISION,
     "task_ids_wellformed": TASK,
     "task_status_legal": TASK,
     "task_no_dangling_refs": TASK,
@@ -117,6 +126,8 @@ ORIGIN: dict[str, str] = {
     "task_park_complete": TASK,
     "task_reading_complete": TASK,
     "task_reading_stale": TASK,
+    "task_probe_wellformed": TASK,
+    "task_binding_wellformed": TASK,
     "parked_holding_work": TASK,
     "task_done_before_prerequisite": TASK,
     "released_by_drop": TASK,

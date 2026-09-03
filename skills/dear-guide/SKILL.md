@@ -232,6 +232,7 @@ Two things to know before using them:
 | `dg areas` | counts by area and status, one table per store |
 | `dg export ID` | the same data as JSON, for machine reading. `dg import` reads it back unchanged |
 | `dg check` | every invariant, and it names the rule that broke. `--staged` judges the graph the tray would produce instead, as a diff: what the batch fixes, what it introduces, what stands either way |
+| `dg probe` | every pre-commitment beside what it is judged against — a falsifier, a PROVISIONAL decision beside the premises dated after it, a task's definition of done, an open question's rule beside its evidence. Asks for a scope (an id, `--provisional`, `--area`, `--since`, `--all`) past a screenful. On a plain install it presents and the verdict is the command you run next |
 | `dg import FILE` | adopt a `decisions.json` prepared elsewhere or exported from another project, refusing one that breaks invariants |
 | `dg import-md FILE` | rebuild a store from the `decision-graph.md` this tool generated. The recovery path when the *store* is the file that was lost |
 | `dg repair` | stage the PROVISIONAL marks a reopen would have derived. What `dg apply` names when a merge, a rebase or a second clone left a decision resting on a premise under review without saying so |

@@ -259,6 +259,12 @@ def cli_ops(r: Runner, f: Fixture, reps: int) -> None:
     r.run("cli.find_waits", f.size, cmd("find", f"waits:{f.decided_mid}"),
           layer="cli")
     r.run("cli.check", f.size, cmd("check"), layer="cli")
+    # The door over everything: one `by_src`, one reverse index, one
+    # `provisional_causes` (proposal E4). The generator's falsifiers are
+    # status-uniform, which the proposal names as the corpus lesson; a store
+    # with real ones is the measurement still to take.
+    r.run("cli.probe_all", f.size, cmd("probe", "--all"), layer="cli",
+          note="present mode, prose domain only")
     r.run("cli.brief", f.size, cmd("brief"), layer="cli")
     r.run("cli.node", f.size, cmd("node", f.decided_mid), layer="cli")
     r.run("cli.context", f.size, cmd("context", f.decided_mid), layer="cli")

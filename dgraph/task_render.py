@@ -114,6 +114,9 @@ def _section(tg: TaskGraph, tid: str, _adj=None) -> str:
     if t.binds:
         out.append("- **Bound to:** "
                    + ", ".join(f"`{b.spelled}`" for b in t.binds))
+    if t.done_when:
+        out.append(f"- **Done when:** "
+                   f"{orgmd.to_markdown(t.done_when, fmt=t.format)}")
     out.append("")
 
     if t.note:

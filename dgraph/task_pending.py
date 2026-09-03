@@ -28,7 +28,7 @@ from dgraph import project, ranges
 from dgraph.pending import (FIELDS, ApplyError, already,
                             area_counts, owner, refuse_area,
                             stored_area_counts, vet_fields)
-from dgraph.pending import _register, bind_step, probe_entry
+from dgraph.pending import _register, bind_step, fields_of, probe_entry
 from dgraph.model import Graph, bind_fault, probe_fault
 from dgraph.tasks import (ID_RE, KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
                           Completion, Reading, Stop, Task, TaskEdge,
@@ -51,7 +51,7 @@ def path() -> Path:
 #: Prose whose dialect follows `Task.format`. A stop's `why` is prose
 #: too, and converted through the same field — but it is written by the
 #: append above rather than by the field loop, so it is not listed here.
-PROSE = ("note", "outcome")
+PROSE = ("note", "outcome", "done_when")
 
 
 def _apply_one(tg: TaskGraph, op: dict) -> None:
@@ -78,6 +78,7 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             format=op.get("format") if op.get("note") else None,
             because=_fold_because(op.get("because")),
             evidence_for=op.get("evidence_for"),
+            done_when=op.get("done_when"),
             # `pending._apply_one`'s twin: the first appended entry.
             probes=[e for e in (probe_entry(op),) if e is not None],
         )
@@ -264,7 +265,7 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             raise ApplyError(f"unknown task {tid!r}")
         t = tg.tasks[tid]
         _register(tg, op.get("area"))
-        for fld in FIELDS:
+        for fld in fields_of("task"):
             if fld in op:
                 setattr(t, fld, op[fld])
         return
@@ -643,6 +644,7 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
                 evidence_for: str | None = None,
                 note: str | None = None,
                 probe: dict | None = None,
+                done_when: str | None = None,
                 stored: TaskGraph | None = None) -> list[dict]:
     """The op list that records a new task, validated against `tg`.
 
@@ -722,6 +724,8 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
     op = {"op": "add_task", "id": tid, "title": title, "area": area}
     if note:
         op["note"] = note
+    if done_when:
+        op["done_when"] = done_when
     if because:
         op["because"] = list(because)
     if evidence_for:
@@ -818,7 +822,7 @@ def vet(tg: TaskGraph, op: dict, *, new_area: bool = False) -> None:
         vet_fields(op, own=area_counts(tg.areas, tg.tasks.values()),
                    other=stored_area_counts(project.find().store),
                    record="task", new_area=new_area,
-                   current={k: getattr(t, k) for k in FIELDS})
+                   current={k: getattr(t, k) for k in fields_of("task")})
     # `outcome` is not among the fields that exempt an op from this: it used to
     # be, and that is half of how a second `dg task done` reached the store —
     # the op was let past by virtue of carrying the very field it was about to

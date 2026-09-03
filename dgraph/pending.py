@@ -41,6 +41,22 @@ OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
 #: title is how a question is referred to, not something the question says.
 FIELDS = ("title", "area", "note", "format")
 
+#: The one prose pre-commitment each record kind carries beyond those four
+#: (`D75`): a decision's `rule` for settling, a task's `done_when`. Amendable
+#: like a note, because they are the writer's own wording of what would
+#: count and not a dated claim about what happened — so they join
+#: `set_fields` for the store that has them and are refused for the other.
+PROSE_OF = {"decision": ("rule",), "task": ("done_when",)}
+
+#: Every field `set_fields` may write in *either* store, for sites that see
+#: an op without knowing which store it is for — a tray listing, a report.
+ALL_FIELDS = FIELDS + PROSE_OF["decision"] + PROSE_OF["task"]
+
+
+def fields_of(record: str) -> tuple[str, ...]:
+    """What `set_fields` may write on a `decision` or a `task`."""
+    return FIELDS + PROSE_OF[record]
+
 #: Everything else a `set_fields` op may carry: which record it addresses, and
 #: the tray's own bookkeeping. Named so that any *other* key can be refused —
 #: `{"op": "set_fields", "vertex": "D01", "answer": "…"}` would otherwise stage
@@ -1173,7 +1189,7 @@ def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
         vet_fields(op, own=area_counts(g.areas, g.vertices.values()),
                    other=stored_area_counts(project.find().tasks),
                    record="decision", new_area=new_area,
-                   current={k: getattr(v, k) for k in FIELDS})
+                   current={k: getattr(v, k) for k in fields_of("decision")})
     if op.get("op") == "set_status" and "derived_from" not in op:
         if status != "DECIDED":
             raise ApplyError(
@@ -1239,17 +1255,18 @@ def vet_fields(op: dict, *, own: dict, other: dict, current: dict,
     # cannot write is told *that* rather than told it named nothing — the
     # caller reached for the field it meant and needs to hear why it is not
     # here, not that its op was empty.
-    extra = sorted(set(op) - set(FIELDS) - set(FIELD_KEYS))
+    fields = fields_of(record)
+    extra = sorted(set(op) - set(fields) - set(FIELD_KEYS))
     if extra:
         raise ApplyError(
             f"a {record} is not amended in {_and_(extra)} — this op writes "
-            f"{', '.join(FIELDS)} and nothing else. An answer, an outcome and "
+            f"{', '.join(fields)} and nothing else. An answer, an outcome and "
             f"a reason work stopped are dated records: they are superseded by "
             f"a new one, never edited")
-    named = [k for k in FIELDS if k in op]
+    named = [k for k in fields if k in op]
     if not named:
         raise ApplyError(
-            f"nothing to change — name at least one of {', '.join(FIELDS)}")
+            f"nothing to change — name at least one of {', '.join(fields)}")
     if "title" in op and not (op["title"] or "").strip():
         raise ApplyError(
             f"a {record} needs a title — it is what every other record, and "
@@ -1497,6 +1514,7 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
                 status: str = "OPEN", after: list[str] | None = None,
                 note: str | None = None,
                 probe: dict | None = None,
+                rule: str | None = None,
                 stored: Graph | None = None) -> list[dict]:
     """The op list that records a new decision, validated against `g`.
 
@@ -1581,6 +1599,8 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
           "area": area, "status": status}
     if note:
         op["note"] = note
+    if rule:
+        op["rule"] = rule
     if probe is not None:
         op["probe"] = probe
         op["date"] = _date.today().isoformat()
@@ -1907,6 +1927,7 @@ def _apply_one(g: Graph, op: dict) -> None:
             status=op.get("status", "OPEN"), note=op.get("note"),
             # the tag describes the note; without one it describes nothing
             format=op.get("format") if op.get("note") else None,
+            rule=op.get("rule"),
             # The first entry of the appended list, dated by the op or today
             # — the same date rule `close` uses for its payload.
             probes=[e for e in (probe_entry(op),) if e is not None],
@@ -1991,7 +2012,8 @@ def _apply_one(g: Graph, op: dict) -> None:
         # benefit. What would reopen it: citations becoming resolvable.
         v = g.vertices[vid]
         _register(g, op.get("area"))
-        out = _dc_replace(v, **{k: op[k] for k in FIELDS if k in op})
+        out = _dc_replace(v, **{k: op[k] for k in fields_of("decision")
+                                if k in op})
         if not out.note:
             # The tag describes the note; without one it describes nothing.
             # `add_vertex` applies the same rule above, and this op is the only

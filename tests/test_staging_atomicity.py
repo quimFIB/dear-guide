@@ -180,7 +180,7 @@ def test_every_staging_command_is_covered():
     NO_TRAY = {
         ("show",), ("find",), ("tree",), ("node",), ("path",), ("context",),
         ("why",), ("areas",),
-        ("brief",), ("gate",), ("check",), ("pending",), ("export",),
+        ("brief",), ("gate",), ("check",), ("probe",), ("pending",), ("export",),
         ("apply",), ("render",), ("init",), ("import",), ("import-md",),
         ("serve",),
         # Writes `.dgraph-range.json`, which is not a tray: it holds no ops,

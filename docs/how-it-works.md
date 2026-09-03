@@ -814,6 +814,26 @@ And with the [agent plugin](quickstart-agents.md) installed, a `git commit`
 that would leave the graph contradicting itself is refused outright, quoting
 the rule and the fix.
 
+### Writing down what would settle it, before it is settled
+
+The falsifier is the idea that does the most work here, and it has two
+younger siblings. An open question can carry a **rule** for settling it,
+written when it is opened and read back by `dg decide` the moment you
+answer; a task can carry a **definition of done**, read back by `dg task
+done` before you write the outcome. Both are prose, amendable like a note.
+Beside any of the three a **probe** can sit — a typed criterion, `{"kind":
+"prose.rule", "args": {...}}`, that installed code could judge — and on an
+open question or a task it is appended and dated rather than edited, so a
+criterion rewritten the day the work was finished is visible as one.
+
+`dg probe` presents every such pre-commitment beside what it is judged
+against. On a plain install the only domain is `prose`, which presents and
+never judges, so the reading ends where it always did: with you running
+`dg reopen`, `dg confirm`, `dg task done` or `dg decide`. `dg check` never
+evaluates anything — its verdict is a function of the store — which is
+what keeps a commit hook from depending on what the hook's machine has
+installed. `reference.md` has the fields and the commands.
+
 ## Next
 
 - [CLI quick start](quickstart-cli.md) — the commands, step by step.

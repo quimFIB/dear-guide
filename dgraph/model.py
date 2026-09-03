@@ -91,7 +91,7 @@ EDGE_FIELDS = ("answer", "falsifier", "source", "date", "summary",
 #: Every field a vertex record holds. `id`, `title`, `area` and `status` are
 #: required; the rest optional. Anything else is `Vertex.extra`.
 VERTEX_FIELDS = ("id", "title", "area", "status", "note", "format", "probes",
-                 "binds")
+                 "binds", "rule")
 
 #: What a store written before 2026-09-03 spells a waiting vertex as. Folded to
 #: `OPEN` on load and never written again: whether a vertex waits is derived
@@ -151,6 +151,13 @@ class Vertex:
     status: str
     note: str | None = None  # prose for a vertex with no decision yet
     format: str | None = None  # the note's dialect: "org", else markdown
+    #: The rule for settling this question, in prose, written when it was
+    #: opened (`D75`): what evidence would count as an answer. Optional,
+    #: amendable like a note — it is the writer's own pre-commitment and
+    #: not a claim about the world — and shown back by `dg decide`, so the
+    #: person answering reads what they said would settle it before they
+    #: settle it. Its mechanical twin is `probes`.
+    rule: str | None = None
     #: Every rule for settling this question that was written down, oldest
     #: first, and never cleared — `Probe` has the argument. Meaningful while
     #: the vertex is unsettled: the answer, once given, carries its own probe
@@ -345,7 +352,8 @@ class Graph:
                     **{k: val for k, val in (
                         ("id", v.id), ("title", v.title), ("area", v.area),
                         ("status", v.status), ("note", v.note),
-                        ("format", v.format), ("probes", probes_to(v.probes)),
+                        ("format", v.format), ("rule", v.rule),
+                        ("probes", probes_to(v.probes)),
                         ("binds", binds_to(v.binds)),
                     ) if val is not None},
                     **v.extra,     # written back as read: see `Vertex.extra`
