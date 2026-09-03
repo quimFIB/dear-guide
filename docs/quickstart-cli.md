@@ -23,8 +23,8 @@ works the same way with `dg task` in front of each verb — `dg task init`,
 
 ## 1. Start a graph
 
-Areas are just grouping labels for the rendered view. Pick a few; you can only
-use ones you declared here.
+Areas are just grouping labels for the rendered view, and nothing has to be
+declared up front.
 
 ```sh
 cd my-project
@@ -374,6 +374,10 @@ Prose is stored exactly as typed. Org composed in the editor is tagged as such,
 so `*bold*` and `/italic/` render with org's meaning in the generated views,
 while markdown typed anywhere else keeps markdown's meaning.
 
+[Composing in an editor](emacs.md) is the whole of this path — every key, why
+they sit where they do, the same buffer opened from the browser, and what the
+provenance tag is for.
+
 ## Where to go next
 
 - [How it works, and why](how-it-works.md) — the ideas behind the
@@ -382,3 +386,5 @@ while markdown typed anywhere else keeps markdown's meaning.
   clickable.
 - [The agent plugin](quickstart-agents.md) — the brief at session start, and a
   commit gate, for Claude Code and opencode.
+- [Reference](reference.md) — every command in one place, and every rule
+  `dg check` enforces.

@@ -159,7 +159,7 @@ Agents apply their own work rather than leaving it for you. `apply` validates a
 copy of the graph before writing anything and refuses a batch that would leave it
 invalid, the store is append-only, and the result is a git diff you review like
 any other — whereas an op staged into a gitignored file and then committed over
-is gone with no trace. See [Still open](../README.md#still-open) for the
+is gone with no trace. See [Still open](open-questions.md) for the
 argument.
 
 ---
@@ -573,7 +573,7 @@ passes flags.
 - **Nothing reads falsifiers back.** A falsifier nobody revisits is a comment —
   and the one in turn 1 fired because a human read it and recognised the number,
   not because anything compared 48M against the threshold. Wiring that up is
-  [still open](../README.md#still-open).
+  [still open](open-questions.md).
 - **Version skew is real** — the plugin and the `dg` package install separately.
   `dg --version` exists so you can check; the brief hook says so explicitly when
   it meets a `dg` too old to know `dg brief`.

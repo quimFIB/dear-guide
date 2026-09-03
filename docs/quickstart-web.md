@@ -374,3 +374,5 @@ open**. Reload it and the new token comes with it.
 - [The CLI](quickstart-cli.md) — every operation, scriptable, including the
   ones above that only it has.
 - [The agent plugin](quickstart-agents.md) — for Claude Code and opencode.
+- [Composing in an editor](emacs.md) — the buffer behind the **Compose in
+  emacs** button, and its keys.

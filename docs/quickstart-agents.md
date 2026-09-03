@@ -346,3 +346,5 @@ lost.
 - [How it works, and why](how-it-works.md) — what the agent is maintaining.
 - [The CLI](quickstart-cli.md) — what the agent is actually driving.
 - [The web interface](quickstart-web.md) — for reviewing a graph by eye.
+- [Still open](open-questions.md) — what unattended `apply` rests on, and the
+  isolation question two agents on one checkout leave behind.
