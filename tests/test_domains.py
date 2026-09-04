@@ -8,6 +8,9 @@ raises is `unjudged`, and the finding names stay out of `check.CHECKS`.
 """
 
 import inspect
+import os
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -96,18 +99,26 @@ class _EP:
 
 
 class Fake:
+    """A domain for the tests. `calls` is counted in a file rather than on
+    the instance, because a batch is evaluated in a forked child (`D86`) and
+    the parent's object never sees the increment."""
+
     name = "fake"
     kinds = frozenset({"fake.ok"})
 
     def __init__(self, verdict="holds", sleep=0.0, boom=None, answer=True):
         self.v, self.sleep, self.boom, self.answer = verdict, sleep, boom, answer
-        self.calls = 0
+        self._tally = Path(tempfile.mkdtemp()) / "calls"
+
+    @property
+    def calls(self) -> int:
+        return int(self._tally.read_text()) if self._tally.exists() else 0
 
     def compose(self, kind, record, root):
         return {}, ""
 
     def evaluate(self, items, root, *, deadline):
-        self.calls += 1
+        self._tally.write_text(str(self.calls + 1))
         if self.boom:
             raise self.boom
         time.sleep(self.sleep)
@@ -122,6 +133,49 @@ class Fake:
 def _install(monkeypatch, *eps):
     monkeypatch.setattr(domains.metadata, "entry_points",
                         lambda **kw: list(eps) if kw.get("group") == domains.GROUP else [])
+
+
+class Slow(Fake):
+    """Declares a short deadline. Module-level, as every fake whose
+    `evaluate` runs must be: the batch runs in a child process, and a
+    threaded parent (an xdist worker, `dg serve`) starts it by `forkserver`,
+    which imports the domain by name."""
+    name = "slow"
+    kinds = frozenset({"slow.ok"})
+    deadline = 0.05
+
+
+class Overrunning(Fake):
+    """Ignores the deadline it is handed, and logs when it starts and ends."""
+    name = "slow"
+    kinds = frozenset({"slow.ok"})
+    deadline = 0.2
+
+    def __init__(self, log):
+        super().__init__()
+        self.log = log
+
+    def evaluate(self, items, root, *, deadline):
+        with open(self.log, "a") as f:
+            f.write(f"slow start {time.monotonic()} pid {os.getpid()}\n")
+        time.sleep(1.0)
+        with open(self.log, "a") as f:
+            f.write(f"slow end {time.monotonic()}\n")
+        return {it.id: Result("holds") for it in items}
+
+
+class Logging(Fake):
+    name = "fast"
+    kinds = frozenset({"fast.ok"})
+
+    def __init__(self, log):
+        super().__init__()
+        self.log = log
+
+    def evaluate(self, items, root, *, deadline):
+        with open(self.log, "a") as f:
+            f.write(f"fast start {time.monotonic()}\n")
+        return {it.id: Result("holds") for it in items}
 
 
 def test_a_prefix_nobody_claims_is_unavailable_not_an_error(monkeypatch):
@@ -238,8 +292,6 @@ def test_a_holding_probe_is_a_warning_not_an_error(monkeypatch):
 def test_each_domain_runs_under_its_own_deadline_unless_the_door_overrides(monkeypatch):
     """D85 / T73: a slow domain declares its deadline; a fast one declares
     none and gets DEADLINE; `timeout` given at the door overrides both."""
-    class Slow(Fake):
-        name = "slow"; kinds = frozenset({"slow.ok"}); deadline = 0.05
     fast, slow = Fake(), Slow(sleep=1.0)
     _install(monkeypatch, _EP("fake", "f:F", fast), _EP("slow", "s:S", slow))
     assert domains.seconds_for(fast) == domains.DEADLINE
@@ -350,3 +402,26 @@ def test_a_composite_under_an_unclaimed_prefix_is_said_once_not_per_member(monke
         "[probe_unjudged] (warning) D02: bench.c unjudged"]
     assert list(domains.unavailable(items)) == ["bench"]
     assert domains.unavailable(items)["bench"][1] == ["bench.a", "bench.b", "bench.c"]
+
+
+def test_a_domain_past_its_deadline_is_stopped_before_the_next_starts(monkeypatch, tmp_path):
+    """D86 / T78, and D85's falsifier made a test: with a domain that ignores
+    its deadline, the next domain does not start while it runs, nothing of
+    it outlives `evaluate`, and it is `unjudged`. On the tree at 21c4b90 the
+    fast domain started 0.2 s in while the slow one ran to 1.0 s on a thread
+    that was still alive afterwards."""
+    log = tmp_path / "log"
+    _install(monkeypatch, _EP("slow", "s:S", Overrunning(log)), _EP("fast", "f:F", Logging(log)))
+    items = [Item("D01", "slow.ok", {}, None), Item("D02", "fast.ok", {}, None)]
+    res = domains.evaluate(items, ROOT)
+    assert res["D01"].verdict == "unjudged" and "0.2s" in res["D01"].sentence
+    assert res["D02"].verdict == "holds"
+    assert not [t for t in threading.enumerate() if t.name.startswith("dg-domain")]
+    lines = log.read_text().splitlines()
+    slow_pid = int(lines[0].split("pid ")[1])
+    with pytest.raises(ProcessLookupError):
+        os.kill(slow_pid, 0)                      # the child is gone, not merely abandoned
+    time.sleep(1.2)                               # long enough for an abandoned slow to finish
+    lines = log.read_text().splitlines()
+    assert [ln.split()[0] for ln in lines] == ["slow", "fast"], lines
+    assert not any(ln.startswith("slow end") for ln in lines)

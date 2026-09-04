@@ -1747,19 +1747,21 @@ def probe(
     scope = probing.Scope(ids=list(ids or []), provisional=provisional,
                           area=area, since=since, all=all_,
                           domain=list(domain or []))
-    unknown = [i for i in scope.ids
-               if not ((g and i in g.vertices) or (tg and i in tg.tasks))]
-    if unknown:
-        con.print(f"[red]unknown record(s): {', '.join(unknown)}[/]")
-        raise typer.Exit(1)
+    # One judgement for a blank, an unknown id, area or prefix — the
+    # scope's own, so the pytest opt-in refuses the same things (`D87`).
+    why = scope.fault(every, g, tg)
+    if why:
+        con.print(f"[red]{_x(why)}[/]")
+        raise typer.Exit(2)
     why = probing.ask_for_scope(every, scope)
     if why:
         con.print(f"[yellow]{_x(why)}[/]")
         raise typer.Exit(2)
     chosen = probing.select(every, g, scope) if scope.given else every
     if not chosen:
-        con.print("[dim]nothing to present — no record in scope carries a "
-                  "falsifier, a rule, a definition of done or a probe[/]")
+        con.print(f"[dim]nothing to present — no record {_x(scope.describe())} "
+                  "carries a falsifier, a rule, a definition of done or a "
+                  "probe[/]")
         return
     probing.judge(chosen, proj.root, timeout=timeout)
     for r in chosen:

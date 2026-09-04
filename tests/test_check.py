@@ -389,3 +389,24 @@ def test_probe_advisory_findings_warn_but_never_fail():
                        "warning", DOMAIN)])
     testing.test_decision_graph_probe_advisory_warnings([])
     assert "test_decision_graph_probe_advisory_warnings" in testing.__all__
+
+
+def test_the_plugin_refuses_a_domain_scope_that_selects_nothing(store, g):
+    """D87 / T79 (audit J-F3): `--decision-graph-domain bnech` used to pass
+    every probe test green having evaluated nothing. The same judgement the
+    CLI applies — `probing.Scope.fault` — makes it a failure that names the
+    prefixes the store holds."""
+    from dgraph import project, testing
+
+    class _Config:
+        def __init__(self, domain): self._d = domain
+        rootpath = store
+        def getoption(self, name, default=None):
+            return {"decision_graph_probe": True, "decision_graph_domain": self._d}.get(name, default)
+
+    proj = project.Project(store)
+    for bad in (["bnech"], [""]):
+        with pytest.raises(pytest.fail.Exception, match="decision-graph-domain"):
+            testing.probe_rows.__wrapped__(_Config(bad), proj)
+    rows = testing.probe_rows.__wrapped__(_Config(["prose"]), proj)
+    assert rows and all(r.prefixes == {"prose"} for r in rows)

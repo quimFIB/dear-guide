@@ -17,7 +17,7 @@ from dgraph.cli import app
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
 from tests.conftest import FIXTURE, TASK_FIXTURE
-from tests.test_domains import Fake, _EP, _install
+from tests.test_domains import Fake, Slow, _EP, _install
 
 
 @pytest.fixture(autouse=True)
@@ -193,7 +193,7 @@ def test_dg_probe_one_id_and_an_unknown_one(run, store):
     res = run("probe", "D01")
     assert res.exit_code == 0 and "D01" in res.output and "D02" not in res.output
     res = run("probe", "D99")
-    assert res.exit_code == 1 and "unknown record" in res.output
+    assert res.exit_code == 2 and "unknown record" in res.output   # a bad parameter (D87)
 
 
 def test_dg_probe_asks_for_a_scope_past_a_screen(run, store, monkeypatch):
@@ -219,8 +219,6 @@ def test_dg_probe_exits_nonzero_when_anything_fired(run, store, monkeypatch):
 def test_dg_probe_domain_scope_never_reaches_the_other_domain(run, store, monkeypatch):
     """D85 / T73: `--domain fake` judges the fast domain and the slow one is
     not called; bare, the slow one runs under its own declared deadline."""
-    class Slow(Fake):
-        name = "slow"; kinds = frozenset({"slow.ok"}); deadline = 0.05
     fast, slow = Fake("holds"), Slow(sleep=0.5)
     _install(monkeypatch, _EP("fake", "f:F", fast), _EP("slow", "s:S", slow))
     ops = [{"op": "reprobe", "vertex": "D05", "probe": {"kind": "fake.ok", "args": {}},
@@ -318,3 +316,67 @@ def test_a_composite_under_an_unclaimed_prefix_is_in_the_footer_too(store):
     assert len(foot) == 1 and "bench." in foot[0] and "1 record(s)" in foot[0], foot
     f = probing.findings(rows)
     assert sum(v.check == "domain_unavailable" for v in f) == 1
+
+
+# ---- D87: a scope that selects nothing --------------------------------------
+
+
+@pytest.mark.parametrize("flag", ["--domain", "--area", "--since"])
+def test_a_blank_narrowing_flag_is_a_bad_parameter_on_dg_probe(run, store, flag):
+    """D87 / T79 (audit J-F3): `""` is the value a failed extraction
+    produces. On this door it used to select nothing (`--domain`) or
+    everything (`--area`, `--since`), exit 0 either way."""
+    res = run("probe", flag, "")
+    assert res.exit_code == 2, res.output
+    assert flag in res.output and "matched nothing" in res.output
+    assert "presented" not in res.output
+
+
+def test_a_blank_id_is_a_bad_parameter_on_dg_probe(run, store):
+    res = run("probe", "")
+    assert res.exit_code == 2 and "matched nothing" in res.output, res.output
+
+
+def test_a_name_no_record_carries_is_refused_naming_what_the_store_holds(run, store, monkeypatch):
+    """D87: a typo in a prefix or an area reads as an unknown agent does —
+    refused, with what the store holds — where it used to be an empty
+    selection and exit 0."""
+    _install(monkeypatch, _EP("fake", "f:F", Fake()))
+    g = pending.apply_all(Graph.load(store / "decisions.json"), [
+        {"op": "reprobe", "vertex": "D05", "probe": {"kind": "fake.ok", "args": {}},
+         "date": "2026-02-02"}])
+    g.save(store / "decisions.json")
+    res = run("probe", "--domain", "bnech")
+    assert res.exit_code == 2, res.output
+    assert "bnech" in res.output and "fake" in res.output and "prose" in res.output
+    res = run("probe", "--area", "nosuch")
+    assert res.exit_code == 2 and "nosuch" in res.output, res.output
+    assert any(a in res.output for a in g.areas)
+    res = run("probe", "nosuch-id")
+    assert res.exit_code == 2 and "unknown record" in res.output, res.output
+
+
+def test_a_range_or_predicate_matching_nothing_reports_and_names_the_scope(run, store):
+    """D87's other half: `--since` is a range and `--provisional` a
+    predicate; an empty answer is a legitimate one, said with the scope."""
+    res = run("probe", "--since", "2999-01-01")
+    assert res.exit_code == 0 and "nothing to present" in res.output, res.output
+    assert "2999-01-01" in res.output
+    res = run("probe", "--provisional")
+    assert res.exit_code == 0 and "nothing to present" in res.output, res.output
+    assert "PROVISIONAL" in res.output
+
+
+def test_the_judgement_is_the_scope_s_not_the_door_s(store):
+    """One shared judgement (`Scope.fault`), so the plugin and any later
+    door get it by constructing a Scope rather than by remembering."""
+    g = Graph.from_dict(FIXTURE)
+    rows = probing.rows(g, None)
+    assert probing.Scope(domain=[""]).fault(rows, g, None)
+    assert probing.Scope(area="").fault(rows, g, None)
+    assert probing.Scope(since="").fault(rows, g, None)
+    assert probing.Scope(ids=[""]).fault(rows, g, None)
+    assert "prose" in probing.Scope(domain=["bnech"]).fault(rows, g, None)
+    assert probing.Scope(domain=["prose"]).fault(rows, g, None) is None
+    assert probing.Scope(since="2999-01-01").fault(rows, g, None) is None
+    assert probing.Scope().fault(rows, g, None) is None

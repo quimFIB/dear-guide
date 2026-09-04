@@ -105,8 +105,66 @@ class Scope:
 
     @property
     def given(self) -> bool:
-        return bool(self.ids or self.provisional or self.area or self.since
-                    or self.all or self.domain)
+        return bool(self.ids or self.provisional or self.area is not None
+                    or self.since is not None or self.all or self.domain)
+
+    def fault(self, all_rows: list[Row], g: Graph | None,
+              tg: TaskGraph | None) -> str | None:
+        """Why this scope is refused, or None — the one judgement every door
+        constructs a `Scope` to get (`D87`, audit `J-F3`).
+
+        A **blank** on any narrowing flag is a bad parameter: it is the value
+        a failed extraction produces, and on this door it used to select
+        nothing (`--domain`) or everything (`--area`, `--since`) with exit 0
+        — `D82`'s rule, which is about the value and not the act. A **name no
+        record carries** — an id, an area, a domain prefix — is refused
+        naming what the store holds, as an unknown agent gets the roster: a
+        typo and an empty selection look identical afterwards and mean
+        opposite things. A **range or predicate** (`--since`, `--provisional`)
+        that matches nothing is a legitimate empty answer and is never
+        refused here; the door reports it and names the scope (`describe`).
+        """
+        from dgraph import pending
+        flagged = [("--domain", v) for v in self.domain]
+        flagged += [("--area", self.area)] if self.area is not None else []
+        flagged += [("--since", self.since)] if self.since is not None else []
+        flagged += [("an id", v) for v in self.ids]
+        for flag, value in flagged:
+            why = pending.refuse_blank(value)
+            if why is not None:
+                return f"{flag} is empty — {why}"
+        unknown = [i for i in self.ids
+                   if not ((g and i in g.vertices) or (tg and i in tg.tasks))]
+        if unknown:
+            return f"unknown record(s): {', '.join(unknown)}"
+        if self.area is not None:
+            held = sorted(set(g.areas if g else []) | set(tg.areas if tg else []))
+            if self.area not in held:
+                return (f"no record is under area {self.area!r}; areas here: "
+                        + (", ".join(held) or "none"))
+        if self.domain:
+            held = sorted({p for r in all_rows for p in r.prefixes})
+            missing = [d for d in self.domain if d not in held]
+            if missing:
+                return (f"no pre-commitment is under `{'`, `'.join(missing)}.`; "
+                        f"prefixes here: " + (", ".join(held) or "none"))
+        return None
+
+    def describe(self) -> str:
+        """The scope as a person named it, to follow *no record …* in the
+        empty report."""
+        parts = []
+        if self.ids:
+            parts.append("among " + ", ".join(self.ids))
+        if self.provisional:
+            parts.append("that is PROVISIONAL")
+        if self.area is not None:
+            parts.append(f"under area {self.area}")
+        if self.since is not None:
+            parts.append(f"dated since {self.since}")
+        if self.domain:
+            parts.append("under " + ", ".join(f"`{d}.`" for d in self.domain))
+        return ", or ".join(parts) if parts else "in the store"
 
 
 def rows(g: Graph | None, tg: TaskGraph | None,
@@ -171,10 +229,10 @@ def select(all_rows: list[Row], g: Graph | None, scope: Scope) -> list[Row]:
         if scope.provisional and r.status == "PROVISIONAL":
             out.append(r)
             continue
-        if scope.area and _area(r, g) == scope.area:
+        if scope.area is not None and _area(r, g) == scope.area:
             out.append(r)
             continue
-        if scope.since and _date_of(r, g) and _date_of(r, g) >= scope.since:
+        if scope.since is not None and _date_of(r, g) and _date_of(r, g) >= scope.since:
             out.append(r)
             continue
         if scope.domain and r.prefixes & set(scope.domain):

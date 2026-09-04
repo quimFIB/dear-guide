@@ -148,7 +148,11 @@ def probe_rows(pytestconfig, decision_project):
                          _pending.load(proj.task_pending) if tg is not None else [])
     only = list(pytestconfig.getoption(_DOMAIN_DEST, default=[]) or [])
     if only:
-        rows = _probing.select(rows, g, _probing.Scope(domain=only))
+        scope = _probing.Scope(domain=only)
+        why = scope.fault(rows, g, tg)       # the CLI's judgement, shared (D87)
+        if why:
+            pytest.fail(f"{DOMAIN_OPTION}: {why}", pytrace=False)
+        rows = _probing.select(rows, g, scope)
     return _probing.judge(rows, proj.root)   # each domain's own deadline (D85)
 
 

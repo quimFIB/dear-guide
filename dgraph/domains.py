@@ -25,7 +25,6 @@ domain is planned; every Rocq example in the proposal is an example.
 
 from __future__ import annotations
 
-import threading
 import time
 from dataclasses import dataclass, field
 from importlib import metadata
@@ -302,13 +301,14 @@ def evaluate(items: list[Item], root: Path, *,
     Each domain has seconds per batch (proposal E5): the `deadline` it
     declares, else `DEADLINE`; `timeout`, when given, overrides every
     domain's — a person at the door outranks a distribution (`D85`). A
-    domain runs on its own thread; one that has not returned by then is
-    `unjudged` for everything it was asked, with the sentence saying so,
-    and the door moves on. A domain that raises is `unjudged` likewise —
-    never an error, because a broken environment is not evidence about the
-    thing the probe is about. Domains run one at a time: two building under
-    one `root` concurrently is worse than slow. `core.all_of` members are
-    dispatched through the same batch and combined afterwards.
+    domain runs in a forked child of its own (`_run`, `D86`); one that has
+    not answered by then is ended and `unjudged` for everything it was
+    asked, with the sentence saying so. A domain that raises is `unjudged`
+    likewise — never an error, because a broken environment is not evidence
+    about the thing the probe is about. Domains run one at a time, and the
+    next starts only when the last is gone: two building under one `root`
+    concurrently is worse than slow. `core.all_of` members are dispatched
+    through the same batch and combined afterwards.
     """
     out: dict[str, Result] = {}
     flat: list[Item] = []
@@ -369,36 +369,117 @@ def seconds_for(dom: Domain, timeout: float | None = None) -> float:
     return DEADLINE
 
 
+#: Seconds a child may take to come up before the domain's own clock starts
+#: — a fresh interpreter importing the domain (`_context`), not the batch.
+STARTUP = 30.0
+
+
+def _child(conn, dom: Domain, group: list[Item], root: Path, timeout: float) -> None:
+    """The batch, in the child: *started* first, so the domain's deadline is
+    counted from the moment it could run and not from the fork; then one
+    message back — the result, or why not."""
+    try:
+        conn.send(("started", None))
+        got = dom.evaluate(group, root, deadline=time.monotonic() + timeout)
+        conn.send(("result", got))
+    except BaseException as exc:          # never the door's problem
+        try:
+            conn.send(("error", f"{type(exc).__name__}: {exc}"))
+        except BaseException:
+            pass
+    finally:
+        conn.close()
+
+
+def _context():
+    """How the child is started. `fork` while the door is the only thread —
+    `dg probe`, the commit gate — since it inherits the loaded domain and
+    the items and pickles nothing. A parent that already has threads
+    (`dg serve`, a pytest worker) may not fork safely: a lock a thread held
+    at the fork is held forever in the child, and Python 3.12+ says so.
+    There the child is started fresh (`forkserver`, else `spawn`) and the
+    domain, the items and the root are pickled on the way in — so a domain
+    is a class importable by name, and `Item.record` a plain record.
+    """
+    import multiprocessing as mp
+    methods = mp.get_all_start_methods()
+    if "fork" in methods and _threads() == 1:
+        return mp.get_context("fork")
+    return mp.get_context("forkserver" if "forkserver" in methods else "spawn")
+
+
+def _threads() -> int:
+    """How many threads this process has, counted the way the interpreter
+    counts them before it warns about a fork: at the OS, where a thread a
+    C extension or a test runner started shows up and `threading` does not
+    see it. Elsewhere than Linux, `threading`'s count."""
+    import threading
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("Threads:"):
+                    return int(line.split()[1])
+    except OSError:
+        pass
+    return threading.active_count()
+
+
 def _run(dom: Domain, group: list[Item], root: Path,
          timeout: float | None) -> dict[str, Result]:
-    """One domain, one batch, one thread, one deadline."""
+    """One domain, one batch, one child process, one deadline.
+
+    A forked child rather than a thread (`D86`): Python cannot end a thread,
+    so a domain that ignored its deadline used to run on beside the next
+    domain and past the door's exit — two building under one root, which is
+    the case the deadline exists for. The operating system can end a process,
+    and does, at the deadline: everything the domain did not answer is
+    `unjudged`, nothing of it is left running, and the next domain starts
+    only after. A domain that raises, exits, or answers something that is
+    not a dict of `Result`s is `unjudged` likewise, with the reason.
+
+    Under `fork` the child inherits the loaded domain and the items as they
+    stand and nothing is pickled on the way in; only the result crosses
+    back, so a domain cannot reach the door's state (R3, by construction).
+    A threaded parent gets a fresh child instead (`_context`), which pickles
+    the domain in. A domain's own heavy work belongs in a subprocess with a
+    `timeout` derived from `deadline`, as the cookbook's `grep` does — then
+    a cut-off is clean at every level.
+    """
     timeout = seconds_for(dom, timeout)
-    box: dict[str, object] = {}
-
-    def go() -> None:
-        try:
-            box["result"] = dom.evaluate(group, root,
-                                         deadline=time.monotonic() + timeout)
-        except BaseException as exc:      # never the door's problem
-            box["error"] = exc
-
-    t = threading.Thread(target=go, name=f"dg-domain-{dom.name}", daemon=True)
-    t.start()
-    t.join(timeout)
-    if t.is_alive():
-        why = f"`{dom.name}` did not answer within {timeout:g}s"
+    ctx = _context()
+    parent, child = ctx.Pipe(duplex=False)
+    proc = ctx.Process(target=_child, name=f"dg-domain-{dom.name}", daemon=True,
+                       args=(child, dom, group, root, timeout))
+    proc.start()
+    child.close()
+    message = None
+    try:
+        if parent.poll(STARTUP) and parent.recv()[0] == "started":
+            if parent.poll(timeout):
+                message = parent.recv()
+    except (EOFError, OSError):
+        message = None
+    finally:
+        parent.close()
+    if proc.is_alive():
+        proc.terminate()
+    proc.join()
+    if message is None:
+        if proc.exitcode not in (0, None) and proc.exitcode < 0:
+            why = f"`{dom.name}` did not answer within {timeout:g}s"
+        else:
+            why = f"`{dom.name}` exited without answering"
         return {it.id: Result("unjudged", why) for it in group}
-    if "error" in box:
-        exc = box["error"]
-        why = f"`{dom.name}` raised {type(exc).__name__}: {exc}"
+    kind, payload = message
+    if kind == "error":
+        why = f"`{dom.name}` raised {payload}"
         return {it.id: Result("unjudged", why) for it in group}
-    got = box.get("result")
-    if not isinstance(got, dict):
-        why = f"`{dom.name}` returned {type(got).__name__}, not a dict"
+    if not isinstance(payload, dict):
+        why = f"`{dom.name}` returned {type(payload).__name__}, not a dict"
         return {it.id: Result("unjudged", why) for it in group}
     out = {}
     for it in group:
-        r = got.get(it.id)
+        r = payload.get(it.id)
         if isinstance(r, Result) and r.verdict in ("holds", "fired", "unjudged"):
             out[it.id] = r
         else:

@@ -121,11 +121,16 @@ the work; a rule beside the outcomes of its evidence — and says what any
 installed domain made of each: `fired`, `holds`, or `unjudged`. Its exit
 code is `dg check`'s, non-zero when anything fired; it reads both trays
 first, so a record a staged op already names says so; and it never writes.
-Each domain runs in turn under its own declared deadline (60 s where it
-declares none); `--timeout` overrides every domain's, and `--domain PREFIX`
-scopes the run to the records one domain judges — how to run the cheap
-ones, or reach a slow one by name. A prefix this machine cannot judge is
-said once, in a footer, not once per record. `dg check` never evaluates a
+Each domain runs in turn, in a child process of its own, under its own
+declared deadline (60 s where it declares none) and is ended at it —
+nothing of it is left running, and the next domain starts only after;
+`--timeout` overrides every domain's, and `--domain PREFIX` scopes the run
+to the records one domain judges — how to run the cheap ones, or reach a
+slow one by name. A prefix this machine cannot judge is said once, in a
+footer, not once per record. A scope that names nothing the store holds —
+a blank on any flag, an unknown id, area or prefix — is refused naming
+what it does hold; a range or predicate that matches nothing reports so
+and names the scope. `dg check` never evaluates a
 probe — its output is a function of the store — and judges only the two
 shapes. The pytest plugin evaluates probes only under
 `--decision-graph-probe`, scoped the same way by `--decision-graph-domain`;
