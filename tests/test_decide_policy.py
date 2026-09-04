@@ -280,7 +280,7 @@ def test_the_task_store_never_learns_who(proj, run, monkeypatch):
     assert "beta" not in raw, raw
     stored = json.loads(raw)["tasks"][0]
     assert "held_by" not in stored
-    assert set(stored["completions"][0]) == {"date", "outcome"}
+    assert stored["done"] and stored["outcome"]
 
 
 def test_parking_records_no_name_either(proj, run, monkeypatch):

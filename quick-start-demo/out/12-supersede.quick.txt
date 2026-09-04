@@ -42,7 +42,7 @@ $ dg node D02
 │ opens       D03, D04                                                                         │
 │                                                                                              │
 │ falsifier   p95 over 200 ms at 500k notes                                                    │
-│ source      bench/fts5-shards.md   (2026-09-03)                                              │
+│ source      bench/fts5-shards.md   (2026-09-04)                                              │
 │                                                                                              │
 │ Answer                                                                                       │
 │ SQLite FTS5 with a trigram tokenizer, sharded into one table per 20k notes.                  │

@@ -597,7 +597,25 @@ def _fields_of(*classes) -> tuple[str, ...]:
 
 
 def _texts(vals: Iterable[object]) -> list[str]:
-    return [v for v in vals if isinstance(v, str) and v]
+    """Every string in `vals`, flattening a list of them one level.
+
+    The flattening is what makes a field holding *several* strings searchable
+    without this module naming it — which matters for exactly one field, and
+    that field is the one it may not name: a task's premise list holds
+    decision ids, and `test_query_never_names_the_link` forbids reaching for
+    it by attribute here, since a hand-written match would be a second
+    implementation of `cross.rests_on`. Reading whatever strings a field holds
+    is not that. Without this, the singular link field worked (a scalar) while
+    the plural one silently matched nothing (a list) — one relation spelled two
+    ways with one of them dead. `D80`; the audit that missed it says so there.
+    """
+    out = []
+    for v in vals:
+        if isinstance(v, str) and v:
+            out.append(v)
+        elif isinstance(v, (list, tuple)):
+            out += [x for x in v if isinstance(x, str) and x]
+    return out
 
 
 #: Edge fields whose superseded copies join the search alongside the active
@@ -619,7 +637,45 @@ _UNSEARCHABLE = {"decisions": ("src", "to", "active", "format", "replaced_by"),
                  # also what a person searching would name. Offering it as a
                  # field that always returns nothing is the drift `_excluded`
                  # exists to prevent, arriving by the front door.
-                 "tasks": ("format", "stops", "completions")}
+                 "tasks": ("format", "stops")}
+
+
+#: Fields whose value is a record rather than text, and **what of it is
+#: indexed** (`D80`). A term over one of these resolves, matches on the text
+#: below, and says what it does not reach — it is never silently dead, which
+#: is the failure `_UNSEARCHABLE`'s comment describes and which these four
+#: names walked into when `D71` added them (`Y-F5`).
+#:
+#: **Addresses and names are indexed; parameters are not.** A `kind`, a `ref`
+#: and a decision id are written to be quoted by people who do not evaluate
+#: them — that is what an address is for. A probe's `args` are written for the
+#: evaluator alone, and `D71`'s R1 says the core reads them no further than
+#: their length: indexing them would make `dg find` an opinion about a domain's
+#: private data, and a domain changing its arg shape would silently change what
+#: people can find.
+PARTIAL = {
+    "binds": ("kind:ref", "the pair, as `dg bind` spells it"),
+    "probes": ("kind", "a probe's args are the domain's and are not indexed"),
+    "probe": ("kind", "a probe's args are the domain's and are not indexed"),
+    "readings": ("the decision read against, and the note",
+                 "a reading's date is not indexed"),
+    "extra": ("nothing", "`extra` holds fields this version of `dg` does not "
+                         "read, so it has no names to match; `dg check` lists "
+                         "them as `unknown_field`"),
+}
+
+
+def partial_note(name: str) -> str | None:
+    """What a term over `name` indexes and what it leaves out, or `None` where
+    the field is indexed whole.
+
+    `_no_predicate`'s rule, one axis over: *a term that cannot be answered is
+    a different sentence from a term that does not exist*, and a term that is
+    answered about **part** of a field is a third. Printed where such a term
+    matched nothing, which is the moment the difference is invisible.
+    """
+    got = PARTIAL.get(name)
+    return None if got is None else f"`{name}:` matches on {got[0]} — {got[1]}"
 
 
 def _excluded(kind: str, *classes) -> frozenset:
@@ -732,7 +788,19 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
             # waiting vertex is `OPEN` now and `is:blocked` asks about the
             # edges (`D68`).
             out = _texts([v.status])
+        # The records, indexed on their address (`D80`): a bind by the pair a
+        # person types, a probe by the domain and name its kind gives. `args`
+        # is deliberately absent — see `PARTIAL`.
+        if name == "binds":
+            out = _texts(b.spelled for b in v.binds)
+        if name == "probes":
+            out = _texts(p.kind for p in v.probes)
         e = active_of(vid)
+        if name == "probe":
+            out = _texts([(e.probe or {}).get("kind") if e else None])
+            out += _texts((o.probe or {}).get("kind")
+                          for o in rivals_of(vid) if o.probe)
+            return out
         if e is not None:
             out += _texts([getattr(e, name, None)])
         # And every *rival* answer, in the store `one_active_edge` refuses.
@@ -818,14 +886,15 @@ def task_lens(tg, *, predicates=None, structural=None, arg_kind=None,
 
     hidden = set(hide)
     out_of = _excluded("tasks", Task)
-    # `why`, `outcome` and `done` are the names here that are not fields on
-    # `Task`. Every reason a task stopped lives in `stops` and every result it
-    # produced lives in `completions`, and a searcher asking "why is this not
-    # being done" types `why:` — so each term is offered and answered out of
-    # the list behind it. Withholding one because the dataclass lost the field
+    # `why` is the one name here that is not a field on `Task`: every reason a
+    # task stopped lives in `stops`, and a searcher asking "why is this not
+    # being done" types `why:` — so the term is offered and answered out of the
+    # list behind it. Withholding it because the dataclass has no such field
     # would retire a working query to reflect a refactor, which is the
-    # vocabulary drifting from what people actually ask.
-    names = tuple(f for f in (*_fields_of(Task), "why", "outcome", "done")
+    # vocabulary drifting from what people actually ask. `outcome` and `done`
+    # are plain fields again since `D81`, and stay listed so the tuple reads as
+    # the vocabulary rather than as a diff against it.
+    names = tuple(f for f in (*_fields_of(Task), "why")
                   if f not in hidden and f not in out_of)
 
     def values(tid: str, name: str) -> list[str]:
@@ -837,8 +906,16 @@ def task_lens(tg, *, predicates=None, structural=None, arg_kind=None,
         # being current and are worth finding anyway.
         if name == "why":
             return _texts(k.why for k in t.stops)
-        if name == "outcome":
-            return _texts(c.outcome for c in t.completions)
+        # As the decision lens does, and on the same policy (`D80`): the pair
+        # a person types for a bind, the domain and name for a probe, and for
+        # a reading the decision it was read against plus the note somebody
+        # wrote. There is no other door to *which tasks read against D05*.
+        if name == "binds":
+            return _texts(b.spelled for b in t.binds)
+        if name == "probes":
+            return _texts(p.kind for p in t.probes)
+        if name == "readings":
+            return _texts([x for r in t.readings for x in (r.against, r.note)])
         # `done` is deliberately not read from the list, for the reason
         # `_ARCHIVED_PROSE` leaves a decision's `date` out: `done:>=` asks when
         # this work was finished, and answering it from a completion the status

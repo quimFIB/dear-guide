@@ -335,8 +335,12 @@ def test_every_agent_name_in_the_prose_is_one_the_tool_can_hand_out():
 # ---- the stranding guard, at the door ------------------------------------
 
 
-def _holding(run, proj, tid="T01"):
-    """Claim a name and have it hold `tid`, staging nothing else."""
+def _holding(run, proj, tid="T02"):
+    """Claim a name and have it hold `tid`, staging nothing else.
+
+    `T02`, not `T01`: the fixture's `T01` is `DONE`, and since `D81` finished
+    work cannot be started. Any unfinished task does; the holding is what these
+    tests are about."""
     name = agents.claim(proj.root)
     runner.invoke(app, ["--project", str(proj.root), "task", "start", tid],
                   env={"DG_AGENT": name})
@@ -427,7 +431,7 @@ def test_prune_keeps_back_a_name_still_holding_work(run, proj, monkeypatch, arun
     assert holder in out and "kept" in out
     assert holder in agents.load(proj.root)
     # ...and the task still knows who has it.
-    assert agents.holdings(proj.root) == {"T01": holder}
+    assert agents.holdings(proj.root) == {"T02": holder}
 
 
 def test_prune_force_strands_it_deliberately(run, proj, monkeypatch, arun):
@@ -446,7 +450,7 @@ def test_release_refuses_a_name_still_holding_work(run, proj, monkeypatch, arun)
     holder = _holding(run, proj)
 
     refused = arun("release", holder)
-    assert refused.exit_code == 1 and "still holds T01" in refused.output
+    assert refused.exit_code == 1 and "still holds T02" in refused.output
     assert holder in agents.load(proj.root)
 
     assert arun("release", holder, "--force").exit_code == 0
@@ -460,7 +464,7 @@ def test_the_guard_reads_real_status_not_a_stale_lease(run, proj, monkeypatch, a
     """
     monkeypatch.setenv("DG_AGENT", "")
     holder = _holding(run, proj)
-    assert run("task", "park", "T01", "--why", "stopped").exit_code == 0
+    assert run("task", "park", "T02", "--why", "stopped").exit_code == 0
     assert run("apply").exit_code == 0
     leases = agents.load(proj.root)
     leases[holder]["holding"] = ["T01"]          # the stale entry
@@ -483,7 +487,7 @@ def test_removing_a_task_takes_the_hold_with_it(run, proj, monkeypatch, arun):
     """
     monkeypatch.setenv("DG_AGENT", "")
     holder = _holding(run, proj)
-    assert agents.holdings(proj.root) == {"T01": holder}
+    assert agents.holdings(proj.root) == {"T02": holder}
     # `dg task rm` refuses an uncommitted store: git is the only record of what
     # a removal takes away.
     subprocess.run(["git", "add", "-A"], cwd=proj.root, capture_output=True)
@@ -491,7 +495,7 @@ def test_removing_a_task_takes_the_hold_with_it(run, proj, monkeypatch, arun):
                     "-c", "user.name=t", "commit", "-qm", "state",
                     "--no-verify"], cwd=proj.root, capture_output=True)
 
-    assert run("task", "rm", "T01", "--yes").exit_code == 0
+    assert run("task", "rm", "T02", "--yes").exit_code == 0
     assert run("apply").exit_code == 0
 
     assert agents.holdings(proj.root) == {}

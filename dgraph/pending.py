@@ -1188,7 +1188,7 @@ def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
         v = g.vertices[op.get("vertex") or op.get("from")]
         vet_fields(op, own=area_counts(g.areas, g.vertices.values()),
                    other=stored_area_counts(project.find().tasks),
-                   record="decision", new_area=new_area,
+                   record="decision", new_area=new_area, shut=v.status if v.settled else None,
                    current={k: getattr(v, k) for k in fields_of("decision")})
     if op.get("op") == "set_status" and "derived_from" not in op:
         if status != "DECIDED":
@@ -1224,8 +1224,40 @@ def _and_(names: list[str]) -> str:
             else " and ".join([", ".join(names[:-1]), names[-1]]))
 
 
+#: The prose pre-commitment each store carries, and the word for the state
+#: that closes it. **A pre-commitment is written before the thing it judges**,
+#: which is the rule `reprobe` and `dg reprobe` already enforce on the
+#: *mechanical* twin (`probes`) — refused on finished work, because "a
+#: definition written after the fact would be the writer certifying its own
+#: result". `D75` put the prose halves in `set_fields`, where nothing said it,
+#: so `dg task amend --done-when` rewrote a criterion on a DONE task while
+#: `dg task reprobe` refused. Audit `Y-F7`; one rule, two spellings, and only
+#: one of them guarded is worse than neither.
+#: `(field, what the field is, the twin that already refuses)`; the way out
+#: is per *status* and comes from `_precommit_way_out`, because `D81` left a
+#: `DONE` task with none at all.
+_PRECOMMIT_SHUT = {
+    "task": ("done_when", "what this work was to be judged against",
+             "dg task reprobe"),
+    "decision": ("rule", "what would settle this question", "dg reprobe"),
+}
+
+
+def _precommit_way_out(record: str, status: str | None, rid: str) -> str:
+    """What to do instead — and for a finished task there is nothing, which
+    the sentence has to say rather than name a command that will refuse."""
+    if record == "decision":
+        return f"`dg reopen {rid}` first if the question is open again."
+    if status == "DONE":
+        return (f"Nothing reopens finished work (`D81`): if the criterion was "
+                f"wrong, the work judged against the new one is a child task — "
+                f"`dg task add --discovered-during {rid}`.")
+    return f"`dg task start {rid}` first if the work is live again."
+
+
 def vet_fields(op: dict, *, own: dict, other: dict, current: dict,
-               record: str, new_area: bool = False) -> None:
+               record: str, new_area: bool = False,
+               shut: str | None = None) -> None:
     """The stage-time floor for a `set_fields` op, shared by both stores.
 
     Here rather than in each store's `vet` for the reason `already` and
@@ -1250,11 +1282,29 @@ def vet_fields(op: dict, *, own: dict, other: dict, current: dict,
 
     `own` and `other` are the two stores' area registries -- see `refuse_area`,
     which is the one place either store's areas are judged.
+
+    `shut` is the status that closes this record's prose pre-commitment, or
+    `None` while it is still open. A status rather than a flag because the way
+    out differs by it: a `PARKED` task is started again and a `DONE` one is
+    not, since `D81` left finished work with no exit at all.
     """
     # Before "nothing to change", so that an op naming only a field this one
     # cannot write is told *that* rather than told it named nothing — the
     # caller reached for the field it meant and needs to hear why it is not
     # here, not that its op was empty.
+    # The pre-commitment, before anything else this function says: an op that
+    # rewrites one on a closed record is refused whatever else it carries, and
+    # telling the caller it named nothing to change would be the wrong sentence
+    # about the wrong field.
+    field, what, twin = _PRECOMMIT_SHUT[record]
+    if shut and field in op:
+        rid = op.get("task") or op.get("vertex") or op.get("from") or "it"
+        raise ApplyError(
+            f"{rid} is settled, and `{field}` is {what} — a definition "
+            f"written after the fact would be the writer certifying its own "
+            f"result. "
+            + _precommit_way_out(record, shut, rid)
+            + f" (`{twin}` refuses the same thing on the criterion beside it.)")
     fields = fields_of(record)
     extra = sorted(set(op) - set(fields) - set(FIELD_KEYS))
     if extra:

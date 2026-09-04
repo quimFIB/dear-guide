@@ -1129,7 +1129,7 @@ def test_the_staged_count_spans_both_trays(srv, dual):
     assert decisions_only == len(pending.load()) > 0
 
     assert jreq(srv, "/api/task-pending", "POST",
-                {"op": "set_status", "task": "T01", "status": "DOING"})[0] == 200
+                {"op": "set_status", "task": "T02", "status": "DOING"})[0] == 200
     both = jreq(srv, "/api/stat")[1]["staged"]
     assert both == decisions_only + 1, "the task tray is not in the count"
     assert both == len(pending.load()) + len(pending.load(task_pending.path()))
@@ -1342,12 +1342,12 @@ def test_the_panel_marks_a_record_a_staged_op_speaks_for(srv, dual):
     before = jreq(srv, "/api/tasks")[1]
     assert before["contested"] == {}
     code, res = jreq(srv, "/api/task-pending", "POST",
-                     {"op": "set_status", "task": "T01", "status": "DOING"})
+                     {"op": "set_status", "task": "T02", "status": "DOING"})
     assert code == 200, res
 
     got = jreq(srv, "/api/tasks")[1]
-    mark = got["contested"].get("T01")
-    assert mark, "a staged claim on T01 is invisible on the surface that reads it"
+    mark = got["contested"].get("T02")
+    assert mark, "a staged claim on T02 is invisible on the surface that reads it"
     assert mark["op"] == "set_status" and mark["to"] == "DOING"
     # …and the reading itself is untouched: the panel still draws the record.
     assert got["derived"]["T01"]["ready"] == before["derived"]["T01"]["ready"]

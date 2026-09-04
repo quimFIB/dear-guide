@@ -16,6 +16,7 @@ terms that reach across arrive injected from `cli`, and the module stays
 answerable about one store at a time.
 """
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -385,41 +386,31 @@ def test_why_reads_the_stop_record(tg):
     assert m.field == "stopped earlier because"
 
 
-def test_outcome_reads_every_completion_and_says_which_is_live(tg):
-    """`why:`'s twin, and the same reason: the term outlived the field.
+def test_outcome_reads_the_one_result_there_is(tg):
+    """`why:` still reads a list; `outcome:` no longer has one to read.
 
-    A result the work produced an earlier time round is still a result, and
-    still the thing somebody types a word from. It is labelled as past so an
-    answer cannot be read as current."""
+    The two used to be twins — a result an earlier round produced was still a
+    result, and was labelled *produced earlier* so it could not be read as
+    current. `D81` removed the second round: a task has one outcome, and work
+    done again is a child task with a result of its own. `why:` keeps its list
+    because a task really can be put down more than once."""
     from conftest import finished
-    finished(tg.tasks["T02"], "2026-01-09", "HNSW 12ms p50")
-    tg.tasks["T02"].status = "DOING"
     finished(tg.tasks["T02"], "2026-03-01", "IVF-PQ 40ms")
     lens = query.task_lens(tg)
-
-    assert query.select(query.parse("outcome:HNSW"), lens) == ["T02"]
-    (m,) = query.explain(query.parse("outcome:HNSW"), lens, "T02")
-    assert m.field == "produced earlier"
+    assert query.select(query.parse("outcome:IVF"), lens) == ["T02"]
     (m,) = query.explain(query.parse("outcome:IVF"), lens, "T02")
     assert m.field == "outcome"
 
 
-def test_done_asks_when_this_work_is_finished_not_when_it_ever_was(tg):
-    """The one place the completion list is deliberately not read.
-
-    `done:>=` asks when this work was finished. Answering it out of a
-    completion the status no longer claims would change what every existing
-    date query means — the same reason a decision's `date` is not read from
-    its superseded edges."""
+def test_done_asks_when_this_work_was_finished(tg):
+    """`done:>=` asks when this work was finished, and since `D81` there is
+    exactly one answer: `DONE` is terminal, so the date cannot be superseded
+    and there is no earlier one for the query to reach past."""
     from conftest import finished
     finished(tg.tasks["T02"], "2026-01-09", "a number")
-    tg.tasks["T02"].status = "DOING"           # picked back up
     lens = query.task_lens(tg)
-    assert "T02" not in query.select(query.parse("done:>=2026-01-01"), lens)
-
-    tg.tasks["T02"].status = "DONE"              # finished again
-    assert "T02" in query.select(query.parse("done:>=2026-01-01"),
-                                 query.task_lens(tg))
+    assert "T02" in query.select(query.parse("done:>=2026-01-01"), lens)
+    assert "T02" not in query.select(query.parse("done:>=2026-06-01"), lens)
 
 
 # ---- structure -----------------------------------------------------------
@@ -1110,3 +1101,105 @@ def test_waits_reads_forwards_and_finds_the_same_vertices(g):
     assert "D05" in set(query.select(query.parse("waits:D01"), _lens(g)))
     assert set(query.select(query.parse("waits:D01"), _lens(g))) == \
         {v for v in g.vertices if "D01" in g.depends(v)}
+
+
+# ---- D80: every offered field can match, or says what it does not reach ----
+
+
+DEC80 = {"areas": ["Alpha"], "edges": [
+    {"from": "D01", "to": [], "active": True, "answer": "HNSW it is",
+     "falsifier": "recall drops", "source": "discussion", "date": "2026-01-01",
+     "probe": {"kind": "prose.rule", "args": {"needle": "recall"}}}],
+    "vertices": [
+        {"id": "D01", "title": "Pick an index", "area": "Alpha",
+         "status": "DECIDED", "rule": "settle by measurement",
+         "binds": [{"kind": "rocq.constant", "ref": "Closure.closed"}]},
+        {"id": "D02", "title": "Still open", "area": "Alpha", "status": "OPEN",
+         "note": "nobody has decided this", "probes": [
+             {"kind": "prose.rule", "args": {"needle": "hnsw"},
+              "date": "2026-01-02"}]}],
+    "superseded": None}
+
+TSK80 = {"areas": ["Alpha"], "edges": [], "tasks": [
+    {"id": "T01", "title": "Measure it", "area": "Alpha", "status": "DONE",
+     "done": "2026-01-01", "outcome": "recall 0.94",
+     "done_when": "recall over the sample",
+     "binds": [{"kind": "rocq.constant", "ref": "Closure.closed"}],
+     "probes": [{"kind": "prose.rule", "args": {"needle": "hnsw"},
+                 "date": "2026-01-02"}],
+     "note": "the sweep is scripted",
+     "because": ["D01"], "evidence_for": "D02",
+     "readings": [{"against": "D01", "note": "it holds",
+                   "date": "2026-01-03"}]}]}
+
+#: A value genuinely in the fixture above, for every field each lens offers.
+NEEDLE = {
+    "decisions": {"id": "D01", "title": "index", "area": "Alpha",
+                  "status": "DECIDED", "note": "decided", "rule": "measurement",
+                  "answer": "HNSW", "falsifier": "recall",
+                  "source": "discussion", "date": "2026-01-01",
+                  "probe": "prose.rule", "probes": "prose.rule",
+                  "binds": "rocq.constant",
+                  # No fixture value: a store this tool writes has no rival
+                  # answer and no reversal, so `summary`, `why` and
+                  # `from_source` have nothing to carry.
+                  "summary": None, "why": None, "from_source": None},
+    "tasks": {"id": "T01", "title": "Measure", "area": "Alpha",
+              "status": "DONE", "outcome": "recall", "done": "2026-01-01",
+              "done_when": "recall", "probes": "prose.rule",
+              "binds": "rocq.constant", "readings": "D01",
+              "note": "scripted", "because": "D01", "evidence_for": "D02",
+              # `why` reads `stops`, and this fixture's task never stopped.
+              "why": None},
+}
+
+
+@pytest.mark.parametrize("kind", ["decisions", "tasks"])
+def test_every_offered_field_matches_or_says_what_it_does_not_reach(kind):
+    """The axis nothing read, and the pair of the withheld-list guard above.
+
+    `test_the_withheld_field_list_is_checked_against_the_dataclasses` verifies
+    every **withheld** name still exists. Nothing verified that every
+    **offered** name can match, and four walked through: `probe`, `probes`,
+    `binds` and `readings` were advertised in the *unknown field* help, parsed,
+    and were satisfied by nothing — for a record carrying the value. `Q-F12`
+    through the front door `_UNSEARCHABLE`'s own comment warns about
+    (`Y-F5`, `D80`).
+
+    Three outcomes are allowed and no fourth: the term matches; or the field is
+    in `PARTIAL`, which says what it indexes and what it leaves out; or it is
+    in `_UNSEARCHABLE` and not offered at all. Silence is not one of them.
+    """
+    lens = (query.decision_lens(Graph.from_dict(copy.deepcopy(DEC80)))
+            if kind == "decisions"
+            else query.task_lens(TaskGraph.from_dict(copy.deepcopy(TSK80))))
+    dead = []
+    for name in lens.fields:
+        assert name in NEEDLE[kind] or name in query.PARTIAL, \
+            f"`{name}:` is offered and this test says nothing about it — give " \
+            f"it a value the fixture carries, or put it in PARTIAL with what " \
+            f"it indexes"
+        needle = NEEDLE[kind].get(name)
+        if needle is None:
+            continue        # nothing in a tool-written store to match
+        hit = any(needle.lower() in text.lower()
+                  for rid in lens.ids for text in lens.values(rid, name))
+        if not hit and query.partial_note(name) is None:
+            dead.append(f"{name}:{needle}")
+    assert not dead, ("offered, and silently matches nothing for a record that "
+                      f"carries the value: {', '.join(dead)}")
+
+
+def test_a_partial_field_says_what_it_leaves_out():
+    """The middle outcome, which is the one `D80` added. `_no_predicate` makes
+    this distinction for `is:` already — a term that cannot be answered is a
+    different sentence from one that does not exist — and a term answered
+    about *part* of a field is a third."""
+    assert "args are the domain's" in query.partial_note("probes")
+    assert "kind:ref" in query.partial_note("binds")
+    assert query.partial_note("title") is None
+    # Every partial name is a real field on one of the two lenses.
+    from dgraph.model import Edge, Vertex
+    from dgraph.tasks import Task
+    known = set(query._fields_of(Vertex, Edge, Task))
+    assert set(query.PARTIAL) <= known, set(query.PARTIAL) - known

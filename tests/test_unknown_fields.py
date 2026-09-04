@@ -207,12 +207,13 @@ def test_import_accepts_a_parked_task_and_a_reading(tmp_path):
 # carried and warned about, as it is on the record (`D76`); a *missing* key
 # stays a load-time refusal, which `_task` argues for and nothing here moves.
 
-def test_a_key_inside_a_stop_completion_or_reading_is_carried_and_warned(
+def test_a_key_inside_a_stop_or_a_reading_is_carried_and_warned(
         task_store, monkeypatch):
+    """Two appended records, not three: `D81` put the finish back on the
+    record as `done`/`outcome`, so there is no completions entry to carry a
+    key inside — the record-level `extra` covers it, as it does every other
+    field this version does not name."""
     raw = copy.deepcopy(TASK_FIXTURE)
-    raw["tasks"][0]["completions"] = [{"date": "2026-01-05", "outcome": "PR #1",
-                                       "by": "scout"}]
-    del raw["tasks"][0]["done"]; del raw["tasks"][0]["outcome"]
     raw["tasks"][3]["status"] = "PARKED"
     raw["tasks"][3]["stops"] = [{"why": "waiting", "date": "2026-01-06",
                                  "by": "scout"}]
@@ -220,13 +221,12 @@ def test_a_key_inside_a_stop_completion_or_reading_is_carried_and_warned(
                                     "against": "D01", "by": "scout"}]
     tg = TaskGraph.from_dict(raw)                  # no crash
     back = tg.to_dict()
-    assert back["tasks"][0]["completions"][0]["by"] == "scout"
     assert back["tasks"][3]["stops"][0]["by"] == "scout"
     assert back["tasks"][3]["readings"][0]["by"] == "scout"
     assert not [v for v in tg.validate() if v.check == "unknown_field"]
     (task_store / "tasks.json").write_text(json.dumps(raw))
     warns = [v for v in run() if v.check == "unknown_field"]
-    assert len(warns) == 3 and all(not v.blocking for v in warns)
+    assert len(warns) == 2 and all(not v.blocking for v in warns)
     assert {w.message.split("`")[1] for w in warns} == {"by"}
     assert all(w.origin == "task" for w in warns)
     # a missing key is still the load-time refusal `_task` argues for

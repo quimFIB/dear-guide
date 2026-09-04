@@ -51,7 +51,7 @@ import json
 from dataclasses import dataclass, field
 
 from dgraph.model import CLAIM, PAYLOAD, Graph
-from dgraph.tasks import TaskGraph
+from dgraph.tasks import TaskGraph, transition_fault
 
 #: The fields `set_fields` carries, in the order a report reads best. Imported
 #: rather than restated: an op that writes a field this list forgets is a
@@ -205,7 +205,7 @@ def _reprobes(was, now, rid: str, what: str) -> list[dict]:
     """`reprobe` per probe entry that is new. The append-only record the two
     stores share.
 
-    Like `stops`, `completions` and `readings`, an entry is a dated act, so
+    Like `stops` and `readings`, an entry is a dated act, so
     a list that grew is that many acts and each carries its own date. A
     record the base did not have arrives with every entry this way rather
     than inside its `add_*` op, so that one derivation serves both cases
@@ -345,39 +345,55 @@ def _links(was, now, tid: str, out: Derived) -> None:
 def _status(was, now, tid: str, out: Derived) -> None:
     """The status changes, as the ops that produce them.
 
-    A completion and a stoppage are both **appends**, so a record that gained
-    two of either is two acts, and each carries the date and the prose its op
-    was given. That is the same property `_edges` leans on in the other store,
-    and it is why a park erased by a completion cannot happen here: the two
-    ops both land.
+    A stoppage is an **append**, so a record that gained two is two acts, each
+    carrying the date and the prose its op was given. The completion is not:
+    `DONE` is terminal (`D81`), so there is one and it can only be the last
+    act, which is what leaves this with a single list to walk and no dates to
+    compare.
+
+    **Where the matrix refuses `prior -> want`, the restart the record proves
+    happened goes in front** — `tasks.ALLOWED`, read rather than copied
+    (`D79`). This used to be a loop per list with a hand-written repair in one
+    of them: two stops arrived with no restart between them and `_apply_one`
+    rejected the second, while a stop after a completion was emitted before it
+    and landed the record `DONE` under a report claiming its reason was
+    missing. 115 of 202 legal histories (`Y-F1`, `Y-F2`). Hand-writing the
+    repair as *"restart when the status repeats"* would fix those two and miss
+    the one `D81` creates — `PARKED -> DONE` is refused now, so
+    parked-then-finished needs a restart no earlier version did. Asking the
+    table cannot miss a row, because the row is the table.
     """
-    old_stops = list(was.stops) if was is not None else []
-    old_done = list(was.completions) if was is not None else []
+    old_stops = len(was.stops) if was is not None else 0
     prior = was.status if was is not None else "TODO"
     ops: list[dict] = []
 
-    for k in now.stops[len(old_stops):]:
+    acts: list[tuple[str, dict]] = []
+    new_stops = now.stops[old_stops:]
+    for i, k in enumerate(new_stops):
         # PARKED or DROPPED — the status says which, and only the last entry
         # can be the live one, so anything but the last is a stoppage the work
-        # has since come back from.
-        kind = now.status if k is now.stops[-1] and now.status in (
+        # has since come back from. `Stop` records no kind, so an interior one
+        # is unrecoverable and immaterial: the entry that lands is the same
+        # either way.
+        kind = now.status if i == len(new_stops) - 1 and now.status in (
             "PARKED", "DROPPED") else "PARKED"
-        ops.append({"op": "set_status", "task": tid, "status": kind,
-                    "why": k.why, "date": k.date})
-        prior = kind
-    for c in now.completions[len(old_done):]:
-        if prior == "DONE":
-            # `set_status` refuses DONE -> DONE, so a second completion needs
-            # the restart that produced it. Recovering *which* status it was
-            # picked back up into is not possible from the record; DOING is
-            # the one the command offers.
+        acts.append((kind, {"why": k.why, "date": k.date}))
+    if now.status == "DONE" and (was is None or was.status != "DONE"):
+        acts.append(("DONE", {"outcome": now.outcome, "done": now.done}))
+
+    for want, payload in acts:
+        if transition_fault(prior, want, tid):
             ops.append({"op": "set_status", "task": tid, "status": "DOING"})
-        ops.append({"op": "set_status", "task": tid, "status": "DONE",
-                    "outcome": c.outcome, "done": c.date})
-        prior = "DONE"
+            prior = "DOING"
+        ops.append({"op": "set_status", "task": tid, "status": want, **payload})
+        prior = want
 
     if now.status != prior:
         if now.status in ("PARKED", "DROPPED"):
+            # Reached only where the record genuinely carries no stop to draw
+            # on — a hand-written store, since every op that sets these
+            # appends one. It used to fire for a legal history whose stop this
+            # function had spent on the wrong transition.
             out.unexpressible.append(
                 f"{tid} arrives {now.status} with no reason recorded — "
                 f"`task_park_complete` refuses it, and no op can invent one")
@@ -420,7 +436,7 @@ def _with_reprobes(ops: list[dict], reprobes: list[dict]) -> list[dict]:
 def _readings(was, now, tid: str, out: Derived) -> None:
     """`read_evidence` per reading that is new. The third append-only record.
 
-    Like `stops` and `completions`, a reading is a dated act, so a list that
+    Like `stops`, a reading is a dated act, so a list that
     grew is that many acts and each carries the note its op was given. `dg
     confirm` is the door, but the op it stages is this one and replaying it
     reproduces the record exactly."""
@@ -500,6 +516,13 @@ class Finding:
     #: How the person answered it: `"take"` the arriving one, `"keep"` this
     #: store's. `None` until they do, and adoption refuses while any is None.
     resolution: str | None = None
+    #: Why `--take` is not an answer to *this* contest, or `None` where both
+    #: are. Some contests have one expressible answer: two finishes of one task
+    #: since `D81`, where taking would rewrite an outcome and `DONE` has no
+    #: restart to record the other beside it. Said when somebody reaches for
+    #: `--take`, not as a refusal of the whole contribution — `--keep` settles
+    #: it, and the arriving result belongs in a child task.
+    untakeable: str | None = None
     #: Why it would not apply, on a **contested** finding that also refused.
     #: One finding rather than two, because they are one fact seen twice: the
     #: refusal is the consequence of the disagreement, and reporting them as
@@ -598,7 +621,7 @@ _MOVED = {
     "status": "status moved here to {value}",
     "probes": "a criterion was written for it here",
     "binds": "it was bound to something here",
-    "completions": "it was finished here",
+    "outcome": "it was finished here",
     "stops": "it was stopped here",
     "readings": "it was read against a decision here",
     "because": "its premises moved here",
@@ -850,10 +873,23 @@ def _contest_task(tg: TaskGraph, base: TaskGraph, op: dict):
         # differently" — and it is the closest thing the task store has to
         # `close` × `close`, which is the decision store's whole conflict test.
         if (op.get("status") == "DONE"
-                and len(mine.completions) > len(was.completions)):
-            return tid, (f"{tid} was finished here too ({mine.done}, "
-                         f"{_clip(mine.outcome)!r}) — arriving "
-                         f"{_clip(op.get('outcome'))!r}")
+                and mine.status == "DONE" and was.status != "DONE"):
+            # **`--keep` only**, since `D81`. Both writers finished the task,
+            # so `--take` would have to rewrite an outcome — a claim, never
+            # edited — and `DONE` is terminal, so there is no restart to record
+            # the arriving result beside ours. What their result deserves is
+            # its own record, which is what a child task is. `answer_one`
+            # refuses `--take` with this sentence rather than staging an op
+            # that `_apply_one` would reject at the end of the adoption.
+            return (tid,
+                    f"{tid} was finished here too ({mine.done}, "
+                    f"{_clip(mine.outcome)!r}) — arriving "
+                    f"{_clip(op.get('outcome'))!r}",
+                    f"{tid} is already DONE here and a task has one outcome "
+                    f"(`D81`) — `--keep` this store's, then file their result "
+                    f"as its own work: `dg task add --discovered-during "
+                    f"{tid}`. `--take` would rewrite an outcome, which is a "
+                    f"claim and is never edited.")
     return None
 
 
@@ -916,8 +952,13 @@ def _walk(g, base, ops: list[dict], store: str,
         # Audit `N-F8`.
         hit = _contest(g, base, op, store)
         if hit is not None:
-            rid, why = hit
+            # A third element is why `--take` cannot be given for this one:
+            # some contests have only one expressible answer, and the seam
+            # says so at the moment somebody reaches for the other.
+            rid, why, *untakeable = hit
             contested = Finding("contested", store, i, rid, why, op=op)
+            if untakeable:
+                contested.untakeable = untakeable[0]
             findings.append(contested)
         # Expanded against the probe rather than against the arriving store:
         # what a reopen drags into PROVISIONAL is a fact about *this* graph,
@@ -1217,7 +1258,9 @@ def save_incoming(rep: Report, *, source: str, base: str, root=None) -> None:
             "contested": [{"ref": (f.op or {}).get("iref"), "store": f.store,
                            "record": f.record, "message": f.message,
                            "refusal": f.refusal, "op": f.op,
-                           "resolution": None}
+                           "resolution": None,
+                           **({"untakeable": f.untakeable}
+                              if f.untakeable else {})}
                           for f in rep.contested],
             "inapplicable": [f.message for f in rep.inapplicable],
             "blocking": list(rep.blocking),
@@ -1267,7 +1310,7 @@ def waiting(root=None) -> int:
 # answers rather than as a merge to resolve.**
 #
 #   H1  two answers to one question      take theirs · keep mine
-#   H2  two completions of one task      take theirs · keep mine
+#   H2  two finishes of one task          take theirs · keep mine
 #   H3  two wordings of one record       take theirs · keep mine
 #
 # H1 is the one that needs a record on the losing side, and it is why the
@@ -1288,6 +1331,8 @@ def answer_one(raw: dict, ref: str, choice: str) -> str:
     """
     for f in raw.get("contested", []):
         if f.get("ref") == ref:
+            if choice == "take" and f.get("untakeable"):
+                raise LookupError(f["untakeable"])
             f["resolution"] = choice
             side = "the arriving one" if choice == "take" else "this store's"
             return f"{ref}: keeping {side} — {f.get('message', '')}"

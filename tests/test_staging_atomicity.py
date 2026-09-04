@@ -283,9 +283,11 @@ def test_expire_is_one_tray_write_per_agent(both_stores, tray_writes,
     name = agents.claim(both_stores, budget=60)
     leases = agents.load(both_stores)
     leases[name]["started"] = "2000-01-01T00:00:00"
-    leases[name]["holding"] = ["T01", "T02"]
+    # `T02` and `T03`, not `T01`: the fixture's `T01` is `DONE`, and `D81`
+    # made finished work unstartable. Two unfinished tasks are what this needs.
+    leases[name]["holding"] = ["T02", "T03"]
     agents.save(leases, both_stores)
-    for tid in ("T01", "T02"):
+    for tid in ("T02", "T03"):
         with pending.as_owner(name):
             assert runner.invoke(
                 app, ["--project", str(both_stores), "task", "start", tid]

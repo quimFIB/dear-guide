@@ -964,6 +964,16 @@ def _find_report(q, lenses, found: dict, *, full: bool, limit: int,
         con.print(f"\n[bold]{heading}[/]  {len(rows)} match of {len(l.ids)}")
         if not rows:
             con.print("  [dim]nothing matches here[/]")
+            # And, for a term that reads only *part* of the field it names,
+            # what it read. `nothing matches` and `this cannot answer that`
+            # are different sentences — `_no_predicate` makes the same
+            # distinction for `is:`, and `D80` extends it to fields. Said only
+            # where nothing matched, which is the moment it is invisible.
+            for name in dict.fromkeys(t.name for t in q.terms
+                                      if t.kind == "named"):
+                note = _query.partial_note(name)
+                if note and name in l.fields:
+                    con.print(f"  [dim]{note}[/]")
             continue
         shown = rows if full else rows[:limit]
         asides = {rid: _find_aside(q, l, rid, g) for rid in shown}
@@ -4238,9 +4248,12 @@ def task_amend(
     the work is referred to, while an outcome and a reason it stopped are dated
     records of what happened, and those are appended, never edited.
 
-    To correct an outcome, `dg task start` and finish it again: the new one is
-    recorded beside the old rather than over it, which is the whole of what
-    `completions` is for.
+    An outcome cannot be corrected here, and since `D81` it cannot be
+    superseded either — `DONE` is terminal, so there is no second finish to
+    record one beside. Catch it in the tray (`dg task drop-op`, then stage it
+    again); a wrong outcome that has already been applied is a hand-edit of
+    the store, deliberately outside this tool. What is *more work* rather than
+    a correction is a child task: `dg task add --discovered-during <tid>`.
     """
     tg = _teff(_tg())
     _require_task(tid, tg)
@@ -4900,13 +4913,10 @@ def task_rm(
         if before or after:
             lines.append(f"{label:<12}{', '.join(before) or '—'}  "
                          f"→ {', '.join(after) or '—'}")
-    if t.completions:
-        # Every completion, not the live one: they are archived exactly as
-        # `stops` are, so a removal takes the whole account of what this work
-        # produced — including the results of earlier goes at it, which the
-        # status no longer shows and nothing else records.
-        lines.append(f"[yellow]loses[/] {len(t.completions)} completion(s), "
-                     f"latest: {_x(t.completions[-1].outcome)}")
+    if t.outcome:
+        # What this work produced. `DONE` is terminal (`D81`), so there is one
+        # of these and a removal takes the only account of it.
+        lines.append(f"[yellow]loses[/] the result: {_x(t.outcome)}")
     if t.stops:
         # The one record here that a removal cannot supersede — `dg task drop`
         # keeps it, `dg task rm` does not, which is the difference between the
@@ -4967,19 +4977,13 @@ def task_node(tid: str) -> None:
                      + ("  [yellow](undecided)[/]" if gate else ""))
     if t.evidence_for:
         lines.append(f"informs     {t.evidence_for}")
-    if t.done:
-        lines.append(f"done        {t.done}")
-    if t.completions:
-        # Every completion, whatever the status is now, and drawn like the
-        # stops below: the same record, kept for the same reason. The live one
-        # is the last, and only while the status still claims one — `done_label`
-        # decides that, so this panel cannot disagree with the store.
+    if t.outcome:
+        # The one result, with its date. `done_label` supplies the word so this
+        # panel cannot disagree with the other three renderers about it.
         lines += ["", "[bold]Outcome[/]"]
         label = done_label(t.status)
-        last = len(t.completions) - 1
-        for i, c in enumerate(t.completions):
-            tag = f"  [dim]({label})[/]" if label and i == last else ""
-            lines.append(f"  [dim]{c.date}[/]  {_x(c.outcome)}{tag}")
+        tag = f"  [dim]({label})[/]" if label else ""
+        lines.append(f"  [dim]{t.done or ''}[/]  {_x(t.outcome)}{tag}")
     if t.stops:
         # Kept whatever the status is now — work picked up again is the
         # ordinary case, and the list of what kept stopping it is the record

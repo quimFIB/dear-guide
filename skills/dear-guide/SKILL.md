@@ -419,12 +419,12 @@ starting is the moment that gets said, and the check that reports it is read by
 whoever runs it, which at that moment is nobody. A note, never a refusal.
 
 **Put work down with `dg task park T14 --why "…"`, not `dg task drop`.** Both
-record why and when, in the same place — `stops`, one of this store's two
-archived records, which nothing ever clears. (`completions` is the other:
-finishing work appends a dated outcome, so a task finished, picked back up and
-finished again keeps both results. Finishing work that is already `DONE` is
-refused — `dg task start` first, and the second completion is then a deliberate
-record rather than an overwrite.) They differ *downstream*: dropping says
+record why and when, in the same place — `stops`, this store's one archived
+record, which nothing ever clears. (There is no second: `DONE` is terminal, so
+a task has one `outcome` and work done again is a child task —
+`dg task add --discovered-during T14` — which carries its own definition of
+done rather than a second result under a criterion the first was judged
+against.) They differ *downstream*: dropping says
 the work is not needed, so it releases everything that waited on it and demands
 a verdict on each one; parking says nobody is doing this right now, so it
 settles nothing and its dependants go on waiting. Reach for `drop` only when
@@ -504,7 +504,7 @@ an answer — it
 refuses while any is open, and there is no flag that answers them for you.
 
 **Do not answer them yourself.** They are the three only a person can settle:
-two answers to one question, two completions of one task, two wordings of one
+two answers to one question, two finishes of one task, two wordings of one
 record. Show the report and ask. Where the answer that loses is a *decision*,
 keeping this store's records the other one as **offered and not adopted** —
 kept, and not filed as a reversal, because nothing was overturned.

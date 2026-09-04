@@ -449,13 +449,15 @@ def _tasks(proj: _project.Project, tg: TaskGraph | None = None, *,
         from dgraph import cross
         problems += tag(cross.validate(tg, Graph()), LINK)
 
-    # The note, and the live end of each archive. `completions` and `stops`
-    # are append-only history; only the last of each is a record somebody is
-    # still reading, and the earlier ones are as unactionable as a superseded
-    # answer.
+    # The note, the outcome, and the live end of the one archive. `stops` is
+    # append-only history and only its last entry is a record somebody is still
+    # reading; the earlier ones are as unactionable as a superseded answer.
+    # `done_when` is here too, and was not until `Y-F7`: it is a prose
+    # pre-commitment whose mechanical twin has its length bounded at
+    # `probe_args_limit`, so leaving it out bounded one spelling of one rule.
     problems += _verbose(
         [(t.id, {"note": t.note,
-                 "outcome": t.completions[-1].outcome if t.completions else None,
+                 "outcome": t.outcome, "done_when": t.done_when,
                  "why": t.stops[-1].why if t.stops else None})
          for t in tg.tasks.values()],
         TASK)
@@ -467,7 +469,7 @@ def _tasks(proj: _project.Project, tg: TaskGraph | None = None, *,
         # not here, because `validate` refuses it as a shape fault.
         + [(f"{t.id}'s {what} {i + 1}", k.extra)
            for t in tg.tasks.values()
-           for what, rows in (("stop", t.stops), ("completion", t.completions),
+           for what, rows in (("stop", t.stops),
                               ("reading", t.readings))
            for i, k in enumerate(rows)],
         TASK)
@@ -531,7 +533,11 @@ def _decisions(proj: _project.Project, g: Graph | None = None, *,
     # skipped: they are the record of what was believed and are never edited,
     # so a warning about one names something nobody may act on.
     problems += _verbose(
-        [(v.id, {"note": v.note}) for v in g.vertices.values()]
+        # `rule` beside the note, and it was not here until `Y-F7`: it is the
+        # prose twin of the edge's probe, whose `args` are bounded at
+        # `probe_args_limit`, so leaving it out bounded one spelling of one
+        # rule. `done_when` is its counterpart on a task, above.
+        [(v.id, {"note": v.note, "rule": v.rule}) for v in g.vertices.values()]
         + [(e.src, {"answer": e.answer, "falsifier": e.falsifier,
                     "summary": e.summary, "why": e.why})
            for e in g.edges if e.active],

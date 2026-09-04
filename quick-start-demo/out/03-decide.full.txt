@@ -49,12 +49,12 @@ $ dg check
 ! [stale_task_view] (warning) tasks.md does not match tasks.json. It is generated — run `dg task
 render` rather than editing it.
 ! [evidence_after_deciding] (warning) D04 (Where does the index live?) is DECIDED, settled 
-2026-06-15, but the work meant to inform it reported afterwards (T12 finished 2026-09-03 — 
+2026-06-15, but the work meant to inform it reported afterwards (T12 finished 2026-09-04 — 
 bench/index-size.md — 38 MB beside 400 MB of notes) — read it against the answer, then `dg 
 confirm D04 --against T12` if it still holds, `dg reopen D04` if it does not, or `dg task unlink
 T12 --evidence-for` if the answer never needed it
 ! [evidence_after_deciding] (warning) D06 (What happens when the index is corrupted?) is 
-DECIDED, settled 2026-09-03, but the work meant to inform it has not reported yet (T04 is todo) 
+DECIDED, settled 2026-09-04, but the work meant to inform it has not reported yet (T04 is todo) 
 — read it against the answer, then `dg confirm D06 --against T04` if it still holds, `dg reopen 
 D06` if it does not, or `dg task unlink T04 --evidence-for` if the answer never needed it
 ✓ 9 vertices, 7 edges; 12 tasks, all invariants hold, 4 warning(s)
@@ -68,7 +68,7 @@ $ dg check
 ! [stale_task_view] (warning) tasks.md does not match tasks.json. It is generated — run `dg task
 render` rather than editing it.
 ! [evidence_after_deciding] (warning) D06 (What happens when the index is corrupted?) is 
-DECIDED, settled 2026-09-03, but the work meant to inform it has not reported yet (T04 is todo) 
+DECIDED, settled 2026-09-04, but the work meant to inform it has not reported yet (T04 is todo) 
 — read it against the answer, then `dg confirm D06 --against T04` if it still holds, `dg reopen 
 D06` if it does not, or `dg task unlink T04 --evidence-for` if the answer never needed it
 ✓ 9 vertices, 7 edges; 12 tasks, all invariants hold, 3 warning(s)
@@ -88,6 +88,6 @@ $ dg node D04
 │ Beside the notes, in .notelit/index.db. Rebuilt on demand, never synced.                     │
 │ implemented by T03 (DROPPED)                                                                 │
 │ evidence from T12 (DONE) — bench/index-size.md — 38 MB beside 400 MB of notes                │
-│                 read 2026-09-03 — Under a tenth of the notes themselves; beside them is      │
+│                 read 2026-09-04 — Under a tenth of the notes themselves; beside them is      │
 │ fine.                                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯

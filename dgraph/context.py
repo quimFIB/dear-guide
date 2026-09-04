@@ -208,8 +208,7 @@ def task(tg: TaskGraph, tid: str, g: Graph | None = None) -> dict:
         # has been finished before, and what it produced that time. The two
         # scalars are the live reading and stay, so nothing that already reads
         # them had to change.
-        "completions": [{"date": c.date, "outcome": c.outcome}
-                        for c in t.completions],
+        "done": t.done, "outcome": t.outcome,
         # The word for the live one, from `tasks.DONE_LABEL`, never chosen here.
         "done_label": done_label(t.status),
         # The live reason where the status makes that claim, and every
@@ -494,17 +493,11 @@ def _task_text(d: dict) -> str:
     if d["note"]:
         out.append("")
         out += _wrap(d["note"], "  ", d.get("format"))
-    # Every completion, oldest first, with the live one marked — the same
-    # list and the same marker the stops below use, and for the same reason:
-    # an earlier result is not superseded prose, it is what the work produced
-    # that time round, and printing only the live one hides it entirely.
-    if d["completions"]:
-        out += ["", f"OUTCOME ({len(d['completions'])}) — oldest first"]
-        last = len(d["completions"]) - 1
-        for i, c in enumerate(d["completions"]):
-            mark = (f"  ← {d['done_label']}"
-                    if d["done_label"] and i == last else "")
-            out.append(f"  {c['date']}  {c['outcome']}{mark}")
+    # The one result, with its date. One because `DONE` is terminal (`D81`):
+    # a second attempt is a child task, reached by its edge.
+    if d.get("outcome"):
+        out += ["", "OUTCOME", f"  {d['outcome']}"
+                + (f"  ({d['done']})" if d.get("done") else "")]
     # Every stoppage, oldest first, with the live one marked — one list and
     # one marker, the construction `task_render` and `app.html` both use.
     #

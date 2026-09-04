@@ -25,7 +25,7 @@ from dataclasses import replace
 
 import pytest
 
-from dgraph import cross, integrate, pending, project, task_pending
+from dgraph import cross, integrate, pending, project, task_pending, tasks
 from dgraph.model import Graph
 from dgraph.tasks import TaskGraph
 
@@ -466,7 +466,15 @@ def test_the_three_semantic_conflicts_arrive_together_and_are_answered_one_by_on
     ref = {f["op"]["op"]: f["ref"] for f in raw["contested"]}
     assert run("incoming", "--keep", ref["set_fields"]).exit_code == 0
     assert run("incoming", "--keep", ref["close"]).exit_code == 0
-    assert run("incoming", "--take", ref["set_status"]).exit_code == 0
+    # **`--take` is not an answer to this one**, since `D81`: both writers
+    # finished T01, taking theirs would rewrite an outcome (a claim, never
+    # edited), and `DONE` is terminal so there is no restart to record theirs
+    # beside ours. The seam says so where somebody reaches for it, rather than
+    # staging an op the apply would reject.
+    refused = run("incoming", "--take", ref["set_status"])
+    assert refused.exit_code == 1
+    assert "--discovered-during T01" in refused.output
+    assert run("incoming", "--keep", ref["set_status"]).exit_code == 0
     assert run("incoming", "--adopt").exit_code == 0
     assert run("apply").exit_code == 0
 
@@ -479,10 +487,10 @@ def test_the_three_semantic_conflicts_arrive_together_and_are_answered_one_by_on
     assert g.history("D01") == []          # nothing was overturned
     assert g.vertices["D01"].title == "Which index structure?"
 
-    # Taking theirs on the task keeps both results, with theirs live.
+    # Ours stands on the task too, and theirs is not silently lost: the
+    # report named it and named where it goes.
     t = TaskGraph.load(root / "tasks.json").tasks["T01"]
-    assert [c.outcome for c in t.completions] == ["recall 0.91", "recall 0.94"]
-    assert t.outcome == "recall 0.94"
+    assert t.outcome == "recall 0.91"
 
 
 def test_a_declined_answer_is_not_filed_as_a_reversal(g):
@@ -1054,3 +1062,101 @@ def test_a_link_this_clone_never_moved_is_not_contested(tg):
 
     same = _linked(base, "T02", evidence_for="D07", because=["D09", "D01"])
     assert integrate._walk(same, base, ops, "tasks", None)[0] == []
+
+
+# ---- D79: the seam replays every history the store can hold ---------------
+#
+# `Y-F1` and `Y-F2`: `_status` recovered a task's acts from the lengths of two
+# lists and emitted every stop before every completion. 115 of 202 legal
+# histories did not survive — a task parked twice arrived with no restart
+# between its stops and `_apply_one` rejected the second, and a stop after a
+# completion landed the record `DONE` under a report claiming its reason was
+# missing. `D81` then removed the second list, and `D79` answered with one
+# rule: walk the acts, and where `tasks.ALLOWED` refuses the transition, emit
+# the restart the record proves happened.
+#
+# The test is the enumeration, not sequences somebody chose. `N01`'s six task
+# sequences each carried at most one stop, which is exactly why a green suite
+# of 3031 sat on top of this.
+
+_BASE80 = {"areas": ["Alpha"], "edges": [],
+           "tasks": [{"id": "T01", "title": "Ship it", "area": "Alpha",
+                      "status": "TODO"}]}
+
+
+def _legal_histories(depth):
+    """Every walk from `TODO` the matrix permits, up to `depth` steps."""
+    out = []
+
+    def go(cur, path):
+        if path:
+            out.append(tuple(path))
+        if len(path) == depth:
+            return
+        for nxt in sorted(tasks.ALLOWED[cur]):
+            go(nxt, path + [nxt])
+
+    go("TODO", [])
+    return out
+
+
+def _ops_for(path):
+    ops = []
+    for i, st in enumerate(path, 1):
+        op = {"op": "set_status", "task": "T01", "status": st}
+        if st in ("PARKED", "DROPPED"):
+            op.update(why=f"reason {i}", date=f"2026-01-{i:02d}")
+        if st == "DONE":
+            op.update(outcome=f"result {i}", done=f"2026-01-{i:02d}")
+        ops.append(op)
+    return ops
+
+
+def _fresh():
+    return TaskGraph.from_dict(copy.deepcopy(_BASE80))
+
+
+def test_the_seam_replays_every_history_the_matrix_allows():
+    """Derive, replay, and the record comes back exactly — for all of them."""
+    histories = _legal_histories(8)
+    assert len(histories) > 250, "the enumeration collapsed; the matrix moved"
+
+    for path in histories:
+        theirs = task_pending.apply_all(_fresh(), _ops_for(path))
+        derived = integrate.tasks(_fresh(), theirs)
+        assert not derived.unexpressible, (path, derived.unexpressible)
+
+        replay = task_pending.apply_all(_fresh(), derived.ops)
+        want, got = theirs.tasks["T01"], replay.tasks["T01"]
+        assert got.status == want.status, path
+        assert [(s.why, s.date) for s in got.stops] == \
+               [(s.why, s.date) for s in want.stops], path
+        assert (got.done, got.outcome) == (want.done, want.outcome), path
+
+        # And every transition it derived is one the matrix permits, so the
+        # replay above cannot have been rescued by a lenient `_apply_one`.
+        prior = "TODO"
+        for op in derived.ops:
+            nxt = op["status"]
+            assert tasks.transition_fault(prior, nxt, "T01") is None, \
+                f"{path}: derived an illegal {prior} -> {nxt}"
+            prior = nxt
+
+
+def test_the_seam_adds_no_restart_the_matrix_did_not_demand():
+    """The other half, stated on its own so it cannot pass vacuously.
+
+    A derivation free to insert `DOING` wherever it liked would satisfy the
+    test above while inventing acts nobody performed."""
+    def derive(path):
+        theirs = task_pending.apply_all(_fresh(), _ops_for(path))
+        return [o["status"] for o in integrate.tasks(_fresh(), theirs).ops]
+
+    # Two stops of one kind: the restart between them is what `Y-F1` lost.
+    assert derive(("PARKED", "DOING", "PARKED")) == ["PARKED", "DOING", "PARKED"]
+    # A park then a drop: two real stoppages, a legal transition, no restart.
+    assert derive(("PARKED", "DROPPED")) == ["PARKED", "DROPPED"]
+    # `PARKED -> DONE` is refused since `D81`, so this needs a restart that no
+    # earlier version of the seam ever had to supply — the row a hand-written
+    # "restart when the status repeats" would have missed.
+    assert derive(("PARKED", "DOING", "DONE")) == ["PARKED", "DOING", "DONE"]

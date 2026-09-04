@@ -837,9 +837,8 @@ def draw(state: State, before: State | None, lit: set[str] | None) -> str:
             if dd.get("waiting_on") or (dd.get("cross") or {}).get("gating"):
                 w = list(dd.get("waiting_on") or []) + [g["id"] if isinstance(g, dict) else str(g) for g in (dd.get("cross") or {}).get("gating") or []]
                 tip += f'<div class="kv"><i>waits on</i>{E(", ".join(w))}</div>'
-            if x.get("completions"):
-                c = x["completions"][-1]
-                tip += f'<div class="kv"><i>outcome</i>{E(c.get("outcome", ""))} · {E(c.get("date", ""))}</div>'
+            if x.get("outcome"):
+                tip += f'<div class="kv"><i>outcome</i>{E(x["outcome"])} · {E(x.get("done", ""))}</div>'
             if x.get("stops"):
                 st = x["stops"][-1]
                 tip += f'<div class="kv"><i>stopped</i>{E(st.get("why", ""))} · {E(st.get("date", ""))}</div>'
@@ -1303,8 +1302,8 @@ def page() -> str:
         if x.get("evidence_for"):
             links.append("evidence for " + x["evidence_for"])
         rec = []
-        for c in x.get("completions", []):
-            rec.append(f'{c["date"]} — {esc(c["outcome"])}')
+        if x.get("outcome"):
+            rec.append(f'{x.get("done", "")} — {esc(x["outcome"])}')
         for s in x.get("stops", []):
             rec.append(f'{s["date"]} — stopped: {esc(s["why"])}')
         app.append(f'<tr><td>{x["id"]}</td><td><span class="chip {x["status"].lower()}">{x["status"]}</span></td><td>{esc(x["title"])}</td><td>{"; ".join(links) or "—"}</td><td>{"<br>".join(rec) or "—"}</td></tr>')

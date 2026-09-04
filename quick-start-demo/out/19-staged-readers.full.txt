@@ -23,8 +23,8 @@ the tray changes nothing `dg check` reports
 # The tray itself, and the store it would produce, are two different things a reader can tell apart.
 $ dg pending
 STAGED  2 op(s)
-  0  sajv  add_vertex  D09  Which edit wins when two machines change one note? [sync]
-  1  rktm  add_edge    D08  → D09
+  0  qhgs  add_vertex  D09  Which edit wins when two machines change one note? [sync]
+  1  fqtu  add_edge    D08  → D09
 `dg apply` to write, `dg drop <id>` to unstage
   `dg pending --full` for the table, nothing clipped
 $ dg apply

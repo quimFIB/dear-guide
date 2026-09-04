@@ -19,7 +19,7 @@ is the one place a judgement is made here and it is not about ops: a scalar
 (a title, a status, a link slot) is overwritten when the probe holds a
 different value from this clone's; a set (targets, premises, binds) when
 something this clone added is gone or something it removed is back; an
-append-only record (probes, completions, stops, readings, history) when an
+append-only record (probes, stops, readings, history) when an
 entry this clone appended is missing. Two writers editing *different* aspects
 of one record is two facts landing, and asking a person about it would be
 asking a question with one answer — which is why the property is about loss
@@ -264,8 +264,7 @@ def _task_aspects(tg, tid):
                                        if e.src == tid for to in e.to)),
         "probes": ("append", tuple(_frozen((p.kind, p.args, p.date))
                                    for p in t.probes)),
-        "completions": ("append", tuple(_frozen((c.date, c.outcome))
-                                        for c in t.completions)),
+        "outcome": ("scalar", (t.done, t.outcome)),
         "stops": ("append", tuple(_frozen((s.date, s.why))
                                   for s in t.stops)),
         "readings": ("append", tuple(_frozen((r.date, r.against, r.note))

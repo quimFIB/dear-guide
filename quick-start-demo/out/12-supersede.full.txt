@@ -71,7 +71,7 @@ $ dg node D04
 │ opens       D06                                                                              │
 │                                                                                              │
 │ falsifier   a user needs the index to travel with the notes, as on a USB stick               │
-│ source      issues/52   (2026-09-03)                                                         │
+│ source      issues/52   (2026-09-04)                                                         │
 │                                                                                              │
 │ Answer                                                                                       │
 │ In the user's cache directory, keyed by a hash of the notes folder's path. Never inside the  │
@@ -116,7 +116,7 @@ RESTS ON (3) — nearest premise last
        path. Never inside the synced folder.
        falsifier:
          a user needs the index to travel with the notes, as on a USB stick
-       source: issues/52  ·  2026-09-03
+       source: issues/52  ·  2026-09-04
 
 WORK
   because of this: T09

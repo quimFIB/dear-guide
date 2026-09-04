@@ -58,15 +58,17 @@ the point:
   are resolved, so there is no status to keep up to date and none to go stale.
   Decisions keep status explicit because a decision can have consequences and
   still be under review; readiness genuinely *is* a function of dependencies.
-- **Supersession in two places, and no falsifier.** Two questions here can stop
-  being *current* and still be worth having — *why is this work not being done*
-  and *what did it produce* — so every stoppage and every completion appends to
-  the task and nothing ever clears either; work put down three times says so,
-  and work finished twice keeps both results. Which entry is live is derived
-  from the status, never stored, which is what stops a record outliving the
-  claim it supported. Every other field is current-state. An outcome is a
-  record of what happened, not a claim about the world, so nothing can falsify
-  it — and a later outcome does not falsify an earlier one either.
+- **Supersession in one place, and no falsifier.** One question here can stop
+  being *current* and still be worth having — *why is this work not being
+  done* — so every stoppage appends to the task and nothing ever clears it;
+  work put down three times says so, and which entry is live is derived from
+  the status, never stored. **What the work produced is not the other half of
+  that**: a task has one outcome because it has one criterion, one set of
+  premises, one decision it informs. `DONE` is terminal, `done` and `outcome`
+  are plain fields, and work done again is a *child task* — linked
+  `discovered-during`, carrying its own definition of done. An outcome is a
+  record of what happened, not a claim about the world, so nothing can
+  falsify it.
 - **Two ways to stop, differing downstream and not in the record.** `PARKED` is
   work nobody is doing; `DROPPED` is work nobody is going to do. Both write the
   same entry. What separates them is whether the work that waited on this is

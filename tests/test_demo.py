@@ -100,19 +100,23 @@ def test_demo_holds_a_reading(demo):
     assert t.readings[-1].note
 
 
-def test_demo_holds_work_finished_more_than_once(demo):
-    """The record `F-F5` exists for, in the store a reader actually opens.
+def test_the_demo_shows_a_redo_as_a_child_task(demo):
+    """`D81`'s shape, and the demo has to show it or nobody meets it.
 
-    A completion is archived exactly as a stop is, and a demo showing only
-    once-finished work shows the list as a formality — the reader has no reason
-    to notice that the first result was kept, because nothing was superseded.
-    T01 was built, T02 changed what it was built over, and it was built again."""
+    A task has one outcome because it has one criterion. When work is done
+    again — T01 built the index, T02 changed what it was built over, and it
+    had to be built again — the second round is a *task*, linked
+    `discovered-during`, carrying its own criterion and its own result. A demo
+    of only once-finished work would never show the reader where a redo goes.
+    """
     tg = TaskGraph.load(demo / "tasks.json")
-    twice = [t for t in tg.tasks.values() if len(t.completions) > 1]
-    assert twice, "no task in the demo was finished more than once"
-    t = twice[0]
-    assert t.outcome == t.completions[-1].outcome     # the live one is the last
-    assert t.completions[0].outcome != t.outcome      # and the first was kept
+    redone = [t for t in tg.tasks.values()
+              if t.status == "DONE" and tg.discovered_during(t.id)]
+    assert redone, "no finished task in the demo prompted follow-up work"
+    # And no task claims two results: `DONE` is terminal, so the pair is one.
+    for t in tg.tasks.values():
+        assert not t.extra.get("completions"), f"{t.id} still carries a list"
+
 
 
 def test_demo_holds_both_kinds_of_reversal(demo):

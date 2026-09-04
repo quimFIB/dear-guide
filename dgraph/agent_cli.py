@@ -217,7 +217,9 @@ def agent_list() -> None:
         return
     # Only where a broker is running, because the column can only ever be empty
     # otherwise and an always-blank column reads as "nobody is waiting" rather
-    # than "nothing could tell you". `P-F7`.
+    # than "nothing could tell you". `P-F7`. `waiting` asks the same question
+    # itself now (`Y-F4`), so the two cannot disagree about whether there is a
+    # broker — this stays because the *column* is the thing being decided.
     blocked = _broker.waiting(proj.root)
     columns = ["Name", "Since", "Staged", "Holding", "Budget", "Seen"]
     if _broker.listening(proj.root):
@@ -1663,8 +1665,20 @@ def agent_broker(
             "or `dg-agent broker` in a terminal[/]")
         return
 
-    # Before any door check, because the child runs every one of them itself
-    # and running them twice would report each twice. `D53`.
+    # The fourth door check, and the one `unattachable` does not make: it asks
+    # which rung, this asks what will answer it. `Y-F3`.
+    if detach:
+        no_front = _broker.undetachable(rungs, relay)
+        if no_front:
+            cli.con.print(f"[red]✗ {cli._x(no_front)}[/]\n[dim]nothing is "
+                          f"listening; fix the rung and start again[/]")
+            raise typer.Exit(2)
+
+    # **In the parent.** The comment here used to say the child runs every door
+    # check itself, which was never true of this function — `unattachable`,
+    # `unwaitable`, `unrelayable` and `unbindable` all sit above and all run
+    # before this line. It matters because a refusal raised in the child goes
+    # to `.dgraph-consent.out` and reaches nobody. `Y-F6`. `D53`.
     if detach:
         argv = [a for a in sys.argv[1:] if a != "--detach"]
         argv = argv[argv.index("broker") + 1:] if "broker" in argv else []
@@ -1677,9 +1691,14 @@ def agent_broker(
             f"[green]{'already listening' if rec['already'] else 'listening'}[/]"
             f" [dim]{cli._x(rec['socket'])}"
             f"{'' if rec['already'] else f'  pid {rec["pid"]}'}[/]\n"
-            f"[dim]`dg-agent consent` to answer what it publishes; "
-            f"`dg-agent broker --stop` is not a thing — Ctrl-C the process, or "
-            f"let it go with the run[/]")
+            # Only where it is relaying: without `--relay` the broker
+            # publishes nothing for `dg-agent consent` to read, and pointing a
+            # supervisor at it would name a door that answers "nothing is
+            # waiting" whatever is happening. `Y-F3`.
+            + (f"[dim]`dg-agent consent` to answer what it publishes; " if relay
+               else "[dim]")
+            + f"`dg-agent broker --stop` is not a thing — Ctrl-C the process, "
+            f"or let it go with the run[/]")
         return
 
     if warrant:

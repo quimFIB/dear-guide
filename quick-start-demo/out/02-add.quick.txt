@@ -2,8 +2,8 @@ $ dg add --id D09 --area sync --title 'Which files does sync ignore?' --after D0
 staged add D09
 $ dg pending
 STAGED  2 op(s)
-  0  jruq  add_vertex  D09  Which files does sync ignore? [sync]
-  1  ahet  add_edge    D08  → D09
+  0  zujr  add_vertex  D09  Which files does sync ignore? [sync]
+  1  hmnv  add_edge    D08  → D09
 `dg apply` to write, `dg drop <id>` to unstage
   `dg pending --full` for the table, nothing clipped
 $ dg apply

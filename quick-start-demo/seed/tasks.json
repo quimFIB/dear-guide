@@ -11,12 +11,8 @@
    "title": "Write the file-store loader",
    "area": "storage",
    "status": "DONE",
-   "completions": [
-    {
-     "date": "2026-05-12",
-     "outcome": "src/store/files.py, PR #12"
-    }
-   ],
+   "done": "2026-05-12",
+   "outcome": "src/store/files.py, PR #12",
    "because": [
     "D01"
    ]
@@ -63,12 +59,8 @@
    "title": "Benchmark FTS5 on 50k synthetic notes",
    "area": "search",
    "status": "DONE",
-   "completions": [
-    {
-     "date": "2026-06-02",
-     "outcome": "bench/fts5.md \u2014 p95 41 ms at 50k notes, one table per notebook"
-    }
-   ],
+   "done": "2026-06-02",
+   "outcome": "bench/fts5.md \u2014 p95 41 ms at 50k notes, one table per notebook",
    "evidence_for": "D02"
   },
   {

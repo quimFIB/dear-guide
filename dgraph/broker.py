@@ -294,6 +294,45 @@ def unattachable(rungs: dict[str, str], auto: object = None) -> str | None:
             f"verdict stands.")
 
 
+def undetachable(rungs: dict[str, str], relay: bool) -> str | None:
+    """Why this broker could not answer anything once detached — or `None`.
+
+    `unattachable`'s sibling, and the axis it does not read. That one asks
+    **which rung**; this asks **what front end will answer it**. A detached
+    broker gets `stdin=DEVNULL`, so `terminal_prompt` meets EOF on the first
+    request and on every request after it: every verdict is `deny`, logged
+    `by: unanswered`, with the reason naming a terminal that closed — and
+    there was no terminal. Meanwhile the banner prints `listening`, `--check`
+    answers that a broker is up, and `dg-agent list` grows a `Waiting` column.
+    Three readings that all say the run is healthy, which is `unattachable`'s
+    own sentence one rung over. Audit `Y-F3`.
+
+    `--relay` is a front end that survives detachment — the question goes to
+    `dg-agent consent` and a person answers it from anywhere — so the two
+    together are exactly the documented form and pass. Every rung `off` passes
+    too: nothing will be asked, so nothing can go unanswered.
+
+    Refused **at the door**, in the parent, like the three checks beside it —
+    not in the child, whose refusal would go to `.dgraph-consent.out` and
+    reach nobody.
+    """
+    if relay:
+        return None
+    prompting = sorted(k for k, v in (rungs or {}).items()
+                       if v in ("user", "scoped") and k in LADDERS)
+    if not prompting:
+        return None
+    which = ", ".join(f"${LADDERS[k][0]}" for k in prompting)
+    is_are = "is" if len(prompting) == 1 else "are"
+    return (f"{which} {is_are} set to a rung that asks a person, and a "
+            f"detached broker has no terminal to ask at — it would answer "
+            f"`deny` to every request while reporting itself as listening. "
+            f"Add `--relay` so the question reaches `dg-agent consent`; or "
+            f"run it in a terminal without `--detach`; or set the rung to "
+            f"`off`, where this answers nothing and the gate's own verdict "
+            f"stands.")
+
+
 #: What the host adapters give the gate, and therefore the shortest bound any
 #: request will carry in an ordinary run. Read from `hooks/prewrite.py` by
 #: `tests/test_plugin.py` rather than copied — this is the *floor check's*
@@ -1347,10 +1386,23 @@ def waiting(root: Path | None = None) -> dict[str, dict]:
     cannot be read — three states a reader must not tell apart, because only
     one of them is about an agent and the other two are about the supervisor's
     terminal.
+
+    **"No broker is running" is asked, not assumed.** `Relay.serve`'s `finally`
+    unlinks this file, so a Ctrl-C leaves nothing behind — but a signal, a
+    closed terminal or a crash does, and the map then outlives the only process
+    that could have written it. `dg-agent consent` read it and told a
+    supervisor that agents were blocked on a broker that was not relaying, and
+    to answer it where it was running: three false claims and a remedy pointing
+    at nothing. The fix is the one `listening` already is — ask, do not believe
+    the file. Audit `X-F6` for the socket, `Y-F4` for this. The connect costs a
+    round trip on a unix socket, and both callers are printing a human-facing
+    line, not looping.
     """
+    root = root if root is not None else project.find().root
+    if not listening(root):
+        return {}
     try:
-        path = (root or project.find().root) / WAITING_NAME
-        return json.loads(path.read_text(encoding="utf-8")) or {}
+        return json.loads((root / WAITING_NAME).read_text(encoding="utf-8")) or {}
     except Exception:
         return {}
 

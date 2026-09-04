@@ -35,8 +35,8 @@ staged add T12
 staged T12 after T08
 $ dg pending
 STAGED  2 op(s)
-  0  sjkb  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
-  1  dcrp  add_edge    D08  → D09                                   ·  by agile-bearing
+  0  hyfe  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
+  1  hepz  add_edge    D08  → D09                                   ·  by agile-bearing
 staged by  agile-bearing 4
   `dg pending --agent <name>` for one writer alone
 `dg apply` to write, `dg drop <id>` to unstage
@@ -48,8 +48,8 @@ of them; `dg pending` shows who staged what
 [exit 1]
 $ dg pending --agent agile-bearing
 STAGED  2 op(s)
-  0  sjkb  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
-  1  dcrp  add_edge    D08  → D09                                   ·  by agile-bearing
+  0  hyfe  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
+  1  hepz  add_edge    D08  → D09                                   ·  by agile-bearing
 staged by  agile-bearing 4  — showing agile-bearing
 `dg apply` to write, `dg drop <id>` to unstage
   `dg pending --full` for the table, nothing clipped
@@ -61,7 +61,7 @@ $ dg-agent list
 ┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━┓
 ┃ Name          ┃ Since      ┃ Staged ┃ Holding ┃ Budget ┃ Seen ┃
 ┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━┩
-│ agile-azimuth │ 2026-09-03 │ 0      │ T04     │ —      │ 5s   │
-│ agile-bearing │ 2026-09-03 │ 0      │ —       │ —      │ 4s   │
+│ agile-azimuth │ 2026-09-04 │ 0      │ T04     │ —      │ 6s   │
+│ agile-bearing │ 2026-09-04 │ 0      │ —       │ —      │ 4s   │
 └───────────────┴────────────┴────────┴─────────┴────────┴──────┘
 7002 of 7004 names free

@@ -24,23 +24,33 @@ are not decisions and the differences are the whole point of keeping two stores:
   round to the same view for *waiting* (`D68`): its `BLOCKED:<id>` status was
   a stored copy of an edge, and the rule that kept it honest, `stale_block`,
   went with it.
-- **Supersession, in two places, and both are lists.** A decision that is
-  overturned keeps its old answer forever, because how a project changed its
-  mind is worth more than the conclusion. Here that applies to the two
-  questions whose answers can stop being current and still be worth having —
-  *why is this work not being done* and *what did it produce* — so every
-  stoppage appends to `Task.stops` and every completion appends to
-  `Task.completions`, and nothing ever clears either. Work put down three
-  times says so; work finished twice keeps both results. Which entry is
-  **live** is never stored: `stopped_because`, `done` and `outcome` all derive
-  it from the status, which is what stops a record outliving the claim it
-  used to support. Every other field this store keeps is current-state.
+- **Supersession, in one place, and the asymmetry is the design.** A decision
+  that is overturned keeps its old answer forever, because how a project
+  changed its mind is worth more than the conclusion. Here only *one* question
+  has an answer that can stop being current and still be worth having — **why
+  is this work not being done** — so every stoppage appends to `Task.stops` and
+  nothing ever clears it. Work put down three times says so. Which entry is
+  live is never stored: `stopped_because` derives it from the status, which is
+  what stops a record outliving the claim it used to support.
 
-  `completions` was the exception until audit `F-F5`, and it is worth saying
-  why the exception was not visible: the pair was two scalars that `_apply_one`
-  assigned, so a second `dg task done` overwrote a result and its date with
-  every invariant still holding. Nothing about the record's *shape* changed,
-  which is exactly what an invariant can see.
+  **What the work produced is not the other half of that** (`D81`). A task has
+  one outcome because it has one criterion, one set of premises, one
+  `evidence_for` — so `DONE` is terminal, `done` and `outcome` are plain
+  stored fields, and a second attempt is *different work*: a child task, linked
+  `discovered-during`, carrying its own `done_when` and its own links.
+
+  The route to that is worth keeping, because it ran through a wrong turn.
+  Before `F-F5` the pair was two scalars `_apply_one` assigned, so a second
+  `dg task done` overwrote a result and its date with every invariant holding —
+  nothing about the record's *shape* changed, which is exactly what an
+  invariant can see. `F-F5` was right about the defect and reached for *keep
+  both results*, which made `completions` a list. Audit pass 21 found the list
+  keeps the second result and loses everything that makes it readable: a second
+  round rewrites the single `done_when` it is judged against, so two outcomes
+  sit side by side as if comparable while the criterion that would separate
+  them is gone. `D81` answers *refuse the second finish* — which destroys
+  nothing, and is why the scalars are back and why storing them is safe: there
+  is no path out of `DONE`, so the pair cannot outlive the state that wrote it.
 - **Two ways to stop, and they differ downstream, not in the record.** `PARKED`
   is work nobody is doing; `DROPPED` is work nobody is going to do. Both write
   the same `Stop`. What separates them is whether the work that waited on this
@@ -89,6 +99,99 @@ UNFINISHED = frozenset({"TODO", "DOING", "PARKED"})
 #: prerequisite releases its dependants: abandoning it *is* the decision that it
 #: was not needed.
 RESOLVED = frozenset({"DONE", "DROPPED"})
+
+#: What a task's status may become, from each status it can be in (`D81`).
+#: **One table, and every door reads it** — `task_pending._apply_one` refuses
+#: what is not here, and `integrate._status` derives the restart the record
+#: proves happened wherever this refuses the transition it is about to emit.
+#: A chain of `if`s in either place would be a rule on some doors and not the
+#: rest, which is the shape most of this tool's audit findings took.
+#:
+#: Four rules, and each is a claim about the work rather than a convenience:
+#:
+#: - **`DONE` is terminal.** A task has one outcome because it has one
+#:   criterion, one set of premises, one `evidence_for`; a second attempt is
+#:   different work and gets a child task, linked `discovered-during`. Finishing
+#:   twice under one head keeps the second result and loses everything that
+#:   makes it interpretable — `done_when` is a single field, so the second
+#:   round rewrites what the first was judged against.
+#: - **Nothing returns to `TODO`.** It is where work starts and not a state it
+#:   comes back to; picking work up is `DOING`.
+#: - **A `DROPPED` task may be picked up, not parked.** Abandoning released
+#:   everything that waited on it; parking asserts the opposite, so the way
+#:   back is through `DOING`, where a person says the work is live again.
+#: - **A status never repeats.** Two parks in a row cannot be told from an
+#:   amendment of the one park there was, and these records are kept forever.
+#:
+#: That `DONE` has no exit is what makes `Task.done` and `Task.outcome` safe to
+#: *store* rather than derive: a stored field that outlives the state that made
+#: it true is this codebase's most-filed defect, and the reason this pair
+#: cannot is that there is no path out of the status that wrote it.
+ALLOWED: dict[str, frozenset[str]] = {
+    "TODO": frozenset({"DOING", "PARKED", "DROPPED", "DONE"}),
+    "DOING": frozenset({"PARKED", "DONE", "DROPPED"}),
+    "PARKED": frozenset({"DOING", "DROPPED"}),
+    "DROPPED": frozenset({"DOING"}),
+    "DONE": frozenset(),
+}
+
+#: What to say instead, per refused transition — the way out, not just the no.
+#: A refusal that names none is answered by deleting the refusal.
+_WAY_OUT = {
+    ("DONE", "DONE"): "`{tid}` is finished. A second result is different work: "
+                      "file a child task with `dg task add --discovered-during "
+                      "{tid}`, which gets its own done_when and its own links.",
+    ("PARKED", "PARKED"): "`{tid}` is already PARKED — `dg task start {tid}` "
+                          "first, or the record would claim it was parked twice.",
+    ("DROPPED", "DROPPED"): "`{tid}` is already DROPPED — `dg task start {tid}` "
+                            "first, or the record would claim it was dropped "
+                            "twice.",
+    ("DROPPED", "PARKED"): "`{tid}` was dropped, which released everything "
+                           "waiting on it; parking asserts the opposite. "
+                           "`dg task start {tid}` first if it is live again.",
+    ("PARKED", "DONE"): "`{tid}` is PARKED — `dg task start {tid}` first, then "
+                        "finish it. Work is not finished straight from being "
+                        "put down; picking it up is an act and the record says "
+                        "so.",
+    ("DROPPED", "DONE"): "`{tid}` was dropped — `dg task start {tid}` first, "
+                         "then finish it. Abandoned work that turned out to be "
+                         "done was picked up by somebody, and the record says "
+                         "so.",
+}
+
+#: The sentence for a transition `_WAY_OUT` does not name individually — the
+#: `TODO` column, above all, which is every status trying to go back to where
+#: work starts.
+_NO_WAY = ("{tid} is {was}; {want} is not a status it can move to. "
+           "`dg task node {tid}` shows where it is.")
+
+
+def transition_fault(was: str, want: str, tid: str) -> str | None:
+    """Why `was -> want` is refused, or `None` if `ALLOWED` permits it.
+
+    The one implementation, for every door: the CLI's own pre-check, `vet` on
+    an op arriving as data, `_apply_one` on the write, and the browser's route
+    all ask this and print the sentence it returns. Three doors with three
+    copies is how `status_fault` got its docstring.
+    """
+    if want not in STATUSES:
+        return f"{want!r} is not a task status ({', '.join(STATUSES)})"
+    if want in ALLOWED.get(was, frozenset()):
+        return None
+    tmpl = _WAY_OUT.get((was, want))
+    if tmpl:
+        return tmpl.format(tid=tid)
+    if was == want:
+        # Every self-transition, including the two `_WAY_OUT` does not name:
+        # `TODO -> TODO` and `DOING -> DOING`, which write no record and so
+        # have no "or it would claim it twice" to give.
+        return f"{tid} is already {was}"
+    if was == "DONE":
+        return (f"{tid} is DONE, and finished work stays finished. If there is "
+                f"more to do, file a child task with "
+                f"`dg task add --discovered-during {tid}`.")
+    return _NO_WAY.format(tid=tid, was=was, want=want)
+
 
 ID_RE = re.compile(r"T\d+")
 
@@ -187,31 +290,6 @@ class Stop:
 
 
 @dataclass
-class Completion:
-    """One time this work was finished, and what it produced.
-
-    `Stop`'s twin, and for the same reason: a record kept forever is appended,
-    never assigned. A task can be finished, restarted and finished again — a
-    measurement redone with a different method, a fix shipped twice — and each
-    time the store holds a dated account of what came out. Overwriting the
-    first one destroys the only copy of a result, silently, and no invariant
-    can notice because nothing about the record's *shape* changed.
-
-    Two fields and no more: when it finished, and what it produced -- not who
-    produced it, for the reason `Stop` gives. Which completion is *live* is not
-    stored, for the reason `stopped_because` gives:
-    the status decides, so `Task.done` and `Task.outcome` derive it, and a
-    completion that a later status contradicts cannot rot because it never
-    claimed to be current.
-    """
-
-    date: str
-    outcome: str
-    #: As `Stop.extra`.
-    extra: dict = field(default_factory=dict)
-
-
-@dataclass
 class Reading:
     """One time this work was read against the answer it was evidence for.
 
@@ -257,13 +335,23 @@ class Task:
     #: the result is written against what was said would count. Its
     #: mechanical twin is `probes`.
     done_when: str | None = None
-    #: Every time this work was finished, oldest first, and never cleared.
-    #: `done` and `outcome` read the last entry and are derived, not stored —
-    #: see those properties for why. Held as a list because the pair used to be
-    #: two scalars, and a second `dg task done` overwrote both with `dg check`
-    #: reporting clean: the one archival record in either store kept somewhere
-    #: a later write could erase it.
-    completions: list[Completion] = field(default_factory=list)
+    #: When the work finished, and what it produced. **Stored, not derived,
+    #: and safe to store for exactly one reason**: `DONE` is terminal
+    #: (`tasks.ALLOWED`, `D81`), so nothing can move a task out of the status
+    #: that wrote this pair and it cannot outlive the state that made it true.
+    #:
+    #: It was a list of `Completion` between `F-F5` and `D81`. `F-F5` was right
+    #: that a second `dg task done` must not silently overwrite the first
+    #: result, and reached for *keep both*; `D81` answers *refuse the second
+    #: finish*, which destroys nothing and sends the second result to a child
+    #: task that can carry its own `done_when`, its own links and its own
+    #: premises — none of which a second list entry could hold. A store written
+    #: in between carries `completions`, which this version does not name: it
+    #: loads (`extra`, `D76`), and `task_done_complete` refuses the commit
+    #: until somebody writes this pair by hand, with the old entry in the file
+    #: to copy from.
+    done: str | None = None
+    outcome: str | None = None
     #: Why the work is not being done, written by `dg task drop`. Its own
     #: field rather than the note, because overwriting the only description of
     #: what the work *was* is the opposite of keeping a record: the decision
@@ -338,27 +426,6 @@ class Task:
     @property
     def parked(self) -> bool:
         return self.status == "PARKED"
-
-    @property
-    def done(self) -> str | None:
-        """The date of the live completion, or None where none is claimed.
-
-        Derived for the reason `stopped_because` is, and the sentence there
-        applies word for word: a record that outlived its status cannot exist
-        if the status is what decides whether the record is live. Restarting
-        finished work leaves its completion in the list and stops it being
-        read, which is why nothing clears anything any more.
-        """
-        return self.completions[-1].date if self._live else None
-
-    @property
-    def outcome(self) -> str | None:
-        """What the live completion produced. `done`'s other half."""
-        return self.completions[-1].outcome if self._live else None
-
-    @property
-    def _live(self) -> bool:
-        return self.status == "DONE" and bool(self.completions)
 
     @property
     def stopped_because(self) -> str | None:
@@ -550,20 +617,6 @@ def _task(raw: dict) -> Task:
         Stop(**named, extra=extra) for named, extra in
         (split_known(k, ("why", "date"), rid, "stops", "a `why` and a `date`")
          for k in fields.pop("stops", []))]
-    completions = fields.pop("completions", [])
-    legacy = [fields.pop(f, None) for f in ("done", "outcome")]
-    if any(v is not None for v in legacy) and not completions:
-        # A store written while a completion was two scalars. Folded rather
-        # than refused, unlike the `why` above, because nothing has to be
-        # invented: both halves are already in the record, and the date is one
-        # of them. A half-written pair folds too, with the missing half empty,
-        # so that `validate` can go on reporting it — refusing the load would
-        # make the one command that names the fault unable to run.
-        completions = [{"date": legacy[0] or "", "outcome": legacy[1] or ""}]
-    fields["completions"] = [
-        Completion(**named, extra=extra) for named, extra in
-        (split_known(c, ("date", "outcome"), rid, "completions",
-                     "a `date` and an `outcome`") for c in completions)]
     fields["probes"] = probes_from(fields.pop("probes", []), rid)
     fields["binds"] = binds_from(fields.pop("binds", []), rid)
     fields["readings"] = [
@@ -652,12 +705,10 @@ class TaskGraph:
                         ("id", t.id), ("title", t.title), ("area", t.area),
                         ("status", t.status), ("note", t.note),
                         ("done_when", t.done_when),
-                        # `t.completions`, not `t.done`/`t.outcome`: those are
-                        # status-gated, so serializing through them would drop
-                        # the record of finished work the moment it restarted.
-                        ("completions", [{"date": c.date, "outcome": c.outcome,
-                                          **c.extra}
-                                         for c in t.completions] or None),
+                        # The pair, written flat. `D81` made `DONE`
+                        # terminal, so there is one of each and no list.
+                        ("done", t.done),
+                        ("outcome", t.outcome),
                         # Absent rather than `[]` when there is none, matching
                         # every other field here: the store stays readable, and
                         # work that never stopped says so by silence.
@@ -922,21 +973,15 @@ class TaskGraph:
                     add("task_probe_wellformed", f"{tid}: {fault}")
             for fault in binds_fault(t.binds):
                 add("task_binding_wellformed", f"{tid}: {fault}")
-            for c in t.completions:
-                if not c.date or not c.outcome:
-                    add("task_done_complete",
-                        f"{tid}: a completions entry is missing its "
-                        f"{'date' if not c.date else 'outcome'}")
-            # There is no "carries completion data it should not" rule any
-            # more, and its absence is the point of folding the pair into a
-            # list. That rule existed because two live scalars outlived the
-            # status that made them true, and a status change had to clear them
-            # to stop them rotting. A completion describes work that *finished*,
-            # so no later status can contradict it — work finished, restarted
-            # and finished again is the ordinary case rather than drift, and it
-            # is the case the old shape destroyed. What is checked instead is
-            # the other direction: a status claiming a completion that is not
-            # there, below, and an entry missing a half of itself, above.
+            # No "carries completion data it should not" rule, and its absence
+            # is structural rather than an omission: `DONE` is terminal
+            # (`D81`), so the pair cannot be reached from any other status and
+            # there is nothing for a later status to contradict. What is
+            # checked is the other direction — a status claiming a result that
+            # is not there. That is also what a store written while
+            # `completions` was a list meets: the list lands in `extra` and
+            # this pair is empty, so the commit is refused and the old entry is
+            # still in the file to hand-fix from.
             if t.status != "DONE":
                 continue
             if not t.done:

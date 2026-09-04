@@ -358,7 +358,7 @@ the three that mattered go past unread.
 | | |
 |---|---|
 | two answers to one question | `--take` the arriving one, `--keep` this store's, or `--split` because they answer different questions |
-| two completions of one task | take or keep, and both survive either way |
+| two finishes of one task | take or keep; `DONE` is terminal, so one result stands and the other is what a child task is for |
 | two wordings of one record | take or keep; a title has no truth value, so nothing is archived |
 
 Each arrives as a question with candidate answers rather than as a merge to
@@ -434,8 +434,9 @@ the work arrived.
 **Taking the arriving answer is the ordinary route, not a special case.** An
 answer is never written over an answer, so taking one inserts the `reopen` the
 store would demand of anybody, and this store's answer becomes history. A task
-is never finished twice, so taking a completion inserts the restart, and both
-outcomes are kept with the status saying which is live.
+is never finished twice at all, so taking an arriving finish over one already
+recorded is a choice between two results rather than a merge of them — and the
+one not taken belongs to work that deserves its own record.
 
 **Keeping yours needs somewhere to put theirs.** When a person keeps this
 store's answer, the arriving answer and its falsifier otherwise survive only in

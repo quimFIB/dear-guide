@@ -72,7 +72,7 @@ def split_known(raw: object, known: tuple[str, ...], rid: str,
     everything else — carried, never dropped and never crashed on.
 
     The one loader for every appended record in both stores — a probe, a
-    bind, and the task store's stops, completions and readings — so that
+    bind, and the task store's stops and readings — so that
     they all draw the line in the same place: an entry that is **not an
     object**, or one **missing** a key it needs, is refused here, at load,
     as `tasks._task` argues (an entry dropped here would be invisible by the

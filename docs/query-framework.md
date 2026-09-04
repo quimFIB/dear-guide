@@ -158,7 +158,7 @@ Tasks: `id title area status note done outcome readings why`.
 `why`, `outcome` and `done` are the exceptions that prove the rule, and each
 arrived the same way: the store folded a scalar into an archival list, and the
 term outlived the field. Every reason work stopped lives in `stops` and every
-result it produced lives in `completions`, both appended and never cleared —
+result it produced lives in `outcome`, one of them since `DONE` is terminal —
 but a searcher asking *why is this not being done* types `why:`, and one
 looking for a measurement types a word from it, so both terms are kept and
 answered out of the list behind them. A hit in an entry that is not the live

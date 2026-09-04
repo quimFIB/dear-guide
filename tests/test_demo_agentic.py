@@ -79,7 +79,7 @@ def test_the_store_is_the_shape_every_scene_assumes(tmp_path):
 
     # An answer is owed: T02 reported and D03 was never settled on it.
     assert tg.tasks["T02"].status == "DONE" and tg.tasks["T02"].evidence_for == "D03"
-    assert tg.tasks["T02"].completions, "T02 has to carry a real outcome"
+    assert tg.tasks["T02"].outcome, "T02 has to carry a real outcome"
     # Work is ready: T01 has no prerequisites, and its result is owed to D02.
     assert tg.tasks["T01"].status == "TODO" and tg.tasks["T01"].evidence_for == "D02"
     assert "T01" not in tg.blocked_ids(), "T01 has to be startable on day one"

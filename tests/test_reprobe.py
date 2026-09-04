@@ -3,7 +3,7 @@
 The slot `D71` puts on the two records that are not an edge: a rule for
 settling an open question, a definition of done for a task. Both are lists,
 last entry live, each dated, and the only writer is an append — `stops` and
-`completions` are the precedent (proposal §Reconciliation C3). The shape of
+`stops` are the precedent (proposal §Reconciliation C3). The shape of
 each entry's criterion is `probe_fault`'s, which `tests/test_probe.py` owns;
 what this file proves is the append, the doors onto it, the refusals, the
 seam, and the views.
@@ -389,18 +389,28 @@ T_DONE = lambda t, d: {"op": "set_status", "task": t, "status": "DONE",
 T_DOING = lambda t: {"op": "set_status", "task": t, "status": "DOING"}
 
 
+T_PARK = lambda t, d: {"op": "set_status", "task": t, "status": "PARKED",
+                       "why": "waiting", "date": d}
+T_DROP = lambda t, d: {"op": "set_status", "task": t, "status": "DROPPED",
+                       "why": "no", "date": d}
+
+# Every sequence here is legal under `D81`'s matrix, which is what changed
+# them: three used to restart a `DONE` task and `DONE` is terminal now. The
+# ones that replaced them exercise what the store still allows and the seam
+# still has to replay — a park and a pick-up, two stops with a restart between
+# them, and a stop *before* a finish, which is where `Y-F1` lived.
 @pytest.mark.parametrize("sequence", [
     [T_RP("T02", ONE, "2026-02-01"), T_DONE("T02", "2026-02-05")],   # reprobe, done
-    [T_DOING("T01"), T_RP("T01", ONE, "2026-02-02")],               # restart, reprobe
-    [T_DOING("T01"), T_RP("T01", ONE, "2026-02-02"), T_DONE("T01", "2026-02-03")],
-    [T_RP("T02", ONE, "2026-02-01"), T_DONE("T02", "2026-02-02"), T_DOING("T02"),
-     T_RP("T02", TWO, "2026-02-03"), T_DONE("T02", "2026-02-04")],
-    [T_RP("T02", ONE, "2026-02-01"),
-     {"op": "set_status", "task": "T02", "status": "DROPPED", "why": "no",
-      "date": "2026-02-02"}],                                        # reprobe, drop
+    [T_DOING("T02"), T_RP("T02", ONE, "2026-02-02")],               # start, reprobe
+    [T_DOING("T02"), T_RP("T02", ONE, "2026-02-02"), T_DONE("T02", "2026-02-03")],
+    [T_PARK("T02", "2026-02-01"), T_DOING("T02"), T_RP("T02", ONE, "2026-02-02"),
+     T_PARK("T02", "2026-02-03")],                          # two stops, restart between
+    [T_PARK("T02", "2026-02-01"), T_DOING("T02"), T_RP("T02", TWO, "2026-02-02"),
+     T_DONE("T02", "2026-02-04")],                          # stop, then a finish
+    [T_RP("T02", ONE, "2026-02-01"), T_DROP("T02", "2026-02-02")],   # reprobe, drop
     [T_RP("T02", ONE, "2026-02-05"), T_DONE("T02", "2026-02-05")],   # same day
-], ids=["reprobe-done", "restart-reprobe", "restart-reprobe-done",
-        "done-restart-reprobe-done", "reprobe-drop", "same-day"])
+], ids=["reprobe-done", "start-reprobe", "start-reprobe-done",
+        "park-restart-park", "park-restart-done", "reprobe-drop", "same-day"])
 def test_the_seam_replays_every_legal_task_order_with_a_reprobe(sequence):
     base = _task_base()
     theirs = task_pending.apply_all(base, sequence)

@@ -17,7 +17,7 @@ remove D09 (sever)
 staged remove D09
 $ dg pending
 STAGED  1 op(s)
-  0  wseg  remove_vertex  D09  ✗ removed (sever)
+  0  raae  remove_vertex  D09  ✗ removed (sever)
 `dg apply` to write, `dg drop <id>` to unstage
   `dg pending --full` for the table, nothing clipped
 $ dg apply

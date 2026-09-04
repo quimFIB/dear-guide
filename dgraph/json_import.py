@@ -92,15 +92,16 @@ SCHEMA = {
         "collection": "tasks",
         "record": "task",
         "required": ("id", "title", "area"),
-        # `done` and `outcome` are still accepted, though the store holds
-        # neither: `tasks._task` folds a legacy pair into a one-entry
-        # `completions` list, so a document written against the old shape is
-        # still adoptable and says so by loading rather than by an error.
+        # `done` and `outcome` are fields of the record again since `D81`.
+        # `completions` is deliberately absent: a document written between
+        # `F-F5` and `D81` carries it, and `dg task import` refuses rather than
+        # folding, because which of several entries was live is a judgement
+        # this cannot make for somebody.
         # `stops` and `readings` were missing here for as long as the store
         # has held them, so `dg task import` refused every store with a
         # parked task or a read result — the drift this table's own comment
         # warns of, arriving through the door it was written to guard.
-        "optional": ("status", "note", "completions", "done", "outcome",
+        "optional": ("status", "note", "done", "outcome",
                      "why", "format", "because", "evidence_for", "stops",
                      "readings", "probes", "binds", "done_when"),
         "edge_required": ("from",),

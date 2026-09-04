@@ -114,9 +114,10 @@ for e in g["edges"]:
 json.dump(g, open("decisions.json", "w"), indent=1); open("decisions.json", "a").write("\n")
 t = json.load(open("tasks.json"))
 for x in t["tasks"]:
-    for k in ("completions", "stops"):
-        for entry in x.get(k, []):
-            entry["date"] = dates[x["id"]]
+    if x.get("done"):
+        x["done"] = dates[x["id"]]
+    for entry in x.get("stops", []):
+        entry["date"] = dates[x["id"]]
 json.dump(t, open("tasks.json", "w"), indent=1); open("tasks.json", "a").write("\n")
 PY
 d check

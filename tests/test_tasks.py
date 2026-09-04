@@ -388,24 +388,20 @@ def test_dropping_a_task_keeps_the_note_that_described_it(run_cli, task_store):
     assert "the vendor tool does it" in (task_store / "tasks.md").read_text()
 
 
-def test_leaving_done_keeps_the_completion_and_stops_claiming_it(run_cli,
-                                                                 task_store):
-    """What used to be a clearing rule, and is now the same rule as `stops`.
+def test_finished_work_cannot_be_left(run_cli, task_store):
+    """The rule that replaced the clearing rule, which replaced a bug.
 
-    `tasks.md` printed an outcome under work in progress again, and nothing
-    complained — so leaving DONE deleted the pair. Deleting was the wrong half
-    to fix: what went stale was the *claim*, not the record. The record stays
-    in the store and on the page, and the claim is gone because `done` and
-    `outcome` are derived from a status that no longer makes it.
+    First `done`/`outcome` were live scalars a status change had to clear, and
+    the clear destroyed the only record of a result. `F-F5` made them a list
+    and derived the claim from the status, so leaving `DONE` kept the record
+    and dropped the claim. `D81` removes the case: nothing leaves `DONE`, so
+    the pair is stored again and there is no claim to go stale.
     """
-    assert run_cli("task", "start", "T01").exit_code == 0
-    assert run_cli("apply").exit_code == 0
-    assert run_cli("task", "render").exit_code == 0   # view is generated on demand
+    res = run_cli("task", "start", "T01")            # T01 is DONE in the fixture
+    assert res.exit_code == 1
+    assert "--discovered-during T01" in res.output
     t = TaskGraph.load(task_store / "tasks.json").tasks["T01"]
-    assert t.status == "DOING" and t.done is None and t.outcome is None
-    assert [c.outcome for c in t.completions] == ["PR #1"]
-    md = (task_store / "tasks.md").read_text()
-    assert "PR #1" in md and "(the result)" not in md
+    assert t.status == "DONE" and t.outcome == "PR #1"
 
 
 def test_a_status_that_changes_nothing_is_refused(run_cli):
@@ -413,24 +409,23 @@ def test_a_status_that_changes_nothing_is_refused(run_cli):
     assert res.exit_code == 1 and "already DOING" in res.output
 
 
-def test_a_completion_under_restarted_work_is_kept_and_is_not_a_violation(tg):
-    """The rule this replaces, and why it had to go.
+def test_a_result_under_unfinished_work_is_a_store_no_op_can_produce(tg):
+    """Reachable only by hand, and `validate` is deliberately quiet about it.
 
-    A completion under unfinished work used to be a violation, because `done`
-    and `outcome` were live scalars that a status change had to clear or they
-    would rot. They are derived now, so the same record means the ordinary
-    thing instead: this work was finished once, and has been picked back up.
-    Kept, unread, and reported by nothing.
+    A result under unfinished work used to be a violation, then the ordinary
+    case, and is now neither: `D81` makes it unreachable through any op, so
+    the rule would fire on nothing an operator can do. What `validate` still
+    checks is the other direction — `DONE` claiming a result that is absent —
+    which is the shape a store written before `D81` arrives in.
     """
     finished(tg.tasks["T02"], "2026-01-09", "PR #2")
-    tg.tasks["T02"].status = "DOING"
+    tg.tasks["T02"].status = "DOING"                 # by hand; no op does this
     assert not _check(tg, "task_done_complete")
-    assert tg.tasks["T02"].done is None and tg.tasks["T02"].outcome is None
-    assert tg.tasks["T02"].completions[-1].outcome == "PR #2"
+    assert tg.tasks["T02"].outcome == "PR #2"        # stored, and simply unread
 
 
-def test_a_completion_missing_a_half_of_itself_is_a_violation(tg):
-    """The rule that is left: an entry that cannot say what it records.
+def test_a_finish_missing_half_of_itself_is_a_violation(tg):
+    """The rule that is left: a record that cannot say what it produced.
 
     `stops` is checked the same way and for the same reason — an archived
     record with a hole in it is worse than none, because it reads as an
@@ -438,49 +433,6 @@ def test_a_completion_missing_a_half_of_itself_is_a_violation(tg):
     finished(tg.tasks["T02"], "2026-01-09", "")
     hits = _check(tg, "task_done_complete")
     assert hits and "T02" in str(hits[0]) and "outcome" in str(hits[0])
-
-
-# ---- audit F24: the other thing this store keeps -------------------------
-#
-# `why` and the completion pair had the same problem, and each had half the
-# fix. Leaving DONE *cleared* the completion data, so a result could not
-# outlive its status and could not survive a redo either; leaving DROPPED
-# cleared nothing, so the reason work was abandoned outlived the abandonment
-# and every view printed it anyway. `stops` fixed the second by deriving the
-# claim from the status instead of clearing the record — and `F-F5` then
-# applied the same fix to the first, which is the section further down.
-
-
-@pytest.mark.parametrize("resume", [("start", "DOING"), ("done", "DONE")])
-def test_leaving_dropped_keeps_the_reason_as_a_record(run_cli, task_store, resume):
-    """There used to be a clearing rule here, mirroring the one for completion
-    data. Folding the reason into `stops` retires it: the entry describes a
-    stoppage that *happened*, so resuming cannot make it false — only the claim
-    that it is the current reason, and that claim is derived from the status.
-
-    So the live reading goes and the record stays, which is the property the
-    old field could not have.
-    """
-    verb, want = resume
-    # T04 on purpose: unconnected, so the drop leaves nothing standing and this
-    # test is about the reason rather than about the fallout prompts.
-    assert run_cli("task", "drop", "T04", "--why",
-                   "superseded by the rewrite").exit_code == 0
-    assert run_cli("apply").exit_code == 0
-    assert TaskGraph.load(task_store / "tasks.json").tasks["T04"].stopped_because
-
-    args = ["task", verb, "T04"] + (["-o", "PR #9"] if verb == "done" else [])
-    assert run_cli(*args).exit_code == 0
-    assert run_cli("apply").exit_code == 0
-    assert run_cli("task", "render").exit_code == 0   # view is generated on demand
-
-    t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
-    assert t.status == want
-    assert t.stopped_because is None                     # no longer the case
-    assert [k.why for k in t.stops] == ["superseded by the rewrite"]   # still true
-    view = (task_store / "tasks.md").read_text()
-    assert "Not being done" not in view
-    assert "superseded by the rewrite" in view           # under *Stopped:*
 
 
 def test_a_reason_needs_a_status_that_claims_one(tg):
@@ -1591,97 +1543,139 @@ def test_every_task_a_drop_asks_about_can_take_either_verdict(run_cli,
 # status, and refuse the repeat that cannot be told from an amendment.
 
 
-def test_a_second_completion_is_refused_and_names_the_way_forward(run_cli,
-                                                                  task_store):
-    """The finding. Two `dg task done` used to leave one outcome and no report.
+def test_a_second_finish_is_refused_and_names_the_child_task(run_cli,
+                                                             task_store):
+    """`DONE` is terminal (`D81`), and the refusal names the way forward.
 
-    Refused rather than appended, for the reason a second park is: this op
-    cannot tell a genuine second completion from a caller amending the outcome
-    of the one there was. Unlike a park, the way forward is a real one, so the
-    refusal names it instead of only saying no."""
+    `F-F5` refused a second `dg task done` and offered *restart and finish
+    again*; pass 21 found that keeps the second result and loses everything
+    that makes it readable — the single `done_when` it is judged against is
+    rewritten by the second round. So the fork is a child task, which carries
+    its own criterion, its own links and its own premises."""
     assert run_cli("task", "done", "T04", "-o", "A: shipped as PR #7").exit_code == 0
     assert run_cli("apply").exit_code == 0
     res = run_cli("task", "done", "T04", "-o", "B: shipped as PR #9")
     assert res.exit_code == 1
-    assert "already DONE" in res.output and "dg task start T04" in res.output
+    assert "finished" in res.output and "--discovered-during T04" in res.output
     t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
-    assert [c.outcome for c in t.completions] == ["A: shipped as PR #7"]
+    assert t.outcome == "A: shipped as PR #7"
 
 
-def test_the_second_completion_is_refused_inside_one_batch_too(run_cli):
+def test_finished_work_cannot_be_restarted_either(run_cli, task_store):
+    """The half `F-F5`'s refusal left open, and the reason the outcome pair is
+    safe to *store*: no transition leads out of `DONE`, so neither `done` nor
+    `outcome` can outlive the status that wrote it."""
+    assert run_cli("task", "done", "T04", "-o", "shipped").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    for verb in ("start", "park", "drop"):
+        args = ("task", verb, "T04") + (
+            () if verb == "start" else ("-w", "changed my mind"))
+        res = run_cli(*args)
+        assert res.exit_code == 1, f"`dg task {verb}` was allowed on a DONE task"
+        assert "DONE" in res.output or "finished" in res.output
+    t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
+    assert t.status == "DONE" and t.outcome == "shipped"
+
+
+def test_the_second_finish_is_refused_inside_one_batch_too(run_cli):
     """Staged twice without applying in between. `vet_all` walks the batch on a
     probe, so the second op meets the first rather than the store — which is
     the only reason a tray cannot hold the loss the store now refuses."""
     assert run_cli("task", "done", "T04", "-o", "first").exit_code == 0
     res = run_cli("task", "done", "T04", "-o", "second")
-    assert res.exit_code == 1 and "already DONE" in res.output
+    assert res.exit_code == 1 and "finished" in res.output
 
 
-def test_restarting_and_finishing_again_keeps_both_results(run_cli, task_store):
-    """The fork the refusal offers, taken. Both results are in the record and
-    the status says which is live — which is what the old shape could not do
-    at all, and why the refusal alone would have been a dead end."""
-    assert run_cli("task", "done", "T04", "-o", "HNSW 12ms p50").exit_code == 0
-    assert run_cli("apply").exit_code == 0
-    assert run_cli("task", "start", "T04").exit_code == 0
-    assert run_cli("apply").exit_code == 0
-    assert run_cli("task", "done", "T04", "-o", "IVF-PQ 40ms").exit_code == 0
-    assert run_cli("apply").exit_code == 0
+def test_the_transition_matrix_is_one_table_and_every_cell_is_checked():
+    """`D81`'s matrix, cell by cell — all 25, not the ones somebody thought of.
 
-    t = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
-    assert [c.outcome for c in t.completions] == ["HNSW 12ms p50", "IVF-PQ 40ms"]
-    assert t.outcome == "IVF-PQ 40ms"           # the live one, and only it
-    section = task_render._section(TaskGraph.load(task_store / "tasks.json"),
-                                   "T04")
-    assert section.index("HNSW 12ms p50") < section.index("IVF-PQ 40ms")
-    assert section.count("(the result)") == 1        # on the last, and only it
-    assert "IVF-PQ 40ms **(the result)**" in section
+    `tasks.ALLOWED` is the table and `transition_fault` is its one reader; a
+    chain of `if`s in `_apply_one` or in `integrate._status` would be a rule on
+    some doors and not the rest, which is `Y-F1` exactly."""
+    from dgraph.tasks import ALLOWED, STATUSES, transition_fault
+    want = {
+        "TODO":    {"DOING", "PARKED", "DROPPED", "DONE"},
+        "DOING":   {"PARKED", "DONE", "DROPPED"},
+        "PARKED":  {"DOING", "DROPPED"},
+        "DROPPED": {"DOING"},
+        "DONE":    set(),
+    }
+    assert {k: set(v) for k, v in ALLOWED.items()} == want
+    for was in STATUSES:
+        for to in STATUSES:
+            fault = transition_fault(was, to, "T01")
+            assert (fault is None) == (to in want[was]), f"{was} -> {to}"
+            if fault:
+                assert "T01" in fault, f"{was} -> {to} does not name the task"
 
 
-def test_a_result_is_kept_through_a_park_and_a_drop(tg):
-    """No status clears a completion, because none of them can make it untrue.
+def test_every_refusal_that_has_a_way_out_names_it():
+    """A check that offered no way out would be answered by deleting it —
+    `unattachable`'s argument, applied to the four cells a person actually
+    hits."""
+    from dgraph.tasks import transition_fault
+    for was, to, needle in (("DONE", "DONE", "--discovered-during"),
+                            ("PARKED", "PARKED", "dg task start"),
+                            ("DROPPED", "DROPPED", "dg task start"),
+                            ("DROPPED", "PARKED", "dg task start"),
+                            ("PARKED", "DONE", "dg task start"),
+                            ("DROPPED", "DONE", "dg task start")):
+        assert needle in transition_fault(was, to, "T01"), f"{was} -> {to}"
 
-    The mirror of `test_a_restarted_task_keeps_the_stop_and_loses_the_marker`:
-    the claim is derived and goes, the record is stored and stays."""
+
+def test_the_outcome_pair_cannot_outlive_its_status(tg):
+    """Stored rather than derived, and safe **because** `DONE` is terminal.
+
+    A stored field that outlives the state that made it true is this
+    codebase's most-filed defect. The reason this pair cannot is structural
+    and not a clearing rule: there is no transition out of `DONE`."""
+    from dgraph.tasks import ALLOWED
+    assert ALLOWED["DONE"] == frozenset()
     finished(tg.tasks["T04"], "2026-01-09", "PR #2")
-    for status in ("PARKED", "DROPPED", "TODO", "DOING"):
-        tg.tasks["T04"].status = status
-        assert tg.tasks["T04"].done is None and tg.tasks["T04"].outcome is None
-        assert tg.tasks["T04"].completions[-1].outcome == "PR #2"
+    assert tg.tasks["T04"].done == "2026-01-09"
+    assert tg.tasks["T04"].outcome == "PR #2"
 
 
-def test_a_second_completion_survives_the_store(task_store, tg):
-    """Written and read back. The list is the stored shape now, so a round trip
-    is what says the record outlives the process that made it."""
-    finished(tg.tasks["T04"], "2026-01-09", "first")
-    finished(tg.tasks["T04"], "2026-03-01", "second")
+def test_the_outcome_pair_survives_the_store(task_store, tg):
+    """Written and read back, flat. `D81` put the pair back on the record, so
+    a round trip is what says the result outlives the process that made it."""
+    finished(tg.tasks["T04"], "2026-01-09", "PR #2")
     tg.save(task_store / "tasks.json")
+    row = next(r for r in json.loads((task_store / "tasks.json").read_text())["tasks"]
+               if r["id"] == "T04")
+    assert row["done"] == "2026-01-09" and row["outcome"] == "PR #2"
+    assert "completions" not in row
     back = TaskGraph.load(task_store / "tasks.json").tasks["T04"]
-    assert [(c.date, c.outcome) for c in back.completions] == [
-        ("2026-01-09", "first"), ("2026-03-01", "second")]
-    assert back.done == "2026-03-01" and back.outcome == "second"
+    assert back.done == "2026-01-09" and back.outcome == "PR #2"
 
 
-def test_a_store_written_before_the_list_loads_as_one_completion(task_store):
-    """The migration, and it is the whole of it: no store needs converting.
-
-    Folded rather than refused — unlike the pre-`stops` `why`, which needed a
-    date nothing could supply. Both halves of a completion are already in the
-    old record, and one of them *is* the date."""
+def test_a_store_written_while_completions_was_a_list_loads_and_is_refused(
+        task_store):
+    """No migration, by decision. `completions` is a field this version does
+    not name, so `D76` carries it in `extra` and writes it back untouched —
+    and the record then has no `done` and no `outcome`, which
+    `task_done_complete` refuses as blocking. The commit gate stops it, and the
+    original entry is still in the file to copy from."""
     path = task_store / "tasks.json"
     raw = json.loads(path.read_text())
     for t in raw["tasks"]:
         if t["id"] == "T04":
-            t.update(status="DONE", done="2026-01-09", outcome="PR #2")
+            t.update(status="DONE")
+            t.pop("done", None)
+            t.pop("outcome", None)
+            t["completions"] = [{"date": "2026-01-09", "outcome": "PR #2"}]
     path.write_text(json.dumps(raw))
 
-    t = TaskGraph.load(path).tasks["T04"]
-    assert [(c.date, c.outcome) for c in t.completions] == [("2026-01-09", "PR #2")]
-    assert t.done == "2026-01-09" and t.outcome == "PR #2"
-    # And the old keys do not come back on the way out.
-    written = t and TaskGraph.load(path).to_dict()["tasks"]
-    row = next(r for r in written if r["id"] == "T04")
-    assert "done" not in row and "outcome" not in row
+    tg = TaskGraph.load(path)                       # loads, does not raise
+    t = tg.tasks["T04"]
+    assert t.done is None and t.outcome is None
+    assert t.extra["completions"] == [{"date": "2026-01-09", "outcome": "PR #2"}]
+    blocking = [v for v in tg.validate() if v.blocking]
+    assert [v.check for v in blocking] == ["task_done_complete"] * len(blocking)
+    assert blocking, "a DONE task with no outcome must not commit"
+    # Carried back out verbatim, so the data to hand-fix from is still there.
+    row = next(r for r in tg.to_dict()["tasks"] if r["id"] == "T04")
+    assert row["completions"] == [{"date": "2026-01-09", "outcome": "PR #2"}]
 
 
 def test_finishing_without_an_outcome_is_refused_at_the_op(tg):

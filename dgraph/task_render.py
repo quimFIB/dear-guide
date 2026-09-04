@@ -122,18 +122,17 @@ def _section(tg: TaskGraph, tid: str, _adj=None) -> str:
     if t.note:
         out.append(orgmd.to_markdown(t.note, fmt=t.format).strip())
         out.append("")
-    # Every completion, live one included, drawn exactly as the stops below
-    # are — because it is the same kind of record. Work finished, picked back
-    # up and finished again has two results, and the earlier one is not
-    # superseded prose: it is what the work produced that time. Printing only
-    # the live one would put the first result nowhere a reader can reach it.
-    if t.completions:
-        label = done_label(t.status)
-        last = len(t.completions) - 1
-        out.append("*Outcome:* " + " · ".join(
-            f"{c.date} — {orgmd.to_markdown(c.outcome, fmt=t.format)}"
-            + (f" **({label})**" if label and i == last else "")
-            for i, c in enumerate(t.completions)))
+    # The one result, with its date. There is exactly one because `DONE` is
+    # terminal (`D81`): a second attempt is a child task, and the reader
+    # follows the edge rather than a second entry here.
+    if t.outcome:
+        # `done_label` supplies the word, as `stop_label` does below: four
+        # renderers draw this and a word each of them chose is how the PARKED
+        # reason came to be printed by one and dropped by the others.
+        label = done_label(t.status) or "outcome"
+        out.append(f"- **{label.capitalize()}:** "
+                   + orgmd.to_markdown(t.outcome, fmt=t.format)
+                   + (f" ({t.done})" if t.done else ""))
     # Every stoppage, live one included — the record is what kept stopping this
     # work, and a list that omitted the current entry would read as though the
     # present were not part of the history.

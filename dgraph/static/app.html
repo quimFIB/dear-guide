@@ -1691,19 +1691,16 @@ function taskPanel(){
       ).join("<br>")}</div>`;
   h+=`</div>`;
   if(x.note) h+=`<div class="answer muted">${mdFold(x.note, x.format)}</div>`;
-  /* Every completion, and no status guard — the same reading as the stops
-     below. Work finished, restarted and finished again has two results, and
-     only the last of them can be the live one, and only while the status still
-     claims one. `done_label` comes from the server for the reason the stop
-     label does: a fourth renderer choosing its own word is how the last one
-     drifted. */
-  (x.completions||[]).forEach((c,i)=>{
-    const live = i===(x.completions.length-1) && !!d.done_label;
-    const tag = live
+  /* The one result. `DONE` is terminal (`D81`), so a task has one outcome and
+     a second attempt is a child task reached by its edge. `done_label` comes
+     from the server for the reason the stop label does: a fourth renderer
+     choosing its own word is how the last one drifted. */
+  if(x.outcome){
+    const tag = d.done_label
       ? ` <span class="pill" style="background:${TASK_COLOR[x.status]};color:#04121f">${
           esc(d.done_label)}</span>` : "";
-    h+=`<div class="answer"><b>outcome</b> <span class="muted">${esc(c.date)}</span>${tag} — ${mdFold(c.outcome, x.format)}</div>`;
-  });
+    h+=`<div class="answer"><b>outcome</b> <span class="muted">${esc(x.done||"")}</span>${tag} — ${mdFold(x.outcome, x.format)}</div>`;
+  }
   /* Only where the status supports it — see `task_render._section`. A store
      cannot hold a `why` under work in progress any more, but a view is drawn
      from broken stores too. */

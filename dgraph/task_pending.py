@@ -31,8 +31,8 @@ from dgraph.pending import (FIELDS, ApplyError, already,
 from dgraph.pending import _register, bind_step, fields_of, probe_entry
 from dgraph.model import Graph, bind_fault, probe_fault
 from dgraph.tasks import (ID_RE, KINDS, MISSING_EDGE, REMOVAL_MODES, STATUSES,
-                          Completion, Reading, Stop, Task, TaskEdge,
-                          TaskGraph, _fold_because, matches)
+                          Reading, Stop, Task, TaskEdge, TaskGraph,
+                          _fold_because, matches, transition_fault)
 from dgraph.violation import Violation
 
 OPS = {"add_task", "add_dep", "remove_dep", "remove_task", "set_status",
@@ -276,22 +276,21 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             raise ApplyError(f"unknown task {tid!r}")
         t = tg.tasks[tid]
         was = t.status
+        # **The one place a status moves, and it asks the one table** (`D81`).
+        # Every refusal this used to spell out by hand — a second park, a
+        # second drop, a second finish — is a cell of `tasks.ALLOWED`, and so
+        # are the ones nobody had written: `DONE` to anything, `DROPPED` to
+        # `PARKED`, and every return to `TODO`. A chain of `if`s here is a rule
+        # on the transitions somebody thought of, which is how the seam came to
+        # emit a `PARKED -> PARKED` the store was right to reject (`Y-F1`).
+        fault = transition_fault(was, op["status"], tid)
+        if fault:
+            raise ApplyError(fault)
         t.status = op["status"]
         if t.status in ("PARKED", "DROPPED"):
             # One append for both, because a park and a drop record the same
             # fact. Appended, never assigned: this is the store's only archived
             # record, and nothing downstream ever clears it.
-            #
-            # Stopping work that is already stopped is refused rather than
-            # merged or appended. Appending would claim two stoppages where
-            # there was one; merging would edit a record that is kept forever.
-            # The caller wanted to amend a reason, and this op cannot tell that
-            # from a genuine second stoppage.
-            if was == t.status:
-                verb = "parked" if t.status == "PARKED" else "dropped"
-                raise ApplyError(
-                    f"{tid} is already {t.status} — `dg task start {tid}` "
-                    f"first, or the record would claim it was {verb} twice")
             if not op.get("why"):
                 raise ApplyError(
                     f"{'parking' if t.parked else 'dropping'} {tid} needs a "
@@ -299,26 +298,19 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             t.stops.append(Stop(why=op["why"], date=op["date"]))
         wrote_prose = False
         if t.status == "DONE":
-            # The same shape as the stop above, and refused for the same
-            # reason. Finishing work that is already finished cannot be told
-            # from amending the outcome of the one completion there was, and
-            # this record is kept forever — but unlike a stop the way forward
-            # is a real one, so the refusal names it rather than only saying no.
-            if was == "DONE":
-                raise ApplyError(
-                    f"{tid} is already DONE ({t.done}, {t.outcome!r}) — "
-                    f"`dg task start {tid}` first, then finish it again to "
-                    f"record a second completion; both are kept, and the "
-                    f"later one is the live result")
             # An op-shape rule, beside `--why` above and `--note` on a reading,
             # not the record-completeness rule `validate` keeps: without an
-            # outcome there is nothing to append, and no later op in the batch
-            # can supply one now that a second `set_status DONE` is refused.
+            # outcome there is nothing to write, and `DONE` being terminal
+            # means no later op in the batch can supply one.
             if not op.get("outcome"):
                 raise ApplyError(
                     f"finishing {tid} needs what it produced: --outcome")
-            t.completions.append(Completion(date=op["done"],
-                                            outcome=op["outcome"]))
+            # Assigned, not appended, and safe to store for one reason only:
+            # `DONE` is terminal (`D81`), so there is no path out of the status
+            # that wrote this pair and it cannot outlive the state that made it
+            # true. That is the whole of why `F-F5`'s list is gone — the second
+            # completion it protected is now a child task.
+            t.done, t.outcome = op["done"], op["outcome"]
             wrote_prose = True
         # Neither `done` nor `outcome` is among these, and `why` is not either:
         # all three travel in the op under those names and go to an appended
@@ -821,7 +813,7 @@ def vet(tg: TaskGraph, op: dict, *, new_area: bool = False) -> None:
         t = tg.tasks[op["task"]]
         vet_fields(op, own=area_counts(tg.areas, tg.tasks.values()),
                    other=stored_area_counts(project.find().store),
-                   record="task", new_area=new_area,
+                   record="task", new_area=new_area, shut=t.status if t.resolved else None,
                    current={k: getattr(t, k) for k in fields_of("task")})
     # `outcome` is not among the fields that exempt an op from this: it used to
     # be, and that is half of how a second `dg task done` reached the store —
