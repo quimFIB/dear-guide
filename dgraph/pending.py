@@ -552,6 +552,39 @@ def refuse_apply(staged: int = 0, chosen: str | None = None) -> str | None:
             f"for a caller with no ${AGENT_ENV} to apply")
 
 
+def refuse_blank(value: object) -> str | None:
+    """Why an empty narrowing value is refused — `None` if it is not empty.
+
+    `""` is not `None`. Every narrowing flag used to be tested for truth —
+    `if agent:`, `bool(group)` — so the empty string *was* the absent flag, and
+    the narrowest scope the tool offers degraded to the widest with exit 0 and
+    an output saying the narrowing had been honoured. The unknown name and the
+    unknown ref were already refused, on the argument that an empty selection
+    and a typo look identical afterwards and mean opposite things; the empty
+    string is that argument word for word, and it was the one value neither
+    refusal reached.
+
+    It matters *when* a blank arrives: exactly when a script's extraction
+    matched nothing, which is the moment its author is least able to notice.
+    Under a fan-out, a supervisor's `dg apply --group "$REF"` with an empty
+    `$REF` applies every writer's half-composed batch, and a staged `close` so
+    applied is a DECIDED answer whose only exit is a `reopen` nobody made. Met
+    in use, audit `O-F1`; decided under `D82`.
+
+    One sentence, every door, and the door names the field: the terminal
+    raises it as a bad parameter, which says which option, and the browser
+    returns it as a 400 prefixed with the body key. So no door has to remember
+    it — the next flag that narrows gets it by sharing the callback rather
+    than by anybody recalling this paragraph. Exactly `""`, and not
+    whitespace: no name has a charset, and the value a failed extraction
+    produces is the empty one.
+    """
+    if value != "":
+        return None
+    return ("a blank name or ref is a selection that matched nothing, not "
+            "the whole tray, and is refused rather than widened")
+
+
 def _new_ref(taken: set[str]) -> str:
     """An id no op in this tray is using.
 

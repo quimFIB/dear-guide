@@ -1103,10 +1103,30 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, 400)
         elif self.path == "/api/apply":
             body = self._body()
-            self._apply(body.get("agent") or None,
-                        group=body.get("group") or None)
+            # `.get`, not `.get(...) or None`: the `or` mapped a blank back
+            # to the whole tray, which is the widening the clear route below
+            # refuses, and both now refuse it through `_blank`. `O-F1`.
+            agent, group = body.get("agent"), body.get("group")
+            if self._blank("agent", agent) or self._blank("group", group):
+                return
+            self._apply(agent, group=group)
         else:
             self._json({"error": "not found"}, 404)
+
+    def _blank(self, field: str, value) -> bool:
+        """Answer 400 on an empty `field`, and say so; `False` if it was not.
+
+        `pending.refuse_blank`, rendered as the browser's half — the same
+        judgement the CLI's `_not_blank` callback raises. One check for the
+        apply route and the clear route rather than one each, so the two
+        cannot drift on the one direction neither must fail in: a narrowing
+        that silently widens to the whole tray. `O-F1`, `D82`.
+        """
+        why = pending.refuse_blank(value)
+        if why is None:
+            return False
+        self._json({"error": f"{field} is empty — {why}"}, 400)
+        return True
 
     def _apply(self, agent: str | None = None,
                group: str | None = None) -> None:
@@ -1634,12 +1654,14 @@ class Handler(BaseHTTPRequestHandler):
                 # ignored. Without both, `?agent=` parses to nothing and a
                 # narrowed clear silently becomes a clear of the whole tray —
                 # a destructive widening produced by a page bug, which is the
-                # one direction this route must not fail in.
+                # one direction this route must not fail in. The refusal is
+                # `_blank`, shared with `/api/apply`, which had the same hole
+                # forty lines up for as long as this route had the guard.
                 who = parse_qs(urlparse(self.path).query,
                                keep_blank_values=True).get("agent")
                 agent = who[0] if who else None
-                if agent == "":
-                    return self._json({"error": "empty agent name"}, 400)
+                if self._blank("agent", agent):
+                    return
                 if route == "/api/pending":
                     return self._json({"cleared": _clear(None, agent)})
                 if route == "/api/task-pending":

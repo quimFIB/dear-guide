@@ -1079,3 +1079,63 @@ def test_clearing_one_writer_never_splits_an_act(proj, monkeypatch):
     assert [o["id"] for o in left] == ["T81"], "a clear left half an act"
     assert not any(o.get("group") for o in left), \
         "the surviving op is a lone one and should carry no group"
+
+
+# ---- the empty string -----------------------------------------------------
+
+
+_DOORS = [
+    ("apply", "--agent"), ("apply", "--group"),
+    ("clear", "--agent"), ("task", "clear", "--agent"),
+    ("pending", "--agent"), ("task", "pending", "--agent"),
+]
+
+
+@pytest.mark.parametrize("door", _DOORS, ids=lambda d: " ".join(d))
+def test_an_empty_narrowing_value_is_refused_not_read_as_the_whole_tray(
+        proj, run, monkeypatch, door):
+    """`O-F1`, decided under `D82`: `""` selects nothing and is refused.
+
+    Every one of these doors tested its narrowing flag for truth, so an empty
+    string *was* the absent flag: `dg apply --group "$REF"` with `$REF` blank —
+    an extraction that matched nothing — applied every writer's batch and
+    exited 0. The unknown name and the unknown ref were refused on the
+    argument that an empty selection and a typo look identical afterwards;
+    the empty string is that argument's own case. One callback on the
+    options, so this walks every door that takes a name or a ref rather than
+    trusting each to remember.
+    """
+    as_agent(monkeypatch, "b")
+    pending.stage_all([D07], proj.pending)
+    pending.stage_all([T07], task_pending.path())
+    as_agent(monkeypatch, None)
+    before = (pending.load(proj.pending), pending.load(task_pending.path()))
+
+    res = run(*door, "")
+
+    assert res.exit_code != 0, f"{' '.join(door)} '' exited 0:\n{res.output}"
+    assert "matched nothing" in res.output, res.output
+    assert door[-1] in res.output, "the refusal does not name the option"
+    assert (pending.load(proj.pending),
+            pending.load(task_pending.path())) == before, \
+        f"{' '.join(door)} '' touched a tray"
+    assert "D07" not in ids(proj.store), "the blank applied the whole tray"
+    # ...and the sentence is the one the unknown value gets: neither says
+    # "nothing staged" as if the selection had been honoured.
+    assert "nothing staged by" not in res.output, res.output
+
+
+def test_a_blank_and_an_unknown_name_leave_the_same_tray_behind(proj, run,
+                                                                monkeypatch):
+    """The point of the refusal: afterwards, a blank and a typo used to look
+    identical and mean opposite things. Now they look identical and mean the
+    same thing — nothing was written, look again."""
+    as_agent(monkeypatch, "b")
+    pending.stage_all([D07], proj.pending)
+    as_agent(monkeypatch, None)
+
+    blank = run("apply", "--agent", "")
+    typo = run("apply", "--agent", "bb")
+
+    assert blank.exit_code != 0 and typo.exit_code != 0
+    assert owners(proj.pending) == ["b"] and "D07" not in ids(proj.store)

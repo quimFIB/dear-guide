@@ -216,7 +216,10 @@ Two things to know before using them:
   adjudication to whoever is supervising.
 - A name nobody staged under is **refused**, with the roster, rather than
   quietly applying nothing. An empty selection and a typo look identical
-  afterwards and mean opposite things.
+  afterwards and mean opposite things. **So is an empty one**: `--agent ""`
+  and `--group ""` refuse on every door, because a blank is what a script's
+  failed extraction produces, and a narrowing must never widen to the whole
+  tray.
 
 ## Reading
 

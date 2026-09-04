@@ -14,7 +14,7 @@ import urllib.request
 
 import pytest
 
-from dgraph import editor, pending, server
+from dgraph import editor, pending, server, task_pending
 
 
 @pytest.fixture
@@ -1465,6 +1465,35 @@ def test_an_unknown_group_ref_is_a_refusal_not_an_empty_apply(srv, dual):
                  "area": "Alpha"})[0] == 200
     code, got = jreq(srv, "/api/apply", "POST", {"group": "nosuch"})
     assert code == 400 and "nothing staged with id" in got["error"]
+
+
+@pytest.mark.parametrize("field", ["agent", "group"])
+def test_a_blank_apply_narrowing_is_a_400_not_the_whole_tray(srv, dual, field):
+    """`O-F1`, under `D82`: `/api/apply` read `body.get("agent") or None`,
+    which mapped a blank back to the whole tray — the widening the clear route
+    refused forty lines down. Both now refuse it through one check."""
+    assert jreq(srv, "/api/task-pending", "POST",
+                {"op": "add_task", "id": "T09", "title": "x",
+                 "area": "Alpha"})[0] == 200
+    code, got = jreq(srv, "/api/apply", "POST", {field: ""})
+    assert code == 400, got
+    assert got["error"].startswith(f"{field} is empty"), got
+    assert "matched nothing" in got["error"], got
+    assert [o["id"] for o in pending.load(task_pending.path())] == ["T09"], \
+        "the blank applied the tray"
+
+
+def test_a_blank_clear_says_the_same_sentence_as_a_blank_apply(srv, dual):
+    """One check, two routes: the clear route had the guard first, and its
+    sentence is now the shared one rather than its own."""
+    assert jreq(srv, "/api/task-pending", "POST",
+                {"op": "add_task", "id": "T09", "title": "x",
+                 "area": "Alpha"})[0] == 200
+    c_code, cleared = jreq(srv, "/api/task-pending?agent=", "DELETE")
+    a_code, applied = jreq(srv, "/api/apply", "POST", {"agent": ""})
+    assert c_code == a_code == 400
+    assert cleared["error"] == applied["error"], (cleared, applied)
+    assert len(pending.load(task_pending.path())) == 1
 
 
 def test_the_page_binds_both_new_controls(srv, store):

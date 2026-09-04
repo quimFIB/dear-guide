@@ -2820,11 +2820,27 @@ def _tasks_naming(did: str) -> list[str]:
         return []
 
 
+def _not_blank(param: typer.CallbackParam, value: str | None) -> str | None:
+    """The callback every narrowing option shares: `""` is refused, `None` passes.
+
+    One callback rather than a test at each door, so the sixth door gets it
+    without anybody remembering — the judgement is `pending.refuse_blank`,
+    which the browser returns as a 400, and what is here is only the rendering.
+    A bad parameter rather than a scope: the value never reaches the code that
+    narrows, so no door below can read it as the absent flag. `O-F1`, `D82`.
+    """
+    why = pending.refuse_blank(value)
+    if why is not None:
+        raise typer.BadParameter(why)     # typer names the option in front
+    return value
+
+
 @app.command(name="pending", rich_help_panel=STAGE)
 def pending_cmd(
     full: bool = typer.Option(False, "--full",
                               help="The table, with no detail clipped."),
     agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              callback=_not_blank,
                               help="Only what one writer staged. `unowned` "
                                    "names the ops nobody signed."),
 ) -> None:
@@ -2890,10 +2906,12 @@ def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
     is true of the selection and false of the tray, and the line underneath is
     where the other twelve are accounted for.
     """
-    if agent:
+    # Presence, not truth: the callback has refused `""` before this runs, and
+    # `is not None` says so here rather than letting a blank read as no flag.
+    if agent is not None:
         ops = [o for o in ops if pending.named(o) == agent]
     if not ops:
-        con.print(f"[dim]nothing staged by {_x(agent)}[/]" if agent
+        con.print(f"[dim]nothing staged by {_x(agent)}[/]" if agent is not None
                   else "[dim]nothing staged[/]")
         # `matched=False`: "showing scout-c" over a listing showing nothing
         # contradicts the line above it, and the name has already been said.
@@ -2927,7 +2945,7 @@ def _clear_tray(clear_all, clear_one, agent: str | None, path, unit: str, *,
     the cross-tray roster exists to catch, and catching it one command earlier
     is cheaper than reading it off a roster afterwards.
     """
-    if not agent:
+    if agent is None:      # presence, not truth — `_not_blank` refused `""`
         clear_all(path)
         con.print("[green]cleared[/]")
         return
@@ -3323,6 +3341,7 @@ def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
 @app.command(rich_help_panel=STAGE)
 def clear(
     agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              callback=_not_blank,
                               help="Unstage only what one writer staged."),
 ) -> None:
     """Unstage everything, or one writer's contribution with `--agent`.
@@ -3379,9 +3398,11 @@ def apply(
     mine: bool = typer.Option(False, "--mine",
                               help="apply only what this writer staged"),
     agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              callback=_not_blank,
                               help="apply what ONE writer staged, by the name "
                                    "`dg pending` lists"),
     group: str = typer.Option(None, "--group", metavar="REF",
+                              callback=_not_blank,
                               help="apply ONE act — the op with this id and "
                                    "everything staged alongside it"),
 ) -> None:
@@ -3416,8 +3437,8 @@ def apply(
             con.print("[dim]nothing staged[/]")
             return
         chosen = [f for f, on in (("--all", all_), ("--mine", mine),
-                                  ("--agent", bool(agent)),
-                                  ("--group", bool(group))) if on]
+                                  ("--agent", agent is not None),
+                                  ("--group", group is not None)) if on]
         if len(chosen) > 1:
             con.print(f"[red]{' and '.join(chosen)} ask for different "
                       f"scopes — pick one[/]")
@@ -3432,9 +3453,9 @@ def apply(
                       f"[dim]`dg pending --mine` reads them back; nothing was "
                       f"written and nothing was lost[/]")
             raise typer.Exit(1)
-        if agent and not _may_apply_for(agent, ops, task_ops):
+        if agent is not None and not _may_apply_for(agent, ops, task_ops):
             raise typer.Exit(1)
-        if group:
+        if group is not None:
             # **The finest grain there is, and it is the act rather than the
             # op.** `dg apply` was per-writer at best, so a reviewer with three
             # proposals from one agent had to take all three or none — and the
@@ -3538,7 +3559,7 @@ def _scope(ops, task_ops, *, all_: bool, mine: bool, agent: str | None = None):
     # downstream is unchanged: one `mine` split, the same note about what was
     # left, the same refusal — except that a caller who *named* whose work to
     # take cannot be surprised by taking it, so the refusal below does not fire.
-    me = pending.addressed(agent) if agent else pending.owner()
+    me = pending.addressed(agent) if agent is not None else pending.owner()
     keep, theirs = pending.mine(ops or [], me)
     tkeep, ttheirs = pending.mine(task_ops or [], me)
     if not theirs and not ttheirs:
@@ -5149,6 +5170,7 @@ def task_pending_cmd(
     full: bool = typer.Option(False, "--full",
                               help="The table, with no detail clipped."),
     agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              callback=_not_blank,
                               help="Only what one writer staged. `unowned` "
                                    "names the ops nobody signed."),
 ) -> None:
@@ -5219,6 +5241,7 @@ def task_drop_op(
 @task_app.command("clear", rich_help_panel=T_STAGE)
 def task_clear(
     agent: str = typer.Option(None, "--agent", metavar="NAME",
+                              callback=_not_blank,
                               help="Unstage only what one writer staged."),
 ) -> None:
     """Unstage every task op, or one writer's with `--agent`. See `dg clear`."""
