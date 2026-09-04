@@ -19,7 +19,7 @@ into the same project; open it only where you want more.
 | **Ask** | the frontier · why a decision is where it is · the backlog and moving work · find by what it says · a fact arrives · changing an answer · keeping it honest |
 | **Agents** | one agent works the frontier · which tasks can run at once, and several agents in one tray · what a session gets from the plugin |
 | **Beyond** | bringing a colleague's clone in |
-| **Annex** | what would settle it, written so a machine could read it · what a reader shows while something is staged |
+| **Annex** | what would settle it, written down before it is settled · what a reader shows while something is staged |
 
 ## Everything on the page ran
 
@@ -58,7 +58,17 @@ data. Re-run it after changing it; the result is committed under `seed/`.
 
 Two things the page shows but does not execute, and says so: the launcher
 `dg-agent setup` writes is printed rather than run, because running it needs
-a coding-agent host; and `dg serve`, the web app, is not shown. The other
+a coding-agent host; and `dg serve`, the web app, is not shown.
+
+Two more are stand-ins, and say so where they appear. `bench/search.sh`,
+the benchmark recipe 18 runs, writes the figure the story needs rather than
+timing an imaginary tool — what the recipe shows is that a script in the
+project leaves a file, and that the graph names neither. And the `grep`
+domain that judges that file is not part of dear-guide: it is forty lines
+under `grep-domain/`, which `lib.sh` puts on `PYTHONPATH` so `dg probe`
+finds it through the `dgraph.domains` entry-point group as if it were
+installed. Only `prose` ships, and it never judges; `grep` is here so the
+page can show a verdict, and as the domain an author copies. The other
 two demos cover neighbouring ground — [`demo/`](../demo) is one graph holding
 every kind of record, served; [`demo-agentic/`](../demo-agentic) is three
 agents and a day's work, as a story.

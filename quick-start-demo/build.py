@@ -32,7 +32,7 @@ PARTS = {
     "ask": ("Ask", "Frontiers, reasoning, and the backlog"),
     "agents": ("Agents", "Letting agents develop a task from the graph"),
     "extra": ("Beyond", "Two more things people ask for"),
-    "annex": ("Annex", "Pre-commitments a machine could read, and what a reader shows of the tray"),
+    "annex": ("Annex", "What would settle it, written down first; and what a reader shows of the tray"),
 }
 
 RECIPES: dict[str, dict] = {
@@ -201,7 +201,8 @@ RECIPES: dict[str, dict] = {
                  (r"^D04 still rests on D01", "no exit until the premise is settled"),
                  (r"\[stale_provisional\]", "premise settled again; re-examine"),
                  (r"back to DECIDED", "confirmed, no reversal invented"),
-                 (r"^│ Superseded", "the root's first answer, kept")],
+                 (r"^│ Superseded", "the root's first answer, kept"),
+                 (r"settled again since this was decided \(by the dates, a heuristic\)", "what moved under it, labelled as the heuristic it is")],
     ),
     "12-supersede": dict(
         read_quick="Changing an answer is a reopen and a second decide. The first answer is superseded, "
@@ -311,34 +312,45 @@ RECIPES: dict[str, dict] = {
                  (r"--take <ref>.*--keep <ref>", "the three ways out")],
     ),
     "18-precommit": dict(
-        read_quick="Every closed decision already carries a falsifier. The same idea now reaches the "
-                   "records that are not settled yet — a <em>rule</em> for settling an open "
-                   "question, a <em>definition of done</em> on a task — and beside any of the three "
-                   "sits an optional typed twin, a <em>probe</em>: <code>{kind, args}</code>, "
-                   "something installed code could judge. <code>dg probe</code> presents each "
-                   "beside what it will be judged against. Only the <code>prose</code> domain "
-                   "ships, and it presents without judging, so the verdict is still the command "
-                   "you run next.",
-        read_full="A probe on an open question or a task is appended and dated, never edited — a "
-                  "criterion rewritten to match the evidence is not a criterion, and the date beside "
-                  "it is what lets a reader see that happen. A <em>bind</em> says what a record is "
-                  "about in some domain's terms and accumulates like an edge. The core checks a "
-                  "probe's shape and nothing else: a kind nobody installed claims is presented and "
-                  "never an error, and <code>dg check</code> never evaluates anything, so a commit "
-                  "hook's verdict does not depend on what the hook's machine has installed.",
-        hl_quick=[(r"^staged add D09", None),
-                  (r"rule for settling\s+a week of the team", "prose, read back at dg decide"),
-                  (r"probe\s+prose\.rule", "its typed twin, dated"),
-                  (r"done when\s+seven days", "read back at dg task done"),
-                  (r"verdict\s+unjudged", "nothing here judges; you do")],
-        hl_full=[(r"entry 2; the earlier 1 stay", "appended, never edited"),
-                 (r"bound to\s+notelit\.module:sync", "an address, not a claim"),
+        read_quick="Three kinds of record, and each can carry what it will be judged against, "
+                   "written before the evidence exists: an open question a <em>rule for "
+                   "settling</em> (which result picks which answer), a task a <em>definition of "
+                   "done</em>, a decided answer the <em>falsifier</em> you already know from "
+                   "recipe 03. The tool's whole use of them is to read each back at the moment "
+                   "you would be tempted to bend it: the done-when before <code>dg task done</code> "
+                   "takes an outcome, the rule above the answer in <code>dg decide</code>, and "
+                   "every one beside its evidence in <code>dg probe</code>. Nothing judges; you do.",
+        read_full="Beside any of the three a <em>probe</em> can sit: <code>{kind, args}</code>, a "
+                  "typed twin that installed code could judge. The prefix of <code>kind</code> "
+                  "names a <em>domain</em>, a package registered under <code>dgraph.domains</code> "
+                  "that claims it. Only <code>prose</code> ships, and it presents without judging; "
+                  "<code>grep</code> is forty lines the cookbook carries for this page, and the "
+                  "shape a domain author copies. The graph names a file and a pattern, never a "
+                  "command — that grep runs was the domain author's choice, on a machine where "
+                  "somebody had the authority to install it — and the door only ever reads: a "
+                  "firing is a verdict and a non-zero exit, and the reopen is yours. A probe on an "
+                  "open record is appended and dated, never edited; a kind nobody installed claims "
+                  "is presented rather than refused; and <code>dg check</code> evaluates none of "
+                  "this, so a commit hook's verdict does not depend on what its machine has. "
+                  "What <em>can</em> run without you is the judging: the pytest plugin, under "
+                  "<code>--decision-graph-probe</code>, turns a fired probe into a failing test, so "
+                  "the job that rewrites the bench file fails on the decision it overturned. Turning "
+                  "that verdict into a staged reopen is the step no domain takes yet.",
+        hl_quick=[(r"^│ Time a search over the 50k-note set\. p95 under 100 ms", "the fork, before any evidence"),
+                  (r"^done when: the p95 over 50k notes", "read back before the outcome is asked for"),
+                  (r"^\s+T12 DONE — p95 340 ms", "the evidence, beside the rule"),
+                  (r"^\s+verdict\s+unjudged\s*$", "nothing here judges; you do"),
+                  (r"^│ rule for settling: Time a search over", "read back above the answer"),
+                  (r"--falsifier 'p95 under 100 ms", "the third pre-commitment, on the answer")],
+        hl_full=[(r"verdict\s+holds\s+no line of bench/search\.md matches", "judged: 340 is three digits"),
+                 (r"^p95: 60 ms  prefix", "the world moved"),
+                 (r"verdict\s+fired\s+bench/search\.md: p95: 60 ms", "the falsifier came true"),
+                 (r"^1 presented · fired 1", "a non-zero exit and no op: the reopen is yours"),
+                 (r"^FAILED tests/test_graph\.py::test_decision_graph_probe\[probe_fired\]", "the benchmark job fails, naming the decision"),
+                 (r"entry 2; the earlier 1 stay", "appended, never edited"),
                  (r"\(live\)", "the last entry is the one that applies"),
                  (r"^--probe: a probe's kind is <domain>\.<name>", "the shape, refused at the door"),
-                 (r"no installed domain claims `rocq\.`", "presented, not evaluated, never an error"),
-                 (r"still under review: D02", None),
-                 (r"settled again since this was decided \(by the dates, a heuristic\)", "a heuristic, labelled as one"),
-                 (r"\[probe_wellformed\]|all invariants hold", "the check reads the store and never the world")],
+                 (r"no installed domain claims `pytest\.`", "presented, not evaluated, never an error")],
     ),
     "19-staged-readers": dict(
         read_quick="Nothing reaches a store until <code>dg apply</code>. Until then every reader — "
@@ -1061,9 +1073,13 @@ section.recipe h2{font-size:22px;margin:0 0 10px;letter-spacing:-.01em}
 .stepbtn{border:1px solid var(--line);background:#fff;border-radius:6px;width:24px;height:22px;cursor:pointer;color:var(--ink);font-size:15px;line-height:1}
 .stepbtn:hover{background:#f2f4f7}
 .pics{padding:8px 10px}
-.picframe svg{max-width:100%;height:auto;display:block;margin:0 auto}
+.picframe svg{max-width:100%;width:auto;height:auto;max-height:calc(45vh - 44px);display:block;margin:0 auto}
 .picframe.empty{color:var(--mut);font:12px var(--mono);text-align:center;padding:24px 0}
-pre.tx{margin:0;padding:8px 0;font:11.5px/1.45 var(--mono);white-space:pre;overflow-x:auto;tab-size:4}
+pre.tx{margin:0;padding:8px 0;font:11.5px/1.45 var(--mono);white-space:pre;overflow:auto;tab-size:4;max-height:calc(55vh - 40px);overscroll-behavior:contain}
+/* Picture and transcript together fit one viewport, so both can sit at its top: the picture is
+   capped, the transcript scrolls inside its box, and the wheel at that box's end does not carry
+   on into the page (overscroll-behavior). Wide enough, the two sit side by side instead. */
+@media (min-width:1600px){main{max-width:none}.layer{grid-template-columns:minmax(0,700px) minmax(0,1fr)}.pane.term{order:1}.pane.pic{order:2}.picframe svg{max-height:calc(100vh - 66px)}pre.tx{max-height:calc(100vh - 18px)}}
 .step{padding:4px 12px 6px;border-left:3px solid transparent;cursor:pointer;margin:2px 0}
 .step:hover{background:#fafbfc}.step.current{border-left-color:var(--acc);background:#f6f9ff}
 .step .cmd{display:block;color:#0f172a;font-weight:600;margin:2px 0;white-space:pre-wrap;word-break:break-word}.step .ps{color:var(--acc)}.who{color:#7c4dff;font-weight:700}
@@ -1323,7 +1339,10 @@ def page() -> str:
                'The highlighted lines are regular expressions that <code>tests/test_quick_start_demo.py</code> asserts against a fresh run, '
                'so if <code>dg</code> rewords a message the page points at, the test fails rather than the page going quietly wrong.</p>'
                '<p class="read">Two things the page shows but does not run: the launcher written by <code>dg-agent setup</code> is printed, not executed, '
-               'because running it needs a coding-agent host; and <code>dg serve</code>, the web app, is not shown at all. Everything else on this page ran.</p>')
+               'because running it needs a coding-agent host; and <code>dg serve</code>, the web app, is not shown at all. '
+               'Two more are stand-ins, and say so where they appear: <code>bench/search.sh</code> in the annex writes the figure the story needs rather than timing an imaginary tool, '
+               'and the <code>grep</code> domain it is judged by is forty lines under <code>quick-start-demo/grep-domain/</code>, on the path for the recipes and installed nowhere. '
+               'Everything else on this page ran.</p>')
     app.append('</div>')
 
     return f"""<!doctype html>

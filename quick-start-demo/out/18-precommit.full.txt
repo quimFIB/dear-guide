@@ -1,99 +1,130 @@
-$ dg add --id D09 --area sync --title 'Which edit wins when two machines change one note?' --after D08 --rule 'a week of the team'\''s own notes syncing with no edit lost' --probe '{"kind": "prose.rule", "args": {"text": "seven days, zero lost edits"}}'
+$ dg add --id D09 --area search --title 'Does search run on every keystroke?' --after D02 --rule 'Time a search over the 50k-note set. p95 under 100 ms: search as you type. Over: search on Enter.'
 staged add D09
+$ dg task add --id T12 --area search --title 'Time a search over the 50k-note set' --evidence-for D09 --done-when 'the p95 over 50k notes, written to bench/search.md'
+staged add T12
 $ dg apply
 ✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
-# A rule is appended, never edited: the earlier one stays, dated, so a rule rewritten to fit the evidence is visible as one.
-$ dg reprobe D09 --probe '{"kind": "prose.rule", "args": {"text": "seven days, zero lost edits, on three machines"}}'
-staged reprobe D09 — entry 2; the earlier 1 stay
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+$ bash bench/search.sh
+$ dg task done T12 --outcome 'p95 340 ms on 50k notes'
+done when: the p95 over 50k notes, written to bench/search.md
+staged T12 → DONE
 $ dg apply
-✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
-# What the question is about, in some domain's terms. An address, not a claim; it accumulates like an edge.
-$ dg bind D09 notelit.module:sync
-staged D09 bound to notelit.module:sync
-$ dg apply
-✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
-$ dg node D09
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+# The falsifier, and beside it a typed twin: a pattern over the bench file, for a domain called grep to judge. The graph carries the file and the pattern; that grep runs was the domain author's choice.
+$ dg decide D09 --answer 'No: search runs on Enter. At 340 ms a keystroke would stutter.' --source T12 --falsifier 'p95 under 100 ms on the 50k-note set' --probe '{"kind": "grep.matches", "args": {"file": "bench/search.md", "pattern": "^p95: [0-9][0-9]? ms"}}'
 ╭──────────────────────────────────────────── D09 ─────────────────────────────────────────────╮
-│ Which edit wins when two machines change one note?                                           │
+│ Does search run on every keystroke?                                                          │
 │                                                                                              │
-│ status      OPEN                                                                             │
-│ area        sync                                                                             │
-│ depends on  D08                                                                              │
-│ opens       —                                                                                │
-│ bound to    notelit.module:sync                                                              │
+│ depends on D02                                                                               │
 │                                                                                              │
-│ Rule for settling                                                                            │
-│ a week of the team's own notes syncing with no edit lost                                     │
-│                                                                                              │
-│ Rule for settling (probe)                                                                    │
-│   2026-09-03  prose.rule {"text": "seven days, zero lost edits"}                             │
-│   2026-09-03  prose.rule {"text": "seven days, zero lost edits, on three machines"}  (live)  │
-╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-# The falsifier's twin travels with the answer, and is archived with it if the answer is ever reopened.
-$ dg decide D08 --answer 'The notes folder is synced by whatever the user already uses; notelit never syncs.' --source discussion --falsifier 'a user asks for notelit to resolve a conflict it did not cause' --probe '{"kind": "prose.falsifier", "args": {"text": "a conflict notelit did not cause"}}'
-╭──────────────────────────────────────────── D08 ─────────────────────────────────────────────╮
-│ How do two machines share one notes folder?                                                  │
-│                                                                                              │
-│ depends on D01                                                                               │
+│ rule for settling: Time a search over the 50k-note set. p95 under 100 ms: search as you      │
+│ type. Over: search on Enter.                                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 staged 1 op(s) — review with `dg pending`, then `dg apply`
 $ dg apply
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
-# The shape is checked at the door, before anything is asked for.
-$ dg reprobe D09 --probe '{"kind": "nodot", "args": {}}'
---probe: a probe's kind is <domain>.<name> — 'nodot' does not name a domain
+# Judged, this time: no line of the file has a p95 of one or two digits, so the falsifier holds.
+$ dg probe D09
+D09  DECIDED  Does search run on every keystroke?
+    falsifier         p95 under 100 ms on the 50k-note set
+    probe             grep.matches {"file": "bench/search.md", "pattern": "^p95: [0-9][0-9]? 
+ms"}
+    verdict           holds  no line of bench/search.md matches /^p95: [0-9][0-9]? ms/
+
+1 presented · fired 0 · holds 1 · unjudged 0
+# The world moves. A prefix index lands, and the same script runs again.
+$ env NOTELIT_INDEX=prefix bash bench/search.sh
+$ cat bench/search.md
+p95: 340 ms  trigram
+p95: 60 ms  prefix
+# The falsifier came true, and the door says so — and does nothing else. The act it calls for is yours.
+$ dg probe D09
+D09  DECIDED  Does search run on every keystroke?
+    falsifier         p95 under 100 ms on the 50k-note set
+    probe             grep.matches {"file": "bench/search.md", "pattern": "^p95: [0-9][0-9]? 
+ms"}
+    verdict           fired  bench/search.md: p95: 60 ms  prefix
+
+1 presented · fired 1 · holds 0 · unjudged 0
 [exit 1]
-# A kind no installed domain claims is presented, not evaluated, and never an error: a plain install must still read a graph written by a richer one.
-$ dg reprobe D09 --probe '{"kind": "rocq.no_admit", "args": {"lemma": "sync_merge_total"}}'
-staged reprobe D09 — entry 3; the earlier 2 stay
-$ dg apply
-✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
-$ dg probe --area sync
-D08  DECIDED  How do two machines share one notes folder?
-    falsifier         a user asks for notelit to resolve a conflict it did not cause
-    probe             prose.falsifier {"text": "a conflict notelit did not cause"}
-    verdict           unjudged  a conflict notelit did not cause
-
-D09  OPEN  Which edit wins when two machines change one note?
-    rule for settling a week of the team's own notes syncing with no edit lost
-    probe             rocq.no_admit {"lemma": "sync_merge_total"}  (2026-09-03)
-    verdict           unjudged  no installed domain claims `rocq.` — nothing registered under 
-`dgraph.domains`
-
-2 presented · fired 0 · holds 0 · unjudged 2
-# A reopened premise: every decision resting on it is presented beside what moved, by the dates, labelled as the heuristic it is.
-$ dg reopen D02 --why 'the trigram tokenizer misses CJK notes entirely' --yes
-╭───────────────────────────────────────── reopen D02 ─────────────────────────────────────────╮
-│ How are notes indexed for search?                                                            │
+# The same verdict where a benchmark job would meet it: one test file, one line, and the run fails naming the decision. This much runs without you; the reopen still does not.
+$ cat tests/test_graph.py
+from dgraph.testing import *  # noqa: F401,F403
+$ env CI=1 pytest -q --tb=no --decision-graph-probe -k probe
+...F..                                                                                   [100%]
+=================================== short test summary info ====================================
+FAILED tests/test_graph.py::test_decision_graph_probe[probe_fired] - AssertionError: [probe_fired] D09: grep.matches fired — bench/search.md: p95: 60 ms  prefix
+1 failed, 5 passed, 43 deselected in 0.05s
+[exit 1]
+$ dg reopen D09 --why 'bench/search.md: p95 60 ms with the prefix index, which is the falsifier' -y
+╭───────────────────────────────────────── reopen D09 ─────────────────────────────────────────╮
+│ Does search run on every keystroke?                                                          │
 │                                                                                              │
 │ Its answer becomes superseded; its dependencies stay.                                        │
 │                                                                                              │
-│ 1 decided descendant(s) rest on it and become PROVISIONAL:                                   │
-│   D04                                                                                        │
-│                                                                                              │
-│ 1 unfinished task(s) rest on a premise under review:                                         │
-│   T10                                                                                        │
+│ 0 decided descendant(s) rest on it and become PROVISIONAL:                                   │
+│   none                                                                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-staged 2 op(s)
+staged 1 op(s)
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+# Open again, the question can carry a typed rule too; and a probe is appended, never edited, so a criterion rewritten to fit the evidence stays visible as one.
+$ dg reprobe D09 --probe '{"kind": "prose.rule", "args": {"text": "p95 under 100 ms: as you type; else on Enter"}}'
+staged reprobe D09
+$ dg reprobe D09 --probe '{"kind": "prose.rule", "args": {"text": "p95 under 100 ms on the slowest team laptop: as you type; else on Enter"}}'
+staged reprobe D09 — entry 2; the earlier 1 stay
 $ dg apply
 ✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
-$ dg probe --provisional
-D04  PROVISIONAL  Where does the index live?
-    falsifier         users sync the notes folder and the index file causes conflicts
-    verdict           unjudged
-    still under review: D02
-    settled again since this was decided (by the dates, a heuristic):
-      D02 REOPENED: was “SQLite FTS5 with a trigram tokenizer, one table for every notebook.” → 
-now “—”
+$ dg node D09
+╭──────────────────────────────────────────── D09 ─────────────────────────────────────────────╮
+│ Does search run on every keystroke?                                                          │
+│                                                                                              │
+│ status      REOPENED                                                                         │
+│ area        search                                                                           │
+│ depends on  D02                                                                              │
+│ opens       —                                                                                │
+│                                                                                              │
+│ Note                                                                                         │
+│ bench/search.md: p95 60 ms with the prefix index, which is the falsifier                     │
+│                                                                                              │
+│ Rule for settling                                                                            │
+│ Time a search over the 50k-note set. p95 under 100 ms: search as you type. Over: search on   │
+│ Enter.                                                                                       │
+│                                                                                              │
+│ Rule for settling (probe)                                                                    │
+│   2026-09-04  prose.rule {"text": "p95 under 100 ms: as you type; else on Enter"}            │
+│   2026-09-04  prose.rule {"text": "p95 under 100 ms on the slowest team laptop: as you type; │
+│ else on Enter"}  (live)                                                                      │
+│ evidence from T12 (DONE) — p95 340 ms on 50k notes                                           │
+│                                                                                              │
+│ Superseded                                                                                   │
+│                                                                                              │
+│   “No: search runs on Enter. At 340 ms a keystroke would stutt…” → (undecided)   2026-09-04  │
+│     why         bench/search.md: p95 60 ms with the prefix index, which is the falsifier     │
+│     falsifier   p95 under 100 ms on the 50k-note set                                         │
+│     source      T12                                                                          │
+│                                                                                              │
+│     archived answer                                                                          │
+│     No: search runs on Enter. At 340 ms a keystroke would stutter.                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+# The shape is checked at the door, before any domain is asked.
+$ dg reprobe D09 --probe '{"kind": "nodot", "args": {}}'
+--probe: a probe's kind is <domain>.<name> — 'nodot' does not name a domain
+[exit 1]
+# A kind no installed domain claims is presented, not evaluated, and never an error: a plain install must still read a graph a richer one wrote.
+$ dg reprobe D09 --probe '{"kind": "pytest.passes", "args": {"node": "tests/test_search.py::test_p95_under_100ms"}}'
+staged reprobe D09 — entry 3; the earlier 2 stay
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg probe D09
+D09  REOPENED  Does search run on every keystroke?
+    rule for settling Time a search over the 50k-note set. p95 under 100 ms: search as you type.
+Over: search on Enter.
+    probe             pytest.passes {"node": "tests/test_search.py::test_p95_under_100ms"}  
+(2026-09-04)
+    verdict           unjudged  no installed domain claims `pytest.` — nothing registered under 
+`dgraph.domains`
+    T12 DONE — p95 340 ms on 50k notes
 
 1 presented · fired 0 · holds 0 · unjudged 1
-# The check never evaluates a probe. Its verdict is a function of the store alone, which is what keeps a commit hook honest on a machine with nothing installed.
-$ dg check
-! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
-`dg render` rather than editing it.
-! [evidence_unharvested] (warning) T02 is DONE and was to inform D02 (How are notes indexed for 
-search?), which is still unsettled — record what it showed with `dg decide D02`, or drop the 
-link
-! [link_premise_under_review] (warning) T10 is PARKED and exists because of D02, which is 
-REOPENED — the reason for this work is under review; re-check it before carrying on
-✓ 9 vertices, 8 edges; 11 tasks, all invariants hold, 3 warning(s)

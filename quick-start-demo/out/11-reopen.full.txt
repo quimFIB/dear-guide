@@ -27,6 +27,29 @@ RESTING ON A PREMISE UNDER REVIEW  3
   D04  PROVISIONAL  Where does the index live?         ·  D01 · storage
   D05  PROVISIONAL  Does the CLI ship a TUI?           ·  D01 · ux
   `dg show --full` for the table, nothing clipped
+# Each provisional decision, beside what moved under it: the premises whose answers are dated after its own — by the dates, and labelled as the heuristic that is.
+$ dg probe --provisional
+D02  PROVISIONAL  How are notes indexed for search?
+    falsifier         p95 over 200 ms at 100k notes
+    verdict           unjudged
+    still under review: D01
+    no premise carries a later date than this edge (2026-07-10) — the falsifier stands alone
+
+D04  PROVISIONAL  Where does the index live?
+    falsifier         users sync the notes folder and the index file causes conflicts
+    verdict           unjudged
+    still under review: D01
+    settled again since this was decided (by the dates, a heuristic):
+      D02 PROVISIONAL: was “SQLite FTS5, one virtual table per notebook.” → now “SQLite FTS5 
+with a trigram tokenizer, one table for every notebook.”
+
+D05  PROVISIONAL  Does the CLI ship a TUI?
+    falsifier         a second interactive prompt appears in the codebase
+    verdict           unjudged
+    still under review: D01
+    no premise carries a later date than this edge (2026-05-20) — the falsifier stands alone
+
+3 presented · fired 0 · holds 0 · unjudged 3
 $ dg brief
 DECISION GRAPH  /tmp/dg-quick-start/notelit  8 decisions: OPEN 4, PROVISIONAL 3, REOPENED 1
 Record what gets settled with `dg` -- see the dear-guide skill.
@@ -108,7 +131,7 @@ $ dg node D01
 │ opens       D02, D05, D08                                                                    │
 │                                                                                              │
 │ falsifier   the journal needs a schema migration, or a note needs more than one file         │
-│ source      issues/41, 44, 45   (2026-09-03)                                                 │
+│ source      issues/41, 44, 45   (2026-09-04)                                                 │
 │                                                                                              │
 │ Answer                                                                                       │
 │ Still plain markdown files, one per note — plus a per-machine journal beside them for        │

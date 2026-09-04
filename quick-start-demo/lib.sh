@@ -37,6 +37,10 @@ claim_work() {
 export COLUMNS=96
 export NO_COLOR=1
 export TERM=dumb
+# The cookbook's demo domain (`grep-domain/`, see its docstring): on the
+# path, `dg probe` finds it through the `dgraph.domains` entry-point group
+# as if it were installed. Recipe 18 is the only one that reaches it.
+export PYTHONPATH="$here/grep-domain${PYTHONPATH:+:$PYTHONPATH}"
 # Nothing here is an agent unless a recipe says so.
 unset DG_AGENT DG_DECIDE DG_APPLY DG_WRITE DG_TERSE DG_AREA DG_TASK DG_BUDGET DG_PROJECT
 export GIT_AUTHOR_NAME=notelit GIT_AUTHOR_EMAIL=notelit@example.invalid

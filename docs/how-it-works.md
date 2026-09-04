@@ -832,7 +832,9 @@ never judges, so the reading ends where it always did: with you running
 `dg reopen`, `dg confirm`, `dg task done` or `dg decide`. `dg check` never
 evaluates anything — its verdict is a function of the store — which is
 what keeps a commit hook from depending on what the hook's machine has
-installed. `reference.md` has the fields and the commands.
+installed. `reference.md` has the fields and the commands, and the
+[cookbook](../quick-start-demo/index.html)'s annex walks one question from
+rule to verdict, with a demo domain judging the falsifier.
 
 ## Next
 

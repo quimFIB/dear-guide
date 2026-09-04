@@ -1,0 +1,2 @@
+[dgraph.domains]
+grep = dg_grep:GREP

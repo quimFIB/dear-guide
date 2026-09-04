@@ -107,7 +107,9 @@ further — the store never carries a command the core runs, and a prefix
 nothing installed claims is a warning, never an import error. **The
 built-in domain is `prose`, and it never evaluates**: its answer is the
 presentation, and the verdict is the command you run next. No other domain
-ships.
+ships; the cookbook carries a demo one, `grep` under
+`quick-start-demo/grep-domain/`, as the one to copy and so its page can show
+a verdict.
 
 `dg probe` is the one door onto evaluation. It presents every
 pre-commitment beside what it is judged against — a falsifier beside the

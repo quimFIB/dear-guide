@@ -1,24 +1,63 @@
-# An open question born with its rule for settling: prose, and a typed twin beside it.
-$ dg add --id D09 --area sync --title 'Which edit wins when two machines change one note?' --after D08 --rule 'a week of the team'\''s own notes syncing with no edit lost' --probe '{"kind": "prose.rule", "args": {"text": "seven days, zero lost edits"}}'
+# A question one number will settle, born with its rule: which side of 100 ms picks which answer.
+$ dg add --id D09 --area search --title 'Does search run on every keystroke?' --after D02 --rule 'Time a search over the 50k-note set. p95 under 100 ms: search as you type. Over: search on Enter.'
 staged add D09
 $ dg apply
 ✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
-# Work born with its definition of done, as evidence for that question.
-$ dg task add --id T12 --area sync --title 'Run two machines against one folder for a week' --evidence-for D09 --done-when 'seven days, zero lost edits, the log in bench/sync-week.md'
+$ dg node D09
+╭──────────────────────────────────────────── D09 ─────────────────────────────────────────────╮
+│ Does search run on every keystroke?                                                          │
+│                                                                                              │
+│ status      OPEN                                                                             │
+│ area        search                                                                           │
+│ depends on  D02                                                                              │
+│ opens       —                                                                                │
+│                                                                                              │
+│ Rule for settling                                                                            │
+│ Time a search over the 50k-note set. p95 under 100 ms: search as you type. Over: search on   │
+│ Enter.                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+# The measurement, as work: born with its definition of done, and linked as evidence for the question.
+$ dg task add --id T12 --area search --title 'Time a search over the 50k-note set' --evidence-for D09 --done-when 'the p95 over 50k notes, written to bench/search.md'
 staged add T12
 $ dg apply
 ✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
-# Every pre-commitment, beside what it will be judged against. Nothing judges it: the verdict is the command you run next.
-$ dg probe D09 T12
-D09  OPEN  Which edit wins when two machines change one note?
-    rule for settling a week of the team's own notes syncing with no edit lost
-    probe             prose.rule {"text": "seven days, zero lost edits"}  (2026-09-03)
-    verdict           unjudged  seven days, zero lost edits
-    T12 TODO
-
-T12  TODO  Run two machines against one folder for a week
-    done when         seven days, zero lost edits, the log in bench/sync-week.md
+# The benchmark: a script in the project, which leaves a file. The graph names neither.
+$ cat bench/search.sh
+#!/usr/bin/env bash
+# Time a search over the 50k-note set; append the p95 to bench/search.md.
+# (notelit is imaginary, so this stands in for timing it: 340 ms with the
+# trigram index, 60 ms with the prefix index.)
+index=${NOTELIT_INDEX:-trigram}
+case $index in trigram) ms=340 ;; *) ms=60 ;; esac
+printf 'p95: %s ms  %s\n' "$ms" "$index" >> bench/search.md
+$ bash bench/search.sh
+$ cat bench/search.md
+p95: 340 ms  trigram
+# The definition of done is read back before the outcome is asked for.
+$ dg task done T12 --outcome 'p95 340 ms on 50k notes'
+done when: the p95 over 50k notes, written to bench/search.md
+staged T12 → DONE
+$ dg apply
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
+# The rule, beside the outcome of its evidence. Nothing here judges: the verdict is the command you run next.
+$ dg probe D09
+D09  OPEN  Does search run on every keystroke?
+    rule for settling Time a search over the 50k-note set. p95 under 100 ms: search as you type.
+Over: search on Enter.
     verdict           unjudged
-    todo
+    T12 DONE — p95 340 ms on 50k notes
 
-2 presented · fired 0 · holds 0 · unjudged 2
+1 presented · fired 0 · holds 0 · unjudged 1
+# The rule again, above the answer, at the one moment it could be bent. The answer brings the third pre-commitment, a falsifier: what would overturn it.
+$ dg decide D09 --answer 'No: search runs on Enter. At 340 ms a keystroke would stutter.' --source T12 --falsifier 'p95 under 100 ms on the 50k-note set'
+╭──────────────────────────────────────────── D09 ─────────────────────────────────────────────╮
+│ Does search run on every keystroke?                                                          │
+│                                                                                              │
+│ depends on D02                                                                               │
+│                                                                                              │
+│ rule for settling: Time a search over the 50k-note set. p95 under 100 ms: search as you      │
+│ type. Over: search on Enter.                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`

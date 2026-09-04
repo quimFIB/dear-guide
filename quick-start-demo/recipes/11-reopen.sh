@@ -16,6 +16,8 @@ full() {
   run dg reopen D01 --why "three users report the same note edited on two machines in one day; two-machine edits are the common case" -y
   run dg apply
   run dg
+  note "Each provisional decision, beside what moved under it: the premises whose answers are dated after its own — by the dates, and labelled as the heuristic that is."
+  run dg probe --provisional
   run dg brief
   note "PROVISIONAL has two exits, and neither is available until the premise is settled again."
   run dg confirm D04
