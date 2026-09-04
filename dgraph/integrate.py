@@ -46,6 +46,7 @@ reads an unadjudicated op as though it had been accepted.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from dataclasses import dataclass, field
 
@@ -296,20 +297,22 @@ def _edges(base: Graph, theirs: Graph, vid: str, out: Derived) -> None:
                             "to": sorted(was.to)})
         return
 
+    # The targets are the graph's, not the answer's (`D57`), so a difference
+    # in them is what was gained and what was lost against the base — for a
+    # decided edge as for a bare one. The close below used to carry the
+    # arriving side's whole target list, which `close` unions into whatever
+    # is here: a target removed here came back under "nothing contested".
+    # Found by `tests/test_contest_property.py`.
+    old_to = set(was.to) if was is not None else set()
+    gained, lost = sorted(set(now.to) - old_to), sorted(old_to - set(now.to))
+
     if now.decided and not _same_answer(was, now):
         # Every `PAYLOAD` field the edge carries, and none it does not: a
         # field named here by hand is one this seam drops the day it is added.
-        out.ops.append({"op": "close", "vertex": vid, "to": sorted(now.to),
+        out.ops.append({"op": "close", "vertex": vid, "to": gained,
                         **{k: getattr(now, k) for k in PAYLOAD
                            if getattr(now, k) is not None}})
-        return
-
-    # A bare edge: the targets are all it holds, so a difference in them is an
-    # `add_edge` or a `remove_edge` and nothing else. A decided edge's targets
-    # travel inside the `close` above, because they are part of the answer.
-    old_to = set(was.to) if was is not None else set()
-    gained, lost = sorted(set(now.to) - old_to), sorted(old_to - set(now.to))
-    if gained:
+    elif gained:
         out.ops.append({"op": "add_edge", "from": vid, "to": gained})
     if lost:
         out.ops.append({"op": "remove_edge", "from": vid, "to": lost})
@@ -524,6 +527,15 @@ class Finding:
 #:
 #: The reasons are not decoration: each says why *two* writers doing this to
 #: one record is not two judgements in conflict.
+#: The op kinds `_contest_*` has a rule for. The other half of the
+#: enumeration `CANNOT_CONFLICT` completes, kept beside it so the report can
+#: say which of an arriving contribution's kinds were *judged* and which were
+#: taken on the argument below — "nothing contested" used to be followed by
+#: "every op applies", which reads as a clean bill of health for kinds no
+#: rule had looked at. `D50`.
+RULED = frozenset({"close", "set_fields", "set_status", "remove_vertex",
+                   "remove_task", "reprobe", "set_link", "reopen"})
+
 CANNOT_CONFLICT = {
     # Creation. A taken id is caught by the `add_*` rules above, and an
     # untaken one is a record this clone has never had an opinion about.
@@ -551,14 +563,18 @@ CANNOT_CONFLICT = {
     # asserts anything a second writer could assert differently.
     "reject": "an offered-and-declined answer is a record of provenance",
     "read_evidence": "a reading is a fact about what was looked at",
-    # `set_link` carries the cross-store edge, which is `add_dep`'s argument
-    # again: a task pointing at a decision is a fact, not a verdict.
-    "set_link": "a cross-store link is a fact, not a verdict",
-    # `reopen` is the one that looks like it should be here and is not obvious.
-    # It moves status, and the `set_status` rule above catches the disagreement
-    # it causes — a reopen arriving at a vertex this clone moved elsewhere is
-    # contested through the status it writes, not through the op.
-    "reopen": "the status it writes is judged by the set_status rule",
+    # `set_link` sat here arguing that *a cross-store link is a fact, not a
+    # verdict* — `add_dep`'s argument again. It was false for both fields the
+    # op writes: `evidence_for` is one slot and `because` is assigned whole,
+    # so a link moved here and a link arriving is last-writer-wins with the
+    # report printing "nothing contested". It has a rule now, `set_fields`'s,
+    # over the two fields. `D50`.
+    # `reopen` sat here too — *the status it writes is judged by the
+    # set_status rule* — and no rule was ever run on it: `_contest` judged
+    # the op it was handed, which was the reopen, and the row rule looked
+    # only at `set_fields` and `set_status`. It is judged by `_writes` now,
+    # on the status and the note it assigns, and the PROVISIONAL statuses it
+    # derives are judged by `_walk` one by one. `D50`.
 }
 
 
@@ -577,7 +593,21 @@ def _contest(g, base, op: dict, store: str) -> tuple[str | None, str] | None:
     return _contest_task(g, base, op)
 
 
-def _moved_here(mine, was, g, base, rid: str, children) -> str | None:
+#: How `_moved_here` names a change, where "changed here" would misread.
+_MOVED = {
+    "status": "status moved here to {value}",
+    "probes": "a criterion was written for it here",
+    "binds": "it was bound to something here",
+    "completions": "it was finished here",
+    "stops": "it was stopped here",
+    "readings": "it was read against a decision here",
+    "because": "its premises moved here",
+    "evidence_for": "the decision it informs moved here",
+}
+
+
+def _moved_here(mine, was, g, base, rid: str, children, parents,
+                claims=None) -> str | None:
     """What this clone changed about `rid` since the base — or `None`.
 
     The condition `D48` names, in the idiom `_contest` already uses: *the
@@ -585,24 +615,103 @@ def _moved_here(mine, was, g, base, rid: str, children) -> str | None:
     base for the reason the docstring above gives — two writers changing one
     record is contested, one writer changing it is a change.
 
-    **A gained child counts, and that is the case a field comparison misses.**
-    The clone that hangs a fresh undecided question on `D07` has not touched
-    `D07`'s own row at all, and the arriving removal takes the question with it
-    and leaves the child a root. Nothing in the fields would have said so.
+    **Every field of the record, read off the dataclass**, and not a list of
+    the ones somebody thought of: this compared `ALL_FIELDS`, the status, the
+    probes and the binds, and so a task's links, its readings and a declined
+    answer on a vertex all went with a removal under "nothing contested".
+    `tests/test_contest_property.py` found the three at once, and a field
+    added to either record is covered here on the day it is added.
+
+    **A gained edge counts, in either direction, and that is the case no
+    field comparison makes.** The clone that hangs a fresh question on `D07`
+    has not touched `D07`'s own row, and the arriving removal takes the
+    question with it and leaves the child a root; the clone that makes `D03`
+    open `D07` has not touched it either, and the removal takes that edge
+    with nothing to say it was there.
     """
-    for f in ALL_FIELDS:
-        if getattr(mine, f, None) != getattr(was, f, None):
-            return f"{f} changed here"
-    if mine.status != was.status:
-        return f"status moved here to {mine.status}"
-    if len(mine.probes) != len(was.probes):
-        return "a criterion was written for it here"
-    if set(mine.binds) - set(was.binds):
-        return "it was bound to something here"
-    gained = sorted(set(children(g, rid)) - set(children(base, rid)))
+    for f in dataclasses.fields(mine):
+        if f.name in ("id", "extra"):
+            continue
+        if getattr(mine, f.name) != getattr(was, f.name):
+            return _MOVED.get(f.name, "{name} changed here").format(
+                name=f.name, value=getattr(mine, f.name))
+    if claims is not None:
+        why = claims(g, base, rid)
+        if why:
+            return why
+    gained = _ids(set(children(g, rid)) - set(children(base, rid)))
     if gained:
         return (f"{', '.join(gained)} {'was' if len(gained) == 1 else 'were'} "
                 f"hung on it here")
+    gained = _ids(set(parents(g, rid)) - set(parents(base, rid)))
+    if gained:
+        return (f"{', '.join(gained)} {'was' if len(gained) == 1 else 'were'} "
+                f"made to open it here")
+    return None
+
+
+def _ids(edges) -> list[str]:
+    """The records named by `edges` — ids, or the task store's `(kind, id)`
+    pairs, which are compared as pairs so that a second kind of edge to a
+    record already related counts as the new edge it is."""
+    return sorted({e if isinstance(e, str) else e[1] for e in edges})
+
+
+def _claims_moved(g: Graph, base: Graph, vid: str) -> str | None:
+    """What this clone did to `vid`'s edges that a removal would take: an
+    answer, a reopen, a declined answer. The half of a vertex that is not
+    on its row."""
+    e, e_was = g.active_edge(vid), base.active_edge(vid)
+    now = tuple(getattr(e, k) for k in CLAIM) if e is not None and e.decided \
+        else None
+    then = tuple(getattr(e_was, k) for k in CLAIM) \
+        if e_was is not None and e_was.decided else None
+    if now != then:
+        return "it was answered here" if now is not None \
+            else "its answer was withdrawn here"
+    if len(g.history(vid)) != len(base.history(vid)):
+        return "it was reopened here"
+    if len(g.rejected(vid)) != len(base.rejected(vid)):
+        return "an answer was declined for it here"
+    return None
+
+
+def _writes(op: dict) -> dict:
+    """The row fields an op assigns, by name, with the value it assigns.
+
+    `set_fields` and `set_status` say so in their keys. `close` and
+    `reopen` write the row too — a close makes the status DECIDED and
+    clears the note, a reopen makes it REOPENED and writes its `why` as the
+    note — and neither said so anywhere a contest rule could read, so a
+    note written here was cleared by an arriving answer, and a status moved
+    here was overwritten by an arriving reopen, under "nothing contested".
+    `reopen` sat in `CANNOT_CONFLICT` for it — *the status it writes is
+    judged by the set_status rule* — and no rule was ever run on it.
+    `tests/test_contest_property.py`.
+    """
+    kind = op.get("op")
+    if kind == "set_fields":
+        return {f: op[f] for f in ALL_FIELDS if f in op}
+    if kind == "set_status":
+        return {"status": op.get("status")}
+    if kind == "close":
+        return {"status": "DECIDED", "note": None}
+    if kind == "reopen":
+        return {"status": "REOPENED",
+                "note": op.get("note") or op.get("why")}
+    return {}
+
+
+def _row_differs(mine, was, op: dict):
+    """`set_fields`'s rule over whatever the op writes to the row. Moved here
+    *and* to somewhere else: two writers making the same edit is not a
+    conflict, and reporting it as one puts a question to a person whose two
+    answers are identical."""
+    for f, arriving in _writes(op).items():
+        if not hasattr(mine, f):
+            continue
+        if getattr(mine, f) != getattr(was, f) and getattr(mine, f) != arriving:
+            return f, arriving
     return None
 
 
@@ -627,30 +736,21 @@ def _contest_decision(g: Graph, base: Graph, op: dict):
         # it. No version vectors, because the required base is the causal
         # context one would supply; no tombstones, because this store lets a
         # removal remove and git is the record of what it took.
-        why = _moved_here(mine, was, g, base, vid, lambda x, i: x.children(i))
+        why = _moved_here(mine, was, g, base, vid,
+                          lambda x, i: x.children(i),
+                          lambda x, i: x.depends(i), _claims_moved)
         if why:
             return vid, f"{vid} is removed there, and {why}"
-    if kind == "set_fields":
-        # Moved here *and* to somewhere else. Two writers making the same edit
-        # is not a conflict, and reporting it as one puts a question to a
-        # person whose two answers are identical.
-        moved = [f for f in fields_of("decision")
-                 if f in op and getattr(mine, f) != getattr(was, f)
-                 and getattr(mine, f) != op[f]]
-        if moved:
-            f = moved[0]
-            return vid, (f"{vid} {f} differs — here {getattr(mine, f)!r}, "
-                         f"arriving {op[f]!r}")
-    if kind == "set_status":
-        # The same rule, on the store that had none for this op. A `reopen`
-        # propagates `set_status … PROVISIONAL` to decided descendants, so two
-        # writers can move one vertex's status apart exactly as they can a
-        # task's. `close` below is the answer-bearing op and is checked on its
-        # answer; this is the rest. Audit `G-F12`.
-        if (mine.status != was.status
-                and mine.status != op.get("status")):
-            return vid, (f"{vid} status differs — here {mine.status}, "
-                         f"arriving {op.get('status')}")
+    # The row: whatever the op writes to it, judged by one rule. `set_fields`
+    # and `set_status` had this; `close` and `reopen` write the row too and
+    # had nothing — see `_writes`. A `reopen` also propagates
+    # `set_status … PROVISIONAL` to decided descendants, which `_walk` judges
+    # here through the same rule. Audit `G-F12`, then `D50`.
+    hit = _row_differs(mine, was, op)
+    if hit is not None:
+        f, arriving = hit
+        return vid, (f"{vid} {f} differs — here {getattr(mine, f)!r}, "
+                     f"arriving {arriving!r}")
     if kind == "reprobe" and _reprobed_apart(mine, was, op):
         return vid, (f"{vid} was given a rule for settling here too — "
                      f"{mine.probes[-1].kind} against "
@@ -677,19 +777,51 @@ def _contest_task(tg: TaskGraph, base: TaskGraph, op: dict):
         # `remove_vertex`'s twin, and it has to be here rather than derived:
         # a rule applied in one store and not the other is the shape most of
         # this tool's audit findings took. `D48`.
-        why = _moved_here(mine, was, tg, base, tid,
-                          lambda x, i: x.unblocks(i))
+        # Both relation kinds, in both directions: a `prompted` edge is as
+        # much a statement about this record as a `precedes` one, and it
+        # went with a removal unreported while only `unblocks` was read.
+        why = _moved_here(
+            mine, was, tg, base, tid,
+            lambda x, i: ([("precedes", t) for t in x.unblocks(i)]
+                          + [("prompted", t) for t in x.prompted(i)]),
+            lambda x, i: ([("precedes", t) for t in x.prerequisites(i)]
+                          + [("prompted", t) for t in x.discovered_during(i)]))
         if why:
             return tid, f"{tid} is removed there, and {why}"
     if kind == "set_fields":
         # See `_contest_decision`: the same edit made twice is not a conflict.
-        moved = [f for f in fields_of("task")
-                 if f in op and getattr(mine, f) != getattr(was, f)
-                 and getattr(mine, f) != op[f]]
-        if moved:
-            f = moved[0]
+        hit = _row_differs(mine, was, op)
+        if hit is not None:
+            f, arriving = hit
             return tid, (f"{tid} {f} differs — here {getattr(mine, f)!r}, "
-                         f"arriving {op[f]!r}")
+                         f"arriving {arriving!r}")
+    if kind == "set_link":
+        # `set_fields`'s three lines again, over the two fields this op
+        # writes. It sat in `CANNOT_CONFLICT` as *a fact, not a verdict*,
+        # which is `add_dep`'s argument — and `add_dep` accumulates, while
+        # this op **assigns**: `evidence_for` is one slot by design
+        # (`task_pending.link` has the argument), and `because` arrives as
+        # the other side's whole list and replaces this one's. Two clones
+        # linking T07 to D03 and to D07 was last-writer-wins under a clean
+        # report; the audit behind `D50` found it.
+        #
+        # An arriving `clear` is a value too — nothing — and is judged the
+        # same way: a link set here and cleared there is two writers
+        # disagreeing about the link.
+        for f, cleared in (("because", []), ("evidence_for", None)):
+            if f in op:
+                arriving = op[f]
+            elif f in (op.get("clear") or ()):
+                arriving = cleared
+            else:
+                continue
+            here, before = getattr(mine, f), getattr(was, f)
+            if f == "because":
+                here, before, arriving = (sorted(here), sorted(before),
+                                          sorted(_fold(arriving)))
+            if here != before and here != arriving:
+                return tid, (f"{tid} {f} differs — here {here!r}, "
+                             f"arriving {arriving!r}")
     if kind == "reprobe" and _reprobed_apart(mine, was, op):
         return tid, (f"{tid} was given a definition of done here too — "
                      f"{mine.probes[-1].kind} against "
@@ -723,6 +855,13 @@ def _contest_task(tg: TaskGraph, base: TaskGraph, op: dict):
                          f"{_clip(mine.outcome)!r}) — arriving "
                          f"{_clip(op.get('outcome'))!r}")
     return None
+
+
+def _fold(raw) -> list[str]:
+    """A `because` as the op may carry it — a list, or the pre-list scalar
+    `task_pending` still accepts — read as the list the record holds."""
+    from dgraph.tasks import _fold_because
+    return _fold_because(raw)
 
 
 def _clip(text: str | None, width: int = 48) -> str:
@@ -788,6 +927,23 @@ def _walk(g, base, ops: list[dict], store: str,
         # has to reach all of them.
         group = [{**one, "iref": op.get("iref")}
                  for one in (expand(probe, op) if expand else [op])]
+        # What the op *derives* is judged too, and on the same finding: a
+        # reopen makes every decided descendant PROVISIONAL, and one of them
+        # decided here since the base is this clone's judgement being set
+        # aside by an act nobody here took. One finding for the act, because
+        # a person answers the reopen and not its consequences one by one —
+        # `iref` is the parent's for the same reason.
+        for one in group[1:]:
+            more = _contest(g, base, one, store)
+            if more is None:
+                continue
+            rid, why = more
+            why = f"{why}, derived from the {op.get('op')} of {op.get('vertex')}"
+            if contested is None:
+                contested = Finding("contested", store, i, rid, why, op=op)
+                findings.append(contested)
+            else:
+                contested.message += f"; and {why}"
         try:
             for one in group:
                 _apply(probe, one, store)
@@ -861,6 +1017,13 @@ class Report:
     #: what was found wrong.
     touched: list[str] = field(default_factory=list)
     derived: int = 0
+    #: The op kinds the contribution carried, split by how they were judged:
+    #: `examined` had a contest rule run over each op; `argued` were taken
+    #: on their `CANNOT_CONFLICT` reason and no rule looked. Reported so a
+    #: reader of "nothing contested" knows what was looked at — the four
+    #: false reasons behind `D50` each hid under that line.
+    examined: list[str] = field(default_factory=list)
+    argued: list[str] = field(default_factory=list)
 
     @property
     def contested(self) -> list[Finding]:
@@ -915,6 +1078,9 @@ def plan(ours_g, ours_tg, base_g, base_tg, theirs_g, theirs_tg,
     t = tasks(base_tg, theirs_tg) if theirs_tg is not None else Derived()
     rep = Report(unexpressible=d.unexpressible + t.unexpressible,
                  derived=len(d.ops) + len(t.ops))
+    kinds = {op["op"] for op in [*d.ops, *t.ops]}
+    rep.examined = sorted(kinds & RULED)
+    rep.argued = sorted(kinds - RULED)
 
     # Class M first, before anything is replayed and before any ref is handed
     # out: a renamed op is the op a person will be shown, and renaming after

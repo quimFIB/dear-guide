@@ -420,7 +420,11 @@ command is shaped to avoid.
 ### What is reported and never acted on
 
 The report ends with the warnings the contribution introduces and the records
-it touched. Both are deliberate. Several of those warnings — work released by
+it touched, and — where nothing was contested — with which op kinds were
+judged for disagreement and which were taken on argument with no rule run.
+That last line exists because *nothing contested* is not a clean bill of
+health: it says what the rules found, and a reader is owed what the rules
+looked at. All three are deliberate. Several of those warnings — work released by
 a drop, a park holding something up — fire in one integration order and not
 the other, so they are stated as advisory: **a signal that depends on who
 integrated first is not a signal to act on.** And the list of what was touched

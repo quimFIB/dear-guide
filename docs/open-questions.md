@@ -136,6 +136,18 @@ arguments they are rather than as a list of limitations.
   printing `nothing contested` over an edit somebody lost. Where nobody here
   touched the record, a removal is still just a removal.
 
+  The same rule reaches a task's links and a reopen, for the same reason. A
+  task linked here to one decision and there to another is two writers
+  disagreeing about what the work informs, and a reopen arriving at a
+  question whose status or note moved here, or whose decided descendant was
+  decided here, is reported rather than landing over it. What holds all of
+  these together is checked as one property, over generated divergent
+  stores, instead of a case per op kind: **a change made here that
+  replaying the contribution would overwrite is always reported.** And the
+  clean line no longer stops at `nothing contested` — it names which op
+  kinds were judged and which were taken on argument, so a reader can tell
+  what was looked at.
+
   An arriving id this store already holds is **not** one of the three: it is
   renamed inside the contribution, where an edge still knows which vertex it
   meant, and reported rather than asked about. Only ids the merge introduces

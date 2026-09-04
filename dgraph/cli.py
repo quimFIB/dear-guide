@@ -5628,8 +5628,20 @@ def _integration_report(rep, ref: str, base_ref: str) -> None:
         con.print(f"\n[dim]touched {len(rep.touched)} record(s): "
                   f"{_x(', '.join(rep.touched))}[/]")
     if rep.ok and rep.derived:
+        # What was looked at, not a clean bill of health. This line used to
+        # end "every op applies and the result is valid", which is true and
+        # is not what a reader takes from it: four op kinds sat under it with
+        # a false reason for having no contest rule, and each lost a
+        # judgement silently. Naming the kinds judged and the kinds taken on
+        # argument is what `D50` decided the report owes. Both are printed
+        # even when one is empty, so "argued: none" is a sentence and not
+        # an omission.
         con.print("[green]nothing contested[/] [dim]— every op applies and "
-                  "the result is valid[/]")
+                  "the result is valid.[/]")
+        con.print(f"  [dim]judged for disagreement: "
+                  f"{_x(', '.join(rep.examined) or 'none')}[/]")
+        con.print(f"  [dim]taken on argument, no rule run: "
+                  f"{_x(', '.join(rep.argued) or 'none')}[/]")
 
 
 @app.command(rich_help_panel=STORE)

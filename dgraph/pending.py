@@ -2052,8 +2052,14 @@ def _apply_one(g: Graph, op: dict) -> None:
         # A bare edge opening nothing says nothing. Dropped so it cannot sit in
         # the store as an active edge with no content — and so `active_edge`
         # goes back to None, letting a later `close` build a fresh one.
-        # Superseded edges are never touched: they are the record.
-        if not e.to:
+        # Superseded edges are never touched: they are the record — and nor
+        # is a **decided** one, which this used to drop with its answer: a
+        # terminal answer opening nothing is an ordinary, legal thing
+        # (`remove_vertex` above says so), and the one op that may take an
+        # answer away is `reopen`. Found by `tests/test_contest_property.py`:
+        # a question answered here, its last target removed there, integrated
+        # under "nothing contested" with the answer gone.
+        if not e.to and not e.decided:
             g.edges = [x for x in g.edges if x is not e]
         return
 

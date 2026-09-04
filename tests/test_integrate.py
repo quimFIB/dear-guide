@@ -310,6 +310,12 @@ def test_a_clean_contribution_is_reported_quarantined_and_adoptable(
     root, run = two_writers
     res = run("integrate", "worker")
     assert res.exit_code == 0 and "0 contested" in res.output
+    # The clean line says what was looked at, not only that nothing was
+    # found (`D50`, `T60`): the worker's branch adds a vertex and an edge,
+    # both kinds taken on argument, and the report says so rather than
+    # claiming every op was judged.
+    assert "judged for disagreement:" in res.output
+    assert "taken on argument, no rule run: add_edge, add_task, add_vertex" in res.output
     assert (root / project.INCOMING_NAME).exists()
     # **Quarantined, not staged.** The tray is what every stage-time guard
     # consults, so an unadjudicated op put there would have this clone
@@ -788,7 +794,13 @@ def test_every_op_kind_is_contestable_or_argued_not_to_be():
     than checking them. `D50` is that gap; `D48` moved these two across.
     """
     ruled = {"close", "set_fields", "set_status",
-             "remove_vertex", "remove_task", "reprobe"}
+             "remove_vertex", "remove_task", "reprobe", "set_link", "reopen"}
+    # Written here by hand *and* exported by the module, and the two are
+    # held equal: the export is what the report prints as "judged", so a
+    # kind given a rule and not added to `RULED` would be reported as taken
+    # on argument, and one added there without a rule would be reported as
+    # judged. Neither list is derived from the other on purpose.
+    assert ruled == set(integrate.RULED)
     every = pending.OPS | task_pending.OPS
     unjudged = every - ruled - set(integrate.CANNOT_CONFLICT)
     assert not unjudged, (
@@ -970,3 +982,75 @@ def test_a_removal_over_a_local_change_reaches_a_person_and_is_answerable(
     assert run("incoming", "--adopt").exit_code == 0
     from dgraph.tasks import TaskGraph
     assert "T01" in TaskGraph.load(root / "tasks.json").tasks
+
+
+# ---- a link over a link this clone moved (`D50`, `T58`) -------------------
+#
+# `set_link` sat in `CANNOT_CONFLICT` arguing *a cross-store link is a fact,
+# not a verdict* — `add_dep`'s argument, and `add_dep` accumulates. This op
+# assigns: `evidence_for` is one slot by design and `because` arrives as the
+# other side's whole list. The audit behind `D50` reproduced it against the
+# cookbook seed: two clones linking one task `--evidence-for` two decisions,
+# integrate reporting nothing contested, ours gone.
+
+
+def _linked(tg, tid, **links):
+    out = copy.deepcopy(tg)
+    out.tasks[tid] = replace(out.tasks[tid], **links)
+    return out
+
+
+def test_two_writers_pointing_one_task_at_two_decisions_is_contested(tg):
+    base = _linked(tg, "T02", evidence_for=None)
+    ours = _linked(base, "T02", evidence_for="D03")
+    theirs = _linked(base, "T02", evidence_for="D07")
+
+    found, probe, _ = integrate._walk(
+        ours, base, integrate.tasks(base, theirs).ops, "tasks", None)
+    assert [f.kind for f in found] == ["contested"]
+    assert "T02 evidence_for differs" in found[0].message
+    assert "D03" in found[0].message and "D07" in found[0].message
+
+
+def test_a_premise_added_here_is_not_silently_replaced_by_theirs(tg):
+    """The half the old reason got wrong twice over: `because` is a set in
+    the model and `link` appends to it, so *accumulates* reads as true — but
+    the op carries the whole list, and replaying the other side's list over
+    this one's is how D05 vanishes with a clean report."""
+    base = _linked(tg, "T02", because=["D01"])
+    ours = _linked(base, "T02", because=["D01", "D05"])
+    theirs = _linked(base, "T02", because=["D01", "D09"])
+
+    found = integrate._walk(ours, base, integrate.tasks(base, theirs).ops,
+                            "tasks", None)[0]
+    assert [f.kind for f in found] == ["contested"]
+    assert "T02 because differs" in found[0].message
+
+
+def test_a_link_cleared_there_over_one_set_here_is_contested(tg):
+    """An arriving `clear` is a value — nothing — and is judged as one."""
+    base = _linked(tg, "T02", evidence_for="D03")
+    ours = _linked(base, "T02", evidence_for="D05")
+    theirs = _linked(base, "T02", evidence_for=None)
+
+    found = integrate._walk(ours, base, integrate.tasks(base, theirs).ops,
+                            "tasks", None)[0]
+    assert [f.kind for f in found] == ["contested"]
+    assert "arriving None" in found[0].message
+
+
+def test_a_link_this_clone_never_moved_is_not_contested(tg):
+    """The other half, and the reason it is a rule rather than a comparison:
+    one writer linking is a link, and two writers making the same link is
+    one link made twice."""
+    base = _linked(tg, "T02", evidence_for=None, because=["D01"])
+    theirs = _linked(base, "T02", evidence_for="D07", because=["D01", "D09"])
+
+    ops = integrate.tasks(base, theirs).ops
+    found, probe, _ = integrate._walk(copy.deepcopy(base), base, ops,
+                                      "tasks", None)
+    assert found == []
+    assert probe.tasks["T02"].evidence_for == "D07"
+
+    same = _linked(base, "T02", evidence_for="D07", because=["D09", "D01"])
+    assert integrate._walk(same, base, ops, "tasks", None)[0] == []
