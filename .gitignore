@@ -62,10 +62,15 @@ dist/
 .venv/
 .pytest_cache/
 
-# the demo renders into a work directory, but `dg render` inside demo/ would
-# drop these here
+# The demos render into a work directory, but `dg render` inside one of these
+# would drop the view here — which is how `demo-agentic/tasks.md` came to be
+# committed once: a `dg task render` run against that store while checking
+# something else, then `git add -A`. The rule names both demos so the next one
+# cannot arrive the same way.
 demo/decision-graph.md
 demo/tasks.md
+demo-agentic/decision-graph.md
+demo-agentic/tasks.md
 
 # the detached web app: a run record and its output
 .dgraph-serve.json
