@@ -39,7 +39,7 @@ export NO_COLOR=1
 export TERM=dumb
 # The cookbook's demo domain (`grep-domain/`, see its docstring): on the
 # path, `dg probe` finds it through the `dgraph.domains` entry-point group
-# as if it were installed. Recipe 18 is the only one that reaches it.
+# as if it were installed. Recipes 18 and 20 are the ones that reach it.
 export PYTHONPATH="$here/grep-domain${PYTHONPATH:+:$PYTHONPATH}"
 # Nothing here is an agent unless a recipe says so.
 unset DG_AGENT DG_DECIDE DG_APPLY DG_WRITE DG_TERSE DG_AREA DG_TASK DG_BUDGET DG_PROJECT
@@ -78,6 +78,10 @@ _typed() {
   local out="" arg
   for arg in "$@"; do
     case $arg in
+      # An empty argument is the one that has to be quoted to be seen at all:
+      # `--domain ''` printed bare reads as the flag with no value, which is
+      # the opposite of what recipe 20 is showing (`pending.refuse_blank`).
+      "")                        out+=" ''" ;;
       *[!A-Za-z0-9./_=:,-]*) out+=" '${arg//\'/\'\\\'\'}'" ;;
       *)                         out+=" $arg" ;;
     esac

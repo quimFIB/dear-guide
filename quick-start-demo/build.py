@@ -32,7 +32,7 @@ PARTS = {
     "ask": ("Ask", "Frontiers, reasoning, and the backlog"),
     "agents": ("Agents", "Letting agents develop a task from the graph"),
     "extra": ("Beyond", "Two more things people ask for"),
-    "annex": ("Annex", "What would settle it, written down first; and what a reader shows of the tray"),
+    "annex": ("Annex", "What would settle it, written down first; what a reader shows of the tray; and one criterion judged by more than one domain"),
 }
 
 RECIPES: dict[str, dict] = {
@@ -369,6 +369,45 @@ RECIPES: dict[str, dict] = {
                  (r"^✓ .*all invariants hold", "the store, as the gate sees it"),
                  (r"^✓ as staged, all invariants hold", "the graph the tray would produce, judged"),
                  (r"^✓ applied", None)],
+    ),
+    "20-domains": dict(
+        read_quick="A criterion is often two things at once, and it is still <em>one</em> "
+                   "criterion: this answer stands while <em>both</em> machines stay above "
+                   "100 ms. <code>core.all_of</code> is how that is written — the one kind the "
+                   "core evaluates itself, taking its members in <code>args.probes</code> and "
+                   "handing each to whichever domain claims it. It <b>holds only if every "
+                   "member holds, and fires as soon as any one of them does</b>, with the "
+                   "sentence saying which: here the 50k-note set came under 100 ms and the "
+                   "laptop did not, and one half is enough to overturn the answer. Written as "
+                   "two records instead, the graph would carry two questions where the project "
+                   "has one, and neither would be the thing that was decided.",
+        read_full="Which domains run is yours to choose. <code>--domain</code> scopes a probe "
+                  "run to the records one domain judges — how you run the cheap ones on every "
+                  "commit and reach a slow one by name — and because a composite is one "
+                  "criterion, it is reached under <em>every</em> member's prefix: the same "
+                  "record answers to <code>grep</code> and to <code>pytest</code>. A member no "
+                  "installed domain claims leaves the composite <code>unjudged</code>, never "
+                  "an error and never a <code>holds</code> it did not earn, and the missing "
+                  "prefix is one footer line however many records name it. Each domain then "
+                  "runs in a child process of its own, under the deadline it declares "
+                  "(<code>grep</code> says five seconds; sixty where a domain says nothing) "
+                  "and is ended at it — a domain that has not answered is unjudged for "
+                  "everything it was asked. <code>--timeout</code> overrides whatever the "
+                  "distribution declared, because a person at the door outranks it. And a "
+                  "scope that names nothing the store holds is refused, saying what it does "
+                  "hold: a blank is what a script's failed extraction produces, and the one "
+                  "thing a narrowing must never do is widen.",
+        hl_quick=[(r'core\.all_of \{"probes"', "one criterion, two members"),
+                  (r"verdict\s+holds\s+no line of bench/search\.md", "both halves clean, so the composite holds"),
+                  (r"^p95: 60 ms  prefix", "one of the two numbers moved"),
+                  (r"verdict\s+fired\s+bench/search\.md: p95: 60 ms", "one half is enough — and it says which"),
+                  (r"^1 presented · fired 1", "a non-zero exit; the reopen is still yours")],
+        hl_full=[(r"^`pytest\.` not judged here — 1 record\(s\)", "one line per prefix, not per record"),
+                 (r"^2 presented · fired 0 · holds 1 · unjudged 1", "--domain grep reaches both records"),
+                 (r"^1 presented · fired 0 · holds 0 · unjudged 1", "...and --domain pytest the one whose other half it claims"),
+                 (r"did not answer within 0\.001s", "the door outranks the distribution"),
+                 (r"^no pre-commitment is under `rocq\.`; prefixes here", "refused, naming what the store does hold"),
+                 (r"^--domain is empty", "a blank selects nothing, and never everything")],
     ),
 }
 
@@ -1332,7 +1371,7 @@ def page() -> str:
                'A dashed task outline means blocked; solid means ready. Click any command in a transcript to see the graph as it stood after it.</p>')
 
     app.append('<h2 id="made">How this page was made</h2>'
-               '<p class="read">Nineteen scripts under <code>quick-start-demo/recipes/</code>, each two functions, <code>quick</code> and <code>full</code>, '
+               '<p class="read">Twenty scripts under <code>quick-start-demo/recipes/</code>, each two functions, <code>quick</code> and <code>full</code>, '
                'run by <code>run.sh</code> against a fresh copy of the seed. The runner captures each function\'s transcript and exports both stores after every command; '
                '<code>build.py</code> turns those into this file, so no command, output line or picture here was typed by hand. '
                'The highlighted lines are regular expressions that <code>tests/test_quick_start_demo.py</code> asserts against a fresh run, '

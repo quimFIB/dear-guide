@@ -1,0 +1,62 @@
+# The answer rests on two measurements, each in its own file.
+$ cat bench/run.sh
+#!/usr/bin/env bash
+# Time a search over the 50k-note set, and on the slowest team laptop.
+# Append each p95 to its own file. (340 ms and 512 ms with the trigram index;
+# 60 ms and 240 ms with the prefix index.)
+index=${NOTELIT_INDEX:-trigram}
+case $index in trigram) fast=340; slow=512 ;; *) fast=60; slow=240 ;; esac
+printf 'p95: %s ms  %s\n' "$fast" "$index" >> bench/search.md
+printf 'p95: %s ms  %s\n' "$slow" "$index" >> bench/laptop.md
+$ bash bench/run.sh
+$ head -n 3 bench/search.md bench/laptop.md
+==> bench/search.md <==
+p95: 340 ms  trigram
+
+==> bench/laptop.md <==
+p95: 512 ms  trigram
+# One criterion, two halves: the answer stands while both numbers stay above 100 ms. So the probe is one too — core.all_of, the one kind the core evaluates itself, holding only if every member holds.
+$ dg add --id D09 --area search --title 'Does search run on every keystroke?' --after D02
+staged add D09
+$ dg decide D09 --answer 'No: search runs on Enter. Neither machine is under 100 ms.' --source 'bench/search.md, bench/laptop.md' --falsifier 'p95 under 100 ms on the 50k-note set, or on the slowest team laptop' --probe '{"kind": "core.all_of", "args": {"probes": [{"kind": "grep.matches", "args": {"file": "bench/search.md", "pattern": "^p95: [0-9][0-9]? ms"}}, {"kind": "grep.matches", "args": {"file": "bench/laptop.md", "pattern": "^p95: [0-9][0-9]? ms"}}]}}'
+╭──────────────────────────────────────────── D09 ─────────────────────────────────────────────╮
+│ Does search run on every keystroke?                                                          │
+│                                                                                              │
+│ depends on D02                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+$ dg apply
+✓ applied 3 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+# Judged, and the sentence is both halves': a composite that holds is every member holding.
+$ dg probe D09
+D09  DECIDED  Does search run on every keystroke?
+    falsifier         p95 under 100 ms on the 50k-note set, or on the slowest team laptop
+    probe             core.all_of {"probes": [{"args": {"file": "bench/search.md", "pattern": 
+"^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"file": "bench/laptop.md", 
+"pattern": "^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}]}
+    verdict           holds  no line of bench/search.md matches /^p95: [0-9][0-9]? ms/; no line 
+of bench/laptop.md matches /^p95: [0-9][0-9]? ms/
+
+1 presented · fired 0 · holds 1 · unjudged 0
+# The prefix index lands. The 50k set comes under 100 ms; the laptop does not.
+$ env NOTELIT_INDEX=prefix bash bench/run.sh
+$ head -n 3 bench/search.md bench/laptop.md
+==> bench/search.md <==
+p95: 340 ms  trigram
+p95: 60 ms  prefix
+
+==> bench/laptop.md <==
+p95: 512 ms  trigram
+p95: 240 ms  prefix
+# One half is enough — and the verdict says which half it was.
+$ dg probe D09
+D09  DECIDED  Does search run on every keystroke?
+    falsifier         p95 under 100 ms on the 50k-note set, or on the slowest team laptop
+    probe             core.all_of {"probes": [{"args": {"file": "bench/search.md", "pattern": 
+"^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"file": "bench/laptop.md", 
+"pattern": "^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}]}
+    verdict           fired  bench/search.md: p95: 60 ms  prefix; no line of bench/laptop.md 
+matches /^p95: [0-9][0-9]? ms/
+
+1 presented · fired 1 · holds 0 · unjudged 0
+[exit 1]

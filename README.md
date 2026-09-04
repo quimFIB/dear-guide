@@ -102,7 +102,7 @@ contradicting itself.
 
 | | |
 |---|---|
-| [**The cookbook**](quick-start-demo/index.html) | nineteen worked examples of *how do I do that?*, every line a real transcript, with the graph drawn beside each step. **Start here.** |
+| [**The cookbook**](quick-start-demo/index.html) | twenty worked examples of *how do I do that?*, every line a real transcript, with the graph drawn beside each step. **Start here.** |
 | [How it works, and why](docs/how-it-works.md) | one project's decisions from first question to first reversal — the orientation, not a manual |
 | [The CLI](docs/quickstart-cli.md) | the commands in the order you meet them |
 | [The web app](docs/quickstart-web.md) | `dg serve`: the DAG, the trays, and what stays in the terminal |

@@ -1,0 +1,104 @@
+$ dg add --id D09 --area search --title 'Does search run on every keystroke?' --after D02
+staged add D09
+$ dg decide D09 --answer 'No: search runs on Enter. Neither machine is under 100 ms.' --source 'bench/search.md, bench/laptop.md' --falsifier 'p95 under 100 ms on the 50k-note set, or on the slowest team laptop' --probe '{"kind": "core.all_of", "args": {"probes": [{"kind": "grep.matches", "args": {"file": "bench/search.md", "pattern": "^p95: [0-9][0-9]? ms"}}, {"kind": "grep.matches", "args": {"file": "bench/laptop.md", "pattern": "^p95: [0-9][0-9]? ms"}}]}}'
+╭──────────────────────────────────────────── D09 ─────────────────────────────────────────────╮
+│ Does search run on every keystroke?                                                          │
+│                                                                                              │
+│ depends on D02                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+staged 1 op(s) — review with `dg pending`, then `dg apply`
+# A second question, whose rule needs a domain this machine does not have — half of it, at least.
+$ dg add --id D10 --area search --title 'Is the prefix index the default?' --after D09 --rule 'the laptop under 100 ms, and the search tests passing' --probe '{"kind": "core.all_of", "args": {"probes": [{"kind": "grep.matches", "args": {"file": "bench/laptop.md", "pattern": "^p95: [0-9][0-9]? ms"}}, {"kind": "pytest.passes", "args": {"node": "tests/test_search.py::test_default"}}]}}'
+staged add D10
+$ dg apply
+✓ applied 5 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+# Both records, and one footer line: a prefix nothing installed claims is said once, not once per record. A member nobody can judge leaves the composite unjudged — never an error, and never a holds it did not earn.
+$ dg probe --all
+D01  DECIDED  What is the note store format?
+    falsifier         a user needs attachments larger than 10 MB inside a note, or one note is 
+edited from two machines at once
+    verdict           unjudged
+
+D02  DECIDED  How are notes indexed for search?
+    falsifier         p95 over 200 ms at 100k notes
+    verdict           unjudged
+
+D04  DECIDED  Where does the index live?
+    falsifier         users sync the notes folder and the index file causes conflicts
+    verdict           unjudged
+
+D05  DECIDED  Does the CLI ship a TUI?
+    falsifier         a second interactive prompt appears in the codebase
+    verdict           unjudged
+
+D09  DECIDED  Does search run on every keystroke?
+    falsifier         p95 under 100 ms on the 50k-note set, or on the slowest team laptop
+    probe             core.all_of {"probes": [{"args": {"file": "bench/search.md", "pattern": 
+"^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"file": "bench/laptop.md", 
+"pattern": "^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}]}
+    verdict           holds  no line of bench/search.md matches /^p95: [0-9][0-9]? ms/; no line 
+of bench/laptop.md matches /^p95: [0-9][0-9]? ms/
+
+D10  OPEN  Is the prefix index the default?
+    rule for settling the laptop under 100 ms, and the search tests passing
+    probe             core.all_of {"probes": [{"args": {"file": "bench/laptop.md", "pattern": 
+"^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"node": 
+"tests/test_search.py::test_default"}, "kind": "pytest.passes"}]}  (2026-09-04)
+    verdict           unjudged  no line of bench/laptop.md matches /^p95: [0-9][0-9]? ms/; no 
+installed domain claims `pytest.` — nothing registered under `dgraph.domains`
+
+6 presented · fired 0 · holds 1 · unjudged 5
+`pytest.` not judged here — 1 record(s): no installed domain claims `pytest.` — nothing 
+registered under `dgraph.domains`
+# --domain runs only what one domain judges: how to run the cheap ones, or reach a slow one by name. A composite is one criterion, so it is reached under every member's prefix — grep finds both records, pytest the one whose other half it would judge.
+$ dg probe --domain grep
+D09  DECIDED  Does search run on every keystroke?
+    falsifier         p95 under 100 ms on the 50k-note set, or on the slowest team laptop
+    probe             core.all_of {"probes": [{"args": {"file": "bench/search.md", "pattern": 
+"^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"file": "bench/laptop.md", 
+"pattern": "^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}]}
+    verdict           holds  no line of bench/search.md matches /^p95: [0-9][0-9]? ms/; no line 
+of bench/laptop.md matches /^p95: [0-9][0-9]? ms/
+
+D10  OPEN  Is the prefix index the default?
+    rule for settling the laptop under 100 ms, and the search tests passing
+    probe             core.all_of {"probes": [{"args": {"file": "bench/laptop.md", "pattern": 
+"^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"node": 
+"tests/test_search.py::test_default"}, "kind": "pytest.passes"}]}  (2026-09-04)
+    verdict           unjudged  no line of bench/laptop.md matches /^p95: [0-9][0-9]? ms/; no 
+installed domain claims `pytest.` — nothing registered under `dgraph.domains`
+
+2 presented · fired 0 · holds 1 · unjudged 1
+`pytest.` not judged here — 1 record(s): no installed domain claims `pytest.` — nothing 
+registered under `dgraph.domains`
+$ dg probe --domain pytest
+D10  OPEN  Is the prefix index the default?
+    rule for settling the laptop under 100 ms, and the search tests passing
+    probe             core.all_of {"probes": [{"args": {"file": "bench/laptop.md", "pattern": 
+"^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"node": 
+"tests/test_search.py::test_default"}, "kind": "pytest.passes"}]}  (2026-09-04)
+    verdict           unjudged  no line of bench/laptop.md matches /^p95: [0-9][0-9]? ms/; no 
+installed domain claims `pytest.` — nothing registered under `dgraph.domains`
+
+1 presented · fired 0 · holds 0 · unjudged 1
+`pytest.` not judged here — 1 record(s): no installed domain claims `pytest.` — nothing 
+registered under `dgraph.domains`
+# Each domain gets a child process of its own and its own deadline — grep declares five seconds, the default is sixty — and --timeout at the door overrides whatever a distribution declared. A domain that has not answered by then is unjudged for everything it was asked.
+$ dg probe D09 --timeout 0.001
+D09  DECIDED  Does search run on every keystroke?
+    falsifier         p95 under 100 ms on the 50k-note set, or on the slowest team laptop
+    probe             core.all_of {"probes": [{"args": {"file": "bench/search.md", "pattern": 
+"^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"file": "bench/laptop.md", 
+"pattern": "^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}]}
+    verdict           unjudged  `grep` did not answer within 0.001s; `grep` did not answer 
+within 0.001s
+
+1 presented · fired 0 · holds 0 · unjudged 1
+# A scope that names nothing the store holds is refused, saying what it does hold — and a blank is a selection that matched nothing, never everything.
+$ dg probe --domain rocq
+no pre-commitment is under `rocq.`; prefixes here: grep, prose, pytest
+[exit 2]
+$ dg probe --domain ''
+--domain is empty — a blank name or ref is a selection that matched nothing, not the whole tray,
+and is refused rather than widened
+[exit 2]

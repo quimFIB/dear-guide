@@ -1,6 +1,6 @@
 """The quick-start page must keep showing what it says it shows.
 
-`quick-start-demo/index.html` is a reference of worked examples: nineteen
+`quick-start-demo/index.html` is a reference of worked examples: twenty
 recipes, each a real transcript of `dg` against a seed project, with the
 lines that matter highlighted. Those highlighted lines are the claim each
 recipe makes, and they are quotations from `dg` -- so a reworded message

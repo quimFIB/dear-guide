@@ -839,7 +839,8 @@ evaluates anything — its verdict is a function of the store — which is
 what keeps a commit hook from depending on what the hook's machine has
 installed. `reference.md` has the fields and the commands, and the
 [cookbook](../quick-start-demo/index.html)'s annex walks one question from
-rule to verdict, with a demo domain judging the falsifier.
+rule to verdict, with a demo domain judging the falsifier, and a second
+where one criterion has two halves and only one of them can be judged here.
 
 ## Next
 

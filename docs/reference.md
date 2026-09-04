@@ -113,6 +113,22 @@ ships; the cookbook carries a demo one, `grep` under
 `quick-start-demo/grep-domain/`, as the one to copy and so its page can show
 a verdict.
 
+One prefix names no distribution: **`core`, which the core evaluates
+itself**, and it holds exactly one kind. `core.all_of` takes its members in
+`args.probes` — a list of `{"kind": ..., "args": {...}}` — and is how one
+criterion is judged by more than one domain: the members go out in the same
+batch as any other probe, each to whichever domain claims it, and are
+combined afterwards. It **fires if any member fired, holds only if every
+member holds**, and is `unjudged` otherwise; its sentence is its members'
+sentences, joined. A composite is still **one criterion** (`D85`), so
+`--domain` and the *not judged here* footer both reach it under every
+member's prefix — `--domain bench` selects a record whose `core.all_of`
+names a `bench.` probe among others, and counts it once. `args.probes`
+missing, empty or not a list is `unjudged` rather than an error; a member of
+the wrong shape is `unjudged` on its own, the others still judged; and any
+other `core.` kind is `unjudged` too, since `all_of` is the only one the
+core evaluates and a kind it does not know is not one it guesses at.
+
 `dg probe` is the one door onto evaluation. It presents every
 pre-commitment beside what it is judged against — a falsifier beside the
 world; a PROVISIONAL decision beside the ancestors whose edges are dated
@@ -190,7 +206,7 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
 | `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG` |
 | `.dgraph-capture/` | a fan-out's recording, if one is running — scratch, and gitignored with the rest |
-| `quick-start-demo/` | **start here** — [the cookbook](../quick-start-demo/index.html): nineteen worked examples of *how do I do that with dear-guide?*, every line a real transcript, with the graph drawn beside each step |
+| `quick-start-demo/` | **start here** — [the cookbook](../quick-start-demo/index.html): twenty worked examples of *how do I do that with dear-guide?*, every line a real transcript, with the graph drawn beside each step |
 | `demo/` | a runnable graph holding one of every record this keeps, served in the web app, and a walkthrough over it |
 | `demo-agentic/` | three agents and a day's work on one graph, as seven scenes — what several writers cost, and what the tool does about it |
 | `docs/` | [how it works](how-it-works.md), then quick starts: the [CLI](quickstart-cli.md), the [web app](quickstart-web.md), the [agent plugin](quickstart-agents.md) and [a whole session with it](session-walkthrough.md); plus this page, [composing in an editor](emacs.md), [the design behind `dg find`](query-framework.md) and [what is still open](open-questions.md) |
@@ -288,6 +304,16 @@ dg edit <id>                             # revise a staged op
 dg drop <id>                             # unstage one op
 dg export                                # the graph as JSON; `dg import` reads it back -- the record alone, never the tray
 ```
+
+**A narrowing flag never widens.** `--agent` and `--group` are refused when
+**empty** on every door that takes them — `dg pending`, `dg apply`,
+`dg clear`, the two task twins, and the web app's apply and clear routes.
+`""` is not the absent flag: it is what a script's extraction produces when
+it matched nothing, and `dg apply --group "$REF"` with an unset `$REF` used
+to apply every writer's half-composed batch and exit 0 saying the narrowing
+had been honoured. A name nobody staged under is refused the same way, with
+the roster of names that did — an empty selection and a typo look identical
+afterwards and mean opposite things (`D82`).
 
 
 ## Adopting a store you already have
