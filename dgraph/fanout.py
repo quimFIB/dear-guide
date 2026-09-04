@@ -598,7 +598,11 @@ def assign(plan: Plan, proj: project.Project | None = None
     held tasks, which is the collision the set was computed to avoid; and a
     supervisor who wants the Nth agent is told which pair to break, in the
     report, rather than finding a refused `close` afterwards. Which is a
-    choice and not a finding: the dev graph holds it as an open question.
+    choice and not a finding, and it is made: an agent added past a maximal
+    set has work known in advance to collide, so an idle slot is cheaper
+    than the agent, and a second wave is a `setup` re-run. What would change
+    it is a run seen re-launching for that second wave routinely, at which
+    point the queue belongs inside setup.
 
     With nothing ready the plan is returned as it came: N agents, nothing
     assigned, reading the frontier — the loop this tool has always run, and
