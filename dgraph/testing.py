@@ -23,7 +23,7 @@ import pytest
 
 from dgraph import project as _project
 from dgraph.check import CHECKS, run
-from dgraph.domains import DEADLINE, PROBES
+from dgraph.domains import PROBES
 
 #: The option's own name, and the attribute pytest derives from it.
 OPTION = "--decision-graph"
@@ -33,6 +33,9 @@ _DEST = "decision_graph"
 #: `dg check` output is a function of the store (R2), and this is not.
 PROBE_OPTION = "--decision-graph-probe"
 _PROBE_DEST = "decision_graph_probe"
+#: With the opt-in: only the probes these domains judge (`dg probe --domain`).
+DOMAIN_OPTION = "--decision-graph-domain"
+_DOMAIN_DEST = "decision_graph_domain"
 
 __all__ = [
     "decision_project",
@@ -63,6 +66,12 @@ def pytest_addoption(parser) -> None:
         help="also evaluate every probe through the installed domains "
              "(`dg probe --all`); off by default because it may need a "
              "toolchain",
+    )
+    parser.addoption(
+        DOMAIN_OPTION, action="append", default=[], metavar="PREFIX",
+        help=f"with {PROBE_OPTION}: only probes this domain judges "
+             "(`dg probe --domain PREFIX`); repeatable. Each domain runs "
+             "under its own declared deadline",
     )
 
 
@@ -134,7 +143,10 @@ def probe_findings(pytestconfig, decision_project):
     rows = _probing.rows(g, tg,
                          _pending.load(proj.pending) if g is not None else [],
                          _pending.load(proj.task_pending) if tg is not None else [])
-    _probing.judge(rows, proj.root, timeout=DEADLINE)
+    only = list(pytestconfig.getoption(_DOMAIN_DEST, default=[]) or [])
+    if only:
+        rows = _probing.select(rows, g, _probing.Scope(domain=only))
+    _probing.judge(rows, proj.root)          # each domain's own deadline (D85)
     return _probing.findings(rows)
 
 

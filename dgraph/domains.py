@@ -109,9 +109,20 @@ class Result:
 @dataclass
 class Relation:
     """`(uses, used)` pairs over bound refs, and whether the relation is
-    *complete* — the artefact is the only source of that dependence, so a
-    pair absent here is a pair that does not hold. Empty for most domains,
-    and for `prose` always."""
+    *complete*. Empty for most domains, and for `prose` always.
+
+    `complete` is the domain's claim about **its own prefix**: over refs
+    bound under that prefix, the artefact is the only source of dependence,
+    so a pair absent here is a pair that does not hold. It says nothing
+    about an endpoint's other binds. Whether an *edge* may be dropped on the
+    strength of it is judged per edge by the core (`D83`): only where every
+    bind on both endpoints is under a prefix whose relation was computed in
+    this run and is complete, and the union of every relation's pairs has
+    none for the edge. One bind under an incomplete, empty or unavailable
+    prefix turns the finding into a report. So a domain never composes an
+    `undep` itself — it reports what it sees and declares how far that
+    sight reaches.
+    """
 
     pairs: list[tuple[Bind, Bind]] = field(default_factory=list)
     complete: bool = False
@@ -151,7 +162,15 @@ class Domain(Protocol):
 
     def relations(self, bindings: list[Bind], root: Path) -> Relation:
         """`(uses, used)` pairs over bound refs, and whether the relation is
-        complete. Empty for most domains."""
+        complete. Empty for most domains.
+
+        `bindings` is **every bind on the graph**, under every prefix, not
+        only this domain's (`D83`): a domain that knows files and constants
+        both wants the lot, and reading a ref is not executing anything, so
+        R4 does not object. What a domain answers for is still its own
+        prefix — `Relation.complete` is coverage over that and no more —
+        and closure and reduction run once, over the union of what every
+        domain returned, in the core (`relations` below)."""
 
 
 # ---- the base case --------------------------------------------------------
@@ -236,6 +255,14 @@ def _load(prefix: str) -> Domain | Unavailable:
     if not eps:
         return Unavailable(prefix, f"no installed domain claims `{prefix}.` — "
                                    f"nothing registered under `{GROUP}`")
+    if len(eps) > 1:
+        # Two distributions, one prefix: the first in entry-point order would
+        # silently shadow the other, and which is first is an accident of the
+        # install. Refuse, naming both — a person uninstalls one (T70).
+        names = ", ".join(sorted(ep.value for ep in eps))
+        return Unavailable(prefix, f"`{prefix}` is claimed by {len(eps)} "
+                                   f"installed distributions ({names}) — "
+                                   f"uninstall all but one")
     try:
         obj = eps[0].load()
     except Exception as exc:          # a broken install is not evidence
@@ -264,7 +291,7 @@ def claims(domain: Domain, kind: str) -> bool:
 
 
 def evaluate(items: list[Item], root: Path, *,
-             timeout: float = DEADLINE) -> dict[str, Result]:
+             timeout: float | None = None) -> dict[str, Result]:
     """Every item judged, grouped by domain and each domain called once.
 
     **R3, owned here.** Nothing this returns is written anywhere: a `Result`
@@ -272,13 +299,16 @@ def evaluate(items: list[Item], root: Path, *,
     — and the op goes to the tray under the same rules as one a person
     typed. No store is opened for writing on this path.
 
-    `timeout` is seconds per domain (proposal E5). A domain runs on its own
-    thread; one that has not returned by then is `unjudged` for everything
-    it was asked, with the sentence saying so, and the door moves on. A
-    domain that raises is `unjudged` likewise — never an error, because a
-    broken environment is not evidence about the thing the probe is about.
-    `core.all_of` members are dispatched through the same batch and combined
-    afterwards.
+    Each domain has seconds per batch (proposal E5): the `deadline` it
+    declares, else `DEADLINE`; `timeout`, when given, overrides every
+    domain's — a person at the door outranks a distribution (`D85`). A
+    domain runs on its own thread; one that has not returned by then is
+    `unjudged` for everything it was asked, with the sentence saying so,
+    and the door moves on. A domain that raises is `unjudged` likewise —
+    never an error, because a broken environment is not evidence about the
+    thing the probe is about. Domains run one at a time: two building under
+    one `root` concurrently is worse than slow. `core.all_of` members are
+    dispatched through the same batch and combined afterwards.
     """
     out: dict[str, Result] = {}
     flat: list[Item] = []
@@ -326,9 +356,23 @@ def evaluate(items: list[Item], root: Path, *,
     return out
 
 
+def seconds_for(dom: Domain, timeout: float | None = None) -> float:
+    """How long `dom` gets for one batch: `timeout` if the door gave one,
+    else what the domain declares as `deadline`, else `DEADLINE`. A declared
+    value that is not a positive number is ignored rather than trusted —
+    a domain's metadata is not the place to hang the door."""
+    if timeout is not None:
+        return timeout
+    own = getattr(dom, "deadline", None)
+    if isinstance(own, (int, float)) and not isinstance(own, bool) and own > 0:
+        return float(own)
+    return DEADLINE
+
+
 def _run(dom: Domain, group: list[Item], root: Path,
-         timeout: float) -> dict[str, Result]:
+         timeout: float | None) -> dict[str, Result]:
     """One domain, one batch, one thread, one deadline."""
+    timeout = seconds_for(dom, timeout)
     box: dict[str, object] = {}
 
     def go() -> None:
@@ -373,21 +417,79 @@ def findings(items: list[Item], results: dict[str, Result]) -> list[Violation]:
     door's exit code is `dg check`'s, non-zero when anything fired; a
     holding probe and an unjudged one are both warnings, since neither is a
     problem with the store and `Violation` has two severities. A kind no
-    domain claims is `domain_unavailable`, once per item, and carries the
-    reason discovery gave.
+    domain claims is `domain_unavailable`, **once per prefix** and carrying
+    the reason discovery gave: a missing `bench` on sixty probes is one line
+    saying what this machine's verdict does not cover, not sixty (T71). Each
+    of those items is still `probe_unjudged` on its own, so the count of
+    what was not judged is unchanged and so is the exit code.
     """
     out = []
+    missing: dict[str, tuple[str, list[str]]] = {}
     for it in items:
         r = results.get(it.id) or Result("unjudged", "no result")
         dom = domain_for(it.kind) if it.kind.partition(".")[0] != CORE else None
         if isinstance(dom, Unavailable):
-            out.append(Violation("domain_unavailable",
-                                 f"{it.id}: {dom.why}", "warning", DOMAIN))
-            continue
+            why, ids = missing.setdefault(it.kind.partition(".")[0],
+                                          (dom.why, []))
+            ids.append(it.id)
+            r = Result("unjudged", "")
         name = {"fired": "probe_fired", "holds": "probe_holds",
                 "unjudged": "probe_unjudged"}[r.verdict]
         sev = "error" if r.verdict == "fired" else "warning"
         out.append(Violation(name, f"{it.id}: {it.kind} {r.verdict}"
                                    + (f" — {r.sentence}" if r.sentence else ""),
                              sev, DOMAIN))
+    for prefix, (why, ids) in missing.items():
+        out.insert(0, Violation("domain_unavailable",
+                                f"`{prefix}.` — {len(ids)} probe(s) not judged "
+                                f"on this machine ({_some(ids)}): {why}",
+                                "warning", DOMAIN))
+    return out
+
+
+def _some(ids: list[str], n: int = 5) -> str:
+    return ", ".join(ids[:n]) + (f", … {len(ids) - n} more" if len(ids) > n else "")
+
+
+def unavailable(kinds: list[str]) -> dict[str, tuple[str, list[str]]]:
+    """`prefix -> (why, kinds)` for every kind among `kinds` that no installed
+    domain claims — what a door prints as one footer line per prefix."""
+    out: dict[str, tuple[str, list[str]]] = {}
+    for k in kinds:
+        prefix = k.partition(".")[0]
+        if prefix == CORE:
+            continue
+        dom = domain_for(k)
+        if isinstance(dom, Unavailable):
+            out.setdefault(prefix, (dom.why, []))[1].append(k)
+    return out
+
+
+# ---- relations ---------------------------------------------------------------
+
+
+def relations(bindings: list[Bind], root: Path) -> dict[str, Relation]:
+    """Every installed domain's relation over **all** of `bindings`, keyed by
+    prefix — the one caller of `Domain.relations` (`D83`).
+
+    Each domain whose prefix appears among the binds is handed the whole
+    list, never only its own; a prefix no domain claims, or a domain that
+    raises or returns the wrong thing, is simply absent from the result, so
+    an edge with a bind under it can never be judged fully covered. Nothing
+    here walks the graph: closure and reduction over the union of these
+    are the discovery door's, when it lands.
+    """
+    out: dict[str, Relation] = {}
+    for prefix in sorted({b.kind.partition(".")[0] for b in bindings}):
+        if prefix == CORE:
+            continue
+        dom = domain_for(f"{prefix}.x")
+        if isinstance(dom, Unavailable):
+            continue
+        try:
+            rel = dom.relations(list(bindings), root)
+        except Exception:                # a broken domain is not evidence
+            continue
+        if isinstance(rel, Relation):
+            out[prefix] = rel
     return out

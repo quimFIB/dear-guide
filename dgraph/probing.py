@@ -73,6 +73,17 @@ class Row:
         args = dict(self.probe["args"]) if self.probe else {"text": self.text}
         return domains.Item(self.id, self.kind, args, self, self.slot)
 
+    @property
+    def prefixes(self) -> set[str]:
+        """The domain prefixes this row's criterion reaches — one, or for a
+        `core.all_of` its members', since a composite is one criterion and
+        `--domain` selects records, not members (`D85`)."""
+        if self.probe and self.kind == domains.ALL_OF:
+            members = self.probe.get("args", {}).get("probes") or []
+            return {m["kind"].partition(".")[0] for m in members
+                    if isinstance(m, dict) and isinstance(m.get("kind"), str)}
+        return {self.kind.partition(".")[0]}
+
 
 @dataclass
 class Scope:
@@ -81,11 +92,15 @@ class Scope:
     area: str | None = None
     since: str | None = None
     all: bool = False
+    #: Domain prefixes (`rocq`, `bench`): records whose probe kind — or any
+    #: `core.all_of` member's — carries one. How "run the cheap ones" is
+    #: said, and how a slow domain is reached by name (`D85`).
+    domain: list[str] = field(default_factory=list)
 
     @property
     def given(self) -> bool:
         return bool(self.ids or self.provisional or self.area or self.since
-                    or self.all)
+                    or self.all or self.domain)
 
 
 def rows(g: Graph | None, tg: TaskGraph | None,
@@ -155,6 +170,9 @@ def select(all_rows: list[Row], g: Graph | None, scope: Scope) -> list[Row]:
             continue
         if scope.since and _date_of(r, g) and _date_of(r, g) >= scope.since:
             out.append(r)
+            continue
+        if scope.domain and r.prefixes & set(scope.domain):
+            out.append(r)
     return out
 
 
@@ -165,18 +183,38 @@ def ask_for_scope(all_rows: list[Row], scope: Scope) -> str | None:
         return None
     return (f"{len(all_rows)} records carry a pre-commitment — more than a "
             f"screen. Name a scope: an id, --provisional, --area, --since "
-            f"DATE, or --all")
+            f"DATE, --domain PREFIX, or --all")
 
 
-def judge(selected: list[Row], root: Path, *, timeout: float) -> list[Row]:
-    """Every selected row through the batched evaluator, verdict filled in."""
+def judge(selected: list[Row], root: Path, *,
+          timeout: float | None = None) -> list[Row]:
+    """Every selected row through the batched evaluator, verdict filled in.
+
+    `timeout` is the door's override; `None` lets each domain's declared
+    deadline stand (`D85`). A row whose prefix no installed domain claims is
+    `unjudged` with no sentence of its own: the reason is said once per
+    prefix, by `not_covered`, not once per row (T71).
+    """
     items = [r.item() for r in selected]
     results = domains.evaluate(items, root, timeout=timeout)
+    missing = domains.unavailable([r.kind for r in selected])
     for r in selected:
         res = results.get(r.id)
         if res is not None:
             r.verdict, r.sentence = res.verdict, res.sentence
+        if r.kind.partition(".")[0] in missing:
+            r.sentence = ""
     return selected
+
+
+def not_covered(selected: list[Row]) -> list[str]:
+    """One line per prefix this machine cannot judge, for the door's footer:
+    which prefixes the verdict above does not cover, and why."""
+    out = []
+    for prefix, (why, kinds) in domains.unavailable([r.kind for r in selected]).items():
+        n = sum(1 for r in selected if r.kind.partition(".")[0] == prefix)
+        out.append(f"`{prefix}.` not judged here — {n} record(s): {why}")
+    return out
 
 
 def findings(selected: list[Row]):

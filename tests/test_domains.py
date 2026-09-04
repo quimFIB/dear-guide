@@ -133,7 +133,24 @@ def test_a_prefix_nobody_claims_is_unavailable_not_an_error(monkeypatch):
     assert res["D01"].verdict == "unjudged"
     f = domains.findings(items, res)
     assert [(v.check, v.severity, v.origin) for v in f] == [
-        ("domain_unavailable", "warning", DOMAIN)]
+        ("domain_unavailable", "warning", DOMAIN),
+        ("probe_unjudged", "warning", DOMAIN)]
+
+
+def test_an_uninstalled_prefix_is_one_finding_however_many_probes(monkeypatch):
+    """T71: sixty probes under a missing `bench` is one `domain_unavailable`
+    naming the prefix and the count, not sixty; each is still unjudged on
+    its own, so nothing blocks and the unjudged count is unchanged."""
+    _install(monkeypatch)
+    items = [Item(f"D{i:02d}", "bench.no_regression", {}, None) for i in range(60)]
+    res = domains.evaluate(items, ROOT)
+    f = domains.findings(items, res)
+    missing = [v for v in f if v.check == "domain_unavailable"]
+    assert len(missing) == 1 and "bench." in str(missing[0]) and "60" in str(missing[0])
+    assert "… 55 more" in str(missing[0])
+    assert sum(v.check == "probe_unjudged" for v in f) == 60
+    assert not any(v.blocking for v in f)
+    assert list(domains.unavailable([it.kind for it in items])) == ["bench"]
 
 
 def test_a_registered_domain_is_loaded_lazily_by_prefix(monkeypatch):
@@ -155,6 +172,15 @@ def test_a_domain_that_fails_to_load_or_is_not_one_is_unavailable(monkeypatch):
     assert isinstance(bad, Unavailable) and "ImportError" in bad.why
     nd = domains.domain_for("notadomain.x")
     assert isinstance(nd, Unavailable) and "not a Domain" in nd.why
+
+
+def test_two_distributions_on_one_prefix_is_unavailable_naming_both(monkeypatch):
+    """T70: `_load` used to take the first entry point, and which is first is
+    an accident of the install — a silent shadow. Refused, naming both."""
+    _install(monkeypatch, _EP("fake", "one:A", Fake()), _EP("fake", "two:B", Fake()))
+    got = domains.domain_for("fake.ok")
+    assert isinstance(got, Unavailable)
+    assert "one:A" in got.why and "two:B" in got.why and "2" in got.why
 
 
 def test_a_malformed_kind_is_unavailable_with_the_shape_fault():
@@ -207,6 +233,72 @@ def test_a_holding_probe_is_a_warning_not_an_error(monkeypatch):
     items = [Item("D01", "fake.ok", {}, None)]
     f = domains.findings(items, domains.evaluate(items, ROOT))
     assert f[0].check == "probe_holds" and not f[0].blocking
+
+
+def test_each_domain_runs_under_its_own_deadline_unless_the_door_overrides(monkeypatch):
+    """D85 / T73: a slow domain declares its deadline; a fast one declares
+    none and gets DEADLINE; `timeout` given at the door overrides both."""
+    class Slow(Fake):
+        name = "slow"; kinds = frozenset({"slow.ok"}); deadline = 0.05
+    fast, slow = Fake(), Slow(sleep=1.0)
+    _install(monkeypatch, _EP("fake", "f:F", fast), _EP("slow", "s:S", slow))
+    assert domains.seconds_for(fast) == domains.DEADLINE
+    assert domains.seconds_for(slow) == 0.05
+    assert domains.seconds_for(slow, 3.0) == 3.0
+    items = [Item("D01", "fake.ok", {}, None), Item("D02", "slow.ok", {}, None)]
+    t0 = time.monotonic()
+    res = domains.evaluate(items, ROOT)                 # no --timeout
+    assert time.monotonic() - t0 < 0.9
+    assert res["D01"].verdict == "holds"
+    assert res["D02"].verdict == "unjudged" and "0.05s" in res["D02"].sentence
+    domains.forget(); slow = Slow(sleep=0.0)
+    _install(monkeypatch, _EP("fake", "f:F", fast), _EP("slow", "s:S", slow))
+    assert domains.evaluate(items, ROOT, timeout=2.0)["D02"].verdict == "holds"
+
+
+def test_a_declared_deadline_that_is_not_a_positive_number_is_ignored():
+    class Odd(Fake):
+        deadline = "soon"
+    class Neg(Fake):
+        deadline = -1
+    class Flag(Fake):
+        deadline = True
+    for d in (Odd(), Neg(), Flag()):
+        assert domains.seconds_for(d) == domains.DEADLINE
+
+
+# ---- relations ---------------------------------------------------------------
+
+
+def test_every_domain_receives_every_bind_not_only_its_own(monkeypatch):
+    """D83 / T72: `relations()` is handed the whole graph's binds. A domain
+    given only its own prefix would fail this."""
+    from dgraph.probe import Bind
+
+    class Seen(Fake):
+        def __init__(self, name):
+            super().__init__(); self.name = name
+            self.kinds = frozenset(); self.given = None
+        def relations(self, bindings, root):
+            self.given = list(bindings)
+            return Relation(complete=self.name == "rocq")
+    rocq, git = Seen("rocq"), Seen("git")
+    _install(monkeypatch, _EP("rocq", "r:R", rocq), _EP("git", "g:G", git))
+    binds = [Bind("rocq.constant", "Closure.closed"), Bind("git.path", "a.v"),
+             Bind("bench.suite", "closure")]
+    got = domains.relations(binds, ROOT)
+    assert rocq.given == binds and git.given == binds
+    assert set(got) == {"rocq", "git"}                  # bench: nobody claims it
+    assert got["rocq"].complete and not got["git"].complete
+
+
+def test_a_domain_whose_relations_raise_is_absent_not_an_error(monkeypatch):
+    from dgraph.probe import Bind
+    class Bad(Fake):
+        def relations(self, bindings, root):
+            raise RuntimeError("no toolchain")
+    _install(monkeypatch, _EP("fake", "f:F", Bad()))
+    assert domains.relations([Bind("fake.x", "y")], ROOT) == {}
 
 
 # ---- core.all_of --------------------------------------------------------------

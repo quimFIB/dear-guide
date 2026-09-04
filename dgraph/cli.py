@@ -1704,10 +1704,19 @@ def probe(
                                    "definition of done in prose alone carries "
                                    "no date and is out of this scope — reach "
                                    "it by id, --area or --all"),
+    domain: list[str] = typer.Option(None, "--domain", metavar="PREFIX",
+                                     help="records whose probe is judged by "
+                                          "this domain (`rocq`, `bench`); "
+                                          "repeatable. How to run only the "
+                                          "cheap ones, or reach a slow one "
+                                          "by name"),
     all_: bool = typer.Option(False, "--all", help="everything, however many"),
-    timeout: float = typer.Option(domains.DEADLINE, "--timeout",
+    timeout: float = typer.Option(None, "--timeout",
                                   help="seconds per domain before its "
-                                       "answers are unjudged"),
+                                       "answers are unjudged; overrides "
+                                       "every domain's own deadline "
+                                       f"(default {domains.DEADLINE:g}s "
+                                       "where a domain declares none)"),
 ) -> None:
     """Every pre-commitment, presented beside what it is judged against.
 
@@ -1736,7 +1745,8 @@ def probe(
     t_ops = pending.load(proj.task_pending) if tg is not None else []
     every = probing.rows(g, tg, d_ops, t_ops)
     scope = probing.Scope(ids=list(ids or []), provisional=provisional,
-                          area=area, since=since, all=all_)
+                          area=area, since=since, all=all_,
+                          domain=list(domain or []))
     unknown = [i for i in scope.ids
                if not ((g and i in g.vertices) or (tg and i in tg.tasks))]
     if unknown:
@@ -1760,6 +1770,8 @@ def probe(
               f"[red]fired {counts['fired']}[/] · "
               f"[green]holds {counts['holds']}[/] · "
               f"[dim]unjudged {counts['unjudged']}[/]")
+    for line in probing.not_covered(chosen):
+        con.print(f"[yellow]{_x(line)}[/]")
     if counts["fired"]:
         raise typer.Exit(1)
 

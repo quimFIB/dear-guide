@@ -121,9 +121,14 @@ the work; a rule beside the outcomes of its evidence — and says what any
 installed domain made of each: `fired`, `holds`, or `unjudged`. Its exit
 code is `dg check`'s, non-zero when anything fired; it reads both trays
 first, so a record a staged op already names says so; and it never writes.
-`dg check` never evaluates a probe — its output is a function of the store
-— and judges only the two shapes. The pytest plugin evaluates probes only
-under `--decision-graph-probe`.
+Each domain runs in turn under its own declared deadline (60 s where it
+declares none); `--timeout` overrides every domain's, and `--domain PREFIX`
+scopes the run to the records one domain judges — how to run the cheap
+ones, or reach a slow one by name. A prefix this machine cannot judge is
+said once, in a footer, not once per record. `dg check` never evaluates a
+probe — its output is a function of the store — and judges only the two
+shapes. The pytest plugin evaluates probes only under
+`--decision-graph-probe`, scoped the same way by `--decision-graph-domain`.
 
 ### Areas — the vocabulary, in both stores
 
@@ -241,6 +246,7 @@ dg task bind T20 rocq.file:theories/X.v  # the same pair of ops, in the other st
 dg probe D40                             # a pre-commitment beside what it is judged against
 dg probe --provisional                   # ...every PROVISIONAL decision beside the premises dated after it
 dg probe --all                           # ...everything; bare, past a screenful, it asks for a scope
+dg probe --domain rocq                   # ...only what one domain judges; --timeout overrides its deadline
 dg reopen D06                            # stage a reopen + its propagation
 dg confirm D12                           # a provisional decision, re-examined and standing
 dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds

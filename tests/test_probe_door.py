@@ -129,6 +129,24 @@ def test_select_by_id_provisional_area_and_since(store):
     assert all(g.active_edge(r.id).date >= "2026-01-01" for r in late)
 
 
+def test_select_by_domain_reaches_a_composite_through_any_member(store):
+    g = pending.apply_all(Graph.from_dict(FIXTURE), [
+        {"op": "reprobe", "vertex": "D05", "probe": {"kind": "fake.ok", "args": {}},
+         "date": "2026-02-02"},
+        {"op": "reprobe", "vertex": "D06", "probe": {
+            "kind": domains.ALL_OF, "args": {"probes": [
+                {"kind": "slow.ok", "args": {}}, {"kind": "fake.ok", "args": {}}]}},
+         "date": "2026-02-02"}])
+    rows = probing.rows(g, None)
+    by = {r.id: r for r in rows}
+    assert by["D05"].prefixes == {"fake"} and by["D06"].prefixes == {"slow", "fake"}
+    assert by["D01"].prefixes == {"prose"}
+    assert [r.id for r in probing.select(rows, g, probing.Scope(domain=["slow"]))] == ["D06"]
+    assert [r.id for r in probing.select(rows, g, probing.Scope(domain=["fake"]))] == ["D05", "D06"]
+    assert probing.Scope(domain=["fake"]).given
+    assert "--domain" in probing.ask_for_scope(rows * 30, probing.Scope())
+
+
 # ---- judged ------------------------------------------------------------------
 
 
@@ -147,6 +165,18 @@ def test_the_door_batches_through_the_evaluator_and_reports_fired(monkeypatch, s
     f = probing.findings(rows)
     assert sum(v.check == "probe_fired" for v in f) == 2
     assert all(v.origin == "domain" for v in f)
+
+
+def test_an_unclaimed_prefix_is_said_once_in_the_footer_not_per_row(store):
+    """T71: the rows stay, each `unjudged`; the reason is one line per prefix."""
+    g = pending.apply_all(Graph.from_dict(FIXTURE), [
+        {"op": "reprobe", "vertex": v, "probe": {"kind": "bench.ok", "args": {}},
+         "date": "2026-02-02"} for v in ("D05", "D06")])
+    rows = probing.judge(probing.rows(g, None), store)
+    by = {r.id: r for r in rows}
+    assert by["D05"].verdict == "unjudged" and by["D05"].sentence == ""
+    foot = probing.not_covered(rows)
+    assert len(foot) == 1 and "bench." in foot[0] and "2 record(s)" in foot[0]
 
 
 # ---- the command --------------------------------------------------------------
@@ -184,6 +214,31 @@ def test_dg_probe_exits_nonzero_when_anything_fired(run, store, monkeypatch):
     run("apply")
     res = run("probe", "D05")
     assert res.exit_code == 1 and "fired 1" in res.output, res.output
+
+
+def test_dg_probe_domain_scope_never_reaches_the_other_domain(run, store, monkeypatch):
+    """D85 / T73: `--domain fake` judges the fast domain and the slow one is
+    not called; bare, the slow one runs under its own declared deadline."""
+    class Slow(Fake):
+        name = "slow"; kinds = frozenset({"slow.ok"}); deadline = 0.05
+    fast, slow = Fake("holds"), Slow(sleep=0.5)
+    _install(monkeypatch, _EP("fake", "f:F", fast), _EP("slow", "s:S", slow))
+    ops = [{"op": "reprobe", "vertex": "D05", "probe": {"kind": "fake.ok", "args": {}},
+            "date": "2026-02-02"},
+           {"op": "reprobe", "vertex": "D06", "probe": {"kind": "slow.ok", "args": {}},
+            "date": "2026-02-02"}]
+    g = pending.apply_all(Graph.load(store / "decisions.json"), ops)
+    g.save(store / "decisions.json")
+    res = run("probe", "--domain", "fake")
+    assert res.exit_code == 0, res.output
+    assert "D05" in res.output and "D06" not in res.output
+    assert fast.calls == 1 and slow.calls == 0
+    res = run("probe", "--all")
+    assert res.exit_code == 0, res.output
+    assert slow.calls == 1 and "0.05s" in res.output
+    assert "holds 1" in res.output
+    res = run("probe", "--domain", "slow", "--timeout", "2")
+    assert "holds 1" in res.output and "1 presented" in res.output
 
 
 def test_dg_probe_shows_a_task_beside_the_work(run, store, task_store):

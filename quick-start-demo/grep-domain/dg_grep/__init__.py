@@ -32,6 +32,10 @@ from dgraph.domains import Item, Relation, Result
 class Grep:
     name = "grep"
     kinds = frozenset({"grep.matches"})
+    # Optional: seconds one batch may take before its answers are unjudged.
+    # Absent, the core's DEADLINE (60 s) applies; `dg probe --timeout`
+    # overrides whatever is declared. A grep needs nothing like a minute.
+    deadline = 5.0
 
     def compose(self, kind: str, record: object, root: Path) -> tuple[dict, str]:
         return {}, ""
