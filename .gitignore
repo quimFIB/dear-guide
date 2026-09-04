@@ -84,3 +84,9 @@ demo-agentic/tasks.md
 node_modules/
 package.json
 package-lock.json
+
+# Skills for developing this tool — the audit pass and the drill for settling
+# the development graph's open questions. They live in the private notes,
+# because they cite pages there, and are reached by a symlink for the same
+# reason `dev-docs` is: no trailing slash, since the rule must match a link.
+/.claude/skills
