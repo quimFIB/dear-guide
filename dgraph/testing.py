@@ -40,10 +40,13 @@ _DOMAIN_DEST = "decision_graph_domain"
 __all__ = [
     "decision_project",
     "decision_violations",
+    "probe_rows",
     "probe_findings",
+    "probe_advisories",
     "test_decision_graph_invariant",
     "test_decision_graph_advisory_warnings",
     "test_decision_graph_probe",
+    "test_decision_graph_probe_advisory_warnings",
 ]
 
 
@@ -125,8 +128,8 @@ def test_decision_graph_advisory_warnings(decision_violations):
 
 
 @pytest.fixture(scope="session")
-def probe_findings(pytestconfig, decision_project):
-    """`dg probe --all` over the project, as findings — only when opted in.
+def probe_rows(pytestconfig, decision_project):
+    """`dg probe --all` over the project, judged — only when opted in.
 
     Skipped rather than empty when the flag is off, so a green run never
     reads as *every probe holds* on a machine that evaluated nothing.
@@ -146,17 +149,50 @@ def probe_findings(pytestconfig, decision_project):
     only = list(pytestconfig.getoption(_DOMAIN_DEST, default=[]) or [])
     if only:
         rows = _probing.select(rows, g, _probing.Scope(domain=only))
-    _probing.judge(rows, proj.root)          # each domain's own deadline (D85)
-    return _probing.findings(rows)
+    return _probing.judge(rows, proj.root)   # each domain's own deadline (D85)
+
+
+@pytest.fixture(scope="session")
+def probe_findings(probe_rows):
+    """The rows as findings — what `test_decision_graph_probe` fails on."""
+    from dgraph import probing as _probing
+    return _probing.findings(probe_rows)
+
+
+@pytest.fixture(scope="session")
+def probe_advisories(probe_rows):
+    """The non-blocking findings worth a reader's eye: what every domain but
+    the base case said, or could not say. `prose` presents and never judges,
+    so its `unjudged` is the reading itself and not a finding; a `holds`, a
+    timeout, a prefix nobody installed are."""
+    from dgraph import probing as _probing
+    rows = [r for r in probe_rows if r.prefixes != {"prose"}]
+    return [v for v in _probing.findings(rows) if not v.blocking]
 
 
 @pytest.mark.parametrize("finding", PROBES)
 def test_decision_graph_probe(finding, probe_findings):
     """One test per probe finding, `test_decision_graph_invariant`'s twin
     over `PROBES` (proposal C6): a fired probe fails, the rest are findings
-    a reader looks at. `domain_unavailable` and `probe_unjudged` never fail
-    — a missing toolchain is not evidence about the thing the probe is
-    about."""
+    a reader looks at — in the warning summary, through the advisory twin
+    below. `domain_unavailable` and `probe_unjudged` never fail — a missing
+    toolchain is not evidence about the thing the probe is about."""
     hits = [str(v) for v in probe_findings
             if v.check == finding and v.blocking]
     assert not hits, "\n".join(hits)
+
+
+def test_decision_graph_probe_advisory_warnings(probe_advisories):
+    """The non-blocking half of `dg probe`, through pytest's warning summary
+    — `test_decision_graph_advisory_warnings`' twin over `PROBES`. A prefix
+    this machine cannot judge is a footer line on `dg probe`, and under the
+    opt-in it was nothing at all: six green tests on a run that evaluated
+    none of what it was asked (audit `J-F5`). Never a failure, for the
+    reason the twin gives; a `holds` and an `unjudged` are findings a
+    reader looks at, and this is where they are put."""
+    warns = [str(v) for v in probe_advisories]
+    if warns:
+        _warnings.warn(
+            "decision graph probe finding(s):\n" + "\n".join(warns),
+            UserWarning, stacklevel=1,
+        )

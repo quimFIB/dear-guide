@@ -300,3 +300,21 @@ def test_the_result_docstring_promises_nothing_the_code_does_not_do():
     (audit N-F6). When `--stage` lands, this test is the one to invert."""
     doc = domains.Result.__doc__
     assert "must pass" in doc and "passes through" not in doc
+
+
+def test_a_composite_under_an_unclaimed_prefix_is_in_the_footer_too(store):
+    """Audit J-F1: `--domain bench` reaches a composite through its members
+    (`Row.prefixes`), so the footer and the findings must reach it the same
+    way — the reason once per prefix, never twice in one row."""
+    g = pending.apply_all(Graph.from_dict(FIXTURE), [
+        {"op": "reprobe", "vertex": "D05", "probe": {
+            "kind": domains.ALL_OF, "args": {"probes": [
+                {"kind": "bench.a", "args": {}}, {"kind": "bench.b", "args": {}}]}},
+         "date": "2026-02-02"}])
+    rows = probing.judge(probing.rows(g, None), store)
+    by = {r.id: r for r in rows}
+    assert by["D05"].verdict == "unjudged" and by["D05"].sentence == ""
+    foot = probing.not_covered(rows)
+    assert len(foot) == 1 and "bench." in foot[0] and "1 record(s)" in foot[0], foot
+    f = probing.findings(rows)
+    assert sum(v.check == "domain_unavailable" for v in f) == 1

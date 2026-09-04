@@ -370,3 +370,22 @@ def test_diff_keys_on_check_and_message():
     c = Violation("acyclic", "cycle D01 -> D02 -> D01")
     fixed, introduced, kept = diff([a, c], [b, c])
     assert fixed == [a] and introduced == [b] and kept == [c]
+
+
+def test_probe_advisory_findings_warn_but_never_fail():
+    """Audit J-F5. `test_decision_graph_probe` fails on `probe_fired` and
+    its docstring calls the rest *findings a reader looks at* — and nothing
+    showed them: a prefix this machine cannot judge was a footer line on
+    `dg probe` and silence under `--decision-graph-probe`. The advisory
+    twin surfaces them the way `test_decision_graph_advisory_warnings` does
+    for `dg check`'s warnings, and never fails."""
+    from dgraph import testing
+    from dgraph.model import Violation
+    from dgraph.violation import DOMAIN
+
+    with pytest.warns(UserWarning, match="domain_unavailable"):
+        testing.test_decision_graph_probe_advisory_warnings(
+            [Violation("domain_unavailable", "`bench.` — 2 probe(s) not judged",
+                       "warning", DOMAIN)])
+    testing.test_decision_graph_probe_advisory_warnings([])
+    assert "test_decision_graph_probe_advisory_warnings" in testing.__all__

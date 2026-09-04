@@ -150,7 +150,7 @@ def test_an_uninstalled_prefix_is_one_finding_however_many_probes(monkeypatch):
     assert "… 55 more" in str(missing[0])
     assert sum(v.check == "probe_unjudged" for v in f) == 60
     assert not any(v.blocking for v in f)
-    assert list(domains.unavailable([it.kind for it in items])) == ["bench"]
+    assert list(domains.unavailable(items)) == ["bench"]
 
 
 def test_a_registered_domain_is_loaded_lazily_by_prefix(monkeypatch):
@@ -329,3 +329,24 @@ def test_all_of_with_no_members_or_a_bad_member_is_unjudged():
     other = Item("D03", "core.any_of", {}, None)
     res = domains.evaluate([other], ROOT)
     assert res["D03"].verdict == "unjudged" and ALL_OF in res["D03"].sentence
+
+
+def test_a_composite_under_an_unclaimed_prefix_is_said_once_not_per_member(monkeypatch):
+    """Audit J-F1. A `core.all_of` whose members sit under a missing prefix
+    is a probe under that prefix too: T71's one line names it, and the
+    row's own sentence does not carry the reason once per member."""
+    _install(monkeypatch)
+    comp = Item("D01", ALL_OF, {"probes": [{"kind": "bench.a", "args": {}},
+                                          {"kind": "bench.b", "args": {}}]}, None)
+    items = [comp, Item("D02", "bench.c", {}, None)]
+    res = domains.evaluate(items, ROOT)
+    assert res["D01"].verdict == "unjudged"
+    f = domains.findings(items, res)
+    missing = [v for v in f if v.check == "domain_unavailable"]
+    assert len(missing) == 1 and "2 probe(s)" in str(missing[0]), [str(v) for v in f]
+    assert "D01" in str(missing[0]) and "D02" in str(missing[0])
+    assert [str(v) for v in f if v.check == "probe_unjudged"] == [
+        "[probe_unjudged] (warning) D01: core.all_of unjudged",
+        "[probe_unjudged] (warning) D02: bench.c unjudged"]
+    assert list(domains.unavailable(items)) == ["bench"]
+    assert domains.unavailable(items)["bench"][1] == ["bench.a", "bench.b", "bench.c"]

@@ -57,7 +57,10 @@ class Grep:
             return Result("unjudged", f"{file} is outside the project — not read")
         if not path.is_file():
             return Result("unjudged", f"{file} does not exist yet")
-        r = subprocess.run(["grep", "-E", "-m1", pattern, str(path)],
+        # `-e` and `--`: the store's pattern and file are data, whatever
+        # they begin with. Without them `--help` was an option and its usage
+        # text a verdict, and `-f/etc/hostname` read outside root (J-F4).
+        r = subprocess.run(["grep", "-E", "-m1", "-e", pattern, "--", str(path)],
                            capture_output=True, text=True)
         if r.returncode == 0:
             return Result("fired", f"{file}: {r.stdout.strip()}")

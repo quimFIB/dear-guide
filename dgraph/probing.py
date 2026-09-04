@@ -74,15 +74,21 @@ class Row:
         return domains.Item(self.id, self.kind, args, self, self.slot)
 
     @property
+    def kinds(self) -> list[str]:
+        """Every kind this row's criterion reaches — one, or for a
+        `core.all_of` its members' (`domains.kinds_of`)."""
+        if self.probe:
+            return domains.kinds_of(self.kind, self.probe.get("args"))
+        return [self.kind]
+
+    @property
     def prefixes(self) -> set[str]:
         """The domain prefixes this row's criterion reaches — one, or for a
         `core.all_of` its members', since a composite is one criterion and
-        `--domain` selects records, not members (`D85`)."""
-        if self.probe and self.kind == domains.ALL_OF:
-            members = self.probe.get("args", {}).get("probes") or []
-            return {m["kind"].partition(".")[0] for m in members
-                    if isinstance(m, dict) and isinstance(m.get("kind"), str)}
-        return {self.kind.partition(".")[0]}
+        `--domain` selects records, not members (`D85`). The footer and the
+        findings read the same list, so what `--domain bench` reaches is
+        what *`bench.` not judged here* counts (audit `J-F1`)."""
+        return {k.partition(".")[0] for k in self.kinds}
 
 
 @dataclass
@@ -197,22 +203,24 @@ def judge(selected: list[Row], root: Path, *,
     """
     items = [r.item() for r in selected]
     results = domains.evaluate(items, root, timeout=timeout)
-    missing = domains.unavailable([r.kind for r in selected])
+    missing = set(domains.unavailable(items))
     for r in selected:
         res = results.get(r.id)
         if res is not None:
             r.verdict, r.sentence = res.verdict, res.sentence
-        if r.kind.partition(".")[0] in missing:
+        if r.prefixes and r.prefixes <= missing:
             r.sentence = ""
     return selected
 
 
 def not_covered(selected: list[Row]) -> list[str]:
     """One line per prefix this machine cannot judge, for the door's footer:
-    which prefixes the verdict above does not cover, and why."""
+    which prefixes the verdict above does not cover, and why. A composite
+    counts under each member's prefix."""
     out = []
-    for prefix, (why, kinds) in domains.unavailable([r.kind for r in selected]).items():
-        n = sum(1 for r in selected if r.kind.partition(".")[0] == prefix)
+    items = [r.item() for r in selected]
+    for prefix, (why, kinds) in domains.unavailable(items).items():
+        n = sum(1 for r in selected if prefix in r.prefixes)
         out.append(f"`{prefix}.` not judged here — {n} record(s): {why}")
     return out
 

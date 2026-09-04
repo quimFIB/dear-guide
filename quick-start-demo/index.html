@@ -2704,10 +2704,10 @@ layer "$@"
 <span class="ln exit">[exit 1]</span></div><div class="step" data-key="89ba806141" data-mode="none" data-i="12"><span class="note">The same verdict where a benchmark job would meet it: one test file, one line, and the run fails naming the decision. This much runs without you; the reopen still does not.</span>
 <span class="cmd"><b class="ps">$</b> cat tests/test_graph.py</span>
 <span class="ln">from dgraph.testing import *  # noqa: F401,F403</span></div><div class="step" data-key="89ba806141-q-3f375487" data-mode="query" data-i="13"><span class="cmd"><b class="ps">$</b> env CI=1 pytest -q --tb=no --decision-graph-probe -k probe</span>
-<span class="ln">...F..                                                                                   [100%]</span>
+<span class="ln">...F...                                                                                  [100%]</span>
 <span class="ln">=================================== short test summary info ====================================</span>
 <span class="ln hl">FAILED tests/test_graph.py::test_decision_graph_probe[probe_fired] - AssertionError: [probe_fired] D09: grep.matches fired — bench/search.md: p95: 60 ms  prefix<em class="mark">the benchmark job fails, naming the decision</em></span>
-<span class="ln">1 failed, 5 passed, 43 deselected in 0.05s</span>
+<span class="ln">1 failed, 6 passed, 43 deselected in 0.05s</span>
 <span class="ln exit">[exit 1]</span></div><div class="step" data-key="89ba806141-q-3f375487" data-mode="query" data-i="14"><span class="cmd"><b class="ps">$</b> dg reopen D09 --why 'bench/search.md: p95 60 ms with the prefix index, which is the falsifier' -y</span>
 <span class="ln">╭───────────────────────────────────────── reopen D09 ─────────────────────────────────────────╮</span>
 <span class="ln">│ Does search run on every keystroke?                                                          │</span>
@@ -2765,11 +2765,12 @@ layer "$@"
 <span class="ln">Over: search on Enter.</span>
 <span class="ln">    probe             pytest.passes {"node": "tests/test_search.py::test_p95_under_100ms"}  </span>
 <span class="ln">(2026-09-04)</span>
-<span class="ln hl">    verdict           unjudged  no installed domain claims `pytest.` — nothing registered under <em class="mark">presented, not evaluated, never an error</em></span>
-<span class="ln">`dgraph.domains`</span>
+<span class="ln">    verdict           unjudged</span>
 <span class="ln">    T12 DONE — p95 340 ms on 50k notes</span>
 <span class="ln"> </span>
-<span class="ln">1 presented · fired 0 · holds 0 · unjudged 1</span></div></pre></div></div><details class="src"><summary>The script that produced both transcripts</summary><pre>#!/usr/bin/env bash
+<span class="ln">1 presented · fired 0 · holds 0 · unjudged 1</span>
+<span class="ln hl">`pytest.` not judged here — 1 record(s): no installed domain claims `pytest.` — nothing <em class="mark">presented, not evaluated, never an error</em></span>
+<span class="ln">registered under `dgraph.domains`</span></div></pre></div></div><details class="src"><summary>The script that produced both transcripts</summary><pre>#!/usr/bin/env bash
 # q: How do I say in advance what would settle a question, finish a task, or overturn an answer?
 # part: annex
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"

@@ -409,6 +409,24 @@ def _run(dom: Domain, group: list[Item], root: Path,
 # ---- findings ----------------------------------------------------------------
 
 
+def kinds_of(kind: str, args: object) -> list[str]:
+    """The kinds a criterion reaches, for whoever asks *which domains does
+    this need*: the kind itself, or for `core.all_of` its well-formed
+    members' — a composite is one criterion (`D85`) and every member is a
+    probe under its own prefix. A `core.` kind that is not the composite
+    reaches none. `Row.prefixes`, `unavailable` and `findings` all read
+    this, so the door's `--domain` and its footer cannot disagree about
+    what a composite is under (audit `J-F1`)."""
+    if kind == ALL_OF:
+        members = args.get("probes") if isinstance(args, dict) else None
+        return [m["kind"] for m in (members or []) if isinstance(m, dict)
+                and isinstance(m.get("kind"), str)
+                and not kind_fault(m["kind"], "a probe's")]
+    if kind.partition(".")[0] == CORE:
+        return []
+    return [kind]
+
+
 def findings(items: list[Item], results: dict[str, Result]) -> list[Violation]:
     """The results as `Violation`s with origin `domain`, one per item.
 
@@ -421,17 +439,27 @@ def findings(items: list[Item], results: dict[str, Result]) -> list[Violation]:
     the reason discovery gave: a missing `bench` on sixty probes is one line
     saying what this machine's verdict does not cover, not sixty (T71). Each
     of those items is still `probe_unjudged` on its own, so the count of
-    what was not judged is unchanged and so is the exit code.
+    what was not judged is unchanged and so is the exit code. An item whose
+    every kind is under a missing prefix — a `core.all_of` of `bench.`
+    members included — carries no sentence of its own, since the line above
+    says why; one with a judged member beside a missing one keeps what the
+    judged member said.
     """
     out = []
     missing: dict[str, tuple[str, list[str]]] = {}
     for it in items:
         r = results.get(it.id) or Result("unjudged", "no result")
-        dom = domain_for(it.kind) if it.kind.partition(".")[0] != CORE else None
-        if isinstance(dom, Unavailable):
-            why, ids = missing.setdefault(it.kind.partition(".")[0],
-                                          (dom.why, []))
-            ids.append(it.id)
+        kinds = kinds_of(it.kind, it.args)
+        gone = []
+        for k in kinds:
+            dom = domain_for(k)
+            if isinstance(dom, Unavailable):
+                gone.append((k.partition(".")[0], dom.why))
+        for prefix, why in dict(gone).items():
+            _, ids = missing.setdefault(prefix, (why, []))
+            if it.id not in ids:
+                ids.append(it.id)
+        if gone and len(gone) == len(kinds):
             r = Result("unjudged", "")
         name = {"fired": "probe_fired", "holds": "probe_holds",
                 "unjudged": "probe_unjudged"}[r.verdict]
@@ -451,17 +479,16 @@ def _some(ids: list[str], n: int = 5) -> str:
     return ", ".join(ids[:n]) + (f", … {len(ids) - n} more" if len(ids) > n else "")
 
 
-def unavailable(kinds: list[str]) -> dict[str, tuple[str, list[str]]]:
-    """`prefix -> (why, kinds)` for every kind among `kinds` that no installed
-    domain claims — what a door prints as one footer line per prefix."""
+def unavailable(items: list[Item]) -> dict[str, tuple[str, list[str]]]:
+    """`prefix -> (why, kinds)` for every kind among `items` that no installed
+    domain claims — a composite's members included — what a door prints as
+    one footer line per prefix."""
     out: dict[str, tuple[str, list[str]]] = {}
-    for k in kinds:
-        prefix = k.partition(".")[0]
-        if prefix == CORE:
-            continue
-        dom = domain_for(k)
-        if isinstance(dom, Unavailable):
-            out.setdefault(prefix, (dom.why, []))[1].append(k)
+    for it in items:
+        for k in kinds_of(it.kind, it.args):
+            dom = domain_for(k)
+            if isinstance(dom, Unavailable):
+                out.setdefault(k.partition(".")[0], (dom.why, []))[1].append(k)
     return out
 
 

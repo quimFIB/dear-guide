@@ -128,7 +128,10 @@ ones, or reach a slow one by name. A prefix this machine cannot judge is
 said once, in a footer, not once per record. `dg check` never evaluates a
 probe — its output is a function of the store — and judges only the two
 shapes. The pytest plugin evaluates probes only under
-`--decision-graph-probe`, scoped the same way by `--decision-graph-domain`.
+`--decision-graph-probe`, scoped the same way by `--decision-graph-domain`;
+a firing fails one test, and what a domain other than `prose` said or could
+not say — a `holds`, a timeout, a prefix nothing installed claims — reaches
+pytest's warning summary.
 
 ### Areas — the vocabulary, in both stores
 
