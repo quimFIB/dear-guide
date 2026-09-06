@@ -279,7 +279,10 @@ def two_writers(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     root.mkdir()
     monkeypatch.setenv("DG_PROJECT", str(root))
-    _git(root, "init", "-q", ".")
+    # `-b main` pins the branch the checkouts below name. Without it the
+    # name comes from the machine's `init.defaultBranch`, and a fixture
+    # that checks out `master` errored on every machine set to `main`.
+    _git(root, "init", "-q", "-b", "main", ".")
     _git(root, "config", "user.email", "t@t")
     _git(root, "config", "user.name", "t")
 
@@ -301,7 +304,7 @@ def two_writers(tmp_path, monkeypatch):
     run("apply")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "worker")
-    _git(root, "checkout", "-q", "master")
+    _git(root, "checkout", "-q", "main")
     return root, run
 
 
@@ -361,7 +364,7 @@ def test_the_cross_store_guard_is_wired_and_not_merely_silent(two_writers):
     tg.save(root / "tasks.json")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "dangling")
-    _git(root, "checkout", "-q", "master")
+    _git(root, "checkout", "-q", "main")
 
     out = run("integrate", "worker").output
     assert "blocking" in out and "link_resolves" in out and "D99" in out
@@ -397,7 +400,7 @@ def test_a_contested_contribution_is_not_adopted(two_writers):
     run("apply")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "worker retitle")
-    _git(root, "checkout", "-q", "master")
+    _git(root, "checkout", "-q", "main")
 
     assert "title differs" in run("integrate", "worker").output
     res = run("incoming", "--adopt")
@@ -419,7 +422,7 @@ def test_no_common_history_is_refused_rather_than_guessed(two_writers):
     root, run = two_writers
     _git(root, "checkout", "-q", "--orphan", "stranger")
     _git(root, "commit", "-qm", "unrelated", "--allow-empty")
-    _git(root, "checkout", "-q", "master")
+    _git(root, "checkout", "-q", "main")
     res = run("integrate", "stranger")
     assert res.exit_code == 1 and "no common history" in res.output
 
@@ -446,7 +449,7 @@ def test_the_three_semantic_conflicts_arrive_together_and_are_answered_one_by_on
 
     _git(root, "checkout", "-q", "worker")
     diverge("HNSW", "recall 0.94", "Which index, at 48M?")
-    _git(root, "checkout", "-q", "master")
+    _git(root, "checkout", "-q", "main")
     diverge("IVF-PQ", "recall 0.91", "Which index structure?")
 
     out = run("integrate", "worker").output
@@ -689,7 +692,7 @@ def test_two_answers_can_turn_out_to_be_to_two_questions(two_writers):
     run("apply")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "theirs")
-    _git(root, "checkout", "-q", "master")
+    _git(root, "checkout", "-q", "main")
     run("decide", "D01", "-a", "IVF-PQ for the batch path", "-s", "bench/b.md",
         "-f", "memory drops")
     run("apply")
@@ -728,7 +731,7 @@ def test_splitting_needs_an_id_and_only_means_something_for_an_answer(
     run("apply")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "theirs")
-    _git(root, "checkout", "-q", "master")
+    _git(root, "checkout", "-q", "main")
 
     run("integrate", "worker")
     raw = integrate.load_incoming(root)
@@ -970,7 +973,7 @@ def test_a_removal_over_a_local_change_reaches_a_person_and_is_answerable(
     assert run("apply").exit_code == 0
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "worker removes T01")
-    _git(root, "checkout", "-q", "master")
+    _git(root, "checkout", "-q", "main")
     assert run("task", "amend", "T01",
                "--title", "kept, and reworded here").exit_code == 0
     assert run("apply").exit_code == 0

@@ -678,14 +678,17 @@ def two_contributions(proj):
         subprocess.run(["git", "-C", str(proj.root), *args], check=True,
                        capture_output=True, text=True)
 
-    git("init", "-q", ".")
+    # `-b main` pins the branch the checkouts below name. Without it the
+    # name comes from the machine's `init.defaultBranch`, and a fixture
+    # that checks out `master` errored on every machine set to `main`.
+    git("init", "-q", "-b", "main", ".")
     git("config", "user.email", "t@example.invalid")
     git("config", "user.name", "t")
     git("add", "-A")
     git("commit", "-qm", "base")
     for branch, vid in (("theirs", "D08"), ("theirs2", "D09")):
         git("checkout", "-q", "-b", branch, "HEAD~0" if branch == "theirs"
-            else "master")
+            else "main")
         raw = json.loads(proj.store.read_text(encoding="utf-8"))
         raw["vertices"] = [v for v in raw["vertices"]
                            if v["id"] not in ("D08", "D09")]
@@ -694,7 +697,7 @@ def two_contributions(proj):
                                 "note": "?"})
         proj.store.write_text(json.dumps(raw), encoding="utf-8")
         git("commit", "-qam", branch)
-    git("checkout", "-q", "master")
+    git("checkout", "-q", "main")
     return proj
 
 
