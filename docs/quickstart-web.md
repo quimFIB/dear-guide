@@ -226,10 +226,14 @@ highlights it with its premises and its consequences, and dims the rest.
 
 ### Focus: the second filter, which removes
 
-**⌖ focus** arms a different question. Armed, clicking a node puts a chip beside
-the find box reading `subgraph:* id:D04`, and the canvas keeps only the
-subgraph that node induces — everything else is *gone*, not dimmed, and the
-slice is re-ranked so it fills the screen.
+**⌖ focus** arms a different question. Armed, the next click on a node puts a
+chip beside the find box reading `subgraph:1 id:D04`, and the canvas keeps only
+that node's neighbourhood — its premises, its dependents and the work resting
+on it, one hop out. Everything else is *gone*, not dimmed, and the slice is
+re-ranked so it fills the screen. That one click spends the arm: the
+clicks after it open records inside the slice without moving it, which is how
+you read what you just cut out. Press **⌖ focus** again to seed from another
+node. Arming with a node already open focuses it straight away.
 
 The two filters answer different questions and so they compose rather than
 compete. The find box dims: everything stays where it was and the matches light
@@ -242,13 +246,16 @@ The chip is text, and it is the page's spelling of two `dg find` flags:
 
 | chip | shell |
 |---|---|
-| `subgraph:* id:D04` | `dg find --subgraph 'id:D04'` |
 | `subgraph:1 id:D04` | `dg find --subgraph --hops 1 'id:D04'` |
+| `subgraph:* id:D04` | `dg find --subgraph 'id:D04'` |
 | `subgraph:0 area:consent` | `dg find --subgraph --hops 0 'area:consent'` |
 
 So the seed is any query, not just one node: `id:D04 or id:D12` focuses both,
 `area:consent` focuses an area. Edit the chip by hand, or press `×` to drop it.
 The hop count is yours and survives the next click; only the seed is replaced.
+A click starts at one hop rather than `*` because `*` is the whole connected
+cone in every direction, which on a connected graph is the whole graph — a
+focus you could not see happen. Type `*` when you do want the cone.
 
 `subgraph:` is **not** a term in the query language — there is no `subgraph`
 field and `dg find` would refuse one. It is how the chip writes down a flag, and
