@@ -1592,7 +1592,7 @@ const R = JSON.parse(process.argv[3]);
 const side = {innerHTML:""};
 const $ = s => side;
 let sel = null, tsel = null, NEWKIND = null, RELATING = null;
-const draw = () => {}, say = () => {};
+const draw = () => {}, say = () => {}, showSide = () => {};
 const api = async () => R;
 showAreas().then(() => {
   const h = side.innerHTML;
@@ -2161,3 +2161,20 @@ def test_the_page_binds_the_preview_controls_and_can_clear_them():
         assert listener in page, f"{drawn} is drawn and nothing listens for it"
     assert "clear preview" in page
     assert "function previewOff" in page and "function previewOn" in page
+
+
+def test_the_page_binds_the_panel_toggles_and_reveals_the_inspector_on_use():
+    """Two chips fold the inspector and the trays away for a canvas-only
+    reading. Drawn and bound (`B-F1`), and the inspector comes back by
+    itself wherever the page is about to write into it — a click on a node,
+    a form, a confirmation — since a panel written to while hidden is a
+    click that did nothing."""
+    page = _page()
+    for btn in ("sideBtn", "trayBtn"):
+        assert f'id="{btn}"' in page and f'$("#{btn}").onclick' in page, btn
+    assert "function showSide" in page
+    for opener in ("function select(id){", "function newNode(){",
+                   "function soundPanel(){", "async function showAreas(){",
+                   "function askDropAct(", "function confirmClear(task){"):
+        body = page.split(opener, 1)[1][:200]
+        assert "showSide();" in body, f"{opener} writes to a panel it may not have shown"

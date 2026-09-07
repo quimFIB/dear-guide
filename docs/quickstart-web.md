@@ -207,6 +207,14 @@ Never one table: the two stores share their areas and not their vocabularies.
 The layout is a layered DAG — rank by longest path from a root, so a node
 always sits below everything it rests on.
 
+When the canvas is the point — a long graph read by panning — the
+**inspector** and **tray** chips in the header fold those panels away and
+give it the whole window. The choice is remembered per browser. The
+inspector comes back on its own the moment something is put in it (a click
+on a node, a form, a confirmation); the tray does not, and carries its
+staged count on the chip while hidden, so staging from the panel never
+yanks the footer open.
+
 | | |
 |---|---|
 | **fill colour** | the area |
