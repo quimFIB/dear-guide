@@ -213,7 +213,15 @@ give it the whole window. The choice is remembered per browser. The
 inspector comes back on its own the moment something is put in it (a click
 on a node, a form, a confirmation); the tray does not, and carries its
 staged count on the chip while hidden, so staging from the panel never
-yanks the footer open.
+yanks the footer open. **Refresh** re-reads the stores and keeps the panels
+as they were, folded or not.
+
+Selecting a node dims everything it is not related to. The **× selection**
+chip that appears in the header while something is selected, or Escape
+outside a field, clears it and lights the whole graph again, the way it
+opens. A click on empty canvas does not — the canvas is grabbed to pan, and
+a pan that started with a still hand should not throw the reading away.
+Find, focus and a preview are their own controls and keep their own clears.
 
 | | |
 |---|---|

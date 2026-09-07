@@ -2173,8 +2173,23 @@ def test_the_page_binds_the_panel_toggles_and_reveals_the_inspector_on_use():
     for btn in ("sideBtn", "trayBtn"):
         assert f'id="{btn}"' in page and f'$("#{btn}").onclick' in page, btn
     assert "function showSide" in page
-    for opener in ("function select(id){", "function newNode(){",
+    for opener in ("function select(id, quiet){", "function newNode(){",
                    "function soundPanel(){", "async function showAreas(){",
                    "function askDropAct(", "function confirmClear(task){"):
         body = page.split(opener, 1)[1][:200]
         assert "showSide();" in body, f"{opener} writes to a panel it may not have shown"
+
+
+def test_refresh_keeps_a_folded_inspector_folded_and_the_canvas_can_be_deselected():
+    """Refresh restores a reading; it does not ask for one, so the reselect
+    it does is the quiet kind. And there is a way back to the opening
+    reading — nothing selected, nothing dimmed — from the canvas itself."""
+    page = _page()
+    assert "select(keep, true)" in page, "refresh reselects loudly"
+    assert "function select(id, quiet){" in page
+    assert "function deselect(){" in page
+    assert 'e.key==="Escape"' in page and "deselect()" in page
+    assert 'id="deselectBtn"' in page and '$("#deselectBtn").onclick' in page
+    # Never on a background click: the canvas is grabbed to pan, and a pan
+    # that started with a still hand must not throw the reading away.
+    assert "drag.moved" not in page

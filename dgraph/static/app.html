@@ -221,6 +221,7 @@
     <button class="chip" id="soundBtn" style="display:none"></button>
     <button class="chip" id="areasBtn" title="Counts by area and status, one block per store">areas</button>
     <button class="chip" id="frontierOnly">frontier only</button>
+    <button class="chip" id="deselectBtn" hidden title="Clear the selection: nothing dimmed, the way the page opens. Esc does the same outside a field.">&times; selection</button>
     <button class="chip" id="focusBtn" title="Arm focus, then click a node: the canvas keeps only the subgraph that node induces and re-lays it out. One click seeds it and the arm drops, so the next click reads a node inside the slice without moving it. The find box still dims within it. Same slice as `dg find --subgraph`.">&#8982; focus</button>
     <button class="chip" id="refreshBtn" title="Re-read both stores and both trays. Pan, zoom and the open inspector are kept.">&#8635; refresh</button>
     <button class="chip on" id="sideBtn" title="Show or hide the inspector. Clicking a node brings it back.">inspector</button>
@@ -484,7 +485,7 @@ async function refresh(){
        inspector costs nothing extra. */
     const here = keep && ((G && G.vertices.some(v=>v.id===keep))
                        || (T && T.tasks.some(x=>x.id===keep)));
-    if(here) select(keep);
+    if(here) select(keep, true);
     else {
       draw();
       if(keep) $("#side").innerHTML=`<p class="muted">${esc(keep)} is no longer
@@ -1128,6 +1129,9 @@ function draw(){
   vp.innerHTML = tab==="tasks" ? drawTasks()
                : tab==="joined" ? drawJoined() : drawDecisions();
   $("#svg").setAttribute("viewBox",view.join(" "));
+  /* Every selection change comes through here, so this is where the chip
+     that clears one appears and goes. */
+  $("#deselectBtn").hidden = !cur();
   vp.querySelectorAll(".node").forEach(n=>n.onclick=()=>select(n.dataset.id));
 }
 
@@ -1353,6 +1357,25 @@ addEventListener("click",e=>{
 /* ---- pan & zoom ---- */
 let view=[0,0,1600,1000];
 function fit(){ const e=extent(); view=[-30,-30,e.w+60,e.h+60]; }
+/* Back to the reading the page opens with: nothing selected, nothing
+   dimmed for a selection. A chip that is there only while something is
+   selected, and Escape outside a field. **Not a click on empty canvas**:
+   the canvas is grabbed to pan, and a pan that started with a still hand
+   would throw the reading away. Query, focus and a preview are their own
+   controls with their own clears and are left alone. */
+function deselect(){
+  if(!cur() && !NEWKIND && !RELATING) return;
+  captureDraft();
+  sel=null; tsel=null; NEWKIND=null; RELATING=null;
+  draw();
+  $("#side").innerHTML=`<p class="muted">Click a node to inspect it.</p>`;
+}
+addEventListener("keydown",e=>{
+  const t = e.target;
+  if(e.key==="Escape" && !(t && t.closest && t.closest("input,textarea,select"))) deselect();
+});
+$("#deselectBtn").onclick=deselect;
+
 (function pz(){
   const svg=$("#svg"); let drag=null;
   svg.addEventListener("mousedown",e=>{ if(e.target.closest(".node"))return;
@@ -1562,8 +1585,10 @@ function syncPreview(){
 /* ---- side panel ---- */
 /* One click handler for both stores: the id says which. In the joined view
    both kinds are on screen at once, so this is not a formality. */
-function select(id){
-  showSide();
+/* `quiet` keeps a folded inspector folded: a refresh re-selecting what was
+   selected is restoring a reading, not asking for one. */
+function select(id, quiet){
+  if(!quiet) showSide();
   captureDraft();
   const isTask = T && T.tasks.some(x=>x.id===id);
   if(isTask){ tsel=id; sel=null; } else { sel=id; tsel=null; }
