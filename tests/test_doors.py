@@ -1829,6 +1829,7 @@ const block = cut("/* Every area either store knows.", "function newDecisionForm
 const G = JSON.parse(process.argv[3]), T = JSON.parse(process.argv[4]);
 const esc = x => String(x == null ? "" : x);
 const ED = null;
+const PREVIEW = null;   // no preview on: the row offers one, marks none
 eval(block);
 // A sixth argument renders every op as members of one act — what `trayTable`
 // passes when the ops share a group — instead of each as an act of one.
@@ -2031,3 +2032,100 @@ def test_the_panels_draw_the_four_new_fields():
     for field in ("x.done_when", "x.binds", "x.probes"):
         assert field in task, field
     assert "e.probe" in edge
+
+
+# ---- the preview marks the difference, never a redrawn store — D88, T80 ----
+#
+# The route sends the diff; the page turns it into a class per record and an
+# extra line per cut edge. Run against the real functions, cut out of the page
+# at the section's own banner, because a mark drawn in the wrong class is
+# invisible to the route test and would only ever be seen on a canvas.
+
+PREVIEW_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const block = js.slice(js.indexOf("/* ---- the preview (D88, T80)"),
+                       js.indexOf("/* ---- side panel ---- */"));
+let PREVIEW = JSON.parse(process.argv[3]);
+const G = null, T = null, JOIN = null, STORE = null, PEND = [], TPEND = [];
+const TRAYWHO = null, sel = null, tsel = null;
+const esc = x => String(x == null ? "" : x);
+const edgeIn = () => true;
+const edgeSvg = (a, b, cls) => `${a}>${b}[${cls}]`;
+eval(block);
+const ids = JSON.parse(process.argv[4]);
+console.log(JSON.stringify({
+  marks: Object.fromEntries(ids.map(i => [i, previewMark(i)])),
+  added: [["D01","D90"],["T01","T09"],["T02","T03"]].map(e => edgeAdded(...e)),
+  gone: {decisions: goneEdges("decisions"), tasks: goneEdges("tasks")},
+}));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_preview_marks_added_removed_and_moved_and_cuts_edges(tmp_path):
+    harness = tmp_path / "preview.js"
+    harness.write_text(PREVIEW_HARNESS)
+    preview = {
+        "scope": "gggg", "label": "act gggg (2 ops)", "refs": ["a", "b"],
+        "diff": {
+            "decisions": {"added": ["D90"], "removed": ["D06"],
+                          "status": {"D05": ["OPEN", "DECIDED"]},
+                          "changed": ["D02"],
+                          "edges_added": [["D01", "D90"]],
+                          "edges_removed": [["D05", "D06"]]},
+            "tasks": {"added": ["T09"], "removed": [], "status": {},
+                      "changed": [],
+                      # A `prompted` edge is provenance, not a line on the
+                      # canvas; only `precedes` is drawn or struck.
+                      "edges_added": [["T01", "T09", "precedes"],
+                                      ["T02", "T03", "prompted"]],
+                      "edges_removed": [["T04", "T05", "precedes"],
+                                        ["T06", "T07", "prompted"]]},
+        },
+    }
+    res = subprocess.run(
+        ["node", str(harness), str(server.STATIC / "app.html"),
+         json.dumps(preview),
+         json.dumps(["D90", "D06", "D05", "D02", "D01", "T09"])],
+        capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout)
+    m = out["marks"]
+    assert m["D90"]["cls"] == "ghost" and m["T09"]["cls"] == "ghost"
+    assert m["D06"]["cls"] == "gone"
+    assert m["D05"]["cls"] == "moved" and m["D05"]["status"] == "OPEN → DECIDED"
+    assert m["D02"]["cls"] == "moved" and "status" not in m["D02"]
+    assert m["D01"] == {}, "a record the act leaves alone carries no mark"
+    assert all("act gggg" in v["note"] for k, v in m.items() if v)
+    assert out["added"] == [True, True, False]
+    assert out["gone"]["decisions"] == "D05>D06[edge gone]"
+    assert out["gone"]["tasks"] == "T04>T05[edge gone]"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_no_preview_means_no_marks(tmp_path):
+    harness = tmp_path / "preview.js"
+    harness.write_text(PREVIEW_HARNESS)
+    res = subprocess.run(
+        ["node", str(harness), str(server.STATIC / "app.html"),
+         json.dumps(None), json.dumps(["D01"])],
+        capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout)
+    assert out["marks"] == {"D01": {}} and out["added"] == [False] * 3
+    assert out["gone"] == {"decisions": "", "tasks": ""}
+
+
+def test_the_page_binds_the_preview_controls_and_can_clear_them():
+    """`B-F1` again: the row's ◎, the tray-wide chip and the bar's clear
+    control are drawn and each has a listener. And the clear exists at all —
+    T80's done-when names it, since a preview with no way out is a mode."""
+    page = _page()
+    for drawn, listener in (('data-preview="', 'button[data-preview]'),
+                            ('data-preview="all"', 'button[data-preview]'),
+                            ("data-preview-off", "[data-preview-off]")):
+        assert drawn in page, f"{drawn} is not drawn"
+        assert listener in page, f"{drawn} is drawn and nothing listens for it"
+    assert "clear preview" in page
+    assert "function previewOff" in page and "function previewOn" in page

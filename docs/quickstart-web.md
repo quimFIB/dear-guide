@@ -361,6 +361,32 @@ tasks, with an ✕ on each to drop it, a ✎ to revise one in the editor, and a
 **clear** per tray that says how many it is about to discard — the trays are
 shared with the CLI, so some of them may not be yours.
 
+Ops that one command staged together — an add and the edges that attach it,
+a reopen and the statuses it propagates — are **one act**, drawn as one block
+with a rule down its left edge and a single set of controls: the ✓ applies
+the whole act and leaves the rest staged, and the ✕ drops all of it, because
+dropping one member would leave the others to apply as something nobody
+proposed. `dg pending` draws the same block as a rail down the rows.
+
+### Previewing on the canvas
+
+The canvas draws the store, and nothing staged moves it — that is deliberate,
+so a pan, a zoom and an open inspector are never pulled from under you. But
+you can ask: the **◎** on an act's row draws the graph as it would be with
+that act applied, and **preview all** in the tray heading does the same for
+everything staged (narrowed to one writer if the tray is). What the act
+would add is a **ghost** — a dashed box, a dashed blue edge — what it would
+remove is **struck**, and what it would move is ringed with `was → now` in
+place of its status. A bar over the canvas says what is being previewed, and
+the open inspector reads the previewed record with a line saying so.
+
+**Clear preview** in that bar, or the ◉ on the row that turned it on, draws
+the store again; pan, zoom and the inspector are kept. A preview also ends by
+itself when its act leaves the tray — applied with the ✓, or dropped — and
+the bar says why. The store is never written by a preview, and `/api/graph`
+still answers the store: previewing is a request, not a mode the page
+falls into.
+
 Revising *replaces* rather than re-stages, as `dg edit` does: re-staging would
 move the op to the end of the batch, and any derived status change would then
 apply before the change it was derived from. **Apply** validates each batch against a

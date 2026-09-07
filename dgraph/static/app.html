@@ -158,6 +158,24 @@
   .tab.on{color:#04121f;background:var(--accent);border-color:var(--accent)}
   /* the join, drawn as an edge between the two stores: never solid, so it can
      never be mistaken for a dependency inside either graph */
+  /* The preview (D88): what an act would add is a ghost, what it would
+     remove is struck, what it would move is ringed — drawn as a difference
+     against the store, never as a redrawn store. */
+  .node.ghost rect{stroke-dasharray:2 3;stroke-width:2px}
+  .node.ghost text{opacity:.85}
+  .node.gone rect{stroke:var(--bad);opacity:.45}
+  .node.gone text{opacity:.4}
+  .node.gone .strike{stroke:var(--bad);stroke-width:1.6px}
+  .node.moved rect{stroke-width:2.4px}
+  .node .pv{font-size:9px;fill:var(--accent);font-weight:700}
+  .edge.ghost{stroke:var(--accent);stroke-dasharray:6 4;stroke-width:1.8px}
+  .edge.gone{stroke:var(--bad);stroke-dasharray:2 4;opacity:.7}
+  #previewBar{position:absolute;left:10px;top:8px;right:10px;z-index:2;
+    display:flex;gap:10px;align-items:center;font-size:12px;
+    background:var(--panel);border:1px solid var(--accent);border-radius:8px;
+    padding:5px 10px;color:var(--ink)}
+  #previewBar[hidden]{display:none}
+  #previewBar .grow{flex:1}
   .edge.cross{stroke:var(--prov);stroke-dasharray:2 5;opacity:.85}
   .edge.evidence{stroke:var(--reop)}
   /* One act, one block: a rule down its left edge, no rule between its rows,
@@ -217,7 +235,7 @@
     <button class="primary" id="applyBtn" disabled>Apply</button>
   </header>
   <main>
-    <div id="canvas"><svg id="svg"><g id="viewport"></g></svg></div>
+    <div id="canvas"><div id="previewBar" hidden></div><svg id="svg"><g id="viewport"></g></svg></div>
     <aside id="side"><p class="muted">Click a node to inspect it.</p></aside>
   </main>
   <footer id="tray"></footer>
@@ -236,6 +254,12 @@ let BUILD=null;
    with no tasks.json — which is not the same as a project whose backlog is
    empty, and the tab says which. */
 let T=null, TPEND=[], JOIN=null, tsel=null;
+/* The preview (D88): while one is on, `G`, `T` and `JOIN` hold the previewed
+   payloads and `STORE` keeps the store's, so every drawer and panel reads
+   the previewed graph with the code it already has, and `previewOff` puts
+   the store back in one assignment. `PREVIEW.diff` is what marks the
+   drawing as a preview — see `previewMark`. */
+let PREVIEW=null, STORE=null;
 
 /* What the four watched files looked like when this page last read them, and
    whether they have moved since. The poll writes STALE and nothing else: it
@@ -366,10 +390,16 @@ async function boot(){
      `layout()` below runs against the *old* set for one frame; `runFocus`
      re-lays out when it lands, which is what `relayout` is for. */
   if(FOCUS) runFocus();
+  STORE=null;
   layout();
   $("#build").textContent = BUILD;
   await soundness();
   tabs(); chips(); legend(); draw(); tray();
+  /* The stores were re-read, so a preview that was on is asked for again
+     over them — and cleared, with the reason, if its act has gone (applied
+     or dropped). `boot()` runs after every Apply, which is how a ✓ on the
+     previewed act ends the preview without a handler knowing about it. */
+  if(PREVIEW) await previewOn(PREVIEW.scope, true);
 }
 let ALL_AREAS=[];
 
@@ -1016,13 +1046,16 @@ function claimNote(c){
 
 function nodeSvg(id, title, status, area, stroke, dash, dim){
   const p=xyOf(id); if(!p) return "";
+  const pv = previewMark(id);
+  if(pv.status) status = pv.status;
   const s=title.length>46?title.slice(0,44)+"…":title;
   const cut = s.length>26 ? (s.lastIndexOf(" ",26)||26) : -1;
   const half = cut<0 ? s : s.slice(0,cut);
   const rest = cut<0 ? "" : s.slice(cut+1);
   const claim = claimOn(id);
   const bridge = bridgeNote(id);
-  return `<g class="node${dim?" dim":""}${claim?" claimed":""}" data-id="${esc(id)}" transform="translate(${p.x},${p.y})">
+  return `<g class="node${dim?" dim":""}${claim?" claimed":""}${pv.cls?" "+pv.cls:""}" data-id="${esc(id)}" transform="translate(${p.x},${p.y})">
+      ${pv.note?`<title>${esc(pv.note)}</title>`:""}
       ${bridge?`<title>${esc(bridge)} — the hop is on the joined tab.</title>
       <rect class="bridge" x="-4" y="-4" width="${NW+8}" height="${NH+8}" rx="10"/>`:""}
       <rect width="${NW}" height="${NH}" rx="7" fill="${AREA_COLOR[area]||"#888"}22"
@@ -1032,6 +1065,8 @@ function nodeSvg(id, title, status, area, stroke, dash, dim){
       ${claim?`<title>${esc(claimNote(claim))}</title>
       <circle class="claim-dot" cx="${NW-9}" cy="10" r="3.5"/>`:""}
       <text x="8" y="29">${esc(half)}</text><text x="8" y="41">${esc(rest)}</text>
+      ${pv.cls==="gone"?`<line class="strike" x1="0" y1="${NH/2}" x2="${NW}" y2="${NH/2}"/>`:""}
+      ${pv.tag?`<text class="pv" x="${NW-8}" y="15" text-anchor="end">${esc(pv.tag)}</text>`:""}
     </g>`;
 }
 
@@ -1099,9 +1134,11 @@ function drawDecisions(){
       const cls=["edge"];
       if(!e.answer) cls.push("pending-dep");
       if(related) cls.push(related.has(e.from)&&related.has(to)?"hot":"dim");
+      if(edgeAdded(e.from,to)) cls.push("ghost");
       edges+=edgeSvg(e.from,to,cls.join(" "));
     });
   });
+  edges+=goneEdges("decisions");
   G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, related); });
   return edges+nodes;
 }
@@ -1119,8 +1156,10 @@ function drawTasks(){
        uses for a premise that is not settled yet. */
     if(T.derived[x.id].waiting_on.includes(pq)) cls.push("pending-dep");
     if(related) cls.push(related.has(pq)&&related.has(x.id)?"hot":"dim");
+    if(edgeAdded(pq,x.id)) cls.push("ghost");
     edges+=edgeSvg(pq,x.id,cls.join(" "));
   }));
+  edges+=goneEdges("tasks");
   T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, related); });
   return edges+nodes;
 }
@@ -1142,13 +1181,16 @@ function drawJoined(){
   let edges="", nodes="";
   G.edges.filter(e=>e.active).forEach(e=>e.to.forEach(to=>{
     if(!edgeIn(e.from,to)) return;
-    edges+=edgeSvg(e.from,to,["edge",e.answer?"":"pending-dep",rel(e.from,to)].join(" "));
+    edges+=edgeSvg(e.from,to,["edge",e.answer?"":"pending-dep",rel(e.from,to),
+                              edgeAdded(e.from,to)?"ghost":""].join(" "));
   }));
   T.tasks.forEach(x=>T.derived[x.id].prerequisites.forEach(pq=>{
     if(!edgeIn(pq,x.id)) return;
     edges+=edgeSvg(pq,x.id,["edge",
-      T.derived[x.id].waiting_on.includes(pq)?"pending-dep":"",rel(pq,x.id)].join(" "));
+      T.derived[x.id].waiting_on.includes(pq)?"pending-dep":"",rel(pq,x.id),
+      edgeAdded(pq,x.id)?"ghost":""].join(" "));
   }));
+  edges+=goneEdges("decisions")+goneEdges("tasks");
   /* The join itself. Two directions, two colours: a decision justifying work,
      and work that will settle a decision. Never solid — it is a link between
      the stores, not a dependency inside either. */
@@ -1314,6 +1356,154 @@ function fit(){ const e=extent(); view=[-30,-30,e.w+60,e.h+60]; }
     view[2]*=k; view[3]*=k; view[0]=mx-(mx-view[0])*k; view[1]=my-(my-view[1])*k;
     svg.setAttribute("viewBox",view.join(" ")); },{passive:false});
 })();
+
+/* ---- the preview (D88, T80) ----------------------------------------------
+
+   The canvas draws the store. A reader turns a preview on — one act from
+   its tray row, or everything staged from the tray heading — and the page
+   swaps in the payloads `/api/preview` built over the previewed copies,
+   then draws the *difference* the route sent beside them: a ghost for what
+   the act adds, a strike for what it removes, a ring and `was → now` for
+   what it moves. A bar over the canvas names what is being previewed and
+   carries the control that clears it; the tray row does too. Off puts the
+   store back in one assignment. Pan and zoom are never touched: `fit()` is
+   not called on either transition. */
+
+/* The mark `nodeSvg` draws on one record, or nothing. Reads the diff for
+   both stores: in the joined view a task and a decision are on one canvas. */
+function previewMark(id){
+  if(!PREVIEW) return {};
+  for(const d of [PREVIEW.diff.decisions, PREVIEW.diff.tasks]){
+    if(!d) continue;
+    if(d.added.includes(id))
+      return {cls:"ghost", tag:"+", note:`${id} would be added by ${PREVIEW.label}`};
+    if(d.removed.includes(id))
+      return {cls:"gone", tag:"✗", note:`${id} would be removed by ${PREVIEW.label}`};
+    if(d.status[id])
+      return {cls:"moved", status:`${d.status[id][0]} → ${d.status[id][1]}`,
+              note:`${id} would move from ${d.status[id][0]} to ${d.status[id][1]} — ${PREVIEW.label}`};
+    if(d.changed.includes(id))
+      return {cls:"moved", tag:"~", note:`${id} would change — ${PREVIEW.label}`};
+  }
+  return {};
+}
+
+/* Whether the preview draws this edge where the store has none. */
+function edgeAdded(a, b){
+  if(!PREVIEW) return false;
+  for(const d of [PREVIEW.diff.decisions, PREVIEW.diff.tasks])
+    if(d && d.edges_added.some(e=>e[0]===a && e[1]===b && (e[2]||"precedes")==="precedes"))
+      return true;
+  return false;
+}
+
+/* The edges the preview cuts, drawn struck between records the canvas still
+   holds — the route put a removed record back for exactly this. Task edges
+   carry a kind, and only `precedes` is a line on the canvas. */
+function goneEdges(kind){
+  const d = PREVIEW && PREVIEW.diff[kind];
+  if(!d) return "";
+  return d.edges_removed
+    .filter(e=>(e[2]||"precedes")==="precedes" && edgeIn(e[0],e[1]))
+    .map(e=>edgeSvg(e[0],e[1],"edge gone")).join("");
+}
+
+/* Turn a preview on, or re-ask for the one that is on after the stores were
+   re-read (`resync`). A scope the tray no longer holds — the act was applied
+   or dropped underneath — clears the preview and says why, which is the one
+   way a preview ends without the reader asking. */
+async function previewOn(scope, resync){
+  const agent = scope==="all" ? (resync && PREVIEW ? PREVIEW.agent : TRAYWHO) : null;
+  let r;
+  try{
+    r = await api("/api/preview?scope="+encodeURIComponent(scope)
+                  +(agent?"&agent="+encodeURIComponent(agent):""));
+  }catch(err){
+    if(resync){ previewOff(`Preview cleared — ${err.message}`); return; }
+    say(err.message,"bad"); previewBar(err.message); return;
+  }
+  if(!STORE) STORE={G,T,JOIN};
+  if(r.graph) G=r.graph;
+  if(r.tasks) T=r.tasks;
+  JOIN=r.joined||JOIN;
+  PREVIEW={scope, agent, label:r.label, refs:r.refs, diff:r.diff};
+  /* A ghost may be filed under an area the store has never used. Appended,
+     never recoloured: the palette is what makes the joined view readable. */
+  [...new Set([...G.areas, ...(T?T.areas:[])])].forEach(a=>{
+    if(!(a in AREA_COLOR)) AREA_COLOR[a]=PALETTE[Object.keys(AREA_COLOR).length%PALETTE.length];
+  });
+  layout(); draw(); previewBar(); tray();
+  repaintPanel();
+}
+
+/* Put the store back. `why` is shown in the bar when the preview ended
+   without the reader asking; a plain clear leaves nothing behind. */
+function previewOff(why){
+  if(!PREVIEW) return;
+  if(STORE){ G=STORE.G; T=STORE.T; JOIN=STORE.JOIN; STORE=null; }
+  PREVIEW=null;
+  /* A ghost that was open has no record in the store to show. */
+  const keep = cur();
+  const here = keep && ((G && G.vertices.some(v=>v.id===keep))
+                     || (T && T.tasks.some(x=>x.id===keep)));
+  if(keep && !here){
+    sel=null; tsel=null;
+    $("#side").innerHTML=`<p class="muted">${esc(keep)} was a preview — the
+      store does not hold it. Click a node to inspect it.</p>`;
+  }
+  layout(); draw(); previewBar(why); tray();
+  if(here) repaintPanel();
+}
+
+/* The bar over the canvas: what is being previewed and the way out — or,
+   with `msg` and no preview, one line saying why it ended, dismissable. */
+function previewBar(msg){
+  const bar=$("#previewBar");
+  if(PREVIEW){
+    bar.hidden=false;
+    bar.innerHTML=`<b>Preview</b><span>${esc(PREVIEW.label)} — the store is
+      unchanged; ghosts are added, struck is removed, ringed is moved.</span>
+      <span class="grow"></span>
+      <button class="chip" data-preview-off title="Draw the store again. Pan, zoom and the open inspector are kept.">clear preview</button>`;
+  }else if(msg){
+    bar.hidden=false;
+    bar.innerHTML=`<span class="muted">${esc(msg)}</span><span class="grow"></span>
+      <button class="chip" data-preview-off>&times;</button>`;
+  }else{ bar.hidden=true; bar.innerHTML=""; }
+  bar.querySelectorAll("[data-preview-off]").forEach(b=>b.onclick=()=>{
+    if(PREVIEW) previewOff(); else previewBar();
+  });
+}
+
+/* The open inspector, redrawn over whichever graph is current — so a record
+   the preview moves reads as moved, with the banner saying so. */
+function repaintPanel(){
+  if(sel) panel(); else if(tsel) taskPanel();
+}
+
+/* The line at the top of a panel while a preview is on. */
+function previewBanner(id){
+  if(!PREVIEW) return "";
+  return `<div class="warn" style="margin:0 0 8px">Preview — ${esc(id)} as it
+    would read after ${esc(PREVIEW.label)}. The store is unchanged.</div>`;
+}
+
+/* The tray keeps its preview honest after the tray moved: an act that was
+   dropped ends the preview, and "everything staged" re-asks when the set
+   of refs it drew is not the set staged now. Called from `tray()`, which
+   every path that reloads `PEND` or `TPEND` already calls. */
+function syncPreview(){
+  if(!PREVIEW) return;
+  const refs = new Set(PEND.concat(TPEND).map(o=>o.ref));
+  if(PREVIEW.scope!=="all"){
+    if(!refs.has(PREVIEW.scope)) previewOff("Preview cleared — the act it drew is no longer staged.");
+    return;
+  }
+  const now = PEND.concat(TPEND)
+    .filter(o=>!PREVIEW.agent||whoOf(o)===PREVIEW.agent).map(o=>o.ref);
+  const same = now.length===PREVIEW.refs.length && now.every(r=>PREVIEW.refs.includes(r));
+  if(!same) previewOn("all", true);
+}
 
 /* ---- side panel ---- */
 /* One click handler for both stores: the id says which. In the joined view
@@ -1680,7 +1870,7 @@ function closeNew(){
    affordance for it. */
 function taskPanel(){
   const x=T.tasks.find(y=>y.id===tsel), d=T.derived[tsel], c=d.cross;
-  let h=`<h2>${esc(x.id)} — ${esc(x.title)}</h2>
+  let h=previewBanner(x.id)+`<h2>${esc(x.id)} — ${esc(x.title)}</h2>
     <span class="pill" style="background:${TASK_COLOR[x.status]};color:#04121f">${esc(x.status)}</span>
     <span class="muted"> ${esc(x.area)}</span>
     <div class="kv">
@@ -2402,7 +2592,7 @@ function panel(){
   const e=G.edges.find(x=>x.from===sel&&x.active);
   const st=base(v.status);
   const decided = !!(e&&e.answer);
-  let h=`<h2>${esc(v.id)} — ${esc(v.title)}</h2>
+  let h=previewBanner(v.id)+`<h2>${esc(v.id)} — ${esc(v.title)}</h2>
     <span class="pill" style="background:${STATUS_COLOR[st]};color:#04121f">${esc(v.status)}</span>${
       (st==="OPEN" && (d.waiting_on||[]).length)
         ? ` <span class="muted">waits ${d.waiting_on.map(esc).join(", ")}</span>` : ""}
@@ -2801,8 +2991,17 @@ function opRow(o, i, kind, act){
     ? `<button class="x" data-i="${i}" data-k="${kind}" data-act="${esc(o.ref||"")}"
          title="Drop all ${act.length} ops of this act">✕</button>`
     : `<button class="x" data-i="${i}" data-k="${kind}" title="Drop this op">✕</button>`;
+  /* Preview this act on the canvas (D88): one button per act, beside the
+     ✓ that would apply the same set. While it is the act being previewed,
+     the same button clears it — the way out sits where the way in was. */
+  const eye = o.ref && head
+    ? (PREVIEW && PREVIEW.scope===o.ref
+        ? `<button class="x" style="color:var(--accent);font-weight:700" data-preview-off title="Clear the preview">◉</button>`
+        : `<button class="x" style="color:var(--dim)" data-preview="${esc(o.ref)}"
+             title="Preview ${grouped?`this act (${act.length} ops)`:"this op"} on the canvas — the store is unchanged">◎</button>`)
+    : "";
   const ctl = head
-    ? `<td style="white-space:nowrap"${grouped?` class="act-ctl" rowspan="${act.length}"`:""}>${take}${
+    ? `<td style="white-space:nowrap"${grouped?` class="act-ctl" rowspan="${act.length}"`:""}>${eye}${take}${
         editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" title="Revise this op in ${esc(ED.editor||"the editor")}">✎</button>`:""
       }${drop}</td>`
     : "";
@@ -2859,6 +3058,9 @@ function rowsFor(list){
 }
 
 function tray(){
+  /* First, before the early return below: a preview of an act that was
+     just dropped must end even when the tray it leaves is empty. */
+  syncPreview();
   const total = PEND.length + TPEND.length;
   const roster = trayRoster();
   /* A writer who had ops and now has none — applied, or cleared — must not
@@ -2892,6 +3094,16 @@ function tray(){
         `<button class="chip" data-who="${esc(n)}" ${TRAYWHO===n?'style="font-weight:600"':""}>${esc(n)} ${c}</button>`).join("")
       + `</div>`;
   }
+  /* The tray-wide preview, narrowed with the tray: under a writer's name it
+     draws that writer's ops and says so. */
+  h+=`<div style="margin-bottom:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <span class="muted">canvas</span>`
+    + (PREVIEW && PREVIEW.scope==="all"
+        ? `<button class="chip" data-preview-off style="color:var(--accent);font-weight:600">clear preview</button>
+           <span class="muted">${esc(PREVIEW.label)}</span>`
+        : `<button class="chip" data-preview="all" title="Draw the graph as it would be with ${TRAYWHO?`${esc(TRAYWHO)}'s ops`:"everything staged"} applied — the store is unchanged">preview ${TRAYWHO?`${esc(TRAYWHO)}'s ${shown}`:`all ${total}`}</button>`
+          + (PREVIEW?`<span class="muted">previewing ${esc(PREVIEW.label)}</span>`:""))
+    + `</div>`;
   h+=`<div class="tray-split">`;
   /* A clear per tray. The count is in the button rather than behind it: the
      trays are shared, so clearing can discard something a terminal staged a
@@ -2911,6 +3123,10 @@ function tray(){
     confirmClear(b.dataset.clear==="t"));
   $("#tray").querySelectorAll("button[data-edit]").forEach(b=>b.onclick=()=>
     reviseOp(b.dataset.edit));
+  $("#tray").querySelectorAll("button[data-preview]").forEach(b=>b.onclick=()=>
+    previewOn(b.dataset.preview));
+  $("#tray").querySelectorAll("button[data-preview-off]").forEach(b=>b.onclick=()=>
+    previewOff());
   $("#tray").querySelectorAll(".x[data-i]").forEach(b=>b.onclick=async()=>{
     const task = b.dataset.k==="t";
     const list = task?TPEND:PEND;

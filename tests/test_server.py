@@ -1514,3 +1514,117 @@ def test_find_subgraph_refuses_a_negative_hop_count_as_a_fault(srv, store):
     code, d = jreq(srv, "/api/find?q=id:D01&subgraph=-1")
     assert code == 200 and "starts at 0" in d["fault"] and "subgraph" not in d
 
+
+
+# ---- the canvas previews an act, or the tray, on request — D88, T80 -------
+#
+# The store routes answer the store; that is the reading model and it does
+# not move. `/api/preview` is the option D88 added beside it: the same
+# payloads, built over the previewed copies, plus the diff that makes the
+# drawing a preview rather than a redrawn store. The grain is the act — the
+# set the tray's ✓ applies — because one member of an act previewed alone
+# draws a graph nobody proposed.
+
+ACT_PREVIEW = [
+    {"op": "add_vertex", "id": "D90", "title": "A new question",
+     "area": "Alpha", "status": "OPEN", "ref": "aaaa", "group": "gggg"},
+    {"op": "add_edge", "from": "D01", "to": ["D90"], "ref": "bbbb",
+     "group": "gggg"},
+]
+LONE_PREVIEW = {"op": "set_status", "vertex": "D05", "status": "DECIDED",
+                "ref": "cccc"}
+
+
+def _stage(store, ops, task=False):
+    name = ".dgraph-task-pending.json" if task else ".dgraph-pending.json"
+    (store / name).write_text(json.dumps(ops), encoding="utf-8")
+
+
+def test_preview_of_an_act_draws_the_whole_act_and_says_what_changed(srv, store):
+    _stage(store, ACT_PREVIEW + [LONE_PREVIEW])
+    code, d = jreq(srv, "/api/preview?scope=bbbb")
+    assert code == 200, d
+    assert d["refs"] == ["aaaa", "bbbb"], "one member named, the act answered"
+    assert "act bbbb" in d["label"]
+    ids = {v["id"] for v in d["graph"]["vertices"]}
+    assert "D90" in ids
+    dd = d["diff"]["decisions"]
+    assert dd["added"] == ["D90"] and dd["edges_added"] == [["D01", "D90"]]
+    assert dd["status"] == {} and dd["removed"] == []
+    # The lone op outside the act is not in the preview.
+    assert next(v for v in d["graph"]["vertices"] if v["id"] == "D05")["status"] == "OPEN"
+    # The layout the page runs needs the derived block for the ghost too.
+    assert "D90" in d["graph"]["derived"]
+    assert d["graph"]["derived"]["D90"]["depends"] == ["D01"]
+
+
+def test_preview_of_the_whole_tray_and_of_one_lone_op(srv, store):
+    _stage(store, ACT_PREVIEW + [LONE_PREVIEW])
+    code, whole = jreq(srv, "/api/preview?scope=all")
+    assert code == 200 and set(whole["refs"]) == {"aaaa", "bbbb", "cccc"}
+    assert whole["diff"]["decisions"]["status"] == {"D05": ["OPEN", "DECIDED"]}
+    assert "3 op(s)" in whole["label"]
+    code, one = jreq(srv, "/api/preview?scope=cccc")
+    assert code == 200 and one["refs"] == ["cccc"]
+    assert one["diff"]["decisions"]["added"] == []
+    assert one["diff"]["decisions"]["status"] == {"D05": ["OPEN", "DECIDED"]}
+
+
+def test_preview_leaves_the_store_routes_and_the_tray_alone(srv, store):
+    """The default is the store. A preview is a copy, and asking for one
+    changes nothing any other route answers."""
+    _stage(store, ACT_PREVIEW)
+    before = (store / "decisions.json").read_text()
+    jreq(srv, "/api/preview?scope=all")
+    assert (store / "decisions.json").read_text() == before
+    _, g = jreq(srv, "/api/graph")
+    assert "D90" not in {v["id"] for v in g["vertices"]}
+    assert len(jreq(srv, "/api/pending")[1]) == 2
+
+
+def test_preview_puts_a_removed_record_back_so_it_can_be_struck(srv, store):
+    _stage(store, [{"op": "remove_vertex", "vertex": "D06", "ref": "dddd"}])
+    code, d = jreq(srv, "/api/preview?scope=dddd")
+    assert code == 200, d
+    assert d["diff"]["decisions"]["removed"] == ["D06"]
+    assert ["D05", "D06"] in d["diff"]["decisions"]["edges_removed"]
+    assert "D06" in {v["id"] for v in d["graph"]["vertices"]}
+    assert "D06" in d["graph"]["derived"]
+
+
+def test_preview_refuses_a_scope_naming_nothing_and_a_blank_agent(srv, store):
+    _stage(store, ACT_PREVIEW)
+    assert jreq(srv, "/api/preview?scope=zzzz")[0] == 400
+    assert jreq(srv, "/api/preview")[0] == 400
+    code, d = jreq(srv, "/api/preview?scope=all&agent=")
+    assert code == 400 and "agent is empty" in d["error"]
+    _stage(store, [])
+    code, d = jreq(srv, "/api/preview?scope=all")
+    assert code == 400 and "nothing staged" in d["error"]
+
+
+def test_preview_reports_a_tray_that_will_not_preview(srv, store):
+    """`D70`: not a canvas drawn without the op that failed."""
+    _stage(store, [{"op": "close", "vertex": "D99", "answer": "x",
+                    "ref": "eeee"}])
+    code, d = jreq(srv, "/api/preview?scope=eeee")
+    assert code == 400 and "will not preview" in d["error"], d
+
+
+def test_preview_is_a_guarded_read(srv, store):
+    _stage(store, ACT_PREVIEW)
+    assert jreq(srv, "/api/preview?scope=all", token=False)[0] == 403
+
+
+def test_preview_spans_both_trays_for_one_act(srv, dual):
+    """An act may hold a task op and a decision op; the tray's ✓ takes both,
+    so the preview draws both."""
+    _stage(dual, [{"op": "add_task", "id": "T09", "title": "new work",
+                   "area": "Alpha", "status": "TODO", "ref": "ffff"}], task=True)
+    code, d = jreq(srv, "/api/preview?scope=ffff")
+    assert code == 200, d
+    assert d["tasks"] is not None
+    assert d["diff"]["tasks"]["added"] == ["T09"]
+    assert "T09" in {t["id"] for t in d["tasks"]["tasks"]}
+    assert d["diff"]["decisions"]["added"] == []
+    assert "by_decision" in d["joined"]

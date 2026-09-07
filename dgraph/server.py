@@ -44,8 +44,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from dgraph import areas
-from dgraph import (applying, check, cross, editor, pending, project, ranges,
-                    render, task_editor, task_pending)
+from dgraph import (applying, check, cross, editor, pending, previewing,
+                    project, ranges, render, task_editor, task_pending)
 from dgraph.model import Graph, rival_note
 from dgraph import tasks as tasks_mod
 from dgraph.tasks import TaskGraph, stop_label
@@ -83,7 +83,7 @@ TOKEN_MARK = "__DG_TOKEN__"
 #: `/api/health` is deliberately *not* in this set: `probe()` calls it without a
 #: token to find out whether a server is already running, which is the one thing
 #: a stranger may usefully learn.
-GUARDED_READS = frozenset({"/api/find"})
+GUARDED_READS = frozenset({"/api/find", "/api/preview"})
 
 #: The only Host headers this loopback server answers. A DNS-rebound page — an
 #: attacker's hostname pointed at 127.0.0.1 — connects to the same socket but
@@ -409,6 +409,62 @@ def joined_payload(g: Graph | None, tg: TaskGraph | None) -> dict:
             for vid in g.vertices
         }
     }
+
+
+def preview_payload(scope: str, agent: str | None = None) -> dict:
+    """The canvas with an act, or the whole tray, drawn in — `D88`, `T80`.
+
+    Both payloads are the ones the store routes build, built over the
+    previewed copies, so the page draws them with the code it already has;
+    beside them travels `diff`, which is what makes the drawing a *preview*
+    rather than a redrawn store — ghost for added, struck for removed, marked
+    for moved. The reading model (`contested`) is untouched: the store routes
+    still answer the store, and this route answers only when asked.
+
+    **A removed record is put back** into the previewed payload, from the
+    store's, so the page has a position to strike it at: the previewed graph
+    has no such vertex, and a strike drawn nowhere says nothing. Its derived
+    lists are trimmed to ids the merged graph holds, because the layout
+    walks them.
+
+    `ValueError` for a scope naming nothing; `pending.ApplyError` for a tray
+    that will not preview. Both are the reader's to hear, as 400s.
+    """
+    proj = project.find()
+    ops = pending.load(proj.pending) if proj.has_decisions else []
+    task_ops = (pending.load(task_pending.path()) if proj.has_tasks else [])
+    d_ops, t_ops, label = previewing.select(ops, task_ops, scope, agent)
+    g, tg = _stores()
+    pg, ptg, diff = previewing.preview(g, tg, d_ops, t_ops)
+    out: dict = {"scope": scope, "label": label,
+                 "refs": [o.get("ref") for o in d_ops + t_ops],
+                 "graph": None, "tasks": None, "diff": diff}
+    if pg is not None:
+        out["graph"] = _with_removed(graph_payload(pg), graph_payload(g),
+                                     "vertices", diff["decisions"]["removed"])
+    if ptg is not None:
+        out["tasks"] = _with_removed(task_payload(ptg, pg), task_payload(tg, g),
+                                     "tasks", diff["tasks"]["removed"])
+    out["joined"] = joined_payload(pg, ptg)
+    return out
+
+
+def _with_removed(after: dict, before: dict, key: str,
+                  removed: list[str]) -> dict:
+    """`after`, with the records `removed` names copied in from `before` so
+    the page can draw them struck — see `preview_payload`."""
+    if not removed:
+        return after
+    present = {r["id"] for r in after[key]} | set(removed)
+    for rid in removed:
+        rec = next(r for r in before[key] if r["id"] == rid)
+        after[key].append(rec)
+        derived = dict(before["derived"][rid])
+        for field, val in list(derived.items()):
+            if isinstance(val, list) and all(isinstance(x, str) for x in val):
+                derived[field] = [x for x in val if x in present]
+        after["derived"][rid] = derived
+    return after
 
 
 def context_payload(vid: str) -> dict:
@@ -1004,6 +1060,26 @@ class Handler(BaseHTTPRequestHandler):
                     # door and `dg find --hops` cannot disagree about the bound.
                     self._json({"query": fq.get("q", [""])[0],
                                 "fault": f"subgraph {exc}"})
+            elif urlparse(self.path).path == "/api/preview":
+                # Blanks kept, so `agent=` reaches `_blank` and is refused as
+                # a blank rather than dropped and read as no narrowing (`D82`).
+                q = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                scope = (q.get("scope") or [""])[0]
+                agent = (q.get("agent") or [None])[0]
+                if not scope:
+                    return self._json({"error": "scope is required: `all`, "
+                                       "or a staged op's id"}, 400)
+                if self._blank("agent", agent):
+                    return
+                try:
+                    self._json(preview_payload(scope, agent))
+                except ValueError as exc:
+                    self._json({"error": str(exc)}, 400)
+                except pending.ApplyError as exc:
+                    # `D70`: a tray that will not preview is a finding, said
+                    # as itself, not a canvas drawn without the op that failed.
+                    self._json({"error": f"the tray will not preview: {exc}"},
+                               400)
             elif urlparse(self.path).path == "/api/context":
                 self._json(context_payload(parse_qs(
                     urlparse(self.path).query).get("id", [""])[0]))
