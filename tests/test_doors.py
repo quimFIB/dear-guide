@@ -2163,30 +2163,26 @@ def test_the_page_binds_the_preview_controls_and_can_clear_them():
     assert "function previewOff" in page and "function previewOn" in page
 
 
-def test_the_page_binds_the_panel_toggles_and_reveals_the_inspector_on_use():
-    """Two chips fold the inspector and the trays away for a canvas-only
-    reading. Drawn and bound (`B-F1`), and the inspector comes back by
-    itself wherever the page is about to write into it — a click on a node,
-    a form, a confirmation — since a panel written to while hidden is a
-    click that did nothing."""
+def test_the_inspector_exists_only_while_it_has_something_to_show():
+    """Hidden at start, opened by whatever writes into it, closed when that
+    is cleared — derived from its content by an observer, so none of the
+    places that write to it has to remember. An empty inspector is a third
+    of the window saying "click a node". The tray folds behind a chip that
+    is drawn and bound (`B-F1`) and carries the staged count while folded."""
     page = _page()
-    for btn in ("sideBtn", "trayBtn"):
-        assert f'id="{btn}"' in page and f'$("#{btn}").onclick' in page, btn
-    assert "function showSide" in page
-    for opener in ("function select(id, quiet){", "function newNode(){",
-                   "function soundPanel(){", "async function showAreas(){",
-                   "function askDropAct(", "function confirmClear(task){"):
-        body = page.split(opener, 1)[1][:200]
-        assert "showSide();" in body, f"{opener} writes to a panel it may not have shown"
+    assert '<aside id="side" hidden>' in page, "the inspector is open at start"
+    assert "new MutationObserver(sideSync)" in page
+    assert "function sideSync" in page and "SIDE_EMPTY" in page
+    assert "showSide" not in page and 'id="sideBtn"' not in page
+    assert 'id="trayBtn"' in page and '$("#trayBtn").onclick' in page
+    assert "`tray ${n}`" in page
 
 
-def test_refresh_keeps_a_folded_inspector_folded_and_the_canvas_can_be_deselected():
-    """Refresh restores a reading; it does not ask for one, so the reselect
-    it does is the quiet kind. And there is a way back to the opening
-    reading — nothing selected, nothing dimmed — from the canvas itself."""
+def test_the_selection_can_be_cleared_but_never_by_a_background_click():
+    """A way back to the opening reading — nothing selected, nothing dimmed,
+    no inspector: a chip that is there while the inspector is, and Escape
+    outside a field."""
     page = _page()
-    assert "select(keep, true)" in page, "refresh reselects loudly"
-    assert "function select(id, quiet){" in page
     assert "function deselect(){" in page
     assert 'e.key==="Escape"' in page and "deselect()" in page
     assert 'id="deselectBtn"' in page and '$("#deselectBtn").onclick' in page

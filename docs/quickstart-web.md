@@ -207,21 +207,21 @@ Never one table: the two stores share their areas and not their vocabularies.
 The layout is a layered DAG — rank by longest path from a root, so a node
 always sits below everything it rests on.
 
-When the canvas is the point — a long graph read by panning — the
-**inspector** and **tray** chips in the header fold those panels away and
-give it the whole window. The choice is remembered per browser. The
-inspector comes back on its own the moment something is put in it (a click
-on a node, a form, a confirmation); the tray does not, and carries its
-staged count on the chip while hidden, so staging from the panel never
-yanks the footer open. **Refresh** re-reads the stores and keeps the panels
-as they were, folded or not.
+The page opens as canvas alone. The inspector on the right exists only
+while it has something to show — it opens when you click a node, start a
+form or ask for a reading, and closes when that is cleared, because an empty
+inspector is a third of the window saying "click a node". The **tray** chip
+in the header folds the trays away and remembers the choice per browser;
+folded, it carries the staged count, so staging from the panel never yanks
+the footer open. **Refresh** re-reads the stores and keeps all of this as it
+was.
 
-Selecting a node dims everything it is not related to. The **× selection**
-chip that appears in the header while something is selected, or Escape
-outside a field, clears it and lights the whole graph again, the way it
-opens. A click on empty canvas does not — the canvas is grabbed to pan, and
-a pan that started with a still hand should not throw the reading away.
-Find, focus and a preview are their own controls and keep their own clears.
+Selecting a node dims everything it is not related to. The **× inspector**
+chip in the header, or Escape outside a field, clears the selection, closes
+the inspector and lights the whole graph again, the way it opens. A click
+on empty canvas does not — the canvas is grabbed to pan, and a pan that
+started with a still hand should not throw the reading away. Find, focus
+and a preview are their own controls and keep their own clears.
 
 | | |
 |---|---|

@@ -221,10 +221,9 @@
     <button class="chip" id="soundBtn" style="display:none"></button>
     <button class="chip" id="areasBtn" title="Counts by area and status, one block per store">areas</button>
     <button class="chip" id="frontierOnly">frontier only</button>
-    <button class="chip" id="deselectBtn" hidden title="Clear the selection: nothing dimmed, the way the page opens. Esc does the same outside a field.">&times; selection</button>
+    <button class="chip" id="deselectBtn" hidden title="Close the inspector and clear the selection: nothing dimmed, the way the page opens. Esc does the same outside a field.">&times; inspector</button>
     <button class="chip" id="focusBtn" title="Arm focus, then click a node: the canvas keeps only the subgraph that node induces and re-lays it out. One click seeds it and the arm drops, so the next click reads a node inside the slice without moving it. The find box still dims within it. Same slice as `dg find --subgraph`.">&#8982; focus</button>
     <button class="chip" id="refreshBtn" title="Re-read both stores and both trays. Pan, zoom and the open inspector are kept.">&#8635; refresh</button>
-    <button class="chip on" id="sideBtn" title="Show or hide the inspector. Clicking a node brings it back.">inspector</button>
     <button class="chip on" id="trayBtn" title="Show or hide the trays. The count stays here while they are hidden.">tray</button>
     <input id="q" placeholder="find…" title="Same query language as `dg find`: a bare word searches prose, field:value matches one field, is:name asks a derived question, under:D04 matches everything below D04. `-` negates, `or` alternates. This box dims what does not match — to draw a slice on its own instead, use the focus chip.">
     <span class="muted" id="qnote"></span>
@@ -243,7 +242,7 @@
   </header>
   <main>
     <div id="canvas"><div id="previewBar" hidden></div><svg id="svg"><g id="viewport"></g></svg></div>
-    <aside id="side"><p class="muted">Click a node to inspect it.</p></aside>
+    <aside id="side" hidden><p class="muted">Click a node to inspect it.</p></aside>
   </main>
   <footer id="tray"></footer>
 </div>
@@ -485,7 +484,7 @@ async function refresh(){
        inspector costs nothing extra. */
     const here = keep && ((G && G.vertices.some(v=>v.id===keep))
                        || (T && T.tasks.some(x=>x.id===keep)));
-    if(here) select(keep, true);
+    if(here) select(keep);
     else {
       draw();
       if(keep) $("#side").innerHTML=`<p class="muted">${esc(keep)} is no longer
@@ -1129,9 +1128,6 @@ function draw(){
   vp.innerHTML = tab==="tasks" ? drawTasks()
                : tab==="joined" ? drawJoined() : drawDecisions();
   $("#svg").setAttribute("viewBox",view.join(" "));
-  /* Every selection change comes through here, so this is where the chip
-     that clears one appears and goes. */
-  $("#deselectBtn").hidden = !cur();
   vp.querySelectorAll(".node").forEach(n=>n.onclick=()=>select(n.dataset.id));
 }
 
@@ -1364,11 +1360,12 @@ function fit(){ const e=extent(); view=[-30,-30,e.w+60,e.h+60]; }
    would throw the reading away. Query, focus and a preview are their own
    controls with their own clears and are left alone. */
 function deselect(){
-  if(!cur() && !NEWKIND && !RELATING) return;
+  /* Whatever the inspector holds — a record, a form, a reading — goes. */
+  if($("#side").hidden) return;
   captureDraft();
   sel=null; tsel=null; NEWKIND=null; RELATING=null;
   draw();
-  $("#side").innerHTML=`<p class="muted">Click a node to inspect it.</p>`;
+  $("#side").innerHTML=`<p class="muted">${SIDE_EMPTY}</p>`;
 }
 addEventListener("keydown",e=>{
   const t = e.target;
@@ -1585,10 +1582,7 @@ function syncPreview(){
 /* ---- side panel ---- */
 /* One click handler for both stores: the id says which. In the joined view
    both kinds are on screen at once, so this is not a formality. */
-/* `quiet` keeps a folded inspector folded: a refresh re-selecting what was
-   selected is restoring a reading, not asking for one. */
-function select(id, quiet){
-  if(!quiet) showSide();
+function select(id){
   captureDraft();
   const isTask = T && T.tasks.some(x=>x.id===id);
   if(isTask){ tsel=id; sel=null; } else { sel=id; tsel=null; }
@@ -1687,7 +1681,6 @@ function findingRows(rows){
    a second wording here is the two doors disagreeing about one store. */
 function soundPanel(){
   if(!SOUND) return;
-  showSide();
   sel=null; tsel=null; NEWKIND=null; RELATING=null; draw();
   const {stored, staged, repairs} = SOUND;
   let h=`<h2>What `+"`dg check`"+` says</h2>`;
@@ -1744,7 +1737,6 @@ function soundPanel(){
 let NEWKIND=null;          /* "decision" | "task" while a form is open */
 
 function newNode(){
-  showSide();
   sel=null; tsel=null; draw();
   /* In a single-store view the tab has already answered the question. In
      **joined** it has not, and guessing is how a piece of work gets recorded as
@@ -2650,7 +2642,6 @@ async function showPath(a, b){
    not their vocabularies — a row summing OPEN with TODO would be counting
    questions and work as if they were the same thing. */
 async function showAreas(){
-  showSide();
   let r;
   try{ r=await api("/api/areas"); }catch(err){ say(err.message,"bad"); return; }
   sel=null; tsel=null; NEWKIND=null; RELATING=null; draw();
@@ -3251,7 +3242,6 @@ function tray(){
    server's refusal when one was heard, and nothing when the act's own ✕ was
    what brought the reader here. */
 function askDropAct(op, list, task, ref, why){
-  showSide();
   const act = groupOf(op, list);
   const rows = act.map(o=>`<li>${esc(opLine(o,task?"t":"d"))}</li>`).join("");
   $("#side").innerHTML=`<h2>Drop the whole act?</h2>
@@ -3342,7 +3332,6 @@ $("#applyBtn").onclick=async()=>{
    every subsequent event, and this one is answerable with the count in front
    of you. */
 function confirmClear(task){
-  showSide();
   const n=rowsFor(task?TPEND:PEND).length;
   const who=TRAYWHO;
   $("#side").innerHTML=`<h2>Discard ${n} staged op(s)${who?` by ${esc(who)}`:""}?</h2>
@@ -3398,29 +3387,40 @@ async function reviseOp(ref){
 
 /* ---- folding the panels -------------------------------------------------
    Sometimes the canvas is the whole point — a long graph read by panning —
-   and the inspector and the trays are a third of the window spent on
-   nothing. Two toggles fold them away. The choice is remembered per browser
+   and the panels are a third of the window spent on nothing.
+
+   **The inspector is there only while it has something to show.** It opens
+   when a record, a form or a reading is written into it and closes when
+   what it held is cleared — an empty inspector is a third of the window
+   saying "click a node". Derived from its content by an observer rather
+   than toggled at each of the twenty places that write to it, so a new
+   panel cannot forget to open it and a cleared one cannot leave it standing.
+
+   The trays fold behind a chip, and that choice is remembered per browser
    (a layout is a viewer's convenience, not a reading of the store, so
-   keeping it is not the trap `TRAYWHO` avoids), and the inspector comes
-   back on its own the moment something is put in it: a click on a node, a
-   form, a confirmation. The tray does not — its count sits on the chip
-   and on Apply — so staging from the panel never yanks the footer open. */
-const PANELS = {side:true, tray:true};
-try{ Object.assign(PANELS, JSON.parse(localStorage.getItem("dg.panels")||"{}")); }catch(e){}
+   keeping it is not the trap `TRAYWHO` avoids). Folded, the chip carries
+   the staged count, so staging from the panel never yanks the footer open. */
+const SIDE_EMPTY = "Click a node to inspect it.";
+function sideSync(){
+  const text = $("#side").textContent.trim();
+  const empty = !text || text===SIDE_EMPTY;
+  $("#side").hidden = empty;
+  $("#deselectBtn").hidden = empty;
+}
+new MutationObserver(sideSync).observe($("#side"), {childList:true, subtree:true, characterData:true});
+sideSync();
+
+const PANELS = {tray:true};
+try{ const kept=JSON.parse(localStorage.getItem("dg.panels")||"{}");
+     if(typeof kept.tray==="boolean") PANELS.tray=kept.tray; }catch(e){}
 function panelsApply(){
-  $("#side").hidden = !PANELS.side;
   $("#tray").hidden = !PANELS.tray;
-  $("#sideBtn").classList.toggle("on", PANELS.side);
   $("#trayBtn").classList.toggle("on", PANELS.tray);
   const n = PEND.length + TPEND.length;
   $("#trayBtn").textContent = PANELS.tray || !n ? "tray" : `tray ${n}`;
   try{ localStorage.setItem("dg.panels", JSON.stringify(PANELS)); }catch(e){}
 }
-function togglePanel(which){ PANELS[which]=!PANELS[which]; panelsApply(); }
-/* The inspector is about to be written to: make sure it can be seen. */
-function showSide(){ if(!PANELS.side){ PANELS.side=true; panelsApply(); } }
-$("#sideBtn").onclick=()=>togglePanel("side");
-$("#trayBtn").onclick=()=>togglePanel("tray");
+$("#trayBtn").onclick=()=>{ PANELS.tray=!PANELS.tray; panelsApply(); };
 panelsApply();
 
 $("#newBtn").onclick=newNode;
