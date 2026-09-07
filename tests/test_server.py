@@ -1523,12 +1523,20 @@ def test_the_focus_button_promotes_the_find_query_at_zero_hops():
     first. The button now has three cases and no state between presses: a
     selected node, else the find box's text at zero hops with the box left
     as it was, else nothing. The arm that used to wait for a click is gone
-    with it, so nothing on the page may still consult it."""
+    with it, so nothing on the page may still consult it. And it is a
+    toggle (`T91`): lit exactly while a chip is up, and a press then drops
+    the slice, so `frontier only` → focus → focus is the frontier drawn
+    alone and then lit over the whole graph again."""
     page = _page()
     handler = page[page.index("btn.onclick = () => {"):]
     handler = handler[:handler.index("};")]
-    assert "if(cur()) focusOn(cur());" in handler
+    assert 'if(box.value.trim()) setFocus("");' in handler, "not a toggle"
+    assert "else if(cur()) focusOn(cur());" in handler
     assert "else if(QUERY) focusQuery();" in handler
+    lit = page[page.index("function setFocus(text){"):]
+    lit = lit[:lit.index("runFocus();")]
+    assert 'classList.toggle("on", !!text.trim())' in lit, \
+        "the button does not read as the state it toggles"
     promote = page[page.index("function focusQuery(){"):]
     promote = promote[:promote.index("}")]
     assert "focusText(QUERY, 0)" in promote, "the promotion is not at zero hops"
