@@ -2050,7 +2050,7 @@ let PREVIEW = JSON.parse(process.argv[3]);
 // A store for `previewLit` to walk one hop in, when the test hands one over.
 const G = process.argv[5] ? JSON.parse(process.argv[5]) : null;
 const T = null, JOIN = null, STORE = null, PEND = [], TPEND = [];
-const TRAYWHO = null, sel = null, tsel = null, tab = "decisions";
+const TRAYWHO = null, sel = null, tsel = null, tab = "decisions", ESEL = null;
 const esc = x => String(x == null ? "" : x);
 const edgeIn = () => true;
 const edgeSvg = (a, b, cls) => `${a}>${b}[${cls}]`;
@@ -2282,5 +2282,68 @@ def test_edges_carry_chevrons_and_a_click_target():
     assert "getPointAtLength(" not in page, "the chevrons measure the drawn path again"
     assert "<marker" not in page and "marker-end" not in page
     assert 'class="hit" d="${d}" data-pick=' in page
-    assert '.hit[data-pick]' in page and "select(h.dataset.pick)" in page
+    assert '.hit[data-pick]' in page and "selectEdge(h.dataset.from, h.dataset.to, h.dataset.pick)" in page
     assert 'closest(".node,.hit")' in page, "a click on an edge starts a drag"
+
+
+# ---- an edge click is an edge selection ------------------------------------
+#
+# It used to select the edge's source, and a node selection lights the
+# node's whole neighbourhood — so clicking one line into a hub lit thirty
+# lines, which answered "what is D70 connected to?" when the question was
+# "what is this one relation?". Now the reading narrows to the edge and its
+# two ends; the inspector still opens the record the answer lives on.
+
+TONE_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const block = js.slice(js.indexOf("function edgeTone("), js.indexOf("/* Two different verbs."));
+let ESEL = JSON.parse(process.argv[3]);
+eval(block);
+const related = new Set(["D01", "D02", "D03"]), lit = new Set(["D02", "D90"]);
+console.log(JSON.stringify({
+  sel:   [edgeTone("D01","D02",related,null), edgeTone("D02","D03",related,null), edgeTone("D03","D04",related,null)],
+  lit:   [edgeTone("D02","D90",null,lit), edgeTone("D01","D02",null,lit)],
+  none:  edgeTone("D01","D02",null,null),
+  nodes: [...(litSet(related, null)||[])].sort(),
+  nodesLit: [...(litSet(related, lit)||[])].sort(),
+}));
+"""
+
+
+def _tone(tmp_path, esel):
+    harness = tmp_path / "tone.js"
+    harness.write_text(TONE_HARNESS)
+    res = subprocess.run(["node", str(harness), str(server.STATIC / "app.html"),
+                          json.dumps(esel)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    return json.loads(res.stdout)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_a_node_selection_and_a_preview_light_as_before(tmp_path):
+    out = _tone(tmp_path, None)
+    assert out["sel"] == ["hot", "hot", "dim"]
+    assert out["lit"] == ["", "dim"], "a preview lights without hot edges"
+    assert out["none"] == ""
+    assert out["nodes"] == ["D01", "D02", "D03"]
+    assert out["nodesLit"] == ["D02", "D90"], "the preview's set wins over the selection's"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_an_edge_selection_lights_the_edge_and_its_two_ends_only(tmp_path):
+    out = _tone(tmp_path, {"from": "D02", "to": "D03"})
+    assert out["sel"] == ["dim", "hot", "dim"]
+    assert out["lit"] == ["dim", "dim"], "the edge selection is the narrowest reading"
+    assert out["nodes"] == ["D02", "D03"] and out["nodesLit"] == ["D02", "D03"]
+
+
+def test_the_page_binds_the_edge_selection_and_clears_it_on_a_node_click():
+    page = _page()
+    assert "function selectEdge(from, to, pick){" in page
+    assert 'selectEdge(h.dataset.from, h.dataset.to, h.dataset.pick)' in page
+    assert 'data-from="${esc(from)}" data-to="${esc(to)}"' in page
+    assert 'id="edge-card"' in page and '$("#edge-card")' in page
+    body = page.split("function select(id){", 1)[1][:80]
+    assert "ESEL=null;" in body, "a node click leaves the edge selection standing"
+    assert page.count("ESEL=null;") >= 3, "deselect and the tab switch must clear it too"

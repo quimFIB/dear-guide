@@ -292,6 +292,12 @@ let T=null, TPEND=[], JOIN=null, tsel=null;
    the store back in one assignment. `PREVIEW.diff` is what marks the
    drawing as a preview — see `previewMark`. */
 let PREVIEW=null, STORE=null;
+/* An edge selection: `{from, to}` while a click on an edge is the reading,
+   or null. A node click asks "what is this connected to?" and lights the
+   neighbourhood; an edge click asks "what is this one relation?", and the
+   answer is the edge and its two ends, nothing else. The inspector shows
+   the record the edge's answer lives on, the same as before. */
+let ESEL=null;
 
 /* What the four watched files looked like when this page last read them, and
    whether they have moved since. The poll writes STALE and nothing else: it
@@ -550,7 +556,7 @@ function tabs(){
   }).join(" ");
   $("#tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{
     if(b.disabled) return;
-    tab=b.dataset.t; sel=null; tsel=null;
+    tab=b.dataset.t; sel=null; tsel=null; ESEL=null;
     /* The focused set does not change with the tab — it is one slice of both
        stores, and switching view must not silently change what you are looking
        at. What changes is whether a bridge is drawable, so a node marked
@@ -1041,6 +1047,20 @@ function bendsOf(from, to){
   return (b && b[from+"\u0000"+to]) || [];
 }
 
+/* What one edge is drawn as, and which records are lit, under whichever
+   reading is on: an edge selection first (it is the narrowest), then a
+   preview's neighbourhood, then a node selection's related set. One rule
+   for the three drawers so they cannot disagree about it. */
+function edgeTone(a, b, related, lit){
+  if(ESEL) return (a===ESEL.from && b===ESEL.to) ? "hot" : "dim";
+  if(lit) return (lit.has(a) && lit.has(b)) ? "" : "dim";
+  if(related) return (related.has(a) && related.has(b)) ? "hot" : "dim";
+  return "";
+}
+function litSet(related, lit){
+  return ESEL ? new Set([ESEL.from, ESEL.to]) : (lit || related);
+}
+
 /* Two different verbs. `passes` decides what is *lit*; `inFocus` decides what
    is *drawn at all*. A node outside the focus is not dim, it is absent — the
    canvas re-ranked without it — so no caller may reach for one when it meant
@@ -1147,7 +1167,7 @@ function edgeSvg(from, to, cls){
   }
   const info = edgeInfo(from, to, cls);
   return `<g><title>${esc(info.what)}</title><path class="${cls}" d="${d}"/>${chev}
-    <path class="hit" d="${d}" data-pick="${esc(info.pick)}"/></g>`;
+    <path class="hit" d="${d}" data-pick="${esc(info.pick)}" data-from="${esc(from)}" data-to="${esc(to)}"/></g>`;
 }
 
 function decisionNode(v, related){
@@ -1189,7 +1209,8 @@ function draw(){
   vp.querySelectorAll(".node").forEach(n=>n.onclick=()=>select(n.dataset.id));
   /* An edge opens the record its answer lives on — its source for a
      dependency, the task for a link between the stores. */
-  vp.querySelectorAll(".hit[data-pick]").forEach(h=>h.onclick=()=>select(h.dataset.pick));
+  vp.querySelectorAll(".hit[data-pick]").forEach(h=>h.onclick=()=>
+    selectEdge(h.dataset.from, h.dataset.to, h.dataset.pick));
 }
 
 function drawDecisions(){
@@ -1202,14 +1223,13 @@ function drawDecisions(){
       if(!edgeIn(e.from,to)) return;
       const cls=["edge"];
       if(!e.answer) cls.push("pending-dep");
-      if(lit){ if(!(lit.has(e.from)&&lit.has(to))) cls.push("dim"); }
-      else if(related) cls.push(related.has(e.from)&&related.has(to)?"hot":"dim");
+      cls.push(edgeTone(e.from,to,related,lit));
       if(edgeAdded(e.from,to)) cls.push(edgeAdded(e.from,to));
       edges+=edgeSvg(e.from,to,cls.join(" "));
     });
   });
   edges+=goneEdges("decisions");
-  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, lit||related); });
+  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, litSet(related,lit)); });
   return edges+nodes;
 }
 
@@ -1226,13 +1246,12 @@ function drawTasks(){
        resolved one is history. Same faint-dash convention the decision view
        uses for a premise that is not settled yet. */
     if(T.derived[x.id].waiting_on.includes(pq)) cls.push("pending-dep");
-    if(lit){ if(!(lit.has(pq)&&lit.has(x.id))) cls.push("dim"); }
-    else if(related) cls.push(related.has(pq)&&related.has(x.id)?"hot":"dim");
+    cls.push(edgeTone(pq,x.id,related,lit));
     if(edgeAdded(pq,x.id)) cls.push(edgeAdded(pq,x.id));
     edges+=edgeSvg(pq,x.id,cls.join(" "));
   }));
   edges+=goneEdges("tasks");
-  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, lit||related); });
+  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, litSet(related,lit)); });
   return edges+nodes;
 }
 
@@ -1251,8 +1270,7 @@ function drawJoined(){
     d.cross.premises.forEach(p=>related.add(p.id));
     if(d.cross.evidence_for) related.add(d.cross.evidence_for);
   }
-  const rel=(a,b)=>lit?(lit.has(a)&&lit.has(b)?"":"dim")
-                  :related?(related.has(a)&&related.has(b)?"hot":"dim"):"";
+  const rel=(a,b)=>edgeTone(a,b,related,lit);
   let edges="", nodes="";
   G.edges.filter(e=>e.active).forEach(e=>e.to.forEach(to=>{
     if(!edgeIn(e.from,to)) return;
@@ -1283,8 +1301,8 @@ function drawJoined(){
       edges+=edgeSvg(x.id,c.evidence_for,
                      ["edge","cross","evidence",rel(x.id,c.evidence_for)].join(" "));
   });
-  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, lit||related); });
-  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, lit||related); });
+  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, litSet(related,lit)); });
+  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, litSet(related,lit)); });
   return edges+nodes;
 }
 
@@ -1424,7 +1442,7 @@ function deselect(){
   /* Whatever the inspector holds — a record, a form, a reading — goes. */
   if($("#side").hidden) return;
   captureDraft();
-  sel=null; tsel=null; NEWKIND=null; RELATING=null;
+  sel=null; tsel=null; ESEL=null; NEWKIND=null; RELATING=null;
   draw();
   $("#side").innerHTML=`<p class="muted">${SIDE_EMPTY}</p>`;
 }
@@ -1549,7 +1567,7 @@ function goneEdges(kind){
   if(!d) return "";
   return d.edges_removed
     .filter(e=>(e[2]||"precedes")==="precedes" && edgeIn(e[0],e[1]))
-    .map(e=>edgeSvg(e[0],e[1],"edge gone")).join("");
+    .map(e=>edgeSvg(e[0],e[1],"edge gone"+(ESEL?" dim":""))).join("");
 }
 
 /* Turn a preview on, or re-ask for the one that is on after the stores were
@@ -1656,7 +1674,18 @@ function syncPreview(){
 /* ---- side panel ---- */
 /* One click handler for both stores: the id says which. In the joined view
    both kinds are on screen at once, so this is not a formality. */
+/* An edge click: the reading narrows to the edge and its ends, and the
+   inspector opens the record the answer lives on, scrolled to the card for
+   that answer where there is one. */
+function selectEdge(from, to, pick){
+  select(pick);
+  ESEL={from, to};
+  draw();
+  const card=$("#edge-card"); if(card) card.scrollIntoView({block:"nearest"});
+}
+
 function select(id){
+  ESEL=null;
   captureDraft();
   const isTask = T && T.tasks.some(x=>x.id===id);
   if(isTask){ tsel=id; sel=null; } else { sel=id; tsel=null; }
@@ -2552,7 +2581,7 @@ function mdLine(s, fmt){
    qualify it. `date` sits in the head rather than trailing `source`, because
    it dates the edge, not the citation. */
 function edgeCard(e, children){
-  return `<section class="edge-card">
+  return `<section class="edge-card" id="edge-card">
     <span class="edge-head">active edge<span class="when muted">${esc(e.date||"")}</span></span>
     <div class="kv">
       <div>opens</div><div>${idList(children, "TERMINAL")}</div>
