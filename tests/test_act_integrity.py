@@ -167,3 +167,75 @@ def test_the_table_rules_off_each_act_and_not_single_ops(store, monkeypatch):
     assert len(rows) == 4, out          # the four ops; the header row is ┃
     assert len(rules) == 1, out         # after the act; none between 2 and 3
     assert out.index("└ 1") < out.index("├") < out.index("  2")
+
+
+# ---- an act that rests on an earlier act — D89 -----------------------------
+#
+# The tray is a sequence; staging vets each op against the store plus what
+# is before it, so an act may name a record an earlier act adds. Taken alone
+# it fails with "unknown vertex", which is true and useless. `rests_on` is
+# the walk that names the act it was waiting for; the preview draws that act
+# as assumed, and both apply doors refuse by its name, never widening.
+
+CHAIN = [
+    {"op": "add_vertex", "id": "D90", "title": "first", "area": "Alpha",
+     "status": "OPEN", "ref": "a1", "group": "ga"},
+    {"op": "add_edge", "from": "D01", "to": ["D90"], "ref": "a2", "group": "ga"},
+    {"op": "add_vertex", "id": "D91", "title": "second", "area": "Alpha",
+     "status": "OPEN", "ref": "b1", "group": "gb"},
+    {"op": "add_edge", "from": "D90", "to": ["D91"], "ref": "b2", "group": "gb"},
+    {"op": "add_edge", "from": "D91", "to": ["D05"], "ref": "c1"},
+    {"op": "add_edge", "from": "D02", "to": ["D05"], "ref": "d1"},
+]
+TASK_ON_DECISION = [{"op": "add_task", "id": "T90", "title": "work",
+                     "area": "Alpha", "status": "TODO", "because": ["D90"],
+                     "ref": "t1"}]
+
+
+def _act(ref, ops=CHAIN):
+    return pending.group_of(ops, next(o for o in ops if o["ref"] == ref))
+
+
+def test_rests_on_names_the_act_that_adds_what_this_one_references():
+    assert [o["ref"] for o in pending.rests_on(CHAIN, _act("b2"))] == ["a1", "a2"]
+    assert pending.rests_on_acts(CHAIN, _act("b2")) == ["a1"]
+
+
+def test_rests_on_is_transitive_and_in_tray_order():
+    assert [o["ref"] for o in pending.rests_on(CHAIN, _act("c1"))] == \
+        ["a1", "a2", "b1", "b2"]
+    assert pending.rests_on_acts(CHAIN, _act("c1")) == ["a1", "b1"]
+
+
+def test_an_act_naming_only_the_store_rests_on_nothing():
+    assert pending.rests_on(CHAIN, _act("d1")) == []
+    assert pending.rests_on(CHAIN, _act("a2")) == [], "its own act is not a prerequisite"
+    assert pending.refuse_dependent(CHAIN, _act("d1")) is None
+
+
+def test_a_task_act_can_rest_on_a_decision_act():
+    both = CHAIN + TASK_ON_DECISION
+    assert pending.rests_on_acts(both, _act("t1", both)) == ["a1"]
+
+
+def test_the_refusal_names_the_act_and_never_widens():
+    why = pending.refuse_dependent(CHAIN, _act("c1"))
+    assert "act c1 rests on act a1, b1" in why and "Take a1 first" in why
+
+
+def test_apply_group_refuses_a_dependent_act_by_name_and_counts_right(store, monkeypatch):
+    """The CLI door: refused before the apply, so the reader hears which
+    act rather than "unknown vertex" — and the tray is exactly as it was.
+    Before `D89` the abort also printed "N op(s) left staged" counted
+    before the apply, which undercounted by the act still there."""
+    monkeypatch.setenv("COLUMNS", "160")
+    _tray(store / ".dgraph-pending.json", CHAIN)
+    res = CliRunner().invoke(app, ["--project", str(store), "apply", "--group", "b2"])
+    assert res.exit_code == 1, res.output
+    assert "rests on act a1" in res.output and "unknown vertex" not in res.output
+    assert "left staged" not in res.output
+    assert len(json.loads((store / ".dgraph-pending.json").read_text())) == 6
+    # An independent act still applies alone.
+    res = CliRunner().invoke(app, ["--project", str(store), "apply", "--group", "d1"])
+    assert res.exit_code == 0, res.output
+    assert "5 op(s) left staged" in res.output

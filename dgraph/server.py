@@ -433,18 +433,25 @@ def preview_payload(scope: str, agent: str | None = None) -> dict:
     proj = project.find()
     ops = pending.load(proj.pending) if proj.has_decisions else []
     task_ops = (pending.load(task_pending.path()) if proj.has_tasks else [])
-    d_ops, t_ops, label = previewing.select(ops, task_ops, scope, agent)
+    d_ops, t_ops, label, base = previewing.select(ops, task_ops, scope, agent)
     g, tg = _stores()
-    pg, ptg, diff = previewing.preview(g, tg, d_ops, t_ops)
+    pg, ptg, diff, context = previewing.preview(g, tg, d_ops, t_ops, base)
+    # `D89`: what the act rests on, by the id a reviewer would type, so the
+    # bar can say "rests on act ckqz" and the page can draw that act as
+    # assumed rather than as this act's change.
+    both = list(ops) + list(task_ops)
     out: dict = {"scope": scope, "label": label,
                  "refs": [o.get("ref") for o in d_ops + t_ops],
-                 "graph": None, "tasks": None, "diff": diff}
+                 "rests_on": pending.rests_on_acts(both, d_ops + t_ops),
+                 "graph": None, "tasks": None, "diff": diff,
+                 "context": context}
+    removed = lambda k: diff[k]["removed"] + context[k]["removed"]
     if pg is not None:
         out["graph"] = _with_removed(graph_payload(pg), graph_payload(g),
-                                     "vertices", diff["decisions"]["removed"])
+                                     "vertices", removed("decisions"))
     if ptg is not None:
         out["tasks"] = _with_removed(task_payload(ptg, pg), task_payload(tg, g),
-                                     "tasks", diff["tasks"]["removed"])
+                                     "tasks", removed("tasks"))
     out["joined"] = joined_payload(pg, ptg)
     return out
 
@@ -1269,8 +1276,14 @@ class Handler(BaseHTTPRequestHandler):
             if found is None:
                 return self._json(
                     {"error": f"nothing staged with id {group}"}, 400)
-            keep = {o.get("ref") for o in
-                    pending.group_of(list(ops) + list(task_ops), found)}
+            both = list(ops) + list(task_ops)
+            act = pending.group_of(both, found)
+            # `D89`: an act that names a record an earlier act adds is
+            # refused by that act's name — never widened to take it too.
+            why = pending.refuse_dependent(both, act)
+            if why is not None:
+                return self._json({"error": why}, 400)
+            keep = {o.get("ref") for o in act}
             ops = [o for o in ops if o.get("ref") in keep]
             task_ops = [o for o in task_ops if o.get("ref") in keep]
 

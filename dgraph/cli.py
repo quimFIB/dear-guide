@@ -3467,8 +3467,16 @@ def _scope_group(ops, task_ops, ref: str):
                   f"there; --group takes an op's id, and applies the act it "
                   f"was staged in[/]")
         return None
-    keep = {o.get("ref") for o in pending.group_of(
-        list(ops or ()) + list(task_ops or ()), found)}
+    both = list(ops or ()) + list(task_ops or ())
+    act = pending.group_of(both, found)
+    # `D89`: an act that names a record an earlier act adds is refused by
+    # that act's name, never widened to take it too. Said here, before the
+    # apply, so the reader hears which act rather than "unknown vertex".
+    why = pending.refuse_dependent(both, act)
+    if why is not None:
+        con.print(f"[red]✗ {_x(why)}[/]")
+        return None
+    keep = {o.get("ref") for o in act}
     mine_d = [o for o in (ops or ()) if o.get("ref") in keep]
     mine_t = [o for o in (task_ops or ()) if o.get("ref") in keep]
     rest = (len(ops or ()) + len(task_ops or ())) - len(mine_d) - len(mine_t)
@@ -3574,7 +3582,10 @@ def apply(
                 ok = _apply_decisions(ops, dry_run) and ok
             if task_ops:
                 ok = _apply_tasks(task_ops, dry_run) and ok
-        if left:
+        # Only when the scoped batch was written: `left` was counted before
+        # the apply, and after an abort it undercounts by the act that is
+        # still there — "6 op(s) left" over a tray of seven. `D89`.
+        if left and ok:
             con.print(f"[dim]{left}[/]")
     if not ok or ops is None or task_ops is None:
         # Something was refused, or one tray could not even be read. Exit

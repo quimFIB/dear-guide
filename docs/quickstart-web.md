@@ -399,6 +399,14 @@ two-box change is not lost among fifty. A bar over the canvas says what is
 being previewed, and the open inspector reads the previewed record with a
 line saying so.
 
+An act may name a record an earlier act adds — an edge from a vertex still
+in the tray — because staging vets each op against the store *plus what is
+before it*. Previewing such an act draws the act it rests on first, as
+**assumed**: a ghost without the glow, dimmer, so it reads as context and
+not as this act's change, and the bar names it. The ✓ on such an act is
+refused by that name — "rests on act ckqz, take it first or apply
+everything" — never quietly widened to take the prerequisite too.
+
 **Clear preview** in that bar, or the ◉ on the row that turned it on, draws
 the store again; pan, zoom and the inspector are kept. A preview also ends by
 itself when its act leaves the tray — applied with the ✓, or dropped — and

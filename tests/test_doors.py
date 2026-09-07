@@ -2101,9 +2101,37 @@ def test_the_preview_marks_added_removed_and_moved_and_cuts_edges(tmp_path):
     assert m["D02"]["cls"] == "moved" and "status" not in m["D02"]
     assert m["D01"] == {}, "a record the act leaves alone carries no mark"
     assert all("act gggg" in v["note"] for k, v in m.items() if v)
-    assert out["added"] == [True, True, False]
+    assert out["added"] == ["ghost", "ghost", ""]
     assert out["gone"]["decisions"] == "D05>D06[edge gone]"
     assert out["gone"]["tasks"] == "T04>T05[edge gone]"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_preview_draws_what_the_act_rests_on_as_assumed(tmp_path):
+    """`D89`: the change glows; the earlier act it rests on is a ghost
+    without the glow, and its edge is drawn assumed, not ghost."""
+    harness = tmp_path / "preview.js"
+    harness.write_text(PREVIEW_HARNESS)
+    empty = {"added": [], "removed": [], "status": {}, "changed": [],
+             "edges_added": [], "edges_removed": []}
+    preview = {"scope": "dddd", "label": "add_edge D90 (dddd)", "refs": ["dddd"],
+               "rests_on": ["aaaa"],
+               "diff": {"decisions": {**empty, "edges_added": [["D90", "D05"]]},
+                        "tasks": None},
+               "context": {"decisions": {**empty, "added": ["D90"],
+                                         "edges_added": [["D01", "D90"]]},
+                           "tasks": None}}
+    res = subprocess.run(
+        ["node", str(harness), str(server.STATIC / "app.html"),
+         json.dumps(preview), json.dumps(["D90", "D05"])],
+        capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout)
+    assert out["marks"]["D90"]["cls"] == "assumed"
+    assert "aaaa" in out["marks"]["D90"]["note"]
+    assert out["marks"]["D05"] == {}
+    assert out["added"] == ["assumed", "", ""]
+    assert "D05" in out["lit"] and "D90" in out["lit"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -2116,7 +2144,7 @@ def test_no_preview_means_no_marks(tmp_path):
         capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
     out = json.loads(res.stdout)
-    assert out["marks"] == {"D01": {}} and out["added"] == [False] * 3
+    assert out["marks"] == {"D01": {}} and out["added"] == [""] * 3
     assert out["gone"] == {"decisions": "", "tasks": ""}
 
 

@@ -1628,3 +1628,39 @@ def test_preview_spans_both_trays_for_one_act(srv, dual):
     assert "T09" in {t["id"] for t in d["tasks"]["tasks"]}
     assert d["diff"]["decisions"]["added"] == []
     assert "by_decision" in d["joined"]
+
+
+def test_preview_of_a_dependent_act_draws_what_it_rests_on_as_assumed(srv, store):
+    """`D89`: op 4 of chopin's tray, an edge from a vertex act 0 adds. The
+    preview no longer fails on it: the base is the store plus the act it
+    rests on, `context` says what that base added, `diff` is this act's
+    change alone, and `rests_on` names the act for the bar."""
+    dep = ACT_PREVIEW + [{"op": "add_edge", "from": "D90", "to": ["D05"],
+                          "ref": "dddd"}]
+    _stage(store, dep)
+    code, d = jreq(srv, "/api/preview?scope=dddd")
+    assert code == 200, d
+    assert d["rests_on"] == ["aaaa"]
+    assert d["context"]["decisions"]["added"] == ["D90"]
+    assert d["context"]["decisions"]["edges_added"] == [["D01", "D90"]]
+    assert d["diff"]["decisions"]["added"] == []
+    assert d["diff"]["decisions"]["edges_added"] == [["D90", "D05"]]
+    assert "D90" in {v["id"] for v in d["graph"]["vertices"]}
+    # An act resting on nothing carries an empty context, and `all` always does.
+    code, d = jreq(srv, "/api/preview?scope=bbbb")
+    assert code == 200 and d["rests_on"] == [] and d["context"]["decisions"]["added"] == []
+    code, d = jreq(srv, "/api/preview?scope=all")
+    assert code == 200 and d["rests_on"] == [] and d["diff"]["decisions"]["added"] == ["D90"]
+
+
+def test_apply_group_refuses_a_dependent_act_by_name(srv, store):
+    """The browser's ✓ hears the same refusal the CLI gives, and the tray
+    and the store are untouched."""
+    dep = ACT_PREVIEW + [{"op": "add_edge", "from": "D90", "to": ["D05"],
+                          "ref": "dddd"}]
+    _stage(store, dep)
+    before = (store / "decisions.json").read_text()
+    code, d = jreq(srv, "/api/apply", "POST", {"group": "dddd"})
+    assert code == 400 and "rests on act aaaa" in d["error"], d
+    assert (store / "decisions.json").read_text() == before
+    assert len(jreq(srv, "/api/pending")[1]) == 3

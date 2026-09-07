@@ -25,8 +25,13 @@ ALL = "all"
 
 
 def select(ops: list[dict], task_ops: list[dict], scope: str,
-           agent: str | None = None) -> tuple[list[dict], list[dict], str]:
-    """`(decision ops, task ops, label)` the scope names, or `ValueError`.
+           agent: str | None = None
+           ) -> tuple[list[dict], list[dict], str, list[dict]]:
+    """`(decision ops, task ops, label, base)` the scope names, or
+    `ValueError`. `base` is what the act needs applied first — the earlier
+    acts it names records from (`pending.rests_on`, `D89`), split by tray as
+    `(decision ops, task ops)`; both empty for `all`, which is everything in
+    order and rests on nothing.
 
     `agent` narrows `all` to one writer's ops — the browser's tray is
     narrowed the same way, and a preview of "everything" under a narrowing
@@ -41,7 +46,7 @@ def select(ops: list[dict], task_ops: list[dict], scope: str,
         if not n:
             raise ValueError("nothing staged" + (f" by {agent}" if agent else ""))
         return ops, task_ops, (f"everything staged by {agent}" if agent
-                               else "everything staged") + f" ({n} op(s))"
+                               else "everything staged") + f" ({n} op(s))", ([], [])
     both = list(ops) + list(task_ops)
     found = next((o for o in both if o.get("ref") == scope), None)
     if found is None:
@@ -52,7 +57,9 @@ def select(ops: list[dict], task_ops: list[dict], scope: str,
     n = len(d) + len(t)
     label = (f"act {scope} ({n} ops)" if n > 1
              else f"{found.get('op', '?')} {_subject(found)} ({scope})")
-    return d, t, label
+    need = {o.get("ref") for o in pending.rests_on(both, d + t)}
+    return d, t, label, ([o for o in ops if o.get("ref") in need],
+                         [o for o in task_ops if o.get("ref") in need])
 
 
 def _subject(o: dict) -> str:
@@ -105,18 +112,33 @@ def _diff(before: dict[str, dict], after: dict[str, dict],
 
 
 def preview(g: Graph | None, tg: TaskGraph | None,
-            ops: list[dict], task_ops: list[dict]
-            ) -> tuple[Graph | None, TaskGraph | None, dict]:
-    """Both stores with their ops applied to copies, and the two diffs.
+            ops: list[dict], task_ops: list[dict],
+            base: tuple[list[dict], list[dict]] = ((), ())
+            ) -> tuple[Graph | None, TaskGraph | None, dict, dict]:
+    """Both stores with their ops applied to copies, and two diffs each.
+
+    `base` is what the act rests on (`select`'s fourth value), applied
+    first: the act is then drawn against the graph it was staged against,
+    and `context` — store against base — is what the page draws as assumed,
+    dim, distinct from `diff` — base against act — which is the change. Both
+    empty of base when the act rests on nothing, and then `context` is the
+    empty diff.
 
     `pending.ApplyError` propagates: a tray that will not preview is a fact
     the reader is owed (`D70` calls it a blocking finding), not a graph drawn
     without the op that failed.
     """
-    pg = pending.preview_ops(g, ops) if g is not None else None
-    ptg = task_pending.preview_ops(tg, task_ops) if tg is not None else None
-    diff = {
-        "decisions": graph_diff(g, pg) if g is not None else None,
-        "tasks": task_diff(tg, ptg) if tg is not None else None,
+    base_d, base_t = base
+    bg = pending.preview_ops(g, list(base_d)) if g is not None else None
+    btg = task_pending.preview_ops(tg, list(base_t)) if tg is not None else None
+    pg = pending.preview_ops(bg, ops) if g is not None else None
+    ptg = task_pending.preview_ops(btg, task_ops) if tg is not None else None
+    context = {
+        "decisions": graph_diff(g, bg) if g is not None else None,
+        "tasks": task_diff(tg, btg) if tg is not None else None,
     }
-    return pg, ptg, diff
+    diff = {
+        "decisions": graph_diff(bg, pg) if g is not None else None,
+        "tasks": task_diff(btg, ptg) if tg is not None else None,
+    }
+    return pg, ptg, diff, context

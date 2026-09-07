@@ -167,6 +167,11 @@
   .node.ghost rect{stroke:var(--accent);stroke-dasharray:2 3;stroke-width:2px}
   .node.ghost{filter:drop-shadow(0 0 5px var(--accent))}
   .node.moved{filter:drop-shadow(0 0 4px var(--accent))}
+  /* Assumed: added by an earlier act this one rests on (D89) — a ghost
+     without the glow, and dimmer, so it reads as context, not as the change. */
+  .node.assumed rect{stroke:var(--accent);stroke-dasharray:2 3;opacity:.55}
+  .node.assumed text{opacity:.5}
+  .edge.assumed{stroke:var(--accent);stroke-dasharray:6 4;opacity:.4}
   .node.gone rect{stroke:var(--bad);opacity:.45}
   .node.gone text{opacity:.4}
   .node.gone .strike{stroke:var(--bad);stroke-width:1.6px}
@@ -1143,7 +1148,7 @@ function drawDecisions(){
       if(!e.answer) cls.push("pending-dep");
       if(lit){ if(!(lit.has(e.from)&&lit.has(to))) cls.push("dim"); }
       else if(related) cls.push(related.has(e.from)&&related.has(to)?"hot":"dim");
-      if(edgeAdded(e.from,to)) cls.push("ghost");
+      if(edgeAdded(e.from,to)) cls.push(edgeAdded(e.from,to));
       edges+=edgeSvg(e.from,to,cls.join(" "));
     });
   });
@@ -1167,7 +1172,7 @@ function drawTasks(){
     if(T.derived[x.id].waiting_on.includes(pq)) cls.push("pending-dep");
     if(lit){ if(!(lit.has(pq)&&lit.has(x.id))) cls.push("dim"); }
     else if(related) cls.push(related.has(pq)&&related.has(x.id)?"hot":"dim");
-    if(edgeAdded(pq,x.id)) cls.push("ghost");
+    if(edgeAdded(pq,x.id)) cls.push(edgeAdded(pq,x.id));
     edges+=edgeSvg(pq,x.id,cls.join(" "));
   }));
   edges+=goneEdges("tasks");
@@ -1196,13 +1201,13 @@ function drawJoined(){
   G.edges.filter(e=>e.active).forEach(e=>e.to.forEach(to=>{
     if(!edgeIn(e.from,to)) return;
     edges+=edgeSvg(e.from,to,["edge",e.answer?"":"pending-dep",rel(e.from,to),
-                              edgeAdded(e.from,to)?"ghost":""].join(" "));
+                              edgeAdded(e.from,to)].join(" "));
   }));
   T.tasks.forEach(x=>T.derived[x.id].prerequisites.forEach(pq=>{
     if(!edgeIn(pq,x.id)) return;
     edges+=edgeSvg(pq,x.id,["edge",
       T.derived[x.id].waiting_on.includes(pq)?"pending-dep":"",rel(pq,x.id),
-      edgeAdded(pq,x.id)?"ghost":""].join(" "));
+      edgeAdded(pq,x.id)].join(" "));
   }));
   edges+=goneEdges("decisions")+goneEdges("tasks");
   /* The join itself. Two directions, two colours: a decision justifying work,
@@ -1407,6 +1412,7 @@ $("#deselectBtn").onclick=deselect;
    both stores: in the joined view a task and a decision are on one canvas. */
 function previewMark(id){
   if(!PREVIEW) return {};
+  /* The change first; then what it rests on, drawn as assumed (`D89`). */
   for(const d of [PREVIEW.diff.decisions, PREVIEW.diff.tasks]){
     if(!d) continue;
     if(d.added.includes(id))
@@ -1418,6 +1424,12 @@ function previewMark(id){
               note:`${id} would move from ${d.status[id][0]} to ${d.status[id][1]} — ${PREVIEW.label}`};
     if(d.changed.includes(id))
       return {cls:"moved", tag:"~", note:`${id} would change — ${PREVIEW.label}`};
+  }
+  const ctx = PREVIEW.context||{};
+  for(const d of [ctx.decisions, ctx.tasks]){
+    if(!d) continue;
+    if(d.added.includes(id) || d.status[id] || d.changed.includes(id))
+      return {cls:"assumed", tag:"…", note:`${id} is assumed: an earlier act this one rests on (${(PREVIEW.rests_on||[]).join(", ")}) adds or changes it, and is not part of this preview's change`};
   }
   return {};
 }
@@ -1461,13 +1473,16 @@ function previewLit(){
   return lit;
 }
 
-/* Whether the preview draws this edge where the store has none. */
+/* Whether the preview draws this edge where the store has none: "ghost"
+   for the act's own edge, "assumed" for one an earlier act adds, "" for an
+   edge the store has. */
 function edgeAdded(a, b){
-  if(!PREVIEW) return false;
-  for(const d of [PREVIEW.diff.decisions, PREVIEW.diff.tasks])
-    if(d && d.edges_added.some(e=>e[0]===a && e[1]===b && (e[2]||"precedes")==="precedes"))
-      return true;
-  return false;
+  if(!PREVIEW) return "";
+  const hit = d => d && d.edges_added.some(e=>e[0]===a && e[1]===b && (e[2]||"precedes")==="precedes");
+  if(hit(PREVIEW.diff.decisions) || hit(PREVIEW.diff.tasks)) return "ghost";
+  const ctx = PREVIEW.context||{};
+  if(hit(ctx.decisions) || hit(ctx.tasks)) return "assumed";
+  return "";
 }
 
 /* The edges the preview cuts, drawn struck between records the canvas still
@@ -1499,7 +1514,8 @@ async function previewOn(scope, resync){
   if(r.graph) G=r.graph;
   if(r.tasks) T=r.tasks;
   JOIN=r.joined||JOIN;
-  PREVIEW={scope, agent, label:r.label, refs:r.refs, diff:r.diff};
+  PREVIEW={scope, agent, label:r.label, refs:r.refs, diff:r.diff,
+           context:r.context, rests_on:r.rests_on||[]};
   /* A ghost may be filed under an area the store has never used. Appended,
      never recoloured: the palette is what makes the joined view readable. */
   [...new Set([...G.areas, ...(T?T.areas:[])])].forEach(a=>{
@@ -1534,9 +1550,11 @@ function previewBar(msg){
   const bar=$("#previewBar");
   if(PREVIEW){
     bar.hidden=false;
+    const rests = PREVIEW.rests_on && PREVIEW.rests_on.length
+      ? ` It rests on act ${esc(PREVIEW.rests_on.join(", "))}, staged earlier — drawn as assumed, not as this change.` : "";
     bar.innerHTML=`<b>Preview</b><span>${esc(PREVIEW.label)} — the store is
       unchanged. Glowing is added or moved, struck is removed; one hop around
-      the change is lit and the rest is dimmed.</span>
+      the change is lit and the rest is dimmed.${rests}</span>
       <span class="grow"></span>
       <button class="chip" data-preview-off title="Draw the store again. Pan, zoom and the open inspector are kept.">clear preview</button>`;
   }else if(msg){

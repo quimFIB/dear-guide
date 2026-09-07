@@ -837,6 +837,98 @@ def group_of(ops: list[dict], op: dict) -> list[dict]:
     return [o for o in ops if o.get("group") == gid] if gid else [op]
 
 
+#: The ops that bring a record into being, and the fields an op names other
+#: records with. Both stores, one table each: the walk below reads both
+#: trays at once, because a task act may rest on a decision act (`because`
+#: naming a vertex that `add_vertex` is about to add).
+INTRODUCES = ("add_vertex", "add_task")
+REFERENCES = ("vertex", "task", "from", "to", "into", "because",
+              "evidence_for", "derived_from")
+
+
+def introduces(op: dict) -> str | None:
+    """The id this op brings into being, or `None`."""
+    return op.get("id") if op.get("op") in INTRODUCES else None
+
+
+def references(op: dict) -> set[str]:
+    """Every record id this op names — the ones that have to exist for it."""
+    out: set[str] = set()
+    for k in REFERENCES:
+        v = op.get(k)
+        if isinstance(v, str):
+            out.add(v)
+        elif isinstance(v, (list, tuple)):
+            out.update(x for x in v if isinstance(x, str))
+    return out
+
+
+def rests_on(ops: list[dict], act: list[dict]) -> list[dict]:
+    """The earlier ops `act` rests on, as whole acts, in tray order. `D89`.
+
+    The tray is a sequence: staging vets each op against the store *plus
+    everything before it*, so an act may name an id an earlier act adds —
+    an edge from a vertex still in the tray. Taken alone, against the bare
+    store, such an act fails with "unknown vertex", which is true and
+    useless; this is the walk that names the act it was waiting for.
+
+    Transitive, and by act: a prerequisite is taken whole (its own ✓ would
+    take it whole), and what *it* names is walked in turn. Ids the store
+    already holds introduce nothing here and are simply not found. `ops` is
+    both trays in apply order — decisions, then tasks.
+    """
+    by_id = {}
+    for o in ops:
+        i = introduces(o)
+        if i and i not in by_id:
+            by_id[i] = o
+    have = {o.get("ref") for o in act}
+    own = {introduces(o) for o in act} - {None}
+    out: list[dict] = []
+    frontier = set().union(*(references(o) for o in act)) - own
+    while frontier:
+        nxt: set[str] = set()
+        for rid in sorted(frontier):
+            src = by_id.get(rid)
+            if src is None or src.get("ref") in have:
+                continue
+            for m in group_of(ops, src):
+                if m.get("ref") in have:
+                    continue
+                have.add(m.get("ref"))
+                out.append(m)
+                nxt |= references(m)
+        frontier = nxt - {introduces(o) for o in out} - own
+    order = {o.get("ref"): i for i, o in enumerate(ops)}
+    return sorted(out, key=lambda o: order.get(o.get("ref"), 0))
+
+
+def rests_on_acts(ops: list[dict], act: list[dict]) -> list[str]:
+    """The prerequisite acts by the id a reviewer would type: the group's
+    first op. One entry per act, in tray order."""
+    seen: list[str] = []
+    for o in rests_on(ops, act):
+        head = group_of(ops, o)[0].get("ref")
+        if head not in seen:
+            seen.append(head)
+    return seen
+
+
+def refuse_dependent(ops: list[dict], act: list[dict]) -> str | None:
+    """Why this act may not be applied on its own — or `None`. `D89`.
+
+    Named, never widened: a ✓ that quietly took the prerequisite too would
+    apply something the reviewer did not point at.
+    """
+    heads = rests_on_acts(ops, act)
+    if not heads:
+        return None
+    ref = group_of(ops, act[0])[0].get("ref")
+    return (f"act {ref} rests on act {', '.join(heads)} staged earlier — "
+            f"it names a record that act adds. Take {heads[0]} first, or "
+            f"apply everything")
+
+
 def refuse_split(ops: list[dict], op: dict, *, kind: str = "op") -> str | None:
     """Why this op may not be removed on its own — or `None`.
 
