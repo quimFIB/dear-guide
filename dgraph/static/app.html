@@ -88,7 +88,10 @@
   .chev{fill:none;stroke:var(--line);stroke-width:1.6px;pointer-events:none}
   .chev.hot,.chev.ghost,.chev.assumed{stroke:var(--accent)}
   .chev.hot{stroke-width:2.2px}
-  .chev.gone{stroke:var(--bad);opacity:.7}
+  /* On a preview edge the line is dashed and glowing, and an outline
+     chevron vanished into it: these are filled and half again as large. */
+  .chev.ghost,.chev.assumed,.chev.gone{fill:var(--accent);stroke-width:1.2px}
+  .chev.gone{fill:var(--bad);stroke:var(--bad);opacity:.7}
   .chev.cross{stroke:var(--prov);opacity:.85}
   .chev.cross.evidence{stroke:var(--reop)}
   .chev.pending-dep{opacity:.75}
@@ -1139,7 +1142,8 @@ function edgeSvg(from, to, cls){
        and B'(½) ∝ (e.x−s.x, e.y−s.y). */
     const mx=(s.x+e.x)/2, mY=(s.y+6*my+e.y)/8;
     const deg=Math.atan2(e.y-s.y, e.x-s.x)*180/Math.PI;
-    chev+=`<path class="${cc}" d="M-4.5,-3.5 L0.5,0 L-4.5,3.5" transform="translate(${mx.toFixed(1)},${mY.toFixed(1)}) rotate(${deg.toFixed(1)})"/>`;
+    const big = /\b(ghost|assumed|gone)\b/.test(cls) ? " scale(1.5)" : "";
+    chev+=`<path class="${cc}" d="M-4.5,-3.5 L0.5,0 L-4.5,3.5${big?" z":""}" transform="translate(${mx.toFixed(1)},${mY.toFixed(1)}) rotate(${deg.toFixed(1)})${big}"/>`;
   }
   const info = edgeInfo(from, to, cls);
   return `<g><title>${esc(info.what)}</title><path class="${cls}" d="${d}"/>${chev}
