@@ -2494,3 +2494,77 @@ def test_the_preview_bar_says_the_apply_will_be_refused():
     page = _page()
     bar = page.split("function previewBar", 1)[1].split("function repaintPanel", 1)[0]
     assert "refused until" in bar, bar
+
+
+SAID_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const block = js.slice(js.indexOf("/* ---- the said line (D94, T92)"),
+                       js.indexOf("/* After a drop: the acts it stranded"));
+// A page of three elements: the said line, its dismiss, and the inspector.
+const els = {"#said": {hidden: true, className: "", innerHTML: ""},
+             "#unsaid": {}, "#side": {innerHTML: "inspecting D02"}};
+const $ = k => els[k];
+const esc = x => String(x == null ? "" : x);
+const G = {vertices: [{id: "D02"}]}, T = {tasks: [{id: "T01"}]};
+let sel = JSON.parse(process.argv[3]), tsel = null;
+const cur = () => sel || tsel;
+const log = [];
+const select = id => { log.push("select " + id); sel = id; };
+const draw = () => log.push("draw");
+eval(block);
+const out = {};
+said("Applied 2 decision op(s) — one act.");
+out.shown = !els["#said"].hidden;
+out.html = els["#said"].innerHTML;
+said("editor open", "wait");
+out.waitClass = els["#said"].className;
+els["#unsaid"].onclick();
+out.dismissed = els["#said"].hidden && els["#said"].innerHTML === "";
+out.kept = reselect(sel);
+out.gone = reselect("D77");
+out.side = els["#side"].innerHTML;
+out.log = log;
+sel = null;
+restorePanel();
+out.placeholder = els["#side"].innerHTML;
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_outcome_of_a_tray_action_is_one_line_and_the_record_stays(tmp_path):
+    """`D94`: what Apply, a drop or a discard did is said above the trays and
+    stays until dismissed; the inspector is reselected when its record
+    survived, told why when it did not, and the placeholder returns only
+    when nothing was open."""
+    harness = tmp_path / "said.js"
+    harness.write_text(SAID_HARNESS)
+    res = subprocess.run(["node", str(harness), str(server.STATIC / "app.html"),
+                          json.dumps("D02")], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout)
+    assert out["shown"] and "Applied 2 decision op(s)" in out["html"]
+    assert 'id="unsaid"' in out["html"], "the line carries its own dismiss"
+    assert out["waitClass"] == "wait"
+    assert out["dismissed"]
+    assert out["kept"] is True and not out["gone"]
+    assert "D77 is no longer" in out["side"]
+    assert out["log"] == ["select D02", "draw"]
+    assert out["placeholder"] == '<p class="muted">Click a node to inspect it.</p>'
+
+
+def test_no_tray_outcome_is_written_into_the_inspector():
+    """The inspector held 'Applied N op(s)' over the record somebody was
+    reading, and was invisible folded. Every outcome now goes through
+    `said`; the one thing that may still take the panel is the discard
+    question, which has buttons."""
+    page = _page()
+    for word in ("Applied", "Discarded", "The act was dropped", "Left unchanged",
+                 "Replaced with"):
+        for m in re.finditer(r'#side"\)\.innerHTML=[^;]*' + re.escape(word), page):
+            raise AssertionError(f"{word!r} is written into the inspector: {m.group(0)[:100]}")
+    assert page.count("said(") >= 6, "the apply, drop, discard and revise paths all say"
+    assert '<div id="said" hidden></div>' in page
+    assert page.index('<div id="said"') < page.index('<footer id="tray">'), \
+        "the line sits above the trays, so it is read with them folded"

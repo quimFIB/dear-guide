@@ -414,6 +414,16 @@ the whole act and leaves the rest staged, and the ✕ drops all of it, because
 dropping one member would leave the others to apply as something nobody
 proposed. `dg pending` draws the same block as a rail down the rows.
 
+What a tray action did — an act applied, everything applied, an act dropped,
+a tray discarded, an op revised — is said in **one line above the trays**,
+not in the inspector, so the record you were reading stays open and the
+sentence is there whether the trays are folded or not. It stays until the
+next tray action says something else or you dismiss it; nothing here fades on
+a timer, because that line is also where Apply reports what moved under a
+batch while it was staged, and that is a list to be read, not glimpsed. A
+refusal is different: it is about rows still in the tray, so it is said
+beside them.
+
 ### Previewing on the canvas
 
 The canvas draws the store, and nothing staged moves it — that is deliberate,

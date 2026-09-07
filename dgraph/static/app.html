@@ -108,6 +108,17 @@
   /* The two panels fold away for a canvas-only reading; `hidden` has to win
      over the display each one sets. */
   aside[hidden],footer[hidden]{display:none}
+  /* The outcome of a tray action (D94): one line pinned above the trays,
+     read with them folded or open, and never the inspector's third of the
+     window. */
+  #said{display:flex;gap:10px;align-items:flex-start;border-top:1px solid var(--line);
+    background:var(--panel);padding:5px 12px;font-size:12px;color:var(--ok)}
+  #said[hidden]{display:none}
+  #said.wait{color:var(--prov)}
+  #said .body{flex:1}
+  #said .x{color:var(--dim)}   /* a dismiss, not a drop */
+  #said .warn{margin-top:4px}
+  #said ul{margin:2px 0 0 18px;padding:0;color:var(--dim)}
   aside h2{font-size:14px;margin:0 0 2px}
   .muted{color:var(--dim)}
   /* Monospace and dim: it is a token to compare against another token, and
@@ -285,6 +296,7 @@
       <g id="viewport"></g></svg></div>
     <aside id="side" hidden><p class="muted">Click a node to inspect it.</p></aside>
   </main>
+  <div id="said" hidden></div>
   <footer id="tray"></footer>
 </div>
 
@@ -529,15 +541,7 @@ async function refresh(){
     /* Reselect only if it survived. A node another writer dropped cannot be
        re-shown, and `select()` redraws and repaints the panel, so the kept
        inspector costs nothing extra. */
-    const here = keep && ((G && G.vertices.some(v=>v.id===keep))
-                       || (T && T.tasks.some(x=>x.id===keep)));
-    if(here) select(keep);
-    else {
-      draw();
-      if(keep) $("#side").innerHTML=`<p class="muted">${esc(keep)} is no longer
-        in the graph — another writer removed it, or a staged op that added it
-        was discarded or applied away.</p>`;
-    }
+    reselect(keep);
   }catch(err){ say(err.message,"bad"); }
   finally{ BOOTING = false; refreshBadge(); }
 }
@@ -3482,6 +3486,51 @@ function trayErr(msg, cls){
   $("#tray").insertAdjacentHTML("afterbegin", `<div class="${cls||"err"}">${esc(msg)}</div>`);
 }
 
+/* ---- the said line (D94, T92) ---------------------------------------------
+
+   What a tray action did — an act applied, everything applied, an act
+   dropped, a tray discarded, an op revised — is one line pinned above the
+   trays, not the inspector. The inspector was the wrong place twice over: the
+   sentence cost the record somebody was reading, and the inspector folds
+   away, so it was written where nobody was looking. The line sits above the
+   footer so it is read whether the trays are folded or not, and it stays
+   until the next tray action says something else or the × dismisses it —
+   never a timer, because the one thing it carries that must be read, the
+   drift list under Apply, is exactly what a fading bubble loses. `trayErr` is
+   the refusal's slot and stays inside the tray, beside the rows it is about. */
+function said(html, cls){
+  const s=$("#said");
+  s.className = cls||"";
+  s.innerHTML = `<div class="body">${html}</div>
+    <button class="x" id="unsaid" title="Dismiss">&times;</button>`;
+  s.hidden = false;
+  $("#unsaid").onclick = unsay;
+}
+function unsay(){ const s=$("#said"); s.hidden=true; s.innerHTML=""; }
+
+/* After a `boot()` that may have removed the open record: reselect it if it
+   survived, else draw and say why the inspector is empty. `refresh` had this
+   inline; the apply paths cleared the selection and never restored it, which
+   is how "Applied" came to be written over the record. Returns whether the
+   record is back. */
+function reselect(keep){
+  const here = keep && ((G && G.vertices.some(v=>v.id===keep))
+                     || (T && T.tasks.some(x=>x.id===keep)));
+  if(here){ select(keep); return true; }
+  draw();
+  if(keep) $("#side").innerHTML=`<p class="muted">${esc(keep)} is no longer
+    in the graph — another writer removed it, or a staged op that added it
+    was discarded or applied away.</p>`;
+  return false;
+}
+
+/* The inspector as it was before a question took it: the record if one is
+   open, the placeholder otherwise. */
+function restorePanel(){
+  if(cur()) reselect(cur());
+  else $("#side").innerHTML=`<p class="muted">Click a node to inspect it.</p>`;
+}
+
 /* After a drop: the acts it stranded, said once in the tray (`D91`). `was`
    is `strandedRefs()` from before the drop, so only what this drop stranded
    is named, not what was already marked. */
@@ -3519,12 +3568,11 @@ addEventListener("click", async e=>{
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({group:b.dataset.take})});
     Object.keys(NOTES).forEach(k=>delete NOTES[k]);
-    sel=null; tsel=null; await boot(); draw();
+    const keep=cur(); sel=null; tsel=null; await boot(); reselect(keep);
     const bits=[];
     if(r.applied) bits.push(`${r.applied} decision op(s)`);
     if(r.applied_tasks) bits.push(`${r.applied_tasks} task op(s)`);
-    $("#side").innerHTML=`<p class="muted">Applied ${bits.join(" and ")} — one
-      act. Everything else is still staged.</p>`;
+    said(`Applied ${bits.join(" and ")} — one act. Everything else is still staged.`);
   }catch(err){ trayErr(err.message); }
 });
 
@@ -3538,8 +3586,7 @@ addEventListener("click", async e=>{
               +encodeURIComponent(b.dataset.ref)+"?group=1",{method:"DELETE"});
     if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
     tray(); sayStranded(stranded);
-    $("#side").innerHTML=`<p class="muted">The act was dropped. Nothing it
-      staged is left.</p>`;
+    said("The act was dropped. Nothing it staged is left.");
   }catch(err){ trayErr(err.message); }
 });
 
@@ -3550,18 +3597,17 @@ $("#applyBtn").onclick=async()=>{
       body:JSON.stringify(TRAYWHO?{agent:TRAYWHO}:{})});
     /* Every note describes a staging area that no longer exists. */
     Object.keys(NOTES).forEach(k=>delete NOTES[k]);
-    sel=null; tsel=null; await boot(); fit(); draw();
+    const keep=cur(); sel=null; tsel=null; await boot(); fit(); reselect(keep);
     const bits=[];
     if(r.applied) bits.push(`${r.applied} decision op(s)`);
     if(r.applied_tasks) bits.push(`${r.applied_tasks} task op(s)`);
     /* What moved under the batch while it was staged. Said, never refused —
        the invariants already refuse the dangerous case, so what reaches here
-       applied cleanly and rests on something that changed quietly. */
+       applied cleanly and rests on something that changed quietly. It rides
+       the said line, which is why that line never fades. */
     const moved = (r.drift||[]).map(d=>`<li>${esc(d)}</li>`).join("");
-    $("#side").innerHTML=`<p class="muted">Applied ${bits.join(" and ")}. Both
-      stores and their generated views are up to date.</p>`
-      + (moved?`<p class="warn">Moved while this batch was staged:</p>
-         <ul class="muted">${moved}</ul>`:"");
+    said(`Applied ${bits.join(" and ")}. Both stores and their generated views are up to date.`
+      + (moved?`<div class="warn">Moved while this batch was staged:</div><ul>${moved}</ul>`:""));
   }catch(err){
     /* A refusal leaves everything staged; a partial write does not, and the
        message says which. Reload the trays either way rather than assuming. */
@@ -3586,7 +3632,7 @@ function confirmClear(task){
       <button class="primary" id="clYes">Discard ${n}</button>
       <button class="ghost" id="clNo">Keep them</button></p>
     <div class="note" id="note"></div>`;
-  $("#clNo").onclick=()=>{ $("#side").innerHTML=`<p class="muted">Click a node to inspect it.</p>`; };
+  $("#clNo").onclick=restorePanel;
   $("#clYes").onclick=async()=>{
     try{
       /* `who` is read from the closure, not from `TRAYWHO`: the chips are live
@@ -3599,7 +3645,8 @@ function confirmClear(task){
       if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
       Object.keys(NOTES).forEach(k=>delete NOTES[k]);
       tray(); await soundness();
-      $("#side").innerHTML=`<p class="muted">Discarded ${esc(r.cleared)} op(s).</p>`;
+      restorePanel();
+      said(`Discarded ${esc(r.cleared)} op(s).`);
     }catch(err){ trayErr(err.message); }
   };
 }
@@ -3611,8 +3658,8 @@ function confirmClear(task){
 async function reviseOp(ref){
   EDITING={vertex:ref, kind:"edit"};
   tray();
-  $("#side").innerHTML=`<p class="wait">${esc(ED.editor||"The editor")} is open on
-    that op. Save and exit to replace it, or leave it empty to cancel.</p>`;
+  said(`${esc(ED.editor||"The editor")} is open on that op. Save and exit to
+    replace it, or leave it empty to cancel.`, "wait");
   try{
     const r=await api("/api/edit",{method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -3620,12 +3667,11 @@ async function reviseOp(ref){
     EDITING=null;
     PEND=r.pending||await api("/api/pending"); tray();
     await soundness();
-    $("#side").innerHTML= r.aborted
-      ? `<p class="muted">Left unchanged.</p>`
-      : `<p class="muted">Replaced with ${(r.staged||[]).length} op(s).</p>`;
+    said(r.aborted ? "Left unchanged."
+                   : `Replaced with ${(r.staged||[]).length} op(s).`);
   }catch(err){
-    EDITING=null; tray();
-    $("#side").innerHTML=`<div class="err">${esc(err.message)}</div>`;
+    EDITING=null; tray(); unsay();
+    trayErr(err.message);
   }
 }
 
