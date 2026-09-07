@@ -305,7 +305,7 @@ RECIPES: dict[str, dict] = {
         read_full="When both clones answered the same question, the op is contested and nothing "
                   "lands until somebody picks: theirs, ours, or split into two questions that were "
                   "worded as one.",
-        hl_quick=[(r"^2 op\(s\) from colleague/master", None),
+        hl_quick=[(r"^2 op\(s\) from colleague/main", None),
                   (r"^quarantined in .dgraph-incoming.json", "read before anything is yours"),
                   (r"^adopted 2 op\(s\)", None)],
         hl_full=[(r"contested", "two answers to one question"),

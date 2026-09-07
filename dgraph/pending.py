@@ -914,19 +914,34 @@ def rests_on_acts(ops: list[dict], act: list[dict]) -> list[str]:
     return seen
 
 
-def refuse_dependent(ops: list[dict], act: list[dict]) -> str | None:
-    """Why this act may not be applied on its own — or `None`. `D89`.
+def refuse_dependent(ops: list[dict], batch: list[dict], *,
+                     what: str | None = None) -> str | None:
+    """Why this batch may not be applied on its own — or `None`. `D89`.
+
+    `batch` is whatever a door selected: one act, or a writer's ops, or what
+    a broker's predicate admitted. Any cut of the tray other than "all of it"
+    can leave behind the act that adds a record the cut names, and the
+    refusal is the same whichever predicate made the cut — which is why it
+    sits on `applying` as well as on the doors that word it (audit `L-F1`,
+    the construction `refuse_partial` explains). `what` is the door's name
+    for the cut; the default names the act when the batch is one, and the
+    count otherwise.
 
     Named, never widened: a ✓ that quietly took the prerequisite too would
     apply something the reviewer did not point at.
     """
-    heads = rests_on_acts(ops, act)
+    heads = rests_on_acts(ops, batch)
     if not heads:
         return None
-    ref = group_of(ops, act[0])[0].get("ref")
-    return (f"act {ref} rests on act {', '.join(heads)} staged earlier — "
-            f"it names a record that act adds. Take {heads[0]} first, or "
-            f"apply everything")
+    if what is None:
+        act = group_of(ops, batch[0])
+        refs = {o.get("ref") for o in batch}
+        what = (f"act {act[0].get('ref')}"
+                if {o.get("ref") for o in act} == refs
+                else f"the {len(batch)} op(s) this apply takes")
+    return (f"{what} rests on act {', '.join(heads)} staged earlier — "
+            f"it names a record that act adds. Take {heads[0]} first "
+            f"(`dg apply --group {heads[0]}`), or apply everything")
 
 
 def refuse_split(ops: list[dict], op: dict, *, kind: str = "op") -> str | None:

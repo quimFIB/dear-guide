@@ -34,12 +34,13 @@ agile-bearing ▸ $ dg task add --id T12 --area sync --title 'List the files syn
 staged add T12
 staged T12 after T08
 $ dg pending
-STAGED  2 op(s)
-  0  hyfe  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
-  1  hepz  add_edge    D08  → D09                                   ·  by agile-bearing
+STAGED  2 op(s) in 1 act(s)
+  ┌ 0  bvpt  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
+  └ 1  frzz  add_edge    D08  → D09                                   ·  by agile-bearing
 staged by  agile-bearing 4
   `dg pending --agent <name>` for one writer alone
 `dg apply` to write, `dg drop <id>` to unstage
+`dg apply --group <id>` takes one act, `dg drop <id> --group` drops one
   `dg pending --full` for the table, nothing clipped
 $ dg apply
 ✗ nothing written — 4 staged op(s) belong to agile-bearing
@@ -47,11 +48,12 @@ $ dg apply
 of them; `dg pending` shows who staged what
 [exit 1]
 $ dg pending --agent agile-bearing
-STAGED  2 op(s)
-  0  hyfe  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
-  1  hepz  add_edge    D08  → D09                                   ·  by agile-bearing
+STAGED  2 op(s) in 1 act(s)
+  ┌ 0  bvpt  add_vertex  D09  Which files does sync ignore? [sync]   ·  by agile-bearing
+  └ 1  frzz  add_edge    D08  → D09                                   ·  by agile-bearing
 staged by  agile-bearing 4  — showing agile-bearing
 `dg apply` to write, `dg drop <id>` to unstage
+`dg apply --group <id>` takes one act, `dg drop <id> --group` drops one
   `dg pending --full` for the table, nothing clipped
 $ dg apply --agent agile-bearing
 ✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
@@ -61,7 +63,7 @@ $ dg-agent list
 ┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━┓
 ┃ Name          ┃ Since      ┃ Staged ┃ Holding ┃ Budget ┃ Seen ┃
 ┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━┩
-│ agile-azimuth │ 2026-09-04 │ 0      │ T04     │ —      │ 6s   │
-│ agile-bearing │ 2026-09-04 │ 0      │ —       │ —      │ 4s   │
+│ agile-azimuth │ 2026-09-07 │ 0      │ T04     │ —      │ 7s   │
+│ agile-bearing │ 2026-09-07 │ 0      │ —       │ —      │ 5s   │
 └───────────────┴────────────┴────────┴─────────┴────────┴──────┘
 7002 of 7004 names free

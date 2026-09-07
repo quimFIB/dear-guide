@@ -239,3 +239,56 @@ def test_apply_group_refuses_a_dependent_act_by_name_and_counts_right(store, mon
     res = CliRunner().invoke(app, ["--project", str(store), "apply", "--group", "d1"])
     assert res.exit_code == 0, res.output
     assert "5 op(s) left staged" in res.output
+
+
+# ---- the narrowed doors: `--agent`, `--mine`, and the function below ------
+#
+# `D89` put the refusal on the two `--group` doors. A tray is also cut by
+# writer — `dg apply --agent`, `--mine`, the page's "Apply N by bob" — and a
+# writer's ops may rest on another writer's act, because staging vets against
+# the whole tray whoever staged it. Those doors answered "unknown vertex"
+# and sent the reader to `dg drop`. Audit `L-F1`. The fix is where `X-F1`
+# put `refuse_partial`: on `applying`, the one function every door writes
+# through, with the doors keeping their own wording.
+
+OWNED = [
+    {"op": "add_vertex", "id": "D90", "title": "first", "area": "Alpha",
+     "status": "OPEN", "ref": "a1", "group": "ga", "by": "alice"},
+    {"op": "add_edge", "from": "D01", "to": ["D90"], "ref": "a2", "group": "ga",
+     "by": "alice"},
+    {"op": "add_vertex", "id": "D91", "title": "second", "area": "Alpha",
+     "status": "OPEN", "ref": "b1", "group": "gb", "by": "bob"},
+    {"op": "add_edge", "from": "D90", "to": ["D91"], "ref": "b2", "group": "gb",
+     "by": "bob"},
+]
+
+
+@pytest.mark.parametrize("door", ["--agent bob", "--mine", ""])
+def test_a_narrowed_apply_refuses_a_dependent_set_by_name(store, monkeypatch, door):
+    monkeypatch.setenv("COLUMNS", "160")
+    if door == "--agent bob":
+        monkeypatch.delenv("DG_AGENT", raising=False)
+    else:
+        monkeypatch.setenv("DG_AGENT", "bob")
+    _tray(store / ".dgraph-pending.json", OWNED)
+    before = (store / "decisions.json").read_text()
+    res = CliRunner().invoke(app, ["--project", str(store), "apply", *door.split()])
+    assert res.exit_code == 1, res.output
+    assert "rests on act a1" in res.output, res.output
+    assert "unknown vertex" not in res.output and "dg drop" not in res.output
+    assert (store / "decisions.json").read_text() == before
+    assert len(json.loads((store / ".dgraph-pending.json").read_text())) == 4
+
+
+def test_the_function_below_the_doors_refuses_a_dependent_batch(store):
+    """Whatever predicate a door selects by, `applying` judges the batch
+    against the tray it came from — the construction `X-F1` chose for
+    `refuse_partial`, and the one a door added later cannot walk past."""
+    from dgraph import applying
+    _tray(store / ".dgraph-pending.json", OWNED)
+    bobs = [o for o in OWNED if o["by"] == "bob"]
+    with pytest.raises(pending.ApplyError) as exc:
+        applying.apply_decisions(bobs)
+    assert "rests on act a1" in str(exc.value)
+    assert "unknown vertex" not in str(exc.value)
+    assert len(json.loads((store / ".dgraph-pending.json").read_text())) == 4

@@ -55,7 +55,7 @@ fresh() {
   claim_work
   rm -rf "$project" "$work/notelit-colleague"; mkdir -p "$project"
   cp "$seed/decisions.json" "$seed/tasks.json" "$project/"
-  ( cd "$project" && git init -q && dg render >/dev/null && dg task render >/dev/null )
+  ( cd "$project" && git init -q -b main && dg render >/dev/null && dg task render >/dev/null )
   _git_commit "seed"
   cd "$project"
   _snap_n=-1; _snapshot   # 00: the state before anything ran
@@ -65,7 +65,7 @@ fresh() {
 fresh_empty() {
   claim_work
   rm -rf "$project" "$work/notelit-colleague"; mkdir -p "$project"
-  ( cd "$project" && git init -q )
+  ( cd "$project" && git init -q -b main )
   cd "$project"
   _snap_n=-1; _snapshot
 }

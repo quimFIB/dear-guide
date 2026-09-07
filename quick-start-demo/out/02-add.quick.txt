@@ -1,10 +1,11 @@
 $ dg add --id D09 --area sync --title 'Which files does sync ignore?' --after D08
 staged add D09
 $ dg pending
-STAGED  2 op(s)
-  0  zujr  add_vertex  D09  Which files does sync ignore? [sync]
-  1  hmnv  add_edge    D08  → D09
+STAGED  2 op(s) in 1 act(s)
+  ┌ 0  qfwm  add_vertex  D09  Which files does sync ignore? [sync]
+  └ 1  fhch  add_edge    D08  → D09
 `dg apply` to write, `dg drop <id>` to unstage
+`dg apply --group <id>` takes one act, `dg drop <id> --group` drops one
   `dg pending --full` for the table, nothing clipped
 $ dg apply
 ✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`

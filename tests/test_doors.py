@@ -2426,3 +2426,29 @@ def test_every_multi_select_became_a_picker():
                    'pickerValues("r_"+f)'):
         assert reader in page, f"{reader} is not how the form is read back"
     assert "bindPickers();" in page.split("function sideSync", 1)[1][:400]
+
+
+def test_a_tray_control_refusal_is_drawn_in_the_tray():
+    """`L-F5`: the ✓ on a dependent act is refused by name (`D89`), and the
+    page routed that refusal through `say()`, which writes into the open
+    record's note — a control that lives in a node panel. With no record
+    open, which is the common case for a click in the tray, the ✓ did
+    nothing visible; verified in a browser. Every tray control now draws its
+    refusal where Apply's own catch always did: an `.err` line in the tray.
+
+    A vocabulary test, and named as one: it reads which function each
+    handler calls. What it cannot see is whether the line is on screen,
+    which is what the browser run was for."""
+    page = _page()
+    assert "function trayErr(msg)" in page
+    assert 'insertAdjacentHTML("afterbegin", `<div class="err">' in page
+    handlers = {
+        "take": page.split('closest("[data-take]")', 1)[1].split("addEventListener", 1)[0],
+        "dropAct": page.split('closest("#dropAct")', 1)[1].split("addEventListener", 1)[0],
+        "applyBtn": page.split('$("#applyBtn").onclick', 1)[1].split("function confirmClear", 1)[0],
+        "clear": page.split("function confirmClear", 1)[1].split("async function reviseOp", 1)[0],
+        "drop": page.split('querySelectorAll(".x[data-i]")', 1)[1].split("function askDropAct", 1)[0],
+    }
+    for name, body in handlers.items():
+        assert "trayErr(err.message)" in body, f"{name} does not draw its refusal in the tray"
+        assert 'say(err.message' not in body, f"{name} still routes a refusal to a hidden note"

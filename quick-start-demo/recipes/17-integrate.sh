@@ -10,7 +10,7 @@ quick() {
       && quietly dg apply && quietly dg render && quietly git commit -qam "ask D09" )
   quietly git remote add colleague ../notelit-colleague
   quietly git fetch -q colleague
-  run dg integrate colleague/master
+  run dg integrate colleague/main
   run dg incoming
   run dg incoming --adopt
   run dg pending
@@ -28,7 +28,7 @@ full() {
   run git commit -qam "settle D08 here"
   quietly git remote add colleague ../notelit-colleague
   quietly git fetch -q colleague
-  run dg integrate colleague/master
+  run dg integrate colleague/main
   run dg incoming
 }
 

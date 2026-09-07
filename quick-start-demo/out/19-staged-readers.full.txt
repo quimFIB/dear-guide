@@ -22,10 +22,11 @@ the tray changes nothing `dg check` reports
 ✓ as staged, all invariants hold
 # The tray itself, and the store it would produce, are two different things a reader can tell apart.
 $ dg pending
-STAGED  2 op(s)
-  0  qhgs  add_vertex  D09  Which edit wins when two machines change one note? [sync]
-  1  fqtu  add_edge    D08  → D09
+STAGED  2 op(s) in 1 act(s)
+  ┌ 0  bccw  add_vertex  D09  Which edit wins when two machines change one note? [sync]
+  └ 1  vfpb  add_edge    D08  → D09
 `dg apply` to write, `dg drop <id>` to unstage
+`dg apply --group <id>` takes one act, `dg drop <id> --group` drops one
   `dg pending --full` for the table, nothing clipped
 $ dg apply
 ✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`

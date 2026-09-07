@@ -315,6 +315,12 @@ had been honoured. A name nobody staged under is refused the same way, with
 the roster of names that did — an empty selection and a typo look identical
 afterwards and mean opposite things (`D82`).
 
+And a narrowing never leaves behind what it rests on: an act may name a
+record an earlier act adds, and any cut of the tray that takes the one without
+the other — `--group`, `--agent`, `--mine`, the web app's per-writer Apply — is
+refused by the earlier act's name, with the `--group` form that takes it, never
+widened to take it unasked (`D89`).
+
 
 ## Adopting a store you already have
 

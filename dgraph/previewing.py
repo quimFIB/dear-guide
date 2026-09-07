@@ -114,8 +114,10 @@ def _diff(before: dict[str, dict], after: dict[str, dict],
 def preview(g: Graph | None, tg: TaskGraph | None,
             ops: list[dict], task_ops: list[dict],
             base: tuple[list[dict], list[dict]] = ((), ())
-            ) -> tuple[Graph | None, TaskGraph | None, dict, dict]:
-    """Both stores with their ops applied to copies, and two diffs each.
+            ) -> tuple[Graph | None, TaskGraph | None, dict, dict,
+                       Graph | None, TaskGraph | None]:
+    """Both stores with their ops applied to copies, two diffs each, and the
+    base copies the act was applied over.
 
     `base` is what the act rests on (`select`'s fourth value), applied
     first: the act is then drawn against the graph it was staged against,
@@ -123,6 +125,10 @@ def preview(g: Graph | None, tg: TaskGraph | None,
     dim, distinct from `diff` — base against act — which is the change. Both
     empty of base when the act rests on nothing, and then `context` is the
     empty diff.
+
+    The base graphs come back too, because a record the act *removes* may
+    exist only there — added by the act it rests on — and the route has to
+    fetch it from somewhere to draw it struck (audit `L-F2`).
 
     `pending.ApplyError` propagates: a tray that will not preview is a fact
     the reader is owed (`D70` calls it a blocking finding), not a graph drawn
@@ -141,4 +147,4 @@ def preview(g: Graph | None, tg: TaskGraph | None,
         "decisions": graph_diff(bg, pg) if g is not None else None,
         "tasks": task_diff(btg, ptg) if tg is not None else None,
     }
-    return pg, ptg, diff, context
+    return pg, ptg, diff, context, bg, btg

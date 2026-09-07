@@ -3679,6 +3679,17 @@ def _scope(ops, task_ops, *, all_: bool, mine: bool, agent: str | None = None):
                   f"only yours, `dg apply --agent <name>` one of them; "
                   f"`dg pending` shows who staged what[/]")
         return None
+    # `D89` on this door too: a writer's ops may rest on another writer's
+    # act, since staging vets against the whole tray. Said here, by the act's
+    # name, rather than as `apply_all`'s "unknown vertex" — and `applying`
+    # refuses it again below every door regardless. Audit `L-F1`.
+    both = list(ops or ()) + list(task_ops or ())
+    why = pending.refuse_dependent(
+        both, list(keep or ()) + list(tkeep or ()),
+        what=f"the work staged by {_x(me or 'unowned')}")
+    if why is not None:
+        con.print(f"[red]✗ {_x(why)}[/]")
+        return None
     return keep, tkeep, f"{n} op(s) left staged, by {_x(who)}"
 
 

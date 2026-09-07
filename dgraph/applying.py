@@ -205,9 +205,20 @@ def apply_decisions(ops: list[dict], dry_run: bool = False,
         # batch holding part of an act is refused here, on the one function
         # every door writes through, rather than on whichever door happened to
         # select by something other than the act. Audit `X-F1`.
-        partial = pending.refuse_partial(ops, pending.load(proj.pending))
+        tray = pending.load(proj.pending)
+        partial = pending.refuse_partial(ops, tray)
         if partial:
             raise pending.ApplyError(partial)
+        # And a batch that rests on an act it leaves behind — a record the
+        # batch names that only an earlier staged act adds. `D89` refused
+        # this on the two `--group` doors; a writer's cut of the tray
+        # (`--agent`, `--mine`, the page's per-writer apply) reached
+        # `apply_all` and heard "unknown vertex". Here, for the reason
+        # `refuse_partial` is here: the doors cut by different predicates and
+        # this is the one function they all write through. Audit `L-F1`.
+        dependent = pending.refuse_dependent(tray, ops)
+        if dependent:
+            raise pending.ApplyError(dependent)
         # Before anything is applied, and against the store as re-read: what
         # moved under this batch while it sat in the tray.
         moved = tuple(pending.drift(g, ops))
@@ -284,10 +295,19 @@ def apply_tasks(ops: list[dict], dry_run: bool = False,
                       graph=task_pending.apply_all(tg, ops, cross.guard_tasks()))
     with pending.held(proj.task_pending, wait=APPLY_WAIT), _writing(proj):
         tg = TaskGraph.load(proj.tasks)     # under the lock; see apply_decisions
-        partial = pending.refuse_partial(ops, pending.load(proj.task_pending),
-                                         kind="task op")
+        tray = pending.load(proj.task_pending)
+        partial = pending.refuse_partial(ops, tray, kind="task op")
         if partial:
             raise pending.ApplyError(partial)
+        # Both trays, decisions first: a task act may rest on a decision act
+        # (`because` naming a vertex still in the other tray). See
+        # `apply_decisions`; audit `L-F1`. The decision tray is read without
+        # its lock — a decision act that has just been applied has left it,
+        # and the store then holds the record, which is the right answer.
+        dependent = pending.refuse_dependent(
+            pending.load(proj.pending) + tray, ops)
+        if dependent:
+            raise pending.ApplyError(dependent)
         out = task_pending.apply_all(tg, ops, cross.guard_tasks())
         out.save(proj.tasks)
         _record_holdings(ops, out, proj)

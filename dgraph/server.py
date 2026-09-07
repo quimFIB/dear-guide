@@ -421,11 +421,15 @@ def preview_payload(scope: str, agent: str | None = None) -> dict:
     for moved. The reading model (`contested`) is untouched: the store routes
     still answer the store, and this route answers only when asked.
 
-    **A removed record is put back** into the previewed payload, from the
-    store's, so the page has a position to strike it at: the previewed graph
-    has no such vertex, and a strike drawn nowhere says nothing. Its derived
-    lists are trimmed to ids the merged graph holds, because the layout
-    walks them.
+    **A removed record is put back** into the previewed payload so the page
+    has a position to strike it at: the previewed graph has no such vertex,
+    and a strike drawn nowhere says nothing. One the act removes is copied
+    from the *base* payload — the store plus what the act rests on, which is
+    the only place a record an earlier act added can be found (audit `L-F2`:
+    fetched from the store's payload, a removal of such a record was a
+    `StopIteration` answered as an empty 500). One an earlier act removes is
+    copied from the store's. Its derived lists are trimmed to ids the merged
+    graph holds, because the layout walks them.
 
     `ValueError` for a scope naming nothing; `pending.ApplyError` for a tray
     that will not preview. Both are the reader's to hear, as 400s.
@@ -435,7 +439,7 @@ def preview_payload(scope: str, agent: str | None = None) -> dict:
     task_ops = (pending.load(task_pending.path()) if proj.has_tasks else [])
     d_ops, t_ops, label, base = previewing.select(ops, task_ops, scope, agent)
     g, tg = _stores()
-    pg, ptg, diff, context = previewing.preview(g, tg, d_ops, t_ops, base)
+    pg, ptg, diff, context, bg, btg = previewing.preview(g, tg, d_ops, t_ops, base)
     # `D89`: what the act rests on, by the id a reviewer would type, so the
     # bar can say "rests on act ckqz" and the page can draw that act as
     # assumed rather than as this act's change.
@@ -445,32 +449,38 @@ def preview_payload(scope: str, agent: str | None = None) -> dict:
                  "rests_on": pending.rests_on_acts(both, d_ops + t_ops),
                  "graph": None, "tasks": None, "diff": diff,
                  "context": context}
-    removed = lambda k: diff[k]["removed"] + context[k]["removed"]
     if pg is not None:
-        out["graph"] = _with_removed(graph_payload(pg), graph_payload(g),
-                                     "vertices", removed("decisions"))
+        out["graph"] = _with_removed(
+            graph_payload(pg), "vertices",
+            (graph_payload(bg), diff["decisions"]["removed"]),
+            (graph_payload(g), context["decisions"]["removed"]))
     if ptg is not None:
-        out["tasks"] = _with_removed(task_payload(ptg, pg), task_payload(tg, g),
-                                     "tasks", removed("tasks"))
+        out["tasks"] = _with_removed(
+            task_payload(ptg, pg), "tasks",
+            (task_payload(btg, bg), diff["tasks"]["removed"]),
+            (task_payload(tg, g), context["tasks"]["removed"]))
     out["joined"] = joined_payload(pg, ptg)
     return out
 
 
-def _with_removed(after: dict, before: dict, key: str,
-                  removed: list[str]) -> dict:
-    """`after`, with the records `removed` names copied in from `before` so
-    the page can draw them struck — see `preview_payload`."""
+def _with_removed(after: dict, key: str,
+                  *sources: tuple[dict, list[str]]) -> dict:
+    """`after`, with removed records copied back in so the page can draw
+    them struck — see `preview_payload`. Each source is `(payload, ids)`:
+    the payload that still holds those records, and which of them it holds."""
+    removed = [rid for _, ids in sources for rid in ids]
     if not removed:
         return after
     present = {r["id"] for r in after[key]} | set(removed)
-    for rid in removed:
-        rec = next(r for r in before[key] if r["id"] == rid)
-        after[key].append(rec)
-        derived = dict(before["derived"][rid])
-        for field, val in list(derived.items()):
-            if isinstance(val, list) and all(isinstance(x, str) for x in val):
-                derived[field] = [x for x in val if x in present]
-        after["derived"][rid] = derived
+    for before, ids in sources:
+        for rid in ids:
+            rec = next(r for r in before[key] if r["id"] == rid)
+            after[key].append(rec)
+            derived = dict(before["derived"][rid])
+            for field, val in list(derived.items()):
+                if isinstance(val, list) and all(isinstance(x, str) for x in val):
+                    derived[field] = [x for x in val if x in present]
+            after["derived"][rid] = derived
     return after
 
 
@@ -1262,8 +1272,18 @@ class Handler(BaseHTTPRequestHandler):
             why = pending.refuse_apply_for(agent, ops, task_ops)
             if why is not None:
                 return self._json({"error": why}, 400)
+            whole = list(ops) + list(task_ops)
             ops, _ = pending.mine(ops, pending.addressed(agent))
             task_ops, _ = pending.mine(task_ops, pending.addressed(agent))
+            # `D89` on this door too — the page's "Apply N by bob" is
+            # `--agent`'s twin, and bob's act may rest on alice's. Named
+            # here as the CLI names it; `applying` refuses it again below
+            # every door. Audit `L-F1`.
+            why = pending.refuse_dependent(
+                whole, list(ops) + list(task_ops),
+                what=f"the work staged by {agent}")
+            if why is not None:
+                return self._json({"error": why}, 400)
 
         if group is not None:
             # `dg apply --group`'s twin: one **act**, which is the finest grain

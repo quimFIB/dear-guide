@@ -3408,7 +3408,7 @@ function tray(){
       await api(base,{method:"DELETE"});
     }catch(err){
       const act = groupOf(gone, list);
-      if(act.length<2) { say(err.message,"bad"); return; }
+      if(act.length<2) { trayErr(err.message); return; }
       askDropAct(gone, list, task, ref, err.message.split("\n")[0]);
       return;
     }
@@ -3434,6 +3434,17 @@ function askDropAct(op, list, task, ref, why){
       whole keeps it reviewable — apply it, or clear this writer's work.</p>
     <button class="x" id="dropAct" data-ref="${esc(ref)}"
             data-k="${task?"t":"d"}">Drop all ${act.length}</button>`;
+}
+
+/* A refusal from a tray control, drawn in the tray. `say()` writes into the
+   open record's note, and a tray control is clicked with no record open
+   more often than not — the inspector may not even be on screen — so a ✓
+   refused by name reached nobody (audit `L-F5`, verified in a browser: the
+   click did nothing visible). Apply's own catch already drew here; this is
+   that line, shared by every control in the tray. */
+function trayErr(msg){
+  $("#tray").querySelectorAll(":scope > .err").forEach(e=>e.remove());
+  $("#tray").insertAdjacentHTML("afterbegin", `<div class="err">${esc(msg)}</div>`);
 }
 
 /* Every op staged in the same act as `op`. `[op]` where it carries no group,
@@ -3465,7 +3476,7 @@ addEventListener("click", async e=>{
     if(r.applied_tasks) bits.push(`${r.applied_tasks} task op(s)`);
     $("#side").innerHTML=`<p class="muted">Applied ${bits.join(" and ")} — one
       act. Everything else is still staged.</p>`;
-  }catch(err){ say(err.message,"bad"); }
+  }catch(err){ trayErr(err.message); }
 });
 
 /* The act-wide drop the refusal offers. */
@@ -3479,7 +3490,7 @@ addEventListener("click", async e=>{
     tray();
     $("#side").innerHTML=`<p class="muted">The act was dropped. Nothing it
       staged is left.</p>`;
-  }catch(err){ say(err.message,"bad"); }
+  }catch(err){ trayErr(err.message); }
 });
 
 $("#applyBtn").onclick=async()=>{
@@ -3507,7 +3518,7 @@ $("#applyBtn").onclick=async()=>{
     PEND=await api("/api/pending").catch(()=>PEND);
     TPEND=T?await api("/api/task-pending").catch(()=>TPEND):[];
     tray();
-    $("#tray").innerHTML=`<div class="err">${esc(err.message)}</div>`+$("#tray").innerHTML;
+    trayErr(err.message);
   }
 };
 
@@ -3539,7 +3550,7 @@ function confirmClear(task){
       Object.keys(NOTES).forEach(k=>delete NOTES[k]);
       tray(); await soundness();
       $("#side").innerHTML=`<p class="muted">Discarded ${esc(r.cleared)} op(s).</p>`;
-    }catch(err){ say(err.message,"bad"); }
+    }catch(err){ trayErr(err.message); }
   };
 }
 

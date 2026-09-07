@@ -1664,3 +1664,36 @@ def test_apply_group_refuses_a_dependent_act_by_name(srv, store):
     assert code == 400 and "rests on act aaaa" in d["error"], d
     assert (store / "decisions.json").read_text() == before
     assert len(jreq(srv, "/api/pending")[1]) == 3
+
+
+def test_apply_agent_refuses_a_dependent_set_by_name(srv, store):
+    """`L-F1`: the page's "Apply N by bob" is `--agent`'s twin, and bob's act
+    may rest on alice's — staging vets against the whole tray. It answered
+    "unknown vertex"; it names the act, as the ✓ does."""
+    owned = [dict(o, by="alice") for o in ACT_PREVIEW] + [
+        {"op": "add_vertex", "id": "D91", "title": "second", "area": "Alpha",
+         "status": "OPEN", "ref": "b1", "group": "gb", "by": "bob"},
+        {"op": "add_edge", "from": "D90", "to": ["D91"], "ref": "b2",
+         "group": "gb", "by": "bob"}]
+    _stage(store, owned)
+    before = (store / "decisions.json").read_text()
+    code, d = jreq(srv, "/api/apply", "POST", {"agent": "bob"})
+    assert code == 400, d
+    assert "rests on act aaaa" in d["error"] and "unknown vertex" not in d["error"]
+    assert (store / "decisions.json").read_text() == before
+    assert len(jreq(srv, "/api/pending")[1]) == 4
+
+
+def test_preview_of_an_act_removing_what_an_earlier_act_added(srv, store):
+    """`L-F2`: a removal of a record only the tray holds. The route copied
+    a removed record back from the *store's* payload, and the store has no
+    such record — a `StopIteration` answered as a 500 with an empty error."""
+    _stage(store, ACT_PREVIEW + [{"op": "remove_vertex", "vertex": "D90",
+                                  "mode": "sever", "ref": "rrrr"}])
+    code, d = jreq(srv, "/api/preview?scope=rrrr")
+    assert code == 200, d
+    assert d["rests_on"] == ["aaaa"]
+    assert d["diff"]["decisions"]["removed"] == ["D90"]
+    assert d["context"]["decisions"]["added"] == ["D90"]
+    assert "D90" in {v["id"] for v in d["graph"]["vertices"]}
+    assert "D90" in d["graph"]["derived"]
