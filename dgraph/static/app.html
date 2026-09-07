@@ -161,8 +161,9 @@
   /* The preview (D88): what an act would add is a ghost, what it would
      remove is struck, what it would move is ringed — drawn as a difference
      against the store, never as a redrawn store. */
-  .node.ghost rect{stroke-dasharray:2 3;stroke-width:2px}
-  .node.ghost text{opacity:.85}
+  .node.ghost rect{stroke:var(--accent);stroke-dasharray:2 3;stroke-width:2px}
+  .node.ghost{filter:drop-shadow(0 0 5px var(--accent))}
+  .node.moved{filter:drop-shadow(0 0 4px var(--accent))}
   .node.gone rect{stroke:var(--bad);opacity:.45}
   .node.gone text{opacity:.4}
   .node.gone .strike{stroke:var(--bad);stroke-width:1.6px}
@@ -1126,25 +1127,29 @@ function draw(){
 }
 
 function drawDecisions(){
-  const related = sel ? new Set([sel,...G.derived[sel].depends,...G.derived[sel].children]) : null;
+  const lit = previewLit();
+  const related = lit ? null
+    : sel ? new Set([sel,...G.derived[sel].depends,...G.derived[sel].children]) : null;
   let edges="", nodes="";
   G.edges.filter(e=>e.active).forEach(e=>{
     e.to.forEach(to=>{
       if(!edgeIn(e.from,to)) return;
       const cls=["edge"];
       if(!e.answer) cls.push("pending-dep");
-      if(related) cls.push(related.has(e.from)&&related.has(to)?"hot":"dim");
+      if(lit){ if(!(lit.has(e.from)&&lit.has(to))) cls.push("dim"); }
+      else if(related) cls.push(related.has(e.from)&&related.has(to)?"hot":"dim");
       if(edgeAdded(e.from,to)) cls.push("ghost");
       edges+=edgeSvg(e.from,to,cls.join(" "));
     });
   });
   edges+=goneEdges("decisions");
-  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, related); });
+  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, lit||related); });
   return edges+nodes;
 }
 
 function drawTasks(){
-  const related = tsel
+  const lit = previewLit();
+  const related = lit ? null : tsel
     ? new Set([tsel,...T.derived[tsel].prerequisites,...T.derived[tsel].unblocks])
     : null;
   let edges="", nodes="";
@@ -1155,19 +1160,22 @@ function drawTasks(){
        resolved one is history. Same faint-dash convention the decision view
        uses for a premise that is not settled yet. */
     if(T.derived[x.id].waiting_on.includes(pq)) cls.push("pending-dep");
-    if(related) cls.push(related.has(pq)&&related.has(x.id)?"hot":"dim");
+    if(lit){ if(!(lit.has(pq)&&lit.has(x.id))) cls.push("dim"); }
+    else if(related) cls.push(related.has(pq)&&related.has(x.id)?"hot":"dim");
     if(edgeAdded(pq,x.id)) cls.push("ghost");
     edges+=edgeSvg(pq,x.id,cls.join(" "));
   }));
   edges+=goneEdges("tasks");
-  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, related); });
+  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, lit||related); });
   return edges+nodes;
 }
 
 function drawJoined(){
   const cur = sel || tsel;
+  const lit = previewLit();
   let related=null;
-  if(sel){
+  if(lit){ /* the preview's neighbourhood, not the selection's */ }
+  else if(sel){
     const j=(JOIN.by_decision[sel]||{rests_on:[],evidence:[]});
     related=new Set([sel,...G.derived[sel].depends,...G.derived[sel].children,
                      ...j.rests_on,...j.evidence]);
@@ -1177,7 +1185,8 @@ function drawJoined(){
     d.cross.premises.forEach(p=>related.add(p.id));
     if(d.cross.evidence_for) related.add(d.cross.evidence_for);
   }
-  const rel=(a,b)=>related?(related.has(a)&&related.has(b)?"hot":"dim"):"";
+  const rel=(a,b)=>lit?(lit.has(a)&&lit.has(b)?"":"dim")
+                  :related?(related.has(a)&&related.has(b)?"hot":"dim"):"";
   let edges="", nodes="";
   G.edges.filter(e=>e.active).forEach(e=>e.to.forEach(to=>{
     if(!edgeIn(e.from,to)) return;
@@ -1208,8 +1217,8 @@ function drawJoined(){
       edges+=edgeSvg(x.id,c.evidence_for,
                      ["edge","cross","evidence",rel(x.id,c.evidence_for)].join(" "));
   });
-  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, related); });
-  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, related); });
+  G.vertices.forEach(v=>{ if(inFocus(v.id)) nodes+=decisionNode(v, lit||related); });
+  T.tasks.forEach(x=>{ if(inFocus(x.id)) nodes+=taskNode(x, lit||related); });
   return edges+nodes;
 }
 
@@ -1388,6 +1397,45 @@ function previewMark(id){
   return {};
 }
 
+/* What the preview lights: every record the act touches, and one hop around
+   each, in the view being drawn. Everything else is dimmed — the difference
+   is small against a whole graph, and a ghost among fifty lit boxes is a
+   box. `null` when no preview is on, so the drawers fall back to the
+   selection's own dimming. */
+function previewLit(){
+  if(!PREVIEW) return null;
+  const seeds=new Set();
+  for(const d of [PREVIEW.diff.decisions, PREVIEW.diff.tasks]){
+    if(!d) continue;
+    [...d.added, ...d.removed, ...Object.keys(d.status), ...d.changed].forEach(i=>seeds.add(i));
+    [...d.edges_added, ...d.edges_removed].forEach(e=>{
+      if((e[2]||"precedes")==="precedes"){ seeds.add(e[0]); seeds.add(e[1]); }
+    });
+  }
+  const lit=new Set(seeds);
+  const around = id => {
+    const out=[];
+    if(G && G.derived && G.derived[id]) out.push(...G.derived[id].depends, ...G.derived[id].children);
+    if(T && T.derived && T.derived[id]){
+      const d=T.derived[id]; out.push(...d.prerequisites, ...d.unblocks);
+      if(tab==="joined"){
+        d.cross.premises.forEach(p=>out.push(p.id));
+        if(d.cross.evidence_for) out.push(d.cross.evidence_for);
+      }
+    }
+    return out;
+  };
+  seeds.forEach(s=>around(s).forEach(n=>lit.add(n)));
+  /* The join runs the other way too: work resting on a decision the act
+     touches is one hop from it, and only the task knows. */
+  if(tab==="joined" && T) T.tasks.forEach(x=>{
+    const c=T.derived[x.id].cross;
+    if(c.premises.some(p=>seeds.has(p.id)) || (c.evidence_for && seeds.has(c.evidence_for)))
+      lit.add(x.id);
+  });
+  return lit;
+}
+
 /* Whether the preview draws this edge where the store has none. */
 function edgeAdded(a, b){
   if(!PREVIEW) return false;
@@ -1462,7 +1510,8 @@ function previewBar(msg){
   if(PREVIEW){
     bar.hidden=false;
     bar.innerHTML=`<b>Preview</b><span>${esc(PREVIEW.label)} — the store is
-      unchanged; ghosts are added, struck is removed, ringed is moved.</span>
+      unchanged. Glowing is added or moved, struck is removed; one hop around
+      the change is lit and the rest is dimmed.</span>
       <span class="grow"></span>
       <button class="chip" data-preview-off title="Draw the store again. Pan, zoom and the open inspector are kept.">clear preview</button>`;
   }else if(msg){

@@ -375,10 +375,13 @@ so a pan, a zoom and an open inspector are never pulled from under you. But
 you can ask: the **◎** on an act's row draws the graph as it would be with
 that act applied, and **preview all** in the tray heading does the same for
 everything staged (narrowed to one writer if the tray is). What the act
-would add is a **ghost** — a dashed box, a dashed blue edge — what it would
-remove is **struck**, and what it would move is ringed with `was → now` in
-place of its status. A bar over the canvas says what is being previewed, and
-the open inspector reads the previewed record with a line saying so.
+would add is a **ghost** — a glowing dashed box, a dashed blue edge — what it
+would remove is **struck**, and what it would move glows with `was → now` in
+place of its status. The change and one hop around it are lit and the rest
+of the graph is dimmed, the way the find box dims what does not match, so a
+two-box change is not lost among fifty. A bar over the canvas says what is
+being previewed, and the open inspector reads the previewed record with a
+line saying so.
 
 **Clear preview** in that bar, or the ◉ on the row that turned it on, draws
 the store again; pan, zoom and the inspector are kept. A preview also ends by

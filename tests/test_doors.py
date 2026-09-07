@@ -2047,8 +2047,10 @@ const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
 const block = js.slice(js.indexOf("/* ---- the preview (D88, T80)"),
                        js.indexOf("/* ---- side panel ---- */"));
 let PREVIEW = JSON.parse(process.argv[3]);
-const G = null, T = null, JOIN = null, STORE = null, PEND = [], TPEND = [];
-const TRAYWHO = null, sel = null, tsel = null;
+// A store for `previewLit` to walk one hop in, when the test hands one over.
+const G = process.argv[5] ? JSON.parse(process.argv[5]) : null;
+const T = null, JOIN = null, STORE = null, PEND = [], TPEND = [];
+const TRAYWHO = null, sel = null, tsel = null, tab = "decisions";
 const esc = x => String(x == null ? "" : x);
 const edgeIn = () => true;
 const edgeSvg = (a, b, cls) => `${a}>${b}[${cls}]`;
@@ -2058,6 +2060,7 @@ console.log(JSON.stringify({
   marks: Object.fromEntries(ids.map(i => [i, previewMark(i)])),
   added: [["D01","D90"],["T01","T09"],["T02","T03"]].map(e => edgeAdded(...e)),
   gone: {decisions: goneEdges("decisions"), tasks: goneEdges("tasks")},
+  lit: (l => l && [...l].sort())(previewLit()),
 }));
 """
 
@@ -2115,6 +2118,35 @@ def test_no_preview_means_no_marks(tmp_path):
     out = json.loads(res.stdout)
     assert out["marks"] == {"D01": {}} and out["added"] == [False] * 3
     assert out["gone"] == {"decisions": "", "tasks": ""}
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_preview_lights_the_change_and_one_hop_around_it(tmp_path):
+    """The rest is dimmed: a ghost among fifty lit boxes is a box. The lit
+    set is the records the act touches plus their neighbours in the view."""
+    harness = tmp_path / "preview.js"
+    harness.write_text(PREVIEW_HARNESS)
+    preview = {"scope": "a", "label": "act a", "refs": ["a"], "diff": {
+        "decisions": {"added": ["D90"], "removed": [], "status": {},
+                      "changed": [], "edges_added": [["D02", "D90"]],
+                      "edges_removed": []},
+        "tasks": None}}
+    g = {"derived": {
+        "D01": {"depends": [], "children": ["D02"]},
+        "D02": {"depends": ["D01"], "children": ["D03", "D90"]},
+        "D03": {"depends": ["D02"], "children": ["D04"]},
+        "D04": {"depends": ["D03"], "children": []},
+        "D90": {"depends": ["D02"], "children": []},
+    }}
+    res = subprocess.run(
+        ["node", str(harness), str(server.STATIC / "app.html"),
+         json.dumps(preview), json.dumps([]), json.dumps(g)],
+        capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    lit = json.loads(res.stdout)["lit"]
+    # D90 and D02 are the change; D01 and D03 are one hop from D02; D04 is
+    # two hops away and stays dim.
+    assert lit == ["D01", "D02", "D03", "D90"]
 
 
 def test_the_page_binds_the_preview_controls_and_can_clear_them():
