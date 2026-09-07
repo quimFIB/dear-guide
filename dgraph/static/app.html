@@ -262,7 +262,7 @@
     <button class="chip" id="areasBtn" title="Counts by area and status, one block per store">areas</button>
     <button class="chip" id="frontierOnly">frontier only</button>
     <button class="chip" id="deselectBtn" hidden title="Close the inspector and clear the selection: nothing dimmed, the way the page opens. Esc does the same outside a field.">&times; inspector</button>
-    <button class="chip" id="focusBtn" title="Arm focus, then click a node: the canvas keeps only the subgraph that node induces and re-lays it out. One click seeds it and the arm drops, so the next click reads a node inside the slice without moving it. The find box still dims within it. Same slice as `dg find --subgraph`.">&#8982; focus</button>
+    <button class="chip" id="focusBtn" title="Keep only a slice and re-lay it out. With a node selected: that node's subgraph, one hop. Otherwise, with a query in the find box: exactly what the box matches, zero hops, and the box keeps its text. With neither, nothing. Same slice as `dg find --subgraph`.">&#8982; focus</button>
     <button class="chip" id="refreshBtn" title="Re-read both stores and both trays. Pan, zoom and the open inspector are kept.">&#8635; refresh</button>
     <button class="chip" id="trayBtn" title="Show or hide the trays. The count stays here while they are hidden.">tray</button>
     <input id="q" placeholder="find…" title="Same query language as `dg find`: a bare word searches prose, field:value matches one field, is:name asks a derived question, under:D04 matches everything below D04. `-` negates, `or` alternates. This box dims what does not match — to draw a slice on its own instead, use the focus chip.">
@@ -751,50 +751,54 @@ async function runFocus(){
    a slice of six nodes left at the whole graph's zoom is a canvas of empty. */
 function relayout(){ layout(); fit(); draw(); }
 
-/* Clicking a node while focus is armed re-seeds the chip and keeps the hop
-   count, because the hop count is the reader's setting and the seed is the
-   reader's gesture. Replacing both would throw away a `subgraph:1` they had
-   deliberately typed.
+/* Seeding from a node keeps the hop count, because the hop count is the
+   reader's setting and the seed is the reader's gesture. Replacing both would
+   throw away a `subgraph:1` they had deliberately typed.
 
-   Seeding also disarms. The arm is a one-shot: it answers "which node?" and is
-   spent by the answer. It used to stay up, and the click after focusing — the
-   one that reads a node inside the slice — re-seeded and re-laid the canvas
-   out from under the reader, so the slice could never be explored, only
-   replaced. Reading was indistinguishable from doing nothing at all on a
-   connected graph, where the unbounded cone from any node is the whole graph.
-   The rarer gesture, a second seed, is one more press of the chip away.
-
-   A fresh chip starts at one hop, not the whole cone. `*` is unbounded in
-   *every* direction, and on any connected graph that is every node there is:
-   the first focus drew the same picture re-fitted, and the reader could not
-   tell it had happened (the docstring on `cross.induced` had said one hop all
-   along). The hop count typed into a chip already up is kept, `*` included —
-   only an empty chip gets the default. */
+   A fresh chip seeded from a node starts at one hop, not the whole cone. `*`
+   is unbounded in *every* direction, and on any connected graph that is every
+   node there is: the first focus drew the same picture re-fitted, and the
+   reader could not tell it had happened (the docstring on `cross.induced` had
+   said one hop all along). The hop count typed into a chip already up is
+   kept, `*` included — only an empty chip gets the default. */
 const DEFAULT_HOPS = 1;
 
 function focusOn(id){
-  disarm();
   const box = $("#focusQ");
   const hops = box.value.trim() ? parseFocus(box.value).hops : DEFAULT_HOPS;
   setFocus(focusText("id:" + id, hops));
 }
 
-function disarm(){
-  ARMED = false;
-  $("#focusBtn").classList.remove("on");
+/* The find box's text becomes the seed, at zero hops, and the box keeps it
+   (D93). Zero because the reader typed a *set*, not a node to grow from:
+   `is:unsettled or is:outstanding` promoted at one hop would draw the
+   frontier and everything it rests on, which is not what was typed, and the
+   number is one edit in the chip away. The box is left alone because its
+   text is the reader's, and because the two filters stay two inputs under
+   D64 — the box now dims within the slice it just seeded, which on the first
+   frame lights everything, and that is the honest reading of "all of these
+   match". Promoting is a snapshot, not a binding: editing the box afterwards
+   dims, it does not re-slice, so a half-typed query never re-lays the canvas
+   out on every keystroke. */
+function focusQuery(){
+  setFocus(focusText(QUERY, 0));
 }
 
 function bindFocus(){
   const btn = $("#focusBtn"), box = $("#focusQ");
+  /* Three cases, in order, and no state between presses. A node selected:
+     focus it — the press is about the node just clicked. Else text in the
+     find box: promote it. Else nothing. The button used to *arm* instead,
+     and the next node click seeded; the arm was a one-shot so the click
+     after it could read inside the slice. That state bought nothing a
+     selection does not: a click selects, and a press then focuses, and the
+     record you focused is open beside it, which is the next thing wanted
+     anyway. So the arm went with D93 rather than growing a third meaning. */
   btn.onclick = () => {
-    ARMED = !ARMED;
-    btn.classList.toggle("on", ARMED);
-    /* Arming with a node already selected focuses it straight away — the
-       gesture that armed it is almost always about the node just clicked.
-       `focusOn` spends the arm, so the button reads unlit again at once. */
-    if(ARMED && cur()) focusOn(cur());
+    if(cur()) focusOn(cur());
+    else if(QUERY) focusQuery();
   };
-  $("#focusClear").onclick = () => { setFocus(""); disarm(); };
+  $("#focusClear").onclick = () => setFocus("");
   if(box.dataset.bound) return;        /* boot() runs again after Apply */
   box.dataset.bound = "1";
   let timer = null;
@@ -806,12 +810,6 @@ function bindFocus(){
     e.stopPropagation();
   };
 }
-
-/* Whether the *next* node click seeds the focus. Off by default and off
-   again after one seed: clicking a node is how you read one, and hijacking
-   that gesture for longer than one click would cost the commonest thing this
-   page does to buy the rarer one. */
-let ARMED = false;
 
 function syncChips(){
   const on = statusesIn(QUERY);
@@ -1704,12 +1702,7 @@ function select(id){
   captureDraft();
   const isTask = T && T.tasks.some(x=>x.id===id);
   if(isTask){ tsel=id; sel=null; } else { sel=id; tsel=null; }
-  /* Armed, the click does both: it re-seeds the slice *and* opens the record,
-     and the arm is spent. Reading the node you just focused is the next thing
-     you want, and making focus swallow the click — or the clicks after it —
-     would trade the page's commonest gesture for its rarer one. `focusOn`
-     redraws by itself, so this does not. */
-  if(ARMED) focusOn(id); else draw();
+  draw();
   isTask ? taskPanel() : panel();
 }
 

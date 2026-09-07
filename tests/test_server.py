@@ -1516,6 +1516,30 @@ def test_find_subgraph_refuses_a_negative_hop_count_as_a_fault(srv, store):
 
 
 
+def test_the_focus_button_promotes_the_find_query_at_zero_hops():
+    """`D93`, `T90`: the docs said "edit the chip by hand" and listed
+    `subgraph:0 area:consent`, but the chip was hidden until a click seeded
+    it, so a typed set could only be focused by clicking an unrelated node
+    first. The button now has three cases and no state between presses: a
+    selected node, else the find box's text at zero hops with the box left
+    as it was, else nothing. The arm that used to wait for a click is gone
+    with it, so nothing on the page may still consult it."""
+    page = _page()
+    handler = page[page.index("btn.onclick = () => {"):]
+    handler = handler[:handler.index("};")]
+    assert "if(cur()) focusOn(cur());" in handler
+    assert "else if(QUERY) focusQuery();" in handler
+    promote = page[page.index("function focusQuery(){"):]
+    promote = promote[:promote.index("}")]
+    assert "focusText(QUERY, 0)" in promote, "the promotion is not at zero hops"
+    assert "setQuery(" not in promote, "the promotion must leave the box alone"
+    assert "ARMED" not in page and "disarm(" not in page
+    assert "Otherwise, with a query in the find box" in page, "the tooltip is silent"
+    docs = (pathlib.Path(server.__file__).parent.parent / "docs"
+            / "quickstart-web.md").read_text(encoding="utf-8")
+    assert "subgraph:0 is:unsettled or is:outstanding" in docs
+
+
 # ---- the canvas previews an act, or the tray, on request — D88, T80 -------
 #
 # The store routes answer the store; that is the reading model and it does

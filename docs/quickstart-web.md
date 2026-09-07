@@ -253,14 +253,22 @@ highlights it with its premises and its consequences, and dims the rest.
 
 ### Focus: the second filter, which removes
 
-**⌖ focus** arms a different question. Armed, the next click on a node puts a
-chip beside the find box reading `subgraph:1 id:D04`, and the canvas keeps only
-that node's neighbourhood — its premises, its dependents and the work resting
-on it, one hop out. Everything else is *gone*, not dimmed, and the slice is
-re-ranked so it fills the screen. That one click spends the arm: the
-clicks after it open records inside the slice without moving it, which is how
-you read what you just cut out. Press **⌖ focus** again to seed from another
-node. Arming with a node already open focuses it straight away.
+**⌖ focus** asks a different question, and what it does depends on what is
+in front of it. With a node selected, it puts a chip beside the find box
+reading `subgraph:1 id:D04`, and the canvas keeps only that node's
+neighbourhood — its premises, its dependents and the work resting on it, one
+hop out. Everything else is *gone*, not dimmed, and the slice is re-ranked so
+it fills the screen. The clicks after it open records inside the slice without
+moving it, which is how you read what you just cut out; to seed from another
+node, click it and press **⌖ focus** again.
+
+With nothing selected and a query in the find box, it promotes the query
+instead: the chip reads `subgraph:0 is:unsettled or is:outstanding`, the
+canvas keeps exactly the nodes the box matched and nothing else, and the box
+keeps its text. Zero hops because you typed a set, not a node to grow from;
+edit the number in the chip if you want what the set rests on too. So
+**frontier only** followed by **⌖ focus** draws the frontier on its own. With
+neither a node nor a query, the button does nothing.
 
 The two filters answer different questions and so they compose rather than
 compete. The find box dims: everything stays where it was and the matches light
