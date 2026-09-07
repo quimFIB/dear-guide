@@ -324,9 +324,17 @@ Below that is the form:
 - **Source** — a path, a script, or `discussion`.
 - **Falsifier** — what evidence would reopen this. Required if the decision
   opens anything; the form refuses without it.
-- **Opens** — ctrl-click to multi-select. Entries marked *(linked — stays)* are
-  edges that already exist in the store; they stay selected because `apply`
-  unions them back in, and a box that pretended otherwise would be lying.
+- **Opens** — the questions this answer raises. What the vertex already
+  opens is said as text: those edges are in the store and `apply` keeps
+  them. Adding one is behind **+ opens another question…**, since it is the
+  rarer case — a question normally comes to exist through **+ new** resting
+  on this one, edge included. Behind the button is a filter over a
+  checklist: type an id or a word of a title, tick what applies, and the
+  line under the list says what is picked. The vertex itself and anything
+  above it are not offered: opening an ancestor would be a cycle, which
+  `dg check` refuses, so the picker does not ask. The same picker, with the
+  cycle rule the other way round, is the "rests on" of a new question, the
+  relations of a new task, and every list in *Edit structure*.
 
 **Stage decision** puts it in the tray at the bottom. Nothing has been written
 yet.

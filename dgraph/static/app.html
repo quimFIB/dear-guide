@@ -164,6 +164,21 @@
     border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit}
   textarea{min-height:78px;resize:vertical}
   select[multiple]{height:118px}
+  /* The id picker: a filter over a checklist. A ctrl-click multi-select of
+     fifty rows was a list to scroll, and clicking one row looked like
+     nothing happened. */
+  .picker-list{max-height:150px;overflow:auto;border:1px solid var(--line);
+    border-radius:6px;background:#0d1117;padding:3px 6px;margin-top:4px}
+  .picker-list label{display:block;font-size:12px;cursor:pointer;padding:2px 0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .picker-list label.off{display:none}
+  .picker-list input{width:auto;margin:0 6px 0 0;vertical-align:middle}
+  .picker-count{font-size:11px;color:var(--dim);margin:3px 0 6px}
+  /* A disclosure for a control that is rarely wanted: the chip is the
+     summary, the control is behind it. */
+  details.more>summary{list-style:none;display:inline-block;margin:4px 0}
+  details.more>summary::-webkit-details-marker{display:none}
+  details.more[open]>summary{color:var(--ink);border-color:var(--accent)}
   footer{border-top:1px solid var(--line);background:var(--panel);max-height:34%;
     overflow:auto;padding:8px 12px}
   table{width:100%;border-collapse:collapse;font-size:12px}
@@ -1714,6 +1729,10 @@ function captureDraft(){
     d[el.id]=val;
     if(el.multiple ? val.length : val.trim()) any=true;
   });
+  /* A picker is a set of boxes under one id; kept as the ids picked. */
+  $("#side").querySelectorAll(".picker").forEach(p=>{
+    const val=pickerValues(p.id); d[p.id]=val; if(val.length) any=true;
+  });
   /* An empty form is not a draft. Storing it would make the "opens" list
      remember a deselection the user never made. */
   if(any) DRAFTS[cur()]=d; else delete DRAFTS[cur()];
@@ -1723,7 +1742,13 @@ function restoreDraft(){
   const d=DRAFTS[cur()]; if(!d) return;
   Object.entries(d).forEach(([id,val])=>{
     const el=document.getElementById(id); if(!el) return;
-    if(el.multiple) [...el.options].forEach(o=>o.selected=val.includes(o.value));
+    if(el.classList && el.classList.contains("picker")){
+      el.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=val.includes(c.value));
+      if(el.onchange) el.onchange();
+      /* A pick behind a disclosure is a pick the reader should see. */
+      const more = el.closest("details"); if(more && val.length) more.open = true;
+    }
+    else if(el.multiple) [...el.options].forEach(o=>o.selected=val.includes(o.value));
     else el.value=val;
   });
 }
@@ -1865,6 +1890,61 @@ function chooseStore(){
 
 /* The ids a relation control offers. Sorted, and labelled the way every other
    list here is — id first, because ids never clip and titles do. */
+/* Every premise above `id`, transitively — what it rests on, and what those
+   rest on. Also every record below it (`down`), through `children`. Used to
+   keep a picker from offering a cycle: a decision cannot open an ancestor
+   or rest on a descendant, and `link_acyclic` would refuse the op at apply
+   — the picker just does not ask. */
+function reach(id, down){
+  const out=new Set(), stack=[id];
+  while(stack.length){
+    const v=stack.pop(); const d=G.derived[v]; if(!d) continue;
+    (down ? d.children : d.depends).forEach(n=>{ if(!out.has(n)){ out.add(n); stack.push(n); } });
+  }
+  return out;
+}
+
+/* What the decide form may offer as "opens": every decision that is not
+   this one, not above it, and not already opened by it — those last are
+   edges in the store that Apply keeps, said as text rather than as boxes
+   that could not be unticked. */
+function opensCandidates(id){
+  const linked = new Set((G.derived[id]||{}).children||[]);
+  const above = reach(id, false);
+  return {fixed: [...linked],
+          rows: G.vertices.filter(v=>v.id!==id && !above.has(v.id) && !linked.has(v.id))};
+}
+
+/* A filterable checklist of records. `rows` are `{id, title}`; the filter
+   matches the id or any word of the title. `pickerValues` reads it back. */
+function idPicker(id, rows, placeholder){
+  return `<div class="picker" id="${esc(id)}">
+    <input class="picker-q" placeholder="${esc(placeholder||"filter by id or a word of the title…")}" autocomplete="off">
+    <div class="picker-list">${rows.map(r=>
+      `<label><input type="checkbox" value="${esc(r.id)}"> <b>${esc(r.id)}</b> — ${esc(r.title)}</label>`).join("")
+      || `<span class="muted">nothing to offer</span>`}</div>
+    <div class="picker-count"></div></div>`;
+}
+function pickerValues(id){
+  const p=$("#"+id); if(!p) return [];
+  return [...p.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);
+}
+function bindPickers(){
+  document.querySelectorAll(".picker").forEach(p=>{
+    const q=p.querySelector(".picker-q"), count=p.querySelector(".picker-count");
+    const labels=[...p.querySelectorAll("label")];
+    /* Written only when it changes: `sideSync` binds pickers from the
+       inspector's mutation observer, and a write here on every call would
+       be a mutation that calls this again. */
+    const say=()=>{ const v=pickerValues(p.id);
+      const txt = v.length ? `picked: ${v.join(", ")}` : "none picked";
+      if(count.textContent!==txt) count.textContent = txt; };
+    q.oninput=()=>{ const t=q.value.trim().toLowerCase();
+      labels.forEach(l=>l.classList.toggle("off", !!t && !l.textContent.toLowerCase().includes(t))); };
+    p.onchange=say; say();
+  });
+}
+
 function idOptions(rows, idKey, titleKey){
   return rows.map(r=>`<option value="${esc(r[idKey])}">${esc(r[idKey])} — ${
     esc(r[titleKey])}</option>`).join("");
@@ -1903,7 +1983,6 @@ function knownAreas(){
 }
 
 function newDecisionForm(){
-  const opts = idOptions(G.vertices, "id", "title");
   /* No blocked control: a vertex waits on whichever of the decisions in
      "rests on" is unsettled, read off the edges (`D68`). The picker that used
      to ask "blocked until which decision is settled?" was a second copy of
@@ -1919,8 +1998,8 @@ function newDecisionForm(){
     <select id="nStatus">
       <option value="OPEN">OPEN — nobody has answered it yet</option>
     </select>
-    <label>Rests on (ctrl-click; none = a root) — it waits on whichever is unsettled</label>
-    <select id="nAfter" multiple>${opts}</select>
+    <label>Rests on — none = a root; it waits on whichever is unsettled</label>
+    ${idPicker("nAfter", G.vertices)}
     <label>Note — what is undecided, and why (optional)</label>
     <textarea id="nNote"></textarea>
     <p style="margin:10px 0;display:flex;gap:8px">
@@ -1938,13 +2017,12 @@ async function stageNewDecision(){
   await postNew("/api/add", {
     id, title, area:$("#nArea").value.trim(), new_area:$("#nNewArea").checked,
     status,
-    after:[...$("#nAfter").selectedOptions].map(o=>o.value),
+    after:pickerValues("nAfter"),
     note:$("#nNote").value.trim()||null,
   }, id);
 }
 
 function newTaskForm(){
-  const tasks = idOptions(T.tasks, "id", "title");
   /* The frontier first, then everything else: `because` almost always names a
      question that is still open, and a select whose first entries are the
      settled ones buries it. A blank first option is what "no link" looks like,
@@ -1957,15 +2035,15 @@ function newTaskForm(){
     <label>Title — what doing this means</label>
     <input id="nTitle" placeholder="e.g. Build the HNSW index and sweep efSearch">
     ${areaField(knownAreas())}
-    <label>After — work that must be resolved first (ctrl-click)</label>
-    <select id="nAfter" multiple>${tasks}</select>
-    <label>Discovered during — work whose doing turned this up (ctrl-click)</label>
-    <select id="nDuring" multiple>${tasks}</select>
+    <label>After — work that must be resolved first</label>
+    ${idPicker("nAfter", T.tasks)}
+    <label>Discovered during — work whose doing turned this up</label>
+    ${idPicker("nDuring", T.tasks)}
     <p class="muted" style="margin:4px 0 0">These are different claims. <b>After</b>
       asserts an order and holds this work back; <b>discovered during</b> only
       records where it came from and blocks nothing.</p>
-    ${G ? `<label>Because — the decisions this work exists because of (ctrl-click)</label>
-    <select id="nBecause" multiple>${dec}</select>
+    ${G ? `<label>Because — the decisions this work exists because of</label>
+    ${idPicker("nBecause", G.vertices)}
     <label>Evidence for — a decision this work will inform</label>
     <select id="nEvidence">${dec}</select>` :
     `<p class="muted" style="margin:10px 0 0">This project has no decision graph,
@@ -1986,11 +2064,11 @@ async function stageNewTask(){
   await postNew("/api/add-task", {
     id, title, area:$("#nArea").value.trim(),
     new_area:$("#nNewArea").checked,
-    after:[...$("#nAfter").selectedOptions].map(o=>o.value),
-    discovered_during:[...$("#nDuring").selectedOptions].map(o=>o.value),
+    after:pickerValues("nAfter"),
+    discovered_during:pickerValues("nDuring"),
     /* A set, joined the way the CLI's `--because D01,D05` arrives. The server
        splits on commas for both doors, so the two stage the identical op. */
-    because:$("#nBecause")?[...$("#nBecause").selectedOptions].map(o=>o.value).join(","):null,
+    because:$("#nBecause")?pickerValues("nBecause").join(","):null,
     evidence_for:$("#nEvidence")?$("#nEvidence").value||null:null,
     note:$("#nNote").value.trim()||null,
   }, id);
@@ -2304,17 +2382,19 @@ function bindStructure(){
 function relCandidates(store, id, field, verb){
   if(store==="decisions"){
     const held = G.derived[id] ? G.derived[id].depends : [];
-    const rows = verb==="undep"
+    /* A premise cannot be this record, one it already rests on, or anything
+       below it — that last is a cycle, which `link_acyclic` would refuse at
+       apply; the picker does not ask. */
+    const below = reach(id, true);
+    return verb==="undep"
       ? G.vertices.filter(v=>held.includes(v.id))
-      : G.vertices.filter(v=>v.id!==id);
-    return idOptions(rows, "id", "title");
+      : G.vertices.filter(v=>v.id!==id && !held.includes(v.id) && !below.has(v.id));
   }
   const d = T.derived[id] || {};
   const held = field==="after" ? (d.prerequisites||[]) : (d.discovered_during||[]);
-  const rows = verb==="undep"
+  return verb==="undep"
     ? T.tasks.filter(t=>held.includes(t.id))
-    : T.tasks.filter(t=>t.id!==id);
-  return idOptions(rows, "id", "title");
+    : T.tasks.filter(t=>t.id!==id && !held.includes(t.id));
 }
 
 function structureForm(){
@@ -2351,9 +2431,8 @@ function structureForm(){
         if(!held.length){
           h+=`<label class="muted">${esc(label)} — not set</label>`;
         }else if(field==="because"){
-          h+=`<label>${esc(label)} — remove which? (ctrl-click)</label>
-            <select id="r_${field}" multiple>${
-              held.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join("")}</select>`;
+          const rows = held.map(d=>{ const v=G&&G.vertices.find(x=>x.id===d); return {id:d, title:v?v.title:""}; });
+          h+=`<label>${esc(label)} — remove which?</label>${idPicker("r_"+field, rows)}`;
         }else{
           h+=`<label style="display:flex;gap:8px;align-items:center">
             <input type="checkbox" id="r_${field}" style="width:auto"> ${esc(label)}
@@ -2363,8 +2442,9 @@ function structureForm(){
         const opts=(G?idOptions(G.vertices,"id","title"):"");
         const nowSaid = held.length?` <span class="muted">(now ${esc(held.join(", "))})</span>`:"";
         if(field==="because"){
-          h+=`<label>${esc(label)}${nowSaid} (ctrl-click)</label>
-            <select id="r_${field}" multiple>${opts}</select>`;
+          /* Offered from what is not already held. */
+          const rows = G ? G.vertices.filter(v=>!held.includes(v.id)) : [];
+          h+=`<label>${esc(label)}${nowSaid}</label>${idPicker("r_"+field, rows)}`;
         }else{
           h+=`<label>${esc(label)}${nowSaid}</label>
             <select id="r_${field}"><option value=""></option>${opts}</select>`;
@@ -2373,10 +2453,10 @@ function structureForm(){
     });
   }else{
     spec.add.forEach(([field,label])=>{
-      const opts=relCandidates(store, id, field, verb);
-      h+=`<label>${esc(label)}${removing?" — remove which?":""} (ctrl-click)</label>
-        <select id="r_${field}" multiple>${opts||""}</select>`
-        + (opts?"":`<p class="muted" style="margin:4px 0">Nothing to remove here.</p>`);
+      const rows=relCandidates(store, id, field, verb);
+      h+=`<label>${esc(label)}${removing?" — remove which?":""}</label>`
+        + (rows.length ? idPicker("r_"+field, rows)
+                       : `<p class="muted" style="margin:4px 0">Nothing to remove here.</p>`);
     });
     if(store==="tasks" && !removing)
       h+=`<p class="muted" style="margin:6px 0">These are different claims.
@@ -2411,17 +2491,15 @@ function relateBody(){
          stays a flag for it and only for it. Sending a bool for `because` is
          what made the unlink route raise instead of refuse (`V-F2`). */
       if(f==="because"){
-        body[f] = el.multiple
-          ? [...el.selectedOptions].map(o=>o.value).join(",")
-          : (el.value||null);
+        body[f] = pickerValues("r_"+f).join(",");
       }else{
         body[f] = verb==="unlink" ? !!el.checked : (el.value||null);
       }
     });
   }else{
     spec.add.forEach(([f])=>{
-      const el=$("#r_"+f); if(!el) return;
-      body[f]=[...el.selectedOptions].map(o=>o.value);
+      if(!$("#r_"+f)) return;
+      body[f]=pickerValues("r_"+f);
     });
   }
   return body;
@@ -2861,18 +2939,22 @@ function panel(){
   } else {
     /* Linked children are edges in the store; `apply` unions them back in, so
        a box that looked deselectable would be lying — the same rule the org
-       buffer states as "(linked) ... stay regardless". */
-    const linked=new Set(d.children);
-    const opts=G.vertices.filter(x=>x.id!==sel)
-      .map(x=>`<option value="${esc(x.id)}">${esc(x.id)} — ${esc(x.title)}${linked.has(x.id)?" (linked — stays)":""}</option>`).join("");
+       buffer states as "(linked) ... stay regardless". They are said as text
+       and the picker offers only what could be added. */
+    const cand=opensCandidates(sel);
     h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
       <label>Answer — what was decided, and on what evidence</label>
       <textarea id="answer"></textarea>
       <label>Source</label><input id="source" placeholder="report/… · a script · discussion">
       <label>Falsifier — what evidence would reopen this?</label>
       <input id="fals" placeholder="… or ANALYTIC — why no measurement can overturn it">
-      <label>Opens which decisions? (ctrl-click; none = terminal)</label>
-      <select id="opens" multiple>${opts}</select>
+      <label>Opens — the questions this answer raises${cand.fixed.length ? "" : "; none = terminal"}</label>
+      ${cand.fixed.length ? `<p class="muted" style="margin:2px 0 4px">Already opens ${idList(cand.fixed)} — edges in the store, kept on Apply.</p>` : ""}
+      <details id="opensMore" class="more">
+        <summary class="chip">+ opens another question…</summary>
+        <p class="muted" style="margin:6px 0 0">An edge from ${esc(sel)} to an existing question this answer raises. A question that does not exist yet is filed with <b>+ new</b>, resting on ${esc(sel)}.</p>
+        ${idPicker("opens", cand.rows)}
+      </details>
       <p style="margin:10px 0;display:flex;gap:8px;align-items:center">
         <button class="primary" id="doClose">Stage decision</button>
         ${editBtn()}</p>
@@ -2899,13 +2981,9 @@ function panel(){
     ev.preventDefault(); showChain(a.dataset.chain);
   });
   bindStructure();
-  const already=new Set(d.children);
-  const holdLinked=()=>$("#opens")&&[...$("#opens").options].forEach(o=>{
-    if(already.has(o.value)) o.selected=true;});
-  holdLinked();
-  restoreDraft();                       /* after the defaults, so it wins */
-  holdLinked();                         /* ...except over an edge in the store */
-  $("#opens")&&$("#opens").addEventListener("change",holdLinked);
+  /* The linked children are no longer boxes to hold selected: the picker
+     offers only what could be added, and says the linked ones as text. */
+  restoreDraft();
   const n=NOTES[sel];
   if(n) say(n.msg, n.cls);
   $("#doClose")&&($("#doClose").onclick=stageClose);
@@ -2990,7 +3068,7 @@ async function postTasks(ops){
 function stageClose(){
   const a=$("#answer").value.trim(), s=$("#source").value.trim(),
         f=$("#fals").value.trim(),
-        to=[...$("#opens").selectedOptions].map(o=>o.value);
+        to=pickerValues("opens");
   if(!a||!s){ say("Answer and source are required.", "bad"); return; }
   if(to.length&&!f){ say("A non-terminal decision needs a falsifier.", "bad"); return; }
   /* local date, not toISOString(): that is UTC, and near midnight it disagrees
@@ -3512,6 +3590,9 @@ function sideSync(){
   const empty = !text || text===SIDE_EMPTY;
   $("#side").hidden = empty;
   $("#deselectBtn").hidden = empty;
+  /* Whatever form just rendered gets its pickers bound here, once for all
+     of them, rather than at each site that draws one. Idempotent. */
+  bindPickers();
 }
 new MutationObserver(sideSync).observe($("#side"), {childList:true, subtree:true, characterData:true});
 sideSync();

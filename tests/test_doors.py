@@ -409,7 +409,10 @@ const G = JSON.parse(process.argv[3]), T = JSON.parse(process.argv[4]);
 let tab = "decisions", sel = null, tsel = null;
 const held = {};
 const el = id => (held[id] = held[id] || {id, value:"", options:[],
-  selectedOptions:[], style:{}, onclick:null, onchange:null, innerHTML:""});
+  selectedOptions:[], style:{}, onclick:null, onchange:null, innerHTML:"",
+  // The id pickers read their checked boxes back through this; none in a
+  // stub, which reads as "nothing picked".
+  querySelectorAll: () => []});
 // `querySelectorAll` because the forms bind their own controls after drawing
 // them. Returning nothing is right: what is under test is the HTML a form
 // produces and the body a reader builds back out of it, not the binding.
@@ -469,12 +472,11 @@ const taskPanel = () => {}, panel = () => {};
   });
 });
 
-// \`because\` is a set on the way out. The stub select reports itself single by
-// default, so this is the one place the multiple branch is driven.
+// \`because\` is a set on the way out — a picker of boxes, read back as the
+// ids ticked, comma-joined. The stub reports two ticked.
 RELATING = {store: "tasks", id: process.argv[5], verb: "link"};
 structureForm();
-held.r_because.multiple = true;
-held.r_because.selectedOptions = [{value: "D04"}, {value: "D05"}];
+held.r_because.querySelectorAll = () => [{value: "D04"}, {value: "D05"}];
 if (relateBody().because !== "D04,D05")
   throw new Error("a multi-select premise read back as "
                   + JSON.stringify(relateBody().because));
@@ -486,8 +488,7 @@ if (relateBody().because !== "D04,D05")
 // there was fallout to confirm, which is the only time the path runs.
 RELATING = {store: "tasks", id: process.argv[5], verb: "unlink"};
 structureForm();
-held.r_because.multiple = true;
-held.r_because.selectedOptions = [{value: "D04"}];
+held.r_because.querySelectorAll = () => [{value: "D04"}];
 POSTED.length = 0;
 relateFallout().then(() => {
   side.innerHTML = "";                     // as the confirmation did
@@ -2347,3 +2348,72 @@ def test_the_page_binds_the_edge_selection_and_clears_it_on_a_node_click():
     body = page.split("function select(id){", 1)[1][:80]
     assert "ESEL=null;" in body, "a node click leaves the edge selection standing"
     assert page.count("ESEL=null;") >= 3, "deselect and the tab switch must clear it too"
+
+
+# ---- the id picker ---------------------------------------------------------
+#
+# The decide form offered every vertex as "opens" in a ctrl-click
+# multi-select: D70's own premise D74 was in the list (opening it would be a
+# cycle), the three it already opened were rows with a suffix, and a click on
+# a row looked like nothing happened. A filterable checklist now offers only
+# what could be added, and the cycle rule keeps ancestors out.
+
+PICKER_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const block = js.slice(js.indexOf("/* Every premise above `id`, transitively"),
+                       js.indexOf("function idOptions("))
+            + js.slice(js.indexOf("function relCandidates("), js.indexOf("function structureForm("));
+const G = JSON.parse(process.argv[3]);
+const T = null;
+const esc = x => String(x == null ? "" : x);
+const $ = () => null;
+eval(block);
+const ids = rows => rows.map(r => r.id);
+console.log(JSON.stringify({
+  opens: {fixed: opensCandidates("D70").fixed, rows: ids(opensCandidates("D70").rows)},
+  above: [...reach("D70", false)].sort(), below: [...reach("D70", true)].sort(),
+  dep: ids(relCandidates("decisions", "D70", "after", "dep")),
+  undep: ids(relCandidates("decisions", "D70", "after", "undep")),
+  html: idPicker("opens", opensCandidates("D70").rows),
+}));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_opens_picker_offers_no_cycle_and_no_box_for_a_linked_child(tmp_path):
+    harness = tmp_path / "picker.js"
+    harness.write_text(PICKER_HARNESS)
+    # D74 → D70 → D72 → D67; D99 is unrelated.
+    g = {"vertices": [{"id": i, "title": f"q {i}"} for i in
+                      ("D74", "D70", "D72", "D67", "D99")],
+         "derived": {"D74": {"depends": [], "children": ["D70"]},
+                     "D70": {"depends": ["D74"], "children": ["D72"]},
+                     "D72": {"depends": ["D70"], "children": ["D67"]},
+                     "D67": {"depends": ["D72"], "children": []},
+                     "D99": {"depends": [], "children": []}}}
+    res = subprocess.run(["node", str(harness), str(server.STATIC / "app.html"),
+                          json.dumps(g)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout)
+    assert out["above"] == ["D74"] and out["below"] == ["D67", "D72"]
+    # Opens: not itself, not its ancestor D74, not D72 which it already opens.
+    # D67 is below it but not directly opened, so it may be — and D99.
+    assert out["opens"] == {"fixed": ["D72"], "rows": ["D67", "D99"]}
+    # A premise: not itself, not what it already rests on, nothing below it.
+    assert out["dep"] == ["D99"]
+    assert out["undep"] == ["D74"]
+    assert 'id="opens"' in out["html"] and 'value="D67"' in out["html"]
+    assert 'value="D72"' not in out["html"] and "picker-q" in out["html"]
+
+
+def test_every_multi_select_became_a_picker():
+    page = _page()
+    assert "<select id=\"opens\" multiple>" not in page
+    assert "<select id=\"nAfter\" multiple>" not in page
+    assert 'id="r_${field}" multiple' not in page
+    assert "(ctrl-click)" not in page, "a label still tells the reader to ctrl-click"
+    for reader in ('pickerValues("opens")', 'pickerValues("nAfter")',
+                   'pickerValues("r_"+f)'):
+        assert reader in page, f"{reader} is not how the form is read back"
+    assert "bindPickers();" in page.split("function sideSync", 1)[1][:400]
