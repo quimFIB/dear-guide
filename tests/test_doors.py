@@ -2204,6 +2204,12 @@ def test_the_inspector_exists_only_while_it_has_something_to_show():
     assert "showSide" not in page and 'id="sideBtn"' not in page
     assert 'id="trayBtn"' in page and '$("#trayBtn").onclick' in page
     assert "`tray ${n}`" in page
+    # Folded at start, like the inspector; a toggle is what is remembered,
+    # never the state on load, or the old default would pin itself.
+    assert "const PANELS = {tray:false};" in page
+    assert '<button class="chip" id="trayBtn"' in page
+    assert page.count('localStorage.setItem("dg.tray"') == 1
+    assert 'localStorage.setItem("dg.panels"' not in page
 
 
 def test_the_selection_can_be_cleared_but_never_by_a_background_click():

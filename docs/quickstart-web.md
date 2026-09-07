@@ -210,10 +210,11 @@ always sits below everything it rests on.
 The page opens as canvas alone. The inspector on the right exists only
 while it has something to show — it opens when you click a node, start a
 form or ask for a reading, and closes when that is cleared, because an empty
-inspector is a third of the window saying "click a node". The **tray** chip
-in the header folds the trays away and remembers the choice per browser;
-folded, it carries the staged count, so staging from the panel never yanks
-the footer open. **Refresh** re-reads the stores and keeps all of this as it
+inspector is a third of the window saying "click a node". The trays start
+folded too: the **tray** chip in the header opens them, remembers a toggle
+per browser, and while they are folded carries the staged count — so
+staging from the panel never yanks the footer open, and nothing staged goes
+unannounced. **Refresh** re-reads the stores and keeps all of this as it
 was.
 
 Selecting a node dims everything it is not related to. The **× inspector**

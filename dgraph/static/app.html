@@ -249,7 +249,7 @@
     <button class="chip" id="deselectBtn" hidden title="Close the inspector and clear the selection: nothing dimmed, the way the page opens. Esc does the same outside a field.">&times; inspector</button>
     <button class="chip" id="focusBtn" title="Arm focus, then click a node: the canvas keeps only the subgraph that node induces and re-lays it out. One click seeds it and the arm drops, so the next click reads a node inside the slice without moving it. The find box still dims within it. Same slice as `dg find --subgraph`.">&#8982; focus</button>
     <button class="chip" id="refreshBtn" title="Re-read both stores and both trays. Pan, zoom and the open inspector are kept.">&#8635; refresh</button>
-    <button class="chip on" id="trayBtn" title="Show or hide the trays. The count stays here while they are hidden.">tray</button>
+    <button class="chip" id="trayBtn" title="Show or hide the trays. The count stays here while they are hidden.">tray</button>
     <input id="q" placeholder="find…" title="Same query language as `dg find`: a bare word searches prose, field:value matches one field, is:name asks a derived question, under:D04 matches everything below D04. `-` negates, `or` alternates. This box dims what does not match — to draw a slice on its own instead, use the focus chip.">
     <span class="muted" id="qnote"></span>
     <!-- The chip is the *seed*; `#q` beside it is the filter. Two roles, one
@@ -3470,10 +3470,13 @@ async function reviseOp(ref){
    than toggled at each of the twenty places that write to it, so a new
    panel cannot forget to open it and a cleared one cannot leave it standing.
 
-   The trays fold behind a chip, and that choice is remembered per browser
-   (a layout is a viewer's convenience, not a reading of the store, so
-   keeping it is not the trap `TRAYWHO` avoids). Folded, the chip carries
-   the staged count, so staging from the panel never yanks the footer open. */
+   The trays start folded and open behind a chip; a toggle is remembered
+   per browser (a layout is a viewer's convenience, not a reading of the
+   store, so keeping it is not the trap `TRAYWHO` avoids), and only a
+   toggle is written — an earlier version stored the state on every load,
+   which would have pinned the old default open in every browser that had
+   seen it. Folded, the chip carries the staged count, so staging from the
+   panel never yanks the footer open and nothing staged goes unannounced. */
 const SIDE_EMPTY = "Click a node to inspect it.";
 function sideSync(){
   const text = $("#side").textContent.trim();
@@ -3484,17 +3487,19 @@ function sideSync(){
 new MutationObserver(sideSync).observe($("#side"), {childList:true, subtree:true, characterData:true});
 sideSync();
 
-const PANELS = {tray:true};
-try{ const kept=JSON.parse(localStorage.getItem("dg.panels")||"{}");
-     if(typeof kept.tray==="boolean") PANELS.tray=kept.tray; }catch(e){}
+const PANELS = {tray:false};
+try{ const kept=localStorage.getItem("dg.tray");
+     if(kept==="open" || kept==="closed") PANELS.tray = kept==="open"; }catch(e){}
 function panelsApply(){
   $("#tray").hidden = !PANELS.tray;
   $("#trayBtn").classList.toggle("on", PANELS.tray);
   const n = PEND.length + TPEND.length;
   $("#trayBtn").textContent = PANELS.tray || !n ? "tray" : `tray ${n}`;
-  try{ localStorage.setItem("dg.panels", JSON.stringify(PANELS)); }catch(e){}
 }
-$("#trayBtn").onclick=()=>{ PANELS.tray=!PANELS.tray; panelsApply(); };
+$("#trayBtn").onclick=()=>{
+  PANELS.tray=!PANELS.tray; panelsApply();
+  try{ localStorage.setItem("dg.tray", PANELS.tray ? "open" : "closed"); }catch(e){}
+};
 panelsApply();
 
 $("#newBtn").onclick=newNode;
