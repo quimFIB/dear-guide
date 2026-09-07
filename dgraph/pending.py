@@ -944,6 +944,52 @@ def refuse_dependent(ops: list[dict], batch: list[dict], *,
             f"(`dg apply --group {heads[0]}`), or apply everything")
 
 
+def stranded(ops: list[dict], known: set[str]) -> dict[str, list[str]]:
+    """Which staged ops name a record that nothing will have added by the
+    time they apply — `{ref: [ids]}`, empty when the tray is whole. `D91`.
+
+    `known` is what the stores hold; `ops` is both trays in apply order,
+    decisions then tasks, and an id introduced earlier in that order counts.
+    This is `rests_on`'s complement: that walk names the act an op waits
+    for, this names the op whose act is gone. Read at listing time so the
+    tray says it before `dg check --staged` is asked (`tray_applies`).
+    """
+    have = set(known)
+    out: dict[str, list[str]] = {}
+    for o in ops:
+        missing = sorted(references(o) - have)
+        if missing:
+            out[o.get("ref")] = missing
+        i = introduces(o)
+        if i:
+            have.add(i)
+    return out
+
+
+def strands(before: list[dict], after: list[dict]) -> list[str]:
+    """The acts a removal leaves naming what it took — by the id a reviewer
+    would type, in tray order. `D91`: said, never refused.
+
+    `before` and `after` are both trays in apply order, around a `drop`,
+    `drop_group` or `replace_group`. An id introduced in `before` and by
+    nothing in `after` is what went; every act in `after` that names it, or
+    names something that in turn rests on it, is stranded.
+    """
+    gone = {introduces(o) for o in before} - {introduces(o) for o in after} - {None}
+    if not gone:
+        return []
+    # The removal's ids are not "known" to the survivors; everything else
+    # the tray does not introduce is assumed stored, since it was stageable.
+    named = set().union(*(references(o) for o in after)) if after else set()
+    known = named - gone - ({introduces(o) for o in after} - {None})
+    out: list[str] = []
+    for ref in stranded(after, known):
+        head = group_of(after, next(o for o in after if o.get("ref") == ref))[0].get("ref")
+        if head not in out:
+            out.append(head)
+    return out
+
+
 def refuse_split(ops: list[dict], op: dict, *, kind: str = "op") -> str | None:
     """Why this op may not be removed on its own — or `None`.
 

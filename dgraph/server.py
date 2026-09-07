@@ -1454,6 +1454,7 @@ class Handler(BaseHTTPRequestHandler):
             new = editor.compose(eff, kind, vertex=op.get("vertex"),
                                  index=i, op=op, launcher=editor.launch_gui)
             pending.vet_all(eff, new)
+            before = pending.load() + pending.load(task_pending.path())
             pending.replace_group(op.get("ref") or i, new, against=eff,
                                   supersede=editor.supersedes(kind, op))
         except editor.EditorAbort as exc:
@@ -1462,7 +1463,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, 400)
         finally:
             _editing.release()
-        self._json({"staged": new, "pending": pending.load()})
+        # `D91`: a replaced `add_vertex` under another id strands every act
+        # that named the old one; said in the answer, and the tray marks it.
+        self._json({"staged": new, "pending": pending.load(),
+                    "stranded": pending.strands(
+                        before, pending.load() + pending.load(task_pending.path()))})
 
     def _repair(self) -> None:
         """Stage the PROVISIONAL marks a reopen would have derived. `dg repair`.

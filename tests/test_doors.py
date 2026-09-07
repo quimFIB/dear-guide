@@ -1831,6 +1831,7 @@ const G = JSON.parse(process.argv[3]), T = JSON.parse(process.argv[4]);
 const esc = x => String(x == null ? "" : x);
 const ED = null;
 const PREVIEW = null;   // no preview on: the row offers one, marks none
+const PEND = [], TPEND = [];   // `strandedRefs` reads the trays; none here
 eval(block);
 // A sixth argument renders every op as members of one act — what `trayTable`
 // passes when the ops share a group — instead of each as an act of one.
@@ -1845,7 +1846,7 @@ def _oprow(tmp_path, ops, areas_declared=("corpus",), one_act=False):
     harness = tmp_path / "oprow.js"
     harness.write_text(OPROW_HARNESS)
     g = {"areas": list(areas_declared), "vertices": [], "edges": [],
-         "derived": {}}
+         "derived": {}, "vertices": []}
     res = subprocess.run(
         ["node", str(harness), str(server.STATIC / "app.html"),
          json.dumps(g), json.dumps(None), json.dumps(ops)]
@@ -2440,8 +2441,8 @@ def test_a_tray_control_refusal_is_drawn_in_the_tray():
     handler calls. What it cannot see is whether the line is on screen,
     which is what the browser run was for."""
     page = _page()
-    assert "function trayErr(msg)" in page
-    assert 'insertAdjacentHTML("afterbegin", `<div class="err">' in page
+    assert "function trayErr(msg" in page
+    assert 'insertAdjacentHTML("afterbegin", `<div class="${cls||"err"}">' in page
     handlers = {
         "take": page.split('closest("[data-take]")', 1)[1].split("addEventListener", 1)[0],
         "dropAct": page.split('closest("#dropAct")', 1)[1].split("addEventListener", 1)[0],
@@ -2452,3 +2453,44 @@ def test_a_tray_control_refusal_is_drawn_in_the_tray():
     for name, body in handlers.items():
         assert "trayErr(err.message)" in body, f"{name} does not draw its refusal in the tray"
         assert 'say(err.message' not in body, f"{name} still routes a refusal to a hidden note"
+
+
+STRANDED_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const block = js.slice(js.indexOf("const REFS = "), js.indexOf("function opRow("));
+const G = {vertices: [{id:"D01"},{id:"D02"},{id:"D05"}]};
+const T = {tasks: [{id:"T01"}]};
+let PEND = JSON.parse(process.argv[3]), TPEND = JSON.parse(process.argv[4]);
+eval(block);
+console.log(JSON.stringify(Object.fromEntries(strandedRefs())));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_page_marks_a_stranded_act_from_what_it_already_holds(tmp_path):
+    """`D91`: the mark is computed from the stores and the trays the page has
+    — `pending.stranded`'s twin — so a drop in a terminal shows on the next
+    refresh, before anybody runs `dg check --staged`."""
+    harness = tmp_path / "stranded.js"
+    harness.write_text(STRANDED_HARNESS)
+    pend = [{"op": "add_vertex", "id": "D91", "ref": "b1", "group": "gb"},
+            {"op": "add_edge", "from": "D90", "to": ["D91"], "ref": "b2", "group": "gb"},
+            {"op": "add_edge", "from": "D02", "to": ["D05"], "ref": "d1"}]
+    tpend = [{"op": "add_task", "id": "T90", "because": ["D90", "D01"], "ref": "t1"},
+             {"op": "add_dep", "kind": "precedes", "from": "T01", "to": ["T90"], "ref": "t2"}]
+    res = subprocess.run(["node", str(harness), str(server.STATIC / "app.html"),
+                          json.dumps(pend), json.dumps(tpend)],
+                         capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert json.loads(res.stdout) == {"b2": ["D90"], "t1": ["D90"]}
+    page = _page()
+    assert "will not apply" in page and "strandedRefs()" in page.split("function opRow", 1)[1][:8000]
+
+
+def test_the_preview_bar_says_the_apply_will_be_refused():
+    """`D90`: a narrowed preview draws what the per-writer Apply will refuse
+    to write, so the bar says so beside the act it rests on."""
+    page = _page()
+    bar = page.split("function previewBar", 1)[1].split("function repaintPanel", 1)[0]
+    assert "refused until" in bar, bar

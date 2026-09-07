@@ -30,23 +30,32 @@ def select(ops: list[dict], task_ops: list[dict], scope: str,
     """`(decision ops, task ops, label, base)` the scope names, or
     `ValueError`. `base` is what the act needs applied first — the earlier
     acts it names records from (`pending.rests_on`, `D89`), split by tray as
-    `(decision ops, task ops)`; both empty for `all`, which is everything in
-    order and rests on nothing.
+    `(decision ops, task ops)`; empty for a bare `all`, which is everything
+    in order and rests on nothing.
 
     `agent` narrows `all` to one writer's ops — the browser's tray is
     narrowed the same way, and a preview of "everything" under a narrowing
     that shows one proposal would draw the other writers' work unannounced.
-    An act is never narrowed: it is one writer's by construction.
+    A writer's slice is a cut of the tray like an act is, and can rest on
+    another writer's act the same way; its base comes from the same walk
+    (`D90`, audit `L-F1`), so it is drawn as assumed rather than answered
+    "the tray will not preview". An act is never narrowed: it is one
+    writer's by construction.
     """
     if scope == ALL:
+        d_all, t_all = list(ops), list(task_ops)
         if agent is not None:
             ops, _ = pending.mine(ops, pending.addressed(agent))
             task_ops, _ = pending.mine(task_ops, pending.addressed(agent))
         n = len(ops) + len(task_ops)
         if not n:
             raise ValueError("nothing staged" + (f" by {agent}" if agent else ""))
-        return ops, task_ops, (f"everything staged by {agent}" if agent
-                               else "everything staged") + f" ({n} op(s))", ([], [])
+        need = ({o.get("ref") for o in pending.rests_on(d_all + t_all, ops + task_ops)}
+                if agent is not None else set())
+        label = (f"everything staged by {agent}" if agent
+                 else "everything staged") + f" ({n} op(s))"
+        return ops, task_ops, label, ([o for o in d_all if o.get("ref") in need],
+                                      [o for o in t_all if o.get("ref") in need])
     both = list(ops) + list(task_ops)
     found = next((o for o in both if o.get("ref") == scope), None)
     if found is None:

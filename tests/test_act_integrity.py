@@ -292,3 +292,57 @@ def test_the_function_below_the_doors_refuses_a_dependent_batch(store):
     assert "rests on act a1" in str(exc.value)
     assert "unknown vertex" not in str(exc.value)
     assert len(json.loads((store / ".dgraph-pending.json").read_text())) == 4
+
+
+# ---- dropping what another act rests on — D91 -------------------------------
+#
+# Said, never refused: the drop succeeds and names the act it strands, and
+# the tray listings mark a stranded act as one that will not apply, before
+# `dg check --staged` is run.
+
+def test_strands_names_the_acts_left_naming_what_the_drop_took():
+    before = CHAIN
+    after = [o for o in CHAIN if o.get("group") != "ga"]
+    assert pending.strands(before, after) == ["b1"]
+    # Transitively stranded acts are named too: c1 rests on b1 which rests on a1.
+    after = [o for o in CHAIN if o.get("group") not in ("ga", "gb")]
+    assert pending.strands(before, after) == ["c1"]
+    assert pending.strands(before, before) == []
+    # A task act resting on a dropped decision act, across the trays.
+    both = CHAIN + TASK_ON_DECISION
+    assert pending.strands(both, [o for o in both if o.get("group") != "ga"]) == ["b1", "t1"]
+
+
+def test_stranded_reads_the_tray_against_what_the_store_holds():
+    known = {"D01", "D02", "D05"}
+    tray = [o for o in CHAIN if o.get("group") != "ga"]      # b1, b2, c1, d1
+    assert pending.stranded(tray, known) == {"b2": ["D90"]}
+    assert pending.stranded(CHAIN, known) == {}
+    assert pending.stranded(tray, known | {"D90"}) == {}
+
+
+def test_drop_group_says_which_act_it_strands_and_the_listing_marks_it(store, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "160")
+    _tray(store / ".dgraph-pending.json", CHAIN)
+    res = CliRunner().invoke(app, ["--project", str(store), "drop", "a1", "--group"])
+    assert res.exit_code == 0, res.output
+    assert "dropped a1" in res.output and "dropped a2" in res.output
+    assert "act b1 rests on it and will no longer apply" in res.output
+    out = CliRunner().invoke(app, ["--project", str(store), "pending"]).output
+    assert "will not apply" in out and "D90" in out, out
+    line = next(ln for ln in out.splitlines() if " b2 " in ln)
+    assert "will not apply" in line, line
+    # The lone act that names only the store carries no mark.
+    line = next(ln for ln in out.splitlines() if " d1 " in ln)
+    assert "will not apply" not in line, line
+
+
+def test_a_task_act_stranded_by_a_decision_drop_is_marked_in_its_own_tray(task_store, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "160")
+    _tray(task_store / ".dgraph-pending.json", CHAIN)
+    _tray(task_store / ".dgraph-task-pending.json", TASK_ON_DECISION)
+    res = CliRunner().invoke(app, ["--project", str(task_store), "drop", "a1", "--group"])
+    assert res.exit_code == 0, res.output
+    assert "act t1 rests on it" in res.output, res.output
+    out = CliRunner().invoke(app, ["--project", str(task_store), "task", "pending"]).output
+    assert "will not apply" in out and "D90" in out, out

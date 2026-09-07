@@ -2901,6 +2901,43 @@ def _say_arriving() -> None:
                 "this is settled.[/]")
 
 
+def _both_trays() -> list[dict]:
+    """Both trays in apply order — decisions, then tasks — as `pending.rests_on`
+    and `pending.stranded` read them. A missing tray is an empty one."""
+    proj = project.find()
+    out: list[dict] = []
+    for path in (proj.pending, proj.task_pending):
+        try:
+            out += pending.load(path)
+        except Exception:
+            pass
+    return out
+
+
+def _known_ids() -> set[str]:
+    """Every record id either store holds, for judging what a staged op names."""
+    proj = project.find()
+    ids: set[str] = set()
+    try:
+        if proj.has_decisions:
+            ids |= set(Graph.load(proj.store).vertices)
+        if proj.has_tasks:
+            ids |= set(TaskGraph.load(proj.tasks).tasks)
+    except Exception:
+        pass
+    return ids
+
+
+def _say_stranded(before: list[dict]) -> None:
+    """After a drop or an edit: name the acts left naming what it took. `D91` —
+    said, never refused, so a writer can withdraw a proposal another writer
+    built on, and the reader hears which act now waits on nothing."""
+    for head in pending.strands(before, _both_trays()):
+        con.print(f"[yellow]·[/] act {_x(head)} rests on it and will no longer "
+                  f"apply — `dg pending` marks it; drop it, or stage what it "
+                  f"names again")
+
+
 def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
           heading: str, title: str, column: str, actions: str,
           expand: str, roster: dict | None = None,
@@ -2934,9 +2971,14 @@ def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
         # contradicts the line above it, and the name has already been said.
         _roster_line(roster, agent, narrow, matched=False)
         return
+    # `D91`: an op naming a record that nothing staged before it or stored
+    # will have added — the act it rested on was dropped or edited away — is
+    # marked here, where the reviewer reads, rather than left for
+    # `dg check --staged` to say.
+    stranded = pending.stranded(_both_trays(), _known_ids())
     (_tray_table if full else _tray_listing)(
         ops, details=details, subject=subject, heading=heading, title=title,
-        column=column)
+        column=column, stranded=stranded)
     _roster_line(roster, agent, narrow)
     con.print(f"[dim]{actions}[/]")
     # Said only where there is an act to take: a tray of single ops is one the
@@ -3034,8 +3076,10 @@ def _trays_roster() -> dict[str, int]:
     return pending.roster(read(proj.pending), read(proj.task_pending))
 
 
-def _tray_detail(o: dict, details: dict, known: set[str] | None = None) -> str:
-    """The detail cell for one staged op.
+def _tray_detail(o: dict, details: dict, known: set[str] | None = None,
+                 stranded: dict[str, list[str]] | None = None) -> str:
+    """The detail cell for one staged op — and, when the op names a record
+    nothing will have added by the time it applies, that, in red (`D91`).
 
     `known` is the areas both stores already use; passing it marks an op filing
     under one they do not. Optional so that a caller with no listing to compute
@@ -3048,7 +3092,10 @@ def _tray_detail(o: dict, details: dict, known: set[str] | None = None) -> str:
     traceback here leaves `dg clear` as the only exit. The same holds for a
     known kind missing a field, which is what a hand-edit also looks like.
     """
-    return details.get(o.get("op"), _raw_op)(o) + _area_cell(o, known)
+    missing = (stranded or {}).get(o.get("ref"))
+    mark = (f"  [red]· will not apply — names {_x(', '.join(missing))}, which "
+            f"nothing staged or stored adds[/]" if missing else "")
+    return details.get(o.get("op"), _raw_op)(o) + _area_cell(o, known) + mark
 
 
 def _acts(ops: list[dict]) -> list[list[int]]:
@@ -3108,7 +3155,8 @@ def _heading(heading: str, ops: list[dict]) -> str:
 
 
 def _tray_listing(ops: list[dict], *, details: dict, subject: str,
-                  heading: str, title: str, column: str) -> None:
+                  heading: str, title: str, column: str,
+                  stranded: dict[str, list[str]] | None = None) -> None:
     """A tray as one line per op — the default, and the piped one.
 
     The position and the short id share the first column, and neither is ever
@@ -3137,7 +3185,7 @@ def _tray_listing(ops: list[dict], *, details: dict, subject: str,
     _say(compact.listing(
         [(f"{rails[i]}{i:>{iw}}  {o.get('ref') or '—'}",
           compact.pad(k, kw) + "  " + _op_subject(o, subject),
-          _tray_detail(o, details, known), _by(o))
+          _tray_detail(o, details, known, stranded), _by(o))
          for i, (o, k) in enumerate(zip(ops, kinds))],
         width=_width(), markup=True))
 
@@ -3149,7 +3197,8 @@ def _by(o: dict) -> str:
 
 
 def _tray_table(ops: list[dict], *, details: dict, subject: str,
-                heading: str, title: str, column: str) -> None:
+                heading: str, title: str, column: str,
+                stranded: dict[str, list[str]] | None = None) -> None:
     """The detailed tray: every detail in full, every field its own column.
 
     The owner column appears only when the tray has one, for the reason
@@ -3182,7 +3231,7 @@ def _tray_table(ops: list[dict], *, details: dict, subject: str,
                 else _x(area))
         t.add_row(f"{rails[i]}{i}", o.get("ref") or "—", _x(o.get("op") or "?"),
                   _op_subject(o, subject), *([cell] if filed else []),
-                  _tray_detail(o, details),
+                  _tray_detail(o, details, stranded=stranded),
                   *([_x(o.get("by") or "—")] if owned else []),
                   end_section=i in ends)
     con.print(t)
@@ -3349,10 +3398,12 @@ def edit_cmd(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
     # window moves every position past what it removed. The id is resolved
     # against the tray `replace_group` is about to write. Audit F29.
     _vet_all(eff, new)
+    before = _both_trays()
     pending.replace_group(op.get("ref") or i, new, against=eff,
                           supersede=editor.supersedes(kind, op))
     con.print(f"[green]updated[/] op {i} — {len(new)} op(s), review with "
               f"`dg pending`")
+    _say_stranded(before)
 
 
 @app.command(rich_help_panel=STORE)
@@ -3409,6 +3460,7 @@ def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
     The position still works, because it is what a single writer sees and
     reasons about. The two can never be confused — an id is letters only.
     """
+    before = _both_trays()
     try:
         gone = ([pending.drop(ref)] if not group
                 else pending.drop_group(ref))
@@ -3423,6 +3475,7 @@ def drop(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
     for one in gone:
         con.print(f"[green]dropped[/] {_x(one.get('ref', ref))}: "
                   f"{_op_summary(one, _PENDING_DETAIL, 'vertex')}")
+    _say_stranded(before)
 
 
 @app.command(rich_help_panel=STAGE)
@@ -5333,6 +5386,7 @@ def task_drop_op(
         help="drop every op staged in the same act, not just this one"),
 ) -> None:
     """Unstage one staged task op, by id or position. See `dg drop`."""
+    before = _both_trays()
     try:
         gone = ([pending.drop(ref, task_pending.path())] if not group
                 else pending.drop_group(ref, task_pending.path()))
@@ -5347,6 +5401,7 @@ def task_drop_op(
     for one in gone:
         con.print(f"[green]dropped[/] task op {_x(one.get('ref', ref))}: "
                   f"{_op_summary(one, _TASK_DETAIL, 'task')}")
+    _say_stranded(before)
 
 
 @task_app.command("clear", rich_help_panel=T_STAGE)

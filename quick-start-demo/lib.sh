@@ -43,6 +43,9 @@ export TERM=dumb
 export PYTHONPATH="$here/grep-domain${PYTHONPATH:+:$PYTHONPATH}"
 # Nothing here is an agent unless a recipe says so.
 unset DG_AGENT DG_DECIDE DG_APPLY DG_WRITE DG_TERSE DG_AREA DG_TASK DG_BUDGET DG_PROJECT
+# The test that regenerates every recipe runs with no git config; so does
+# this, or the two corpora differ by whatever the machine sets (T88, D92).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=notelit GIT_AUTHOR_EMAIL=notelit@example.invalid
 export GIT_COMMITTER_NAME=notelit GIT_COMMITTER_EMAIL=notelit@example.invalid
 

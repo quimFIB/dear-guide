@@ -35,6 +35,23 @@ import build  # noqa: E402  (quick-start-demo/build.py)
 RECIPES = sorted(build.RECIPES)
 
 
+def _workdir(tmp_path):
+    """A work directory whose path is exactly as long as `run.sh`'s default.
+
+    Transcripts are captured at `COLUMNS=96` and carry the project path —
+    `✓ created …/notelit/decisions.json`, the `DG_WRITE` cell of `dg-agent
+    env` — so a longer path wraps and truncates lines that the shipped run
+    did not, and the diff below would call every such line stale. Same
+    length, masked to `PATH` afterwards: the two corpora then differ only in
+    what the mask names. Unique per test, since xdist runs recipes in
+    parallel and `claim_work` refuses a directory it did not make.
+    """
+    default = Path(os.environ.get("TMPDIR", "/tmp")) / "dg-quick-start"
+    tag = tmp_path.name[-8:].replace("_", "-")
+    name = ("dg-qs-" + tag)[:len(default.name)].ljust(len(default.name), "x")
+    return default.parent / name
+
+
 def _run_layer(slug, layer, workdir):
     env = {**os.environ, "DG_DEMO_DIR": str(workdir),
            # The recipes commit, and a developer's global git config may set
@@ -53,11 +70,47 @@ def _run_layer(slug, layer, workdir):
 @pytest.mark.parametrize("slug", RECIPES)
 @pytest.mark.parametrize("layer", ["quick", "full"])
 def test_recipe_still_shows_what_the_page_highlights(slug, layer, tmp_path):
-    transcript = _run_layer(slug, layer, tmp_path / "work")
+    work = _workdir(tmp_path)
+    try:
+        transcript = _run_layer(slug, layer, work)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
     lines = transcript.splitlines()
     for rx, _note in build.RECIPES[slug][f"hl_{layer}"]:
         assert any(re.search(rx, ln) for ln in lines), \
             f"{slug} {layer}: no line matches /{rx}/\n\n{transcript}"
+    # And the transcript the page ships is the one the tool prints now. The
+    # highlights above pin the lines the page points at; this pins the rest,
+    # which is where three passes found the cookbook stale (`V-F8`, `J-F6`,
+    # `L-F4`) while every highlight still matched. `D92`.
+    shipped = (DEMO / "out" / f"{slug}.{layer}.txt").read_text(encoding="utf-8")
+    want, got = _masked(shipped, work), _masked(transcript, work)
+    if want != got:
+        import difflib
+        diff = "".join(difflib.unified_diff(
+            want.splitlines(True), got.splitlines(True),
+            f"out/{slug}.{layer}.txt", "fresh run", n=1))
+        pytest.fail(f"{slug} {layer}: the shipped transcript is stale — "
+                    f"`./run.sh {slug}` in quick-start-demo/ regenerates it\n{diff}")
+
+
+#: What a fresh run legitimately differs in: op refs (four letters from
+#: `pending.REF_ALPHABET`), dates, durations, commit hashes, and the paths of
+#: this checkout and the work directory. Anything else is drift.
+_NOISE = [
+    (re.compile(r"\b[a-hj-km-np-z]{4}\b"), "REF"),
+    (re.compile(r"\b\d{4}-\d\d-\d\d\b"), "DATE"),
+    (re.compile(r"(?<![\w.])[+-]?\d+(?:\.\d+)?(?:ms|s|m|h)\b"), "SPAN"),
+    (re.compile(r"\b[0-9a-f]{12}\b"), "HASH"),
+]
+
+
+def _masked(text, work):
+    for path in (str(DEMO.parent), str(work), "/tmp/dg-quick-start"):
+        text = text.replace(path, "PATH")
+    for rx, sub in _NOISE:
+        text = rx.sub(sub, text)
+    return text
 
 
 def test_seed_is_clean_and_holds_every_state():

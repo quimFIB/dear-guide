@@ -409,7 +409,9 @@ The canvas draws the store, and nothing staged moves it — that is deliberate,
 so a pan, a zoom and an open inspector are never pulled from under you. But
 you can ask: the **◎** on an act's row draws the graph as it would be with
 that act applied, and **preview all** in the tray heading does the same for
-everything staged (narrowed to one writer if the tray is). What the act
+everything staged — narrowed to one writer if the tray is, in which case
+that writer's ops may rest on another writer's act, and it is drawn the way
+an act's prerequisite is, below. What the act
 would add is a **ghost** — a glowing dashed box, a dashed blue edge — what it
 would remove is **struck**, and what it would move glows with `was → now` in
 place of its status. The change and one hop around it are lit and the rest
@@ -424,7 +426,15 @@ before it*. Previewing such an act draws the act it rests on first, as
 **assumed**: a ghost without the glow, dimmer, so it reads as context and
 not as this act's change, and the bar names it. The ✓ on such an act is
 refused by that name — "rests on act ckqz, take it first or apply
-everything" — never quietly widened to take the prerequisite too.
+everything" — never quietly widened to take the prerequisite too, and the
+bar says so while the preview is on.
+
+The other way round: dropping an act that a later act rests on is never
+refused — a writer may withdraw a proposal somebody else built on — but it
+is said. The tray names the act it stranded, and that act's rows carry
+*will not apply — names D90, which nothing staged or stored adds* until it
+is dropped or what it names is staged again. `dg drop` and `dg pending` say
+the same.
 
 **Clear preview** in that bar, or the ◉ on the row that turned it on, draws
 the store again; pan, zoom and the inspector are kept. A preview also ends by
