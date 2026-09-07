@@ -2376,6 +2376,7 @@ console.log(JSON.stringify({
   dep: ids(relCandidates("decisions", "D70", "after", "dep")),
   undep: ids(relCandidates("decisions", "D70", "after", "undep")),
   html: idPicker("opens", opensCandidates("D70").rows),
+  one: idPicker("nEvidence", opensCandidates("D70").rows, null, true),
 }));
 """
 
@@ -2405,6 +2406,12 @@ def test_the_opens_picker_offers_no_cycle_and_no_box_for_a_linked_child(tmp_path
     assert out["undep"] == ["D74"]
     assert 'id="opens"' in out["html"] and 'value="D67"' in out["html"]
     assert 'value="D72"' not in out["html"] and "picker-q" in out["html"]
+    # The single-choice form: radios under one name, and a "none" row first
+    # so the one choice can be cleared — a slot like evidence-for holds one id.
+    one = out["one"]
+    assert 'type="radio" name="nEvidence"' in one and "checkbox" not in one
+    assert one.index('value="" checked') < one.index('value="D67"')
+    assert "— none —" in one
 
 
 def test_every_multi_select_became_a_picker():
@@ -2413,6 +2420,8 @@ def test_every_multi_select_became_a_picker():
     assert "<select id=\"nAfter\" multiple>" not in page
     assert 'id="r_${field}" multiple' not in page
     assert "(ctrl-click)" not in page, "a label still tells the reader to ctrl-click"
+    assert '<select id="nEvidence">' not in page
+    assert 'pickerValues("nEvidence")[0]' in page and 'pickerValues("r_"+f)[0]' in page
     for reader in ('pickerValues("opens")', 'pickerValues("nAfter")',
                    'pickerValues("r_"+f)'):
         assert reader in page, f"{reader} is not how the form is read back"

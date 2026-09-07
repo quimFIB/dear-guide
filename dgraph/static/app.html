@@ -1743,7 +1743,7 @@ function restoreDraft(){
   Object.entries(d).forEach(([id,val])=>{
     const el=document.getElementById(id); if(!el) return;
     if(el.classList && el.classList.contains("picker")){
-      el.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=val.includes(c.value));
+      el.querySelectorAll('input[type=checkbox],input[type=radio]').forEach(c=>c.checked=val.includes(c.value) || (c.type==="radio" && !c.value && !val.length));
       if(el.onchange) el.onchange();
       /* A pick behind a disclosure is a pick the reader should see. */
       const more = el.closest("details"); if(more && val.length) more.open = true;
@@ -1916,18 +1916,22 @@ function opensCandidates(id){
 }
 
 /* A filterable checklist of records. `rows` are `{id, title}`; the filter
-   matches the id or any word of the title. `pickerValues` reads it back. */
-function idPicker(id, rows, placeholder){
+   matches the id or any word of the title. `pickerValues` reads it back.
+   `single` makes it one choice — radios, with a "none" row so the choice
+   can be cleared — for a slot that holds one id, like evidence-for. */
+function idPicker(id, rows, placeholder, single){
+  const kind = single ? `type="radio" name="${esc(id)}"` : `type="checkbox"`;
   return `<div class="picker" id="${esc(id)}">
     <input class="picker-q" placeholder="${esc(placeholder||"filter by id or a word of the title…")}" autocomplete="off">
-    <div class="picker-list">${rows.map(r=>
-      `<label><input type="checkbox" value="${esc(r.id)}"> <b>${esc(r.id)}</b> — ${esc(r.title)}</label>`).join("")
+    <div class="picker-list">${single ? `<label><input ${kind} value="" checked> <span class="muted">— none —</span></label>` : ""}${rows.map(r=>
+      `<label><input ${kind} value="${esc(r.id)}"> <b>${esc(r.id)}</b> — ${esc(r.title)}</label>`).join("")
       || `<span class="muted">nothing to offer</span>`}</div>
     <div class="picker-count"></div></div>`;
 }
 function pickerValues(id){
   const p=$("#"+id); if(!p) return [];
-  return [...p.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);
+  return [...p.querySelectorAll('input[type=checkbox]:checked,input[type=radio]:checked')]
+    .map(c=>c.value).filter(Boolean);
 }
 function bindPickers(){
   document.querySelectorAll(".picker").forEach(p=>{
@@ -2027,7 +2031,6 @@ function newTaskForm(){
      question that is still open, and a select whose first entries are the
      settled ones buries it. A blank first option is what "no link" looks like,
      and it is the default because most work has neither. */
-  const dec = G ? `<option value=""></option>` + idOptions(G.vertices,"id","title") : "";
   $("#side").innerHTML = `<h2>A new piece of work</h2>
     <p class="muted">Nothing is written until Apply, as with everything else here.</p>
     <label>Id</label><input id="nId" value="${esc(T.next_id||"")}">
@@ -2045,7 +2048,7 @@ function newTaskForm(){
     ${G ? `<label>Because — the decisions this work exists because of</label>
     ${idPicker("nBecause", G.vertices)}
     <label>Evidence for — a decision this work will inform</label>
-    <select id="nEvidence">${dec}</select>` :
+    ${idPicker("nEvidence", G.vertices, null, true)}` :
     `<p class="muted" style="margin:10px 0 0">This project has no decision graph,
       so there is nothing to link this work to. <code>dg init</code> starts one.</p>`}
     <label>Note (optional)</label>
@@ -2069,7 +2072,7 @@ async function stageNewTask(){
     /* A set, joined the way the CLI's `--because D01,D05` arrives. The server
        splits on commas for both doors, so the two stage the identical op. */
     because:$("#nBecause")?pickerValues("nBecause").join(","):null,
-    evidence_for:$("#nEvidence")?$("#nEvidence").value||null:null,
+    evidence_for:$("#nEvidence")?(pickerValues("nEvidence")[0]||null):null,
     note:$("#nNote").value.trim()||null,
   }, id);
 }
@@ -2439,15 +2442,14 @@ function structureForm(){
             <span class="muted">${esc(held[0])}</span></label>`;
         }
       }else{
-        const opts=(G?idOptions(G.vertices,"id","title"):"");
         const nowSaid = held.length?` <span class="muted">(now ${esc(held.join(", "))})</span>`:"";
         if(field==="because"){
           /* Offered from what is not already held. */
           const rows = G ? G.vertices.filter(v=>!held.includes(v.id)) : [];
           h+=`<label>${esc(label)}${nowSaid}</label>${idPicker("r_"+field, rows)}`;
         }else{
-          h+=`<label>${esc(label)}${nowSaid}</label>
-            <select id="r_${field}"><option value=""></option>${opts}</select>`;
+          h+=`<label>${esc(label)}${nowSaid}</label>${
+            idPicker("r_"+field, G ? G.vertices : [], null, true)}`;
         }
       }
     });
@@ -2493,7 +2495,7 @@ function relateBody(){
       if(f==="because"){
         body[f] = pickerValues("r_"+f).join(",");
       }else{
-        body[f] = verb==="unlink" ? !!el.checked : (el.value||null);
+        body[f] = verb==="unlink" ? !!el.checked : (pickerValues("r_"+f)[0]||null);
       }
     });
   }else{
