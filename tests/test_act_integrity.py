@@ -87,3 +87,83 @@ def test_apply_decisions_refuses_part_of_an_act(store):
     assert "bbbb" in str(exc.value)
     assert (store / "decisions.json").read_text() == before
     assert json.loads((store / ".dgraph-pending.json").read_text()) == ops
+
+
+# ---- the tray says which ops are one act ----------------------------------
+#
+# Refusing to split an act (above) is only half of it: `dg pending` listed
+# `add_vertex D77` and `add_edge D73 → D77` as two rows that happened to be
+# adjacent, so a reader had no way to tell that `dg drop 1` would be refused
+# or that `dg apply --group ckqz` takes both. The browser tray drew the same
+# rows the same way. Both now draw the act as one block — a rail down its
+# rows in the CLI, a spanning control cell in the page (`test_doors`).
+
+from typer.testing import CliRunner  # noqa: E402
+from dgraph.cli import app  # noqa: E402
+
+ACT = [
+    {"op": "add_vertex", "id": "D90", "title": "a new question",
+     "area": "Alpha", "ref": "aaaa", "group": "gggg"},
+    {"op": "add_edge", "from": "D01", "to": ["D90"],
+     "ref": "bbbb", "group": "gggg"},
+]
+LONE = [{"op": "add_edge", "from": "D02", "to": ["D03"], "ref": "cccc"}]
+
+
+def _pending(store, *args):
+    res = CliRunner().invoke(app, ["--project", str(store), "pending", *args])
+    assert res.exit_code == 0, res.output
+    return res.output
+
+
+def test_the_listing_draws_a_rail_down_each_act(store, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "120")
+    _tray(store / ".dgraph-pending.json", ACT + LONE)
+    out = _pending(store)
+    lines = out.splitlines()
+    assert lines[0].endswith("3 op(s) in 2 act(s)"), lines[0]
+    assert lines[1].startswith("  ┌ 0  aaaa"), lines[1]
+    assert lines[2].startswith("  └ 1  bbbb"), lines[2]
+    assert lines[3].startswith("    2  cccc"), lines[3]
+    assert "`dg apply --group <id>` takes one act" in out
+    assert "`dg drop <id> --group` drops one" in out
+
+
+def test_a_rail_runs_through_the_middle_of_a_longer_act(store, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "120")
+    three = ACT + [{"op": "add_edge", "from": "D02", "to": ["D90"],
+                    "ref": "dddd", "group": "gggg"}]
+    _tray(store / ".dgraph-pending.json", three)
+    lines = _pending(store).splitlines()
+    assert [ln[2] for ln in lines[1:4]] == ["┌", "│", "└"], lines[1:4]
+
+
+def test_a_tray_of_single_ops_reads_exactly_as_it_did(store, monkeypatch):
+    """Every tray staged before groups existed is made of these. No rail, no
+    act count, no act line — the reading a single writer always had."""
+    monkeypatch.setenv("COLUMNS", "120")
+    _tray(store / ".dgraph-pending.json", LONE + [
+        {"op": "add_edge", "from": "D01", "to": ["D03"], "ref": "eeee"}])
+    out = _pending(store)
+    lines = out.splitlines()
+    assert lines[0].endswith("2 op(s)") and "act" not in lines[0], lines[0]
+    assert lines[1].startswith("  0  cccc"), lines[1]
+    assert "┌" not in out and "└" not in out
+    assert "--group" not in out
+
+
+def test_the_table_rules_off_each_act_and_not_single_ops(store, monkeypatch):
+    """`--full` draws a rule where an act of more than one begins or ends,
+    and none between two single ops — a rule after every row would draw a
+    grouping the tray does not have."""
+    monkeypatch.setenv("COLUMNS", "160")
+    _tray(store / ".dgraph-pending.json", ACT + LONE + [
+        {"op": "add_edge", "from": "D01", "to": ["D03"], "ref": "eeee"}])
+    out = _pending(store, "--full")
+    assert "4 op(s) in 3 act(s)" in out
+    assert "┌ 0" in out and "└ 1" in out and "  2" in out
+    rows = [ln for ln in out.splitlines() if ln.startswith("│")]
+    rules = [ln for ln in out.splitlines() if ln.startswith("├")]
+    assert len(rows) == 4, out          # the four ops; the header row is ┃
+    assert len(rules) == 1, out         # after the act; none between 2 and 3
+    assert out.index("└ 1") < out.index("├") < out.index("  2")

@@ -2872,6 +2872,8 @@ def pending_cmd(
     _tray(pending.load(), full, details=_PENDING_DETAIL, subject="vertex",
           heading="STAGED", title="Staged", column="Vertex",
           actions="`dg apply` to write, `dg drop <id>` to unstage",
+          act_actions="`dg apply --group <id>` takes one act, "
+                      "`dg drop <id> --group` drops one",
           expand="dg pending --full", roster=_trays_roster(), agent=agent)
     _say_arriving()
 
@@ -2903,7 +2905,8 @@ def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
           heading: str, title: str, column: str, actions: str,
           expand: str, roster: dict | None = None,
           agent: str | None = None,
-          narrow: str = "dg pending --agent <name>") -> None:
+          narrow: str = "dg pending --agent <name>",
+          act_actions: str | None = None) -> None:
     """One staging tray, listed or tabulated. Both trays read through here.
 
     The two used to be a table apiece, near-identical and free to drift; they
@@ -2936,6 +2939,11 @@ def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
         column=column)
     _roster_line(roster, agent, narrow)
     con.print(f"[dim]{actions}[/]")
+    # Said only where there is an act to take: a tray of single ops is one the
+    # per-op commands already cover, and a line about acts over it would send
+    # the reader looking for a grouping the rail has not drawn.
+    if act_actions and any(len(r) > 1 for r in _acts(ops)):
+        con.print(f"[dim]{act_actions}[/]")
     if not full:
         con.print(compact.hint(expand, "the table, nothing clipped"))
 
@@ -3043,6 +3051,62 @@ def _tray_detail(o: dict, details: dict, known: set[str] | None = None) -> str:
     return details.get(o.get("op"), _raw_op)(o) + _area_cell(o, known)
 
 
+def _acts(ops: list[dict]) -> list[list[int]]:
+    """The tray as runs of positions: one run per act, in tray order.
+
+    A run is consecutive ops sharing a `group`, or one op with none — the
+    same reading `pending.group_of` gives, taken along the tray rather than
+    by id. Consecutive because that is how `stage_all` writes an act and
+    `replace_group` keeps it, and because the rail `_rails` draws down a run
+    can only join rows that are next to each other. An act that some other
+    route split would show as two runs, which is what the tray then holds.
+    """
+    runs: list[list[int]] = []
+    for i, o in enumerate(ops):
+        gid = o.get("group")
+        if gid and runs and ops[runs[-1][-1]].get("group") == gid:
+            runs[-1].append(i)
+        else:
+            runs.append([i])
+    return runs
+
+
+def _rails(ops: list[dict]) -> list[str]:
+    """One glyph per op, drawing a line down each act of more than one.
+
+    `┌` on the first member, `│` down the middle, `└` on the last, and a blank
+    on an op that stands alone — the browser tray's left rule, in two
+    characters. A tray with no act of more than one gets no rail at all, so
+    every tray staged before groups existed reads exactly as it did.
+
+    The rail is what makes an act readable as one thing: `dg pending` listed
+    `add_vertex D77` and `add_edge D73 → D77` as two rows that happened to be
+    adjacent, and nothing on the page said `dg drop 1` would be refused, or
+    that `dg apply --group ckqz` takes both. The row count in the heading
+    says how many acts there are for the same reason.
+    """
+    runs = _acts(ops)
+    if all(len(r) == 1 for r in runs):
+        return [""] * len(ops)
+    out = [""] * len(ops)
+    for run in runs:
+        if len(run) == 1:
+            out[run[0]] = "  "
+            continue
+        for n, i in enumerate(run):
+            out[i] = ("┌ " if n == 0 else "└ " if n == len(run) - 1 else "│ ")
+    return out
+
+
+def _heading(heading: str, ops: list[dict]) -> str:
+    """`STAGED  7 op(s)`, and `in 5 act(s)` after it when any act has more
+    than one op — the count a reviewer acts on, said where the op count is."""
+    runs = _acts(ops)
+    acts = (f" in {len(runs)} act(s)" if any(len(r) > 1 for r in runs)
+            else "")
+    return f"[bold]{heading}[/]  {len(ops)} op(s){acts}"
+
+
 def _tray_listing(ops: list[dict], *, details: dict, subject: str,
                   heading: str, title: str, column: str) -> None:
     """A tray as one line per op — the default, and the piped one.
@@ -3058,19 +3122,20 @@ def _tray_listing(ops: list[dict], *, details: dict, subject: str,
     What is left goes to the detail, which is the part worth clipping: an
     answer or a title, whose first words say which op this is.
     """
-    con.print(f"[bold]{heading}[/]  {len(ops)} op(s)")
+    con.print(_heading(heading, ops))
     # Once per listing, not per row: an area two staged ops share is new to the
     # *graph*, and marking only the first would call the second ordinary.
     known = _known_areas()
     kinds = [_x(o.get("op") or "?") for o in ops]
     kw = max(len(compact.visible(k)) for k in kinds)
     iw = len(str(len(ops) - 1))
+    rails = _rails(ops)
     # `by` only where somebody is named, and never a column of its own. A tray
     # nobody owns must read exactly as it did before ownership existed — that
     # is the whole claim a single writer is owed — and an "Owner" column of
     # dashes would break it for every project that will never set an identity.
     _say(compact.listing(
-        [(f"{i:>{iw}}  {o.get('ref') or '—'}",
+        [(f"{rails[i]}{i:>{iw}}  {o.get('ref') or '—'}",
           compact.pad(k, kw) + "  " + _op_subject(o, subject),
           _tray_detail(o, details, known), _by(o))
          for i, (o, k) in enumerate(zip(ops, kinds))],
@@ -3096,22 +3161,30 @@ def _tray_table(ops: list[dict], *, details: dict, subject: str,
     a review could not see. A new area is marked rather than merely shown —
     said, never refused. Audit `R-F7`.
     """
-    t = Table(header_style="bold", title=title)
+    t = Table(header_style="bold", title=_heading(title, ops))
     known = _known_areas()
     owned = any(o.get("by") for o in ops)
     filed = any((o.get("area") or "").strip() for o in ops)
     for c in ("#", "id", "Op", column, *(["Area"] if filed else []), "Detail",
               *(["By"] if owned else [])):
         t.add_column(c)
+    rails = _rails(ops)
+    # A rule where an act of more than one begins or ends, so its rows read
+    # as one block; none between two single ops, which the rail already leaves
+    # blank — a rule after every row would draw the grouping over a tray that
+    # has none, which is the reading `_rails` is careful not to give.
+    runs = _acts(ops)
+    ends = {a[-1] for a, b in zip(runs, runs[1:]) if len(a) > 1 or len(b) > 1}
     for i, o in enumerate(ops):
         area = (o.get("area") or "").strip()
         cell = ("" if not area else
                 f"[yellow]{_x(area)} — new[/]" if area not in known
                 else _x(area))
-        t.add_row(str(i), o.get("ref") or "—", _x(o.get("op") or "?"),
+        t.add_row(f"{rails[i]}{i}", o.get("ref") or "—", _x(o.get("op") or "?"),
                   _op_subject(o, subject), *([cell] if filed else []),
                   _tray_detail(o, details),
-                  *([_x(o.get("by") or "—")] if owned else []))
+                  *([_x(o.get("by") or "—")] if owned else []),
+                  end_section=i in ends)
     con.print(t)
 
 
@@ -5200,6 +5273,8 @@ def task_pending_cmd(
           subject="task", heading="STAGED TASKS", title="Staged tasks",
           column="Task",
           actions="`dg apply` to write, `dg task drop-op <id>` to unstage",
+          act_actions="`dg apply --group <id>` takes one act, "
+                      "`dg task drop-op <id> --group` drops one",
           expand="dg task pending --full", roster=_trays_roster(), agent=agent,
           narrow="dg task pending --agent <name>")
     _say_arriving()

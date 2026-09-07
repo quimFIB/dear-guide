@@ -1830,12 +1830,15 @@ const G = JSON.parse(process.argv[3]), T = JSON.parse(process.argv[4]);
 const esc = x => String(x == null ? "" : x);
 const ED = null;
 eval(block);
-const out = JSON.parse(process.argv[5]).map((o, i) => opRow(o, i, "d"));
+// A sixth argument renders every op as members of one act — what `trayTable`
+// passes when the ops share a group — instead of each as an act of one.
+const ops = JSON.parse(process.argv[5]);
+const out = ops.map((o, i) => opRow(o, i, "d", process.argv[6] ? ops : null));
 console.log(JSON.stringify(out));
 """
 
 
-def _oprow(tmp_path, ops, areas_declared=("corpus",)):
+def _oprow(tmp_path, ops, areas_declared=("corpus",), one_act=False):
     """Render staged ops through the page's own `opRow`."""
     harness = tmp_path / "oprow.js"
     harness.write_text(OPROW_HARNESS)
@@ -1843,7 +1846,8 @@ def _oprow(tmp_path, ops, areas_declared=("corpus",)):
          "derived": {}}
     res = subprocess.run(
         ["node", str(harness), str(server.STATIC / "app.html"),
-         json.dumps(g), json.dumps(None), json.dumps(ops)],
+         json.dumps(g), json.dumps(None), json.dumps(ops)]
+        + (["act"] if one_act else []),
         capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout)
@@ -1861,6 +1865,62 @@ def test_the_browser_names_the_area_and_marks_a_new_one(tmp_path):
     assert "corpus-design — new" in rows[0]
     assert "corpus-design" in rows[0] and "fresh-area" in rows[0]
     assert "corpus" in rows[1] and "new" not in rows[1]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_browser_words_an_edge_as_the_cli_does(tmp_path):
+    """`add_edge` and `remove_edge` had no branch either, so `dg add D77
+    --after D73` staged a row whose detail cell was the op's JSON — `saw`,
+    `ref` and `group` where the reader wanted to know what the edge is. The
+    CLI's `_PENDING_DETAIL` already had the wording; the row now uses it:
+    the premise is the subject, the arrow names what rests on it."""
+    add, rm = _oprow(tmp_path, [
+        {"op": "add_edge", "from": "D73", "to": ["D77"], "ref": "wqhf",
+         "saw": {"D73": "DECIDED|8e68c8edda29"}, "group": "ksvf"},
+        {"op": "remove_edge", "from": "D70", "to": ["D76"], "ref": "hgyb"}])
+    assert "→ D77" in add and "<td>D73</td>" in add
+    assert "✗ D76" in rm and "<td>D70</td>" in rm
+    for bookkeeping in ('"saw"', '"ref"', '"group"'):
+        assert bookkeeping not in add, f"the edge is still dumped: {add}"
+
+
+ACT = [
+    {"op": "add_vertex", "id": "D77", "title": "Judgement", "area": "corpus",
+     "ref": "ckqz", "group": "ksvf"},
+    {"op": "add_edge", "from": "D73", "to": ["D77"], "ref": "wqhf",
+     "group": "ksvf"},
+]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_an_act_is_drawn_as_one_block_with_one_set_of_controls(tmp_path):
+    """The ✓ on an act's first row applied the whole act, and the second row
+    carried nothing but a ✕ that was refused — so a reviewer reading the
+    second row saw an op that could only be cancelled and no sign that
+    accepting the first would take it too. Now the act is one block: its
+    rows are marked, the control cell is one cell spanning them, the ✓ says
+    how many ops it takes, and the act's ✕ says it drops them all."""
+    head, edge = _oprow(tmp_path, ACT, one_act=True)
+    assert 'class="act act-head"' in head and 'class="act act-last"' in edge
+    assert 'rowspan="2"' in head and "act-ctl" in head
+    assert 'data-take="ckqz"' in head and "all 2 ops of this act" in head
+    assert 'data-act="ckqz"' in head and "Drop all 2 ops" in head
+    assert "1 of 2 in one act" in head and "2 of 2 in one act" in edge
+    # The second row has no control cell at all — one ✓ and one ✕ per act.
+    assert "<button" not in edge and "rowspan" not in edge
+    assert 'data-take="wqhf"' not in edge and "data-i" not in edge
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_an_act_of_one_is_drawn_as_a_plain_row(tmp_path):
+    """A single op is an act of one, and an act of one has nothing to mark
+    — no rule, no rowspan, no count. Every tray staged before groups existed
+    is made of these, and they must read as they always did."""
+    row, = _oprow(tmp_path, [ACT[0]], one_act=True)
+    assert "act" not in row.split("<td>")[0] and "rowspan" not in row
+    assert "in one act" not in row
+    assert 'data-take="ckqz"' in row and "this op" in row
+    assert 'data-i="0"' in row and "data-act" not in row
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

@@ -160,6 +160,11 @@
      never be mistaken for a dependency inside either graph */
   .edge.cross{stroke:var(--prov);stroke-dasharray:2 5;opacity:.85}
   .edge.evidence{stroke:var(--reop)}
+  /* One act, one block: a rule down its left edge, no rule between its rows,
+     and the spanning control cell drawn as part of the block. */
+  tr.act>td:first-child{border-left:2px solid var(--accent);padding-left:8px}
+  tr.act:not(.act-last)>td{border-bottom:0}
+  td.act-ctl{vertical-align:middle;border-bottom:1px solid var(--line)}
   .tray-split{display:flex;gap:18px;align-items:flex-start}
   .tray-split>div{flex:1;min-width:0}
   .tray-split h3{font-size:11px;margin:0 0 4px;color:var(--dim);
@@ -2722,6 +2727,14 @@ function opRow(o, i, kind, act){
         + (o.why?` <span class="muted">${esc(o.why.slice(0,50))}</span>`:"")
         + (o.derived_from?` <span class="muted">(from ${esc(o.derived_from)})</span>`:"")
     : o.op==="add_dep"||o.op==="remove_dep"?esc((o.after||[]).join(", "))
+    /* The decision-side edge ops. Worded as `_PENDING_DETAIL` in the CLI
+       words them — subject is the premise, detail the vertex it now (or no
+       longer) supports — so the two trays read the same row the same way.
+       Without this branch they fell through to the JSON dump below, which is
+       how "add_edge D73" came to show `saw`, `ref` and `group` in the cell
+       meant to say what the edge is. */
+    : o.op==="add_edge"?`→ ${esc((o.to||[]).join(", "))}`
+    : o.op==="remove_edge"?`✗ ${esc((o.to||[]).join(", "))}`
     /* The three ops the domains scaffold added had no branch either, and fell
        through to the same dump one pass after the comment below was written
        (audit `N-F5`). A reprobe reads as the CLI prints it — kind, then args
@@ -2764,18 +2777,38 @@ function opRow(o, i, kind, act){
      per op, so a reviewer with three proposals from one agent took all three
      or none. `G-F11`.
 
-     Offered on the first row of each act only — a second button on the second
-     member would be the same act twice. */
+     **An act is drawn as one block.** Its rows share a left rule, and the
+     control cell is one cell spanning them — so the ✓ visibly belongs to
+     every row it covers, and the ✕ says it drops the act. The first cut of
+     this put ✓ on the head row alone and nothing on the others, and a person
+     reading the second row saw an op that could only be cancelled, with no
+     way to tell what accepting the first row would take with it. */
   act = act && act.length ? act : [o];
-  const head = act[0].ref===o.ref;
+  const grouped = act.length>1;
+  const pos = !grouped ? 1
+    : act.indexOf(o)>=0 ? act.indexOf(o)+1
+    : act.findIndex(m=>m.ref===o.ref)+1;
+  const head = pos===1;
   const take = o.ref && head
     ? `<button class="x" style="color:var(--ok,#8ec07c)" data-take="${esc(o.ref)}"
-         title="Apply ${act.length>1?`all ${act.length} ops of this act`:"this op"}, and leave the rest staged">✓</button>`
+         title="Apply ${grouped?`all ${act.length} ops of this act`:"this op"}, and leave the rest staged">✓</button>`
     : "";
-  return `<tr><td>${i}</td><td>${esc(o.op)}</td><td>${esc(node)}</td>
-    <td>${det}${mark}${act.length>1?` <span class="muted">· 1 of ${act.length} in one act</span>`:""}</td><td style="white-space:nowrap">${take}${
-      editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" title="Revise this op in ${esc(ED.editor||"the editor")}">✎</button>`:""
-    }<button class="x" data-i="${i}" data-k="${kind}">✕</button></td></tr>`;
+  /* One ✕ per act, on its head. Dropping a member alone is refused by the
+     server (`pending.drop` — half a cascade is not a proposal), so the act's
+     ✕ carries `data-act` and opens the "drop the whole act?" confirmation
+     straight away instead of asking, being refused, and then asking again. */
+  const drop = grouped
+    ? `<button class="x" data-i="${i}" data-k="${kind}" data-act="${esc(o.ref||"")}"
+         title="Drop all ${act.length} ops of this act">✕</button>`
+    : `<button class="x" data-i="${i}" data-k="${kind}" title="Drop this op">✕</button>`;
+  const ctl = head
+    ? `<td style="white-space:nowrap"${grouped?` class="act-ctl" rowspan="${act.length}"`:""}>${take}${
+        editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" title="Revise this op in ${esc(ED.editor||"the editor")}">✎</button>`:""
+      }${drop}</td>`
+    : "";
+  const cls = grouped ? ` class="act${head?" act-head":""}${pos===act.length?" act-last":""}"` : "";
+  return `<tr${cls}><td>${i}</td><td>${esc(o.op)}</td><td>${esc(node)}</td>
+    <td>${det}${mark}${grouped?` <span class="muted">· ${pos} of ${act.length} in one act</span>`:""}</td>${ctl}</tr>`;
 }
 
 /* Rows carry the index they had in the **unfiltered** tray. `opRow` writes it
@@ -2784,8 +2817,21 @@ function opRow(o, i, kind, act){
 function trayTable(rows, kind, list){
   /* The act each row belongs to, resolved here so `opRow` stays a function of
      its arguments — see there. */
+  /* Rows of one act are rendered together, in the order the act's first row
+     appears — a rowspan cannot cover rows that are not adjacent, and an act
+     split by an unrelated op between its members would read as two. The
+     narrowing by writer cannot split one (an act has one writer), but an
+     act's own order in the tray is the store's business, not the table's. */
+  const seen = new Set(), ordered = [];
+  for(const r of rows){
+    if(seen.has(r.i)) continue;
+    const act = groupOf(r.o, list);
+    const members = act.length>1
+      ? act.map(o=>rows.find(x=>x.o===o)).filter(Boolean) : [r];
+    for(const m of members){ seen.add(m.i); ordered.push([m, act]); }
+  }
   return `<table><tr><th>#</th><th>op</th><th>node</th><th>detail</th><th></th></tr>`
-    + rows.map(r=>opRow(r.o,r.i,kind,groupOf(r.o,list))).join("") + `</table>`;
+    + ordered.map(([r,act])=>opRow(r.o,r.i,kind,act)).join("") + `</table>`;
 }
 
 /* The writer the tray is narrowed to, or null for everybody. Page state, not
@@ -2877,22 +2923,19 @@ function tray(){
     const base = (task?"/api/task-pending/":"/api/pending/")+encodeURIComponent(ref);
     /* A group member cannot be dropped alone — staging it was one act, and
        removing one op would leave the rest to be applied as though they meant
-       something they do not. The server refuses with the reason; the page has
-       to carry the way out, because a remedy that exists only as a CLI flag is
-       a dead end in a browser. `G-F11`. */
+       something they do not. The table draws one ✕ per act and it comes here
+       with `data-act`, straight to the confirmation. The server's refusal is
+       still caught below for a tray this page drew before a terminal grouped
+       something into it: the page has to carry the way out either way,
+       because a remedy that exists only as a CLI flag is a dead end in a
+       browser. `G-F11`. */
+    if(b.dataset.act!==undefined){ askDropAct(gone, list, task, ref, null); return; }
     try{
       await api(base,{method:"DELETE"});
     }catch(err){
       const act = groupOf(gone, list);
       if(act.length<2) { say(err.message,"bad"); return; }
-      const rows = act.map(o=>`<li>${esc(opLine(o,task?"t":"d"))}</li>`).join("");
-      $("#side").innerHTML=`<h2>Drop the whole act?</h2>
-        <p class="muted">${esc(err.message.split("\n")[0])}</p>
-        <ul class="muted">${rows}</ul>
-        <p class="muted">Dropping the act turns this proposal down. Leaving it
-          whole keeps it reviewable — apply it, or clear this writer's work.</p>
-        <button class="x" id="dropAct" data-ref="${esc(ref)}"
-                data-k="${task?"t":"d"}">Drop all ${act.length}</button>`;
+      askDropAct(gone, list, task, ref, err.message.split("\n")[0]);
       return;
     }
     if(task) TPEND=await api("/api/task-pending"); else PEND=await api("/api/pending");
@@ -2902,6 +2945,21 @@ function tray(){
     if(node) say("", "", node);
     if(node && node===cur()) cur()===sel?panel():taskPanel();
   });
+}
+
+/* The "drop the whole act?" confirmation, listing what goes. `why` is the
+   server's refusal when one was heard, and nothing when the act's own ✕ was
+   what brought the reader here. */
+function askDropAct(op, list, task, ref, why){
+  const act = groupOf(op, list);
+  const rows = act.map(o=>`<li>${esc(opLine(o,task?"t":"d"))}</li>`).join("");
+  $("#side").innerHTML=`<h2>Drop the whole act?</h2>
+    <p class="muted">${why ? esc(why) : `These ${act.length} ops were staged as one act and are dropped as one.`}</p>
+    <ul class="muted">${rows}</ul>
+    <p class="muted">Dropping the act turns this proposal down. Leaving it
+      whole keeps it reviewable — apply it, or clear this writer's work.</p>
+    <button class="x" id="dropAct" data-ref="${esc(ref)}"
+            data-k="${task?"t":"d"}">Drop all ${act.length}</button>`;
 }
 
 /* Every op staged in the same act as `op`. `[op]` where it carries no group,

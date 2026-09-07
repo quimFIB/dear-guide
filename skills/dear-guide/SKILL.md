@@ -377,7 +377,11 @@ dg apply
 ```
 
 `dg pending` reviews staged work — one line per op, `--full` for the table —
-`dg drop <id>` removes one op, `dg clear` all of it.
+`dg drop <id>` removes one op, `dg clear` all of it. Ops staged by one command
+(a reopen and the statuses it propagates, an add and its edges) are one act,
+drawn as one block with a rail down its rows; `dg apply --group <id>` takes
+an act alone and `dg drop <id> --group` drops it, since dropping one member
+of an act is refused.
 
 ## Recording work
 

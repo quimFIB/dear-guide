@@ -134,13 +134,20 @@ dg pending
 ```
 
 ```
-STAGED  3 op(s)
-  0  kfnq  reopen      D01  the crawl finished at 48M vectors, five times the ~10M threshold in the…
-  1  bwsp  set_status  D02  → PROVISIONAL (from D01)
-  2  hjza  set_status  D03  → PROVISIONAL (from D01)
+STAGED  3 op(s) in 1 act(s)
+  ┌ 0  kfnq  reopen      D01  the crawl finished at 48M vectors, five times the ~10M threshold in the…
+  │ 1  bwsp  set_status  D02  → PROVISIONAL (from D01)
+  └ 2  hjza  set_status  D03  → PROVISIONAL (from D01)
 `dg apply` to write, `dg drop <id>` to unstage
+`dg apply --group <id>` takes one act, `dg drop <id> --group` drops one
   `dg pending --full` for the table, nothing clipped
 ```
+
+The rail down the left says the three ops are **one act**: the reopen and
+the two statuses it propagated were staged together and are taken or dropped
+together. `dg drop 1` on its own is refused, because a tray holding the reopen
+without the statuses it caused would mean something the command never said.
+A single op stands alone, with no rail.
 
 Two ways to name an op, and both are in the row: the position, which is what
 the tool's own messages say, and the short id, which survives another writer
