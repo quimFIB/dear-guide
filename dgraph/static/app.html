@@ -80,6 +80,23 @@
   #focusChip button:hover{color:var(--ink)}
   #focusNote{font-size:11px}
   .edge{fill:none;stroke:var(--line);stroke-width:1.4px}
+  /* Direction is the chevrons: one per rank the edge crosses, turned to
+     the line's tangent (`edgeSvg`), coloured and faded by the same classes
+     as the edge they sit on. Not a head at the landing: on a long edge the
+     landing is far from most of the line, and a reader following it
+     mid-way had no way to tell which end it was going to. */
+  .chev{fill:none;stroke:var(--line);stroke-width:1.6px;pointer-events:none}
+  .chev.hot,.chev.ghost,.chev.assumed{stroke:var(--accent)}
+  .chev.hot{stroke-width:2.2px}
+  .chev.gone{stroke:var(--bad);opacity:.7}
+  .chev.cross{stroke:var(--prov);opacity:.85}
+  .chev.cross.evidence{stroke:var(--reop)}
+  .chev.pending-dep{opacity:.75}
+  .chev.assumed{opacity:.4}
+  .chev.dim{opacity:.07}
+  /* The wide invisible twin of every edge, so a 1.4px line can be hovered
+     and clicked. */
+  .hit{fill:none;stroke:transparent;stroke-width:12px;pointer-events:stroke;cursor:pointer}
   .edge.pending-dep{stroke-dasharray:3 4;opacity:.75}
   .edge.hot{stroke:var(--accent);stroke-width:2.4px}
   .edge.dim{opacity:.07}
@@ -246,7 +263,8 @@
     <button class="primary" id="applyBtn" disabled>Apply</button>
   </header>
   <main>
-    <div id="canvas"><div id="previewBar" hidden></div><svg id="svg"><g id="viewport"></g></svg></div>
+    <div id="canvas"><div id="previewBar" hidden></div><svg id="svg">
+      <g id="viewport"></g></svg></div>
     <aside id="side" hidden><p class="muted">Click a node to inspect it.</p></aside>
   </main>
   <footer id="tray"></footer>
@@ -1081,6 +1099,24 @@ function nodeSvg(id, title, status, area, stroke, dash, dim){
     </g>`;
 }
 
+/* What one edge is, for the hover and for the click. An edge on this canvas
+   is one of four relations, and the class already says which; the answer
+   an edge carries lives on its source, which is what a click opens. */
+function edgeInfo(from, to, cls){
+  const has = k => (" "+cls+" ").includes(" "+k+" ");
+  const prefix = has("ghost") ? "would be added by the preview — "
+    : has("gone") ? "would be removed by the preview — "
+    : has("assumed") ? "assumed from an earlier act — " : "";
+  if(has("evidence")) return {what: prefix+`${from} is evidence for ${to}`, pick: from};
+  if(has("cross")) return {what: prefix+`${to} is work because of ${from}`, pick: to};
+  const task = T && T.derived && T.derived[to] && T.derived[from];
+  if(task) return {what: prefix+`${from} precedes ${to}`, pick: to};
+  const e = G && (G.edges||[]).find(x=>x.from===from && x.active && (x.to||[]).includes(to));
+  const answer = e && e.answer ? " — "+String(e.answer).replace(/\s+/g," ").slice(0,100)
+               : " — not answered yet";
+  return {what: prefix+`${to} rests on ${from}`+answer, pick: from};
+}
+
 function edgeSvg(from, to, cls){
   const a=xyOf(from), b=xyOf(to);
   if(!a||!b) return "";
@@ -1089,12 +1125,25 @@ function edgeSvg(from, to, cls){
      edge reads as the same kind of line as a short one — the alternative, a
      polyline with corners, looks like a different sort of relationship. */
   const pts=[{x:x1,y:y1}, ...bendsOf(from,to), {x:x2,y:y2}];
-  let d=`M${pts[0].x},${pts[0].y}`;
+  let d=`M${pts[0].x},${pts[0].y}`, chev="";
+  const cc = cls.replace(/\bedge\b/, "chev");
   for(let i=0;i<pts.length-1;i++){
     const s=pts[i], e=pts[i+1], my=(s.y+e.y)/2;
     d+=` C${s.x},${my} ${e.x},${my} ${e.x},${e.y}`;
+    /* A chevron at the middle of each cubic — one per rank the edge
+       crosses — turned to the curve's tangent there. Read off the control
+       points rather than measured on the drawn path: `getPointAtLength`
+       cost ~1.7 ms an edge, seconds on a large graph, and at t = ½ a cubic
+       with vertical control points is where the eye expects the arrow.
+       With c₁=(s.x,my), c₂=(e.x,my): B(½) = ((s.x+e.x)/2, (s.y+6my+e.y)/8)
+       and B'(½) ∝ (e.x−s.x, e.y−s.y). */
+    const mx=(s.x+e.x)/2, mY=(s.y+6*my+e.y)/8;
+    const deg=Math.atan2(e.y-s.y, e.x-s.x)*180/Math.PI;
+    chev+=`<path class="${cc}" d="M-4.5,-3.5 L0.5,0 L-4.5,3.5" transform="translate(${mx.toFixed(1)},${mY.toFixed(1)}) rotate(${deg.toFixed(1)})"/>`;
   }
-  return `<path class="${cls}" d="${d}"/>`;
+  const info = edgeInfo(from, to, cls);
+  return `<g><title>${esc(info.what)}</title><path class="${cls}" d="${d}"/>${chev}
+    <path class="hit" d="${d}" data-pick="${esc(info.pick)}"/></g>`;
 }
 
 function decisionNode(v, related){
@@ -1134,6 +1183,9 @@ function draw(){
                : tab==="joined" ? drawJoined() : drawDecisions();
   $("#svg").setAttribute("viewBox",view.join(" "));
   vp.querySelectorAll(".node").forEach(n=>n.onclick=()=>select(n.dataset.id));
+  /* An edge opens the record its answer lives on — its source for a
+     dependency, the task for a link between the stores. */
+  vp.querySelectorAll(".hit[data-pick]").forEach(h=>h.onclick=()=>select(h.dataset.pick));
 }
 
 function drawDecisions(){
@@ -1380,7 +1432,7 @@ $("#deselectBtn").onclick=deselect;
 
 (function pz(){
   const svg=$("#svg"); let drag=null;
-  svg.addEventListener("mousedown",e=>{ if(e.target.closest(".node"))return;
+  svg.addEventListener("mousedown",e=>{ if(e.target.closest(".node,.hit"))return;
     drag={x:e.clientX,y:e.clientY,v:[...view]}; svg.classList.add("drag"); });
   addEventListener("mouseup",()=>{drag=null;svg.classList.remove("drag")});
   addEventListener("mousemove",e=>{ if(!drag)return;

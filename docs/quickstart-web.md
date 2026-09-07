@@ -230,6 +230,14 @@ and a preview are their own controls and keep their own clears.
 | **dashed outline** | `OPEN` (long dashes) or `PROVISIONAL` (fine dots); on a task, work that is waiting |
 | **faint dashed edge** | a dependency whose source is not settled yet |
 | **dotted cyan edge** | the link between the two graphs |
+| **chevrons along an edge** | its direction: towards the record that rests on, follows, or is evidence for the one the edge leaves |
+
+Edges can be read one at a time. Hovering one says what relation it is —
+"D40 rests on D36" with the first line of the answer, "T01 precedes T02",
+"T03 is work because of D05" — and clicking it opens the record the answer
+lives on: the source of a dependency, the task of a link between the stores.
+A vertex resting on four premises has four lines into it, and each can be
+asked which it is.
 
 Task outlines follow their status: amber `TODO`, blue `DOING`, cyan `PARKED`,
 green `DONE`, grey `DROPPED`. Blocked is never stored on a task — it is derived from the

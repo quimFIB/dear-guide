@@ -2217,3 +2217,64 @@ def test_the_selection_can_be_cleared_but_never_by_a_background_click():
     # Never on a background click: the canvas is grabbed to pan, and a pan
     # that started with a still hand must not throw the reading away.
     assert "drag.moved" not in page
+
+
+# ---- edges are directed and inspectable ------------------------------------
+#
+# The rank order implied direction and nothing drew it; and a 1.4px line
+# could be neither hovered nor clicked, so a vertex with several premises
+# offered no way to ask which line was which. Now every edge carries an
+# arrowhead in its own colour, a title saying what relation it is, and a
+# wide invisible twin that opens the record its answer lives on.
+
+EDGE_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const block = js.slice(js.indexOf("function edgeInfo("), js.indexOf("function edgeSvg("));
+const G = {edges: [{from: "D01", to: ["D02"], active: true, answer: "Because  it\nis so."},
+                   {from: "D02", to: ["D03"], active: true}]};
+const T = {derived: {T01: {}, T02: {}}};
+eval(block);
+console.log(JSON.stringify([
+  edgeInfo("D01", "D02", "edge hot"),
+  edgeInfo("D02", "D03", "edge pending-dep"),
+  edgeInfo("T01", "T02", "edge"),
+  edgeInfo("D01", "T02", "edge cross"),
+  edgeInfo("T02", "D01", "edge cross evidence"),
+  edgeInfo("D01", "D02", "edge ghost"),
+  edgeInfo("D01", "D02", "edge gone"),
+  edgeInfo("D01", "D02", "edge assumed"),
+]));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_an_edge_says_what_relation_it_is_and_which_record_a_click_opens(tmp_path):
+    harness = tmp_path / "edge.js"
+    harness.write_text(EDGE_HARNESS)
+    res = subprocess.run(["node", str(harness), str(server.STATIC / "app.html")],
+                         capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    dep, unanswered, task, cross, evidence, ghost, gone, assumed = json.loads(res.stdout)
+    assert dep == {"what": "D02 rests on D01 — Because it is so.", "pick": "D01"}
+    assert unanswered["what"].endswith("not answered yet")
+    assert task == {"what": "T01 precedes T02", "pick": "T02"}
+    assert cross == {"what": "T02 is work because of D01", "pick": "T02"}
+    assert evidence == {"what": "T02 is evidence for D01", "pick": "T02"}
+    assert ghost["what"].startswith("would be added by the preview — D02 rests on D01")
+    assert gone["what"].startswith("would be removed by the preview")
+    assert assumed["what"].startswith("assumed from an earlier act")
+
+
+def test_edges_carry_chevrons_and_a_click_target():
+    page = _page()
+    # Direction is chevrons along the shaft, one per rank crossed, computed
+    # from the cubic's control points: measuring the drawn path cost ~1.7 ms
+    # an edge, seconds on a large graph. No head at the landing — on a long
+    # edge it is far from most of the line.
+    assert 'class="${cc}"' in page and 'cls.replace(/\\bedge\\b/, "chev")' in page
+    assert "getPointAtLength(" not in page, "the chevrons measure the drawn path again"
+    assert "<marker" not in page and "marker-end" not in page
+    assert 'class="hit" d="${d}" data-pick=' in page
+    assert '.hit[data-pick]' in page and "select(h.dataset.pick)" in page
+    assert 'closest(".node,.hit")' in page, "a click on an edge starts a drag"
