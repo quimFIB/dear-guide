@@ -4197,10 +4197,12 @@ def _tg() -> TaskGraph:
     return TaskGraph.load(proj.tasks)
 
 
-def _teff(tg: TaskGraph, skip: int | None = None) -> TaskGraph:
-    """The task store plus its staged ops — what task guards judge against."""
+def _teff(tg: TaskGraph, skip: int | None = None,
+          revising: int | None = None) -> TaskGraph:
+    """The task store plus its staged ops — what task guards judge against.
+    `revising` as in `_eff`: the prefix and the op's own act (`D97`)."""
     try:
-        return task_pending.preview(tg, skip=skip)
+        return task_pending.preview(tg, skip=skip, revising=revising)
     except pending.ApplyError as exc:
         # `dg task drop-op <id>`, not `dg task drop <id>`: the latter exists and
         # abandons a task called N, which is not what a stuck tray needs.
@@ -5726,12 +5728,26 @@ def task_edit_cmd(
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
     op = ops[i]
-    # Without this op: like `dg edit`'s `_eff(g, skip=i)`, so an `add_task`
-    # being revised sees its own id as free and every staged dep still applies.
-    tg = _teff(_tg(), skip=i)
+    kind = op.get("op")
+    # Against the ops *before* this one and the rest of its own act, as
+    # `dg edit` reads (`_eff(g, revising=i)`, `D97`): the task being revised is
+    # absent, so its id is free and its own staged edges still apply; what a
+    # later act adds is not there to rest on, and a later act resting on
+    # *this* task is not read as a tray that no longer applies (`AC-F3`).
+    tg = _teff(_tg(), revising=i)
     g = _decisions_eff_or_none()
+    ref = op.get("ref") or i
+
+    def explain(rid: str) -> str | None:
+        head = pending.later_act(ops, i, rid)
+        if head is None:
+            return None
+        return (f"{rid} is added by act {head}, staged after this one — "
+                f"drop this act and re-stage it (`dg task drop-op {ref} "
+                f"--group`), or take {head} first (`dg apply --group {head}`)")
+
     try:
-        new = task_editor.compose_edit(tg, g, i, op)
+        new = task_editor.compose_edit(tg, g, i, op, explain=explain)
     except (editor.EditorAbort,) as exc:
         con.print(f"[yellow]aborted[/] {_x(exc)}")
         raise typer.Exit(1) from None
@@ -5744,7 +5760,10 @@ def task_edit_cmd(
         con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
         raise typer.Exit(1) from None
     before = _both_trays()
-    pending.replace_group(op.get("ref") or i, new, task_pending.path())
+    # The edges the previous version staged go with it, or the tray holds
+    # both readings of what the task waits on (`AC-F2`, as `dg edit`).
+    pending.replace_group(ref, new, task_pending.path(),
+                          supersede=task_editor.supersedes(kind, op))
     con.print(f"[green]updated[/] task op {i} — {len(new)} op(s), review with "
               f"`dg task pending`")
     _say_stranded(before)

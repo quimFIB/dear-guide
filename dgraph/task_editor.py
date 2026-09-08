@@ -157,6 +157,15 @@ def _task_context(tg: TaskGraph, g: Graph | None, tid: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def _csv(val) -> str:
+    """A seeded id list as the buffer's comma-separated line. The page's seed
+    sends `because` as a string and a staged op holds it as a list (`_parse_add`,
+    `task_pending.compose_add`); both are one field here. Audit `AC-F1`."""
+    if not val:
+        return ""
+    return val if isinstance(val, str) else ", ".join(val)
+
+
 def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
     """The template for a new task.
 
@@ -193,7 +202,7 @@ def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
         + editor._field("Because",
                         "Optional. Comma-separated decisions this work exists\n"
                         "because of. Work can rest on several at once.",
-                        seed.get("because", ""))
+                        _csv(seed.get("because")))
         + editor._field("Evidence for",
                         "Optional. The decision this work will inform.",
                         seed.get("evidence_for", ""))
@@ -275,22 +284,39 @@ ALLOWED = {
 }
 
 
-def render_amend(tg: TaskGraph, g: Graph | None, tid: str) -> str:
+def amend_seed(tg: TaskGraph, tid: str) -> dict:
+    """The record as the amend buffer's seed — the fields amend may correct
+    and the dialect they are stored in, so `_seed_in` can show them in the
+    buffer's. `editor.amend_seed`'s twin."""
+    t = tg.tasks[tid]
+    return {"title": t.title, "area": t.area, "note": t.note or "",
+            "done_when": t.done_when or "", "format": t.format}
+
+
+def render_amend(tg: TaskGraph, g: Graph | None, tid: str,
+                 seed: dict | None = None) -> str:
     """`editor.render_amend`'s twin for a task (`D103`): the fields amend may
     correct, prefilled with the task as it stands. Reuses the `## Note` and
-    `## Done when` fields the add buffer already renders."""
-    t = tg.tasks[tid]
+    `## Done when` fields the add buffer already renders.
+
+    `seed` is the record as `_seed_in` converted it — prose in the buffer's
+    dialect, whatever the record's. Read from the record only where no seed
+    was given, which no compose door does: showing stored org in a markdown
+    buffer and tagging what came back as markdown relabelled every `*span*`
+    a person left alone. Audit `AC-F4`.
+    """
+    s = seed if seed is not None else amend_seed(tg, tid)
     return (
         _header(f"dg task amend {tid}", op="amend", task=tid,
                 project=str(project.find().root))
         + "\n* Input\n"
-        + editor._field("Title", "One line: the work to be done.", t.title)
+        + editor._field("Title", "One line: the work to be done.", s["title"])
         + editor._field("Area", "One area, or a new one; areas accumulate.",
-                        t.area)
+                        s["area"])
         + editor._field("Note", "Optional prose: what this involves. May be "
-                                "emptied.", t.note or "")
+                                "emptied.", s.get("note") or "")
         + editor._field("Done when", "What finished looks like, in prose. May "
-                                     "be emptied.", t.done_when or "")
+                                     "be emptied.", s.get("done_when") or "")
         + "\n" + _task_context(tg, g, tid)
     )
 
@@ -299,8 +325,15 @@ def _parse_amend(tg: TaskGraph, meta: dict, f: dict,
                  tag: str | None = "org") -> list[dict]:
     """A task `set_fields` carrying only the fields the buffer changed. Title
     and area cannot be blanked; note and done_when may be emptied. Nothing
-    changed is an abort. `format` rides along when done_when (the task's prose)
-    was touched. `editor._parse_amend`'s twin."""
+    changed is an abort. `editor._parse_amend`'s twin.
+
+    *Changed* is judged against the record **as the buffer showed it** — its
+    prose converted into the buffer's dialect, the way `render_amend` seeded
+    it — so an org note left alone in a markdown buffer is not staged as a
+    markdown rewrite of itself (`AC-F4`). `format` rides along by `_tag`'s
+    rule: whenever the op writes any of `PROSE`, not only `done_when` — a
+    note typed in emacs is org too (`AC-F5`).
+    """
     tid = meta.get("task")
     if tid not in tg.tasks:
         raise EditorError(f"unknown task {tid!r}")
@@ -314,20 +347,23 @@ def _parse_amend(tg: TaskGraph, meta: dict, f: dict,
         if key in ("title", "area") and not new:
             raise EditorError(f"{field.capitalize()} is empty — a {key} is "
                               f"required and cannot be blanked here")
+        if key in PROSE:
+            current = orgmd.convert(current, t.format, tag) or ""
         if new != (current or "").strip():
             op[key] = new if new or key in ("title", "area") else None
     if len(op) == 2:
         raise EditorAbort("nothing changed — nothing staged")
-    if tag and "done_when" in op:
-        op["format"] = tag
-    return [op]
+    return [_tag(op, tag)]
 
 
 def compose_amend(tg: TaskGraph, g: Graph | None, tid: str, launcher=None,
                   dialect: str | None = None) -> list[dict]:
     dialect = dialect or editor.cli_dialect()
+    if tid not in tg.tasks:
+        raise EditorError(f"unknown task {tid!r}")
+    seed = _seed_in(amend_seed(tg, tid), dialect)
     return editor.run(
-        render_amend(tg, g, tid),
+        render_amend(tg, g, tid, seed),
         lambda after: parse(after, tg=tg, g=g, expect_kind="amend",
                             expect_task=tid, dialect=dialect),
         launcher=launcher, dialect=dialect)
@@ -341,6 +377,17 @@ def render_op(tg: TaskGraph, g: Graph | None, i: int, op: dict) -> str:
     kind = op.get("op")
     seed = dict(op)
     if kind == "add_task":
+        # The edges come from the *graph*, not from the op — `editor.render_op`
+        # says why: an `add_task` carries no `after`, its relations are
+        # `add_dep` ops staged beside it, and `tg` is the effective graph
+        # without this op, so the task is absent and every staged edge
+        # pointing at it still applies. Seeded rather than left blank because
+        # a blank field on a task that *is* attached is a buffer lying about
+        # the thing it is editing (`F26`); the twin was written without this
+        # and said *After* was empty while the tray held the edge (`AC-F2`).
+        tid = seed.get("id") or ""
+        seed.setdefault("after", tg.prerequisites(tid))
+        seed.setdefault("discovered_during", tg.discovered_during(tid))
         text = render_add(tg, g, seed)
     elif kind == "set_status" and op.get("status") == "DONE":
         text = render_done(tg, g, op["task"], seed)
@@ -351,14 +398,42 @@ def render_op(tg: TaskGraph, g: Graph | None, i: int, op: dict) -> str:
     return text.replace(":END:", f":DGRAPH_INDEX: {i}\n:END:", 1)
 
 
+def supersedes(kind: str, op: dict):
+    """What a revision of `op` takes out of the task tray, or None for
+    "nothing". `editor.supersedes`'s twin, for the same reason it exists
+    there: an `add_task` comes back with one `add_dep` per relation named in
+    the buffer, and re-stating them has to retract the ones the old version
+    staged, or the tray holds both readings of what the task waits on and
+    applies their union (`AC-F2`). Both edge kinds, because the buffer
+    re-states both. An `add_dep` naming other tasks as well keeps them."""
+    if kind != "add_task":
+        return None
+    tid = op.get("id")
+
+    def supersede(other: dict) -> dict | None:
+        if other.get("op") != "add_dep" or tid not in (other.get("to") or []):
+            return other
+        rest = [t for t in other["to"] if t != tid]
+        return {**other, "to": rest} if rest else None
+
+    return supersede
+
+
 def compose_edit(tg: TaskGraph, g: Graph | None, i: int, op: dict,
-                 launcher=None, dialect: str | None = None) -> list[dict]:
+                 launcher=None, dialect: str | None = None,
+                 explain=None) -> list[dict]:
+    """`editor.compose` for a staged task op. `explain` is `dg task edit`'s
+    account of an id `tg` lacks (`D97`), handed through to the parser."""
     dialect = dialect or editor.cli_dialect()
     kind = op.get("op")
+    # Shown in the buffer's dialect, whatever the op was composed in — the
+    # rule `compose_add` and `compose_done` already follow (`AC-F4`).
+    op = _seed_in(op, dialect)
     return editor.run(
         render_op(tg, g, i, op),
         lambda after: parse(after, tg=tg, g=g, expect_kind=kind,
-                            expect_task=op.get("task"), dialect=dialect),
+                            expect_task=op.get("task"), dialect=dialect,
+                            explain=explain),
         launcher=launcher, dialect=dialect)
 
 
@@ -366,7 +441,8 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
           expect_kind: str | None = None,
           expect_task: str | None = None,
           new_area: bool = False,
-          dialect: str = "org") -> list[dict]:
+          dialect: str = "org",
+          explain=None) -> list[dict]:
     """Buffer -> task ops ready for `task_pending`. Raises rather than guessing.
 
     The same contract as `editor.parse`, kept deliberately close to it: only
@@ -399,7 +475,8 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
         raise EditorAbort("template came back untouched — nothing staged")
 
     if kind == "add_task":
-        return _parse_add(tg, g, f, new_area=new_area, tag=d.tag)
+        return _parse_add(tg, g, f, new_area=new_area, tag=d.tag,
+                          explain=explain)
     if kind == "set_status":
         return _parse_done(tg, meta, f, tag=d.tag)
     if kind == "amend":
@@ -431,13 +508,15 @@ def _premise(g: Graph | None, did: str, field: str) -> str:
     return did
 
 
-def _targets(tg: TaskGraph, tid: str, raw: str, field: str) -> list[str]:
+def _targets(tg: TaskGraph, tid: str, raw: str, field: str,
+             explain=None) -> list[str]:
     out = []
     for other in [x.strip() for x in raw.split(",") if x.strip()]:
         if other == tid:
             raise EditorError(f"{field}: {tid} cannot come after itself")
         if other not in tg.tasks:
-            raise EditorError(f"{field}: unknown task {other!r}")
+            raise editor._unknown(f"{field}: unknown task {other!r}", [other],
+                                  explain)
         if other not in out:
             out.append(other)
     return out
@@ -445,7 +524,7 @@ def _targets(tg: TaskGraph, tid: str, raw: str, field: str) -> list[str]:
 
 def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
                new_area: bool = False,
-               tag: str | None = "org") -> list[dict]:
+               tag: str | None = "org", explain=None) -> list[dict]:
     tid = _need(f, "id")
     if not ID_RE.fullmatch(tid):
         raise EditorError(f"malformed id {tid!r} — expected something like T07\n"
@@ -484,7 +563,7 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
     for field, key, edge in (("After", "after", "precedes"),
                              ("Discovered during", "discovered during",
                               "prompted")):
-        for other in _targets(tg, tid, f.get(key, ""), field):
+        for other in _targets(tg, tid, f.get(key, ""), field, explain):
             ops.append({"op": "add_dep", "from": other, "to": [tid],
                         "kind": edge})
     return ops

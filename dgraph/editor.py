@@ -320,23 +320,39 @@ def render_reprobe(g: Graph, vid: str, seed: dict | None = None) -> str:
     )
 
 
+def amend_seed(g: Graph, vid: str) -> dict:
+    """The record as the amend buffer's seed: the fields amend may correct and
+    the dialect they are stored in, so `seed_in` can show them in the buffer's.
+    `compose` builds it where no seed was given."""
+    v = g.vertices[vid]
+    return {"title": v.title, "area": v.area, "note": v.note or "",
+            "rule": v.rule or "", "format": v.format}
+
+
 def render_amend(g: Graph, vid: str, seed: dict | None = None) -> str:
     """The buffer for `dg amend --edit`: the fields amend may correct, prefilled
     with the record as it stands (`D103`). Parsed back to a `set_fields` op that
     carries only what changed — an answer is never among them, the line amend is
-    drawn along. Reuses the `## Note` field the add buffer already renders."""
-    v = g.vertices[vid]
+    drawn along. Reuses the `## Note` field the add buffer already renders.
+
+    `seed` is the record as `seed_in` converted it — prose in the buffer's
+    dialect, whatever the record's — and is what is rendered. Reading the
+    record here instead ignored the conversion `compose` had just done, so a
+    markdown buffer showed org `*bold*` and what came back was tagged
+    markdown: every span the person left alone, relabelled. Audit `AC-F4`.
+    """
+    s = seed if seed is not None else amend_seed(g, vid)
     return (
         _header(f"dg amend {vid}", op="amend", vertex=vid,
                 project=str(project.find().root))
         + "\n* Input\n"
         + _field("Title", "How the question is referred to — not a claim it "
-                          "makes.", v.title)
-        + _field("Area", "One area, or a new one; areas accumulate.", v.area)
+                          "makes.", s["title"])
+        + _field("Area", "One area, or a new one; areas accumulate.", s["area"])
         + _field("Note", "What is undecided, and why. Prose; may be emptied.",
-                 v.note or "")
+                 s.get("note") or "")
         + _field("Rule", "What would settle this, in prose. May be emptied.",
-                 v.rule or "")
+                 s.get("rule") or "")
         + "\n" + _context(g, vid)
     )
 
@@ -732,6 +748,11 @@ def _parse_amend(g: Graph, meta: dict, f: dict, tag: str | None = "org") -> list
         if field in ("title", "area") and not new:
             raise EditorError(f"{field.capitalize()} is empty — a {field} is "
                               f"required and cannot be blanked here")
+        if field in ("note", "rule"):
+            # Judged against the record as the buffer showed it — converted
+            # into the buffer's dialect, as `render_amend` seeded it — so a
+            # note left alone is not staged as a rewrite of itself (`AC-F4`).
+            current = orgmd.convert(current, v.format, tag) or ""
         if new != (current or "").strip():
             op[field] = new if new or field in ("title", "area") else None
     if len(op) == 2:
@@ -1243,6 +1264,10 @@ def compose(
     `dialect` is the buffer's — `cli_dialect()` unless the caller has
     resolved an editor of its own, as the browser's door has."""
     dialect = dialect or cli_dialect()
+    if kind == "amend" and seed is None and op is None:
+        if vertex not in g.vertices:
+            raise EditorError(f"unknown vertex {vertex!r}")
+        seed = amend_seed(g, vertex)
     seed = seed_in(seed, kind, dialect)
     op = seed_in(op, kind, dialect)
     if op is not None and index is not None:

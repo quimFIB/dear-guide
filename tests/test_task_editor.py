@@ -403,7 +403,7 @@ def test_a_decision_tray_that_will_not_apply_does_not_block_an_outcome(
 
 # ---- task amend in an editor (D103, T110) -----------------------------------
 
-def test_task_amend_composes_only_the_changed_fields(tg, task_store):
+def test_task_amend_composes_only_the_changed_fields(tg, task_store, fake_emacs):
     t = tg.tasks["T01"]
     seen = {}
 
@@ -412,8 +412,10 @@ def test_task_amend_composes_only_the_changed_fields(tg, task_store):
         return fill(text.replace(f"** Title\n{t.title}\n", "** Title\nReworded work\n"))
 
     import dgraph.task_editor as te
-    import dgraph.editor as ed
-    ed.launch = lambda p: (p.write_text(edit(p.read_text())), 0)[1]
+    # Through the fixture, never `ed.launch = …`: a bare assignment outlives
+    # the test, and every launcher test run after this file in the same
+    # process then exercised the lambda (`AC-F8`).
+    fake_emacs(edit)
     ops = te.compose_amend(tg, None, "T01")
     assert ops == [{"op": "set_fields", "task": "T01", "title": "Reworded work"}]
 
@@ -449,3 +451,102 @@ def test_task_edit_refuses_a_derived_op(run_cli, task_store, monkeypatch):
     res = run_cli("task", "edit", "0")
     assert res.exit_code == 1
     assert "derived or structural" in res.output
+
+
+# ---- the twin's guards — what `dg edit` had that `dg task edit` lacked ------
+# Pass 28 (`AC-F1`–`AC-F3`, `AC-F5`): the task ✎ was written as `dg edit`'s
+# twin, and each guard the original had gained one audit at a time was
+# missing from it. Each test below is one of those guards, on the twin.
+
+
+def test_task_edit_renders_a_staged_add_task_that_carries_a_premise(
+        run_cli, task_store, store, fake_emacs):
+    """`AC-F1`: the staged op holds `because` as a list where the page's seed
+    sends a string; the buffer shows it, and the revision keeps it."""
+    run_cli("task", "add", "--id", "T50", "--area", "Alpha", "--title", "draft",
+            "--because", "D01")
+    seen = {}
+
+    def edit(text):
+        seen["text"] = text
+        return text.replace("** Title\ndraft\n", "** Title\nrevised\n")
+    fake_emacs(edit)
+    res = run_cli("task", "edit", "0")
+    assert res.exit_code == 0, res.output
+    assert "** Because\nD01\n" in seen["text"]
+    (op,) = [o for o in tray(task_store) if o["op"] == "add_task"]
+    assert op["title"] == "revised" and op["because"] == ["D01"]
+
+
+def test_task_edit_seeds_the_staged_edges_and_retracts_them_on_revision(
+        run_cli, task_store, fake_emacs):
+    """`AC-F2`: the buffer reads the task's edges back off the act (`F26`),
+    and a revision retracts the edges the old version staged rather than
+    leaving both readings — and the act stays one act."""
+    run_cli("task", "add", "--id", "T50", "--area", "Alpha", "--title", "draft",
+            "--after", "T02", "--discovered-during", "T04")
+    seen = {}
+
+    def retitle(text):
+        seen["text"] = text
+        return text.replace("** Title\ndraft\n", "** Title\nrevised\n")
+    fake_emacs(retitle)
+    res = run_cli("task", "edit", "0")
+    assert res.exit_code == 0, res.output
+    assert "** After\nT02\n" in seen["text"]
+    assert "** Discovered during\nT04\n" in seen["text"]
+    ops = tray(task_store)
+    deps = [(o["from"], o["kind"]) for o in ops if o["op"] == "add_dep"]
+    assert deps == [("T02", "precedes"), ("T04", "prompted")]
+    groups = {o.get("group") for o in ops}
+    assert len(groups) == 1 and None not in groups, ops     # still one act
+    # Correcting After replaces the edge; it does not add a second reading.
+    fake_emacs(lambda t: t.replace("** After\nT02\n", "** After\nT03\n"))
+    res = run_cli("task", "edit", "0")
+    assert res.exit_code == 0, res.output
+    deps = [(o["from"], o["kind"]) for o in tray(task_store) if o["op"] == "add_dep"]
+    assert deps == [("T03", "precedes"), ("T04", "prompted")]
+
+
+def test_task_edit_judges_against_the_prefix_and_its_own_act(
+        run_cli, task_store, fake_emacs):
+    """`AC-F3`(a): a later act resting on the task being revised is not a
+    reason to refuse, and never a reason to say the tray does not apply."""
+    run_cli("task", "add", "--id", "T50", "--area", "Alpha", "--title", "draft")
+    run_cli("task", "add", "--id", "T51", "--area", "Alpha", "--title", "later",
+            "--after", "T50")
+    fake_emacs(lambda t: t.replace("** Title\ndraft\n", "** Title\nrevised\n"))
+    res = run_cli("task", "edit", "0")
+    assert res.exit_code == 0, res.output
+    assert "no longer apply" not in res.output
+    assert [o["id"] for o in tray(task_store) if o["op"] == "add_task"] == ["T50", "T51"]
+
+
+def test_task_edit_refuses_to_rest_on_an_act_staged_after_it(
+        run_cli, task_store, fake_emacs):
+    """`AC-F3`(b): `D97` on the task tray — refused by the act's name, the
+    tray untouched, where the whole-tray reading accepted it and `dg apply`
+    then aborted."""
+    run_cli("task", "add", "--id", "T50", "--area", "Alpha", "--title", "draft")
+    run_cli("task", "add", "--id", "T51", "--area", "Alpha", "--title", "later")
+    before = tray(task_store)
+    fake_emacs(lambda t: t.replace("** After\n", "** After\nT51\n", 1))
+    res = run_cli("task", "edit", "0")
+    assert res.exit_code == 1, res.output
+    assert "T51 is added by act" in res.output and "staged after" in res.output
+    assert tray(task_store) == before
+
+
+def test_a_task_amend_of_the_note_in_emacs_is_tagged_org(
+        run_cli, task_store, fake_emacs, monkeypatch):
+    """`AC-F5`: the note is one of `PROSE`; an org buffer that writes it
+    claims org, as the decision amend does and as `_tag` says."""
+    monkeypatch.setenv("DG_EDIT_FORMAT", "org")
+    fake_emacs(lambda t: t.replace(
+        "** Note\nNobody has finished this yet.\n",
+        "** Note\nNobody has finished this yet — *not even* the note.\n"))
+    res = run_cli("task", "amend", "T04", "--edit")
+    assert res.exit_code == 0, res.output
+    (op,) = tray(task_store)
+    assert op["note"].endswith("*not even* the note.")
+    assert op.get("format") == "org", op

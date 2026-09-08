@@ -106,6 +106,84 @@ def test_task_seeds_follow_the_same_rule(tg, task_store, monkeypatch):
     assert op["format"] == "org"
 
 
+def test_the_amend_buffer_shows_the_record_in_the_buffers_dialect(g, store, monkeypatch):
+    """`AC-F4`: `dg amend --edit` in vim on a record whose note is org. The
+    note is shown as markdown; untouched it is not staged; touched it comes
+    back markdown, untagged — the rule `seed_in` states for both doors."""
+    import re
+    pending._apply_one(g, {"op": "set_fields", "vertex": "D05",
+                           "note": "this is *bold* in org", "format": "org"})
+    monkeypatch.setenv("DG_EDIT_FORMAT", "markdown")
+    shown = {}
+
+    def retitle(path):
+        shown["text"] = path.read_text(encoding="utf-8")
+        path.write_text(re.sub(r"(## Title\n)(.*)", r"\1\2 renamed", shown["text"], count=1),
+                        encoding="utf-8")
+        return 0
+    monkeypatch.setattr(editor, "launch", retitle)
+    (op,) = editor.compose(g, "amend", vertex="D05")
+    assert "this is **bold** in org" in shown["text"], shown["text"]
+    assert "note" not in op and "format" not in op and op["title"].endswith(" renamed")
+
+    def touch(path):
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace("this is **bold** in org",
+                                     "this is **bold** in org, plus"), encoding="utf-8")
+        return 0
+    monkeypatch.setattr(editor, "launch", touch)
+    (op,) = editor.compose(g, "amend", vertex="D05")
+    assert op["note"] == "this is **bold** in org, plus" and "format" not in op
+
+    # and the other way: a markdown record amended in emacs
+    pending._apply_one(g, {"op": "set_fields", "vertex": "D05", "note": "a **md** note"})
+    monkeypatch.setenv("DG_EDIT_FORMAT", "org")
+
+    def touch_org(path):
+        shown["text"] = path.read_text(encoding="utf-8")
+        path.write_text(shown["text"].replace("a *md* note", "a *md* note, plus"),
+                        encoding="utf-8")
+        return 0
+    monkeypatch.setattr(editor, "launch", touch_org)
+    (op,) = editor.compose(g, "amend", vertex="D05")
+    assert "a *md* note" in shown["text"]
+    assert op["note"] == "a *md* note, plus" and op["format"] == "org"
+
+
+def test_the_task_amend_buffer_and_the_task_edit_follow_the_same_rule(
+        tg, task_store, monkeypatch):
+    """`AC-F4`, task side: `compose_amend` over an org record and
+    `compose_edit` over an org op, both in markdown."""
+    task_pending._apply_one(tg, {"op": "set_fields", "task": "T04",
+                                 "note": "this is *bold* in org", "format": "org"})
+    monkeypatch.setenv("DG_EDIT_FORMAT", "markdown")
+    shown = {}
+
+    def touch(path):
+        shown["text"] = path.read_text(encoding="utf-8")
+        path.write_text(shown["text"].replace("this is **bold** in org",
+                                              "this is **bold** in org, plus"),
+                        encoding="utf-8")
+        return 0
+    monkeypatch.setattr(editor, "launch", touch)
+    (op,) = task_editor.compose_amend(tg, None, "T04")
+    assert "this is **bold** in org" in shown["text"], shown["text"]
+    assert op["note"] == "this is **bold** in org, plus" and "format" not in op
+
+    staged = {"op": "add_task", "id": "T50", "title": "t", "area": "Alpha",
+              "note": "also *bold*", "format": "org"}
+
+    def retitle(path):
+        shown["text"] = path.read_text(encoding="utf-8")
+        path.write_text(shown["text"].replace("## Title\nt\n", "## Title\nt revised\n"),
+                        encoding="utf-8")
+        return 0
+    monkeypatch.setattr(editor, "launch", retitle)
+    (op,) = task_editor.compose_edit(tg, None, 0, staged)
+    assert "also **bold**" in shown["text"], shown["text"]
+    assert op["note"] == "also **bold**" and "format" not in op
+
+
 # ---- the context -----------------------------------------------------------
 
 

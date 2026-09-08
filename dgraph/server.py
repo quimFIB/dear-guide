@@ -246,10 +246,10 @@ def effective(g: Graph, *, revising: int | None = None) -> Graph:
         ) from None
 
 
-def effective_tasks(tg: TaskGraph) -> TaskGraph:
-    """`effective`'s twin for the task tray."""
+def effective_tasks(tg: TaskGraph, *, revising: int | None = None) -> TaskGraph:
+    """`effective`'s twin for the task tray, `revising` included (`D97`)."""
     try:
-        return task_pending.preview(tg)
+        return task_pending.preview(tg, revising=revising)
     except pending.ApplyError as exc:
         raise pending.ApplyError(
             f"the staged task ops no longer apply cleanly, so nothing can be "
@@ -1574,14 +1574,28 @@ class Handler(BaseHTTPRequestHandler):
         try:
             proj = project.find()
             g = pending.preview(Graph.load()) if proj.has_decisions else None
-            # Without op i, so a revised `add_task` sees its own id free.
-            tg = task_pending.preview(TaskGraph.load(proj.tasks), skip=i)
+            # Against the prefix and the op's own act, as `_edit` reads and
+            # `dg task edit` reads (`D97`, `AC-F3`).
+            tg = effective_tasks(TaskGraph.load(proj.tasks), revising=i)
+            ref = op.get("ref") or i
+
+            def explain(rid: str, tops=tops, i=i) -> str | None:
+                head = pending.later_act(tops, i, rid)
+                if head is None:
+                    return None
+                return (f"{rid} is added by act {head}, staged after this "
+                        f"one — drop this act and re-stage it, or take "
+                        f"{head} first")
+
             new = task_editor.compose_edit(tg, g, i, op,
                                            launcher=editor.launch_gui,
-                                           dialect=editor.gui_dialect())
+                                           dialect=editor.gui_dialect(),
+                                           explain=explain)
             task_pending.vet_all(tg, new)
             before = pending.load() + pending.load(task_pending.path())
-            pending.replace_group(op.get("ref") or i, new, task_pending.path())
+            # The old version's edges go with it (`AC-F2`, as `_edit`).
+            pending.replace_group(ref, new, task_pending.path(),
+                                  supersede=task_editor.supersedes(kind, op))
         except editor.EditorAbort as exc:
             return self._json({"aborted": str(exc),
                                "pending": pending.load(task_pending.path())})

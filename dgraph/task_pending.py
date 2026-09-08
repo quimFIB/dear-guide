@@ -805,13 +805,26 @@ def compose_bind(tg: TaskGraph, *, tid: str, binds: list[dict],
     return op, fresh, already
 
 
-def preview(tg: TaskGraph, p: Path | None = None, *, skip: int | None = None) -> TaskGraph:
-    """The task graph as it will stand once the staged ops apply."""
+def preview(tg: TaskGraph, p: Path | None = None, *, skip: int | None = None,
+            revising: int | None = None) -> TaskGraph:
+    """The task graph as it will stand once the staged ops apply.
+
+    `skip` leaves one op out. `revising` is `pending.preview`'s: the store plus
+    the ops **before** op N and the rest of N's own act, never what is staged
+    after it — what `dg task edit N` judges against, so a revision cannot rest
+    on an act staged later (`D97`), and a later act resting on the task being
+    revised is not read as a tray that no longer applies (`AC-F3`)."""
     from dgraph import pending
 
     out = copy.deepcopy(tg)
-    for i, op in enumerate(pending.load(p or path())):
-        if i == skip:
+    ops = pending.load(p or path())
+    keep = None
+    if revising is not None:
+        own = ops[revising].get("group") if revising < len(ops) else None
+        keep = {j for j, o in enumerate(ops)
+                if j < revising or (own and o.get("group") == own and j != revising)}
+    for i, op in enumerate(ops):
+        if i == skip or (keep is not None and i not in keep):
             continue
         try:
             _apply_one(out, op)

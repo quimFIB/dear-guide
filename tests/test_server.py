@@ -2132,3 +2132,33 @@ def test_the_new_task_form_and_reword_form_carry_a_compose_button():
     amend = html.split("function amendForm")[1].split("\nfunction amendOp")[0]
     assert 'composeBtn("doComposeAmend")' in amend
     assert "composeAmend" in html and "carryAmend" in html
+
+
+def test_edit_route_revises_an_add_task_with_its_premise_and_edges_whole(
+        srv, dual, monkeypatch):
+    """`AC-F1`, `AC-F2` through the browser's door: an `add_task` staged with
+    a `because` and an `add_dep` is rendered (not a 500), and the revision
+    keeps the premise, carries the edge once, and stays one act."""
+    from dgraph import pending, task_pending
+
+    def launch(path):
+        t = path.read_text(encoding="utf-8")
+        assert "** After\nT02\n" in t, t
+        path.write_text(t.replace("** Title\ndraft\n", "** Title\nrevised\n"),
+                        encoding="utf-8")
+        return 0
+    monkeypatch.setattr(server.editor, "launch_gui", launch)
+    code, _ = jreq(srv, "/api/task-pending", "POST",
+                   [{"op": "add_task", "id": "T60", "title": "draft",
+                     "area": "Alpha", "because": ["D01"]},
+                    {"op": "add_dep", "from": "T02", "to": ["T60"],
+                     "kind": "precedes"}])
+    assert code == 200
+    ref = pending.load(task_pending.path())[0]["ref"]
+    code, body = jreq(srv, "/api/edit", "POST", {"ref": ref, "store": "tasks"})
+    assert code == 200, body
+    assert body["staged"][0]["title"] == "revised"
+    assert body["staged"][0]["because"] == ["D01"]
+    tray = pending.load(task_pending.path())
+    assert [(o["op"], o.get("from")) for o in tray] == [("add_task", None), ("add_dep", "T02")]
+    assert len({o.get("group") for o in tray}) == 1 and tray[0].get("group")

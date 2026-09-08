@@ -86,6 +86,11 @@ _MARKERS = [
     "#1 no space", "# with space", "#only",
     "> a quote", "*bold* start", "* leading star",
     ",#already commaed", "plain\n#mid-line\nmore", "ordinary prose",
+    # `AC-F6`: markdown's own escaped forms are stored values too, and the
+    # buffer's escape has to be injective over them.
+    "\\#literal hash", "\\> literal gt", "\\\\# two slashes",
+    # `AC-F7`(a): two blank lines inside a value are the value's.
+    "para one\n\n\npara two",
 ]
 
 

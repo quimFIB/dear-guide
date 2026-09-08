@@ -106,6 +106,7 @@ def render(org: str) -> str:
     out: list[str] = []
     comments: list[str] = []
     in_context = False
+    in_input = False
 
     def flush() -> None:
         # Hints are blockquotes, not HTML comments. A markdown editor with
@@ -133,6 +134,7 @@ def render(org: str) -> str:
             title = h.group(2)
             if len(h.group(1)) == 1:
                 in_context = title.lower() == "context"
+                in_input = title.lower() == "input"
             if in_context:
                 title = _DG_LINK.sub(r"\1", title)
             out.append("#" * len(h.group(1)) + " " + title)
@@ -147,12 +149,22 @@ def render(org: str) -> str:
         # leading `#` is a heading, a leading `>` a hint (`body` strips them).
         # A leading `*` needs no markdown escape — it is an ordinary list item,
         # not a heading — so it is only un-commaed. D101.
+        #
+        # One backslash is added before a leading run of backslashes ending in
+        # `#` or `>`, and `body` removes exactly one — the same construction as
+        # org's comma — so a stored `\#` (markdown's own literal `#`) renders
+        # `\\#` and comes back `\#`, instead of colliding with the escape of a
+        # stored `#` and coming back without its backslash. Audit `AC-F6`.
         ln = re.sub(r"^([ \t]*),(,*[#*])", r"\1\2", ln)
-        ln = re.sub(r"^([ \t]*)([#>])", r"\1\\\2", ln)
+        ln = re.sub(r"^([ \t]*)(\\*[#>])", r"\1\\\2", ln)
+        if not in_input and ln.strip() == "" and (not out or out[-1].strip() == ""):
+            # The gap the dropped mode line, `#+TODO` and drawer leave is
+            # closed here, outside Input only: inside it a blank line is the
+            # value's, and a run of them was collapsed too. Audit `AC-F7`.
+            continue
         out.append(ln)
     flush()
-    text = "\n".join(out)
-    text = re.sub(r"\n{3,}", "\n\n", text).lstrip("\n")
+    text = "\n".join(out).lstrip("\n")
     if front:
         text = "---\n" + "\n".join(front) + "\n---\n" + text
     return text
@@ -212,8 +224,10 @@ def body(raw: str) -> str:
     """Strip hint blockquotes and the `\\#` escape, then common indentation.
 
     A hint is a `>` line (see `render`); a value that genuinely begins with
-    `>` is escaped `\\>` and unescaped here, the mirror of the `\\#` escape."""
+    `>` is escaped `\\>` and unescaped here, the mirror of the `\\#` escape.
+    Exactly one backslash is removed from a leading run ending in `#` or `>`
+    (`render` adds exactly one), so `\\\\#` comes back `\\#`: escape∘unescape is
+    the identity for any content. Audit `AC-F6`."""
     text = re.sub(r"^[ \t]*>.*(?:\n|$)", "", raw, flags=re.M)
-    text = re.sub(r"^([ \t]*)\\#", r"\1#", text, flags=re.M)
-    text = re.sub(r"^([ \t]*)\\>", r"\1>", text, flags=re.M)
+    text = re.sub(r"^([ \t]*)\\(\\*[#>])", r"\1\2", text, flags=re.M)
     return textwrap.dedent(text).strip()
