@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from datetime import date as _date
 
-from dgraph import areas, cross, editor, pending, project, ranges
+from dgraph import areas, cross, editor, orgmd, pending, project, ranges
 from dgraph import tags as _tags
 from dgraph.editor import EditorAbort, EditorError
 from dgraph.model import Graph
@@ -73,8 +73,10 @@ def _header(title: str, *, decisions: bool = False, **props: str) -> str:
     )
 
 
-def _org(op: dict) -> dict:
-    """Tag `op` as org, where it writes prose the store will convert.
+def _tag(op: dict, tag: str | None = "org") -> dict:
+    """Tag `op` with its buffer's dialect, where it writes prose the store
+    will convert. `tag` is `None` for the markdown buffer, which claims
+    nothing (`editor.Dialect`).
 
     A task carries one `format` for its whole record, and `task_pending`
     applies it to whichever of `PROSE` the op actually writes. An op claiming a
@@ -83,8 +85,8 @@ def _org(op: dict) -> dict:
     defect this pairing exists to have closed. Both sides read `PROSE`, so
     neither can be extended without the other following.
     """
-    if any(op.get(f) for f in PROSE):
-        op["format"] = "org"
+    if tag and any(op.get(f) for f in PROSE):
+        op["format"] = tag
     return op
 
 
@@ -128,7 +130,8 @@ def _task_context(tg: TaskGraph, g: Graph | None, tid: str) -> str:
            f"   waits on {', '.join(tg.waiting_on(tid)) or '—'} · "
            f"unblocks {', '.join(tg.unblocks(tid)) or '—'}"]
     if t.note:
-        out.append(editor._quote(t.note))
+        # As org, whatever it was typed as — `editor._context` says why.
+        out.append(editor._quote(orgmd.convert(t.note, t.format, "org")))
     # Read through `cross`, like every other cross-graph reading. This module
     # never touches the link fields itself: assembling what the link says from
     # a task's own attributes is the second implementation of the rule that
@@ -274,7 +277,8 @@ ALLOWED = {
 def parse(text: str, *, tg: TaskGraph, g: Graph | None,
           expect_kind: str | None = None,
           expect_task: str | None = None,
-          new_area: bool = False) -> list[dict]:
+          new_area: bool = False,
+          dialect: str = "org") -> list[dict]:
     """Buffer -> task ops ready for `task_pending`. Raises rather than guessing.
 
     The same contract as `editor.parse`, kept deliberately close to it: only
@@ -284,10 +288,11 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
     if not text.strip():
         raise EditorAbort("empty buffer — nothing staged")
 
-    meta = editor._meta(text)
+    d = editor.DIALECTS[dialect]
+    meta = d.meta(text)
     kind = meta.get("op")
     if not kind:
-        raise EditorError("no :DGRAPH_OP: in the buffer's properties drawer")
+        raise EditorError(d.no_op)
     if expect_kind and kind != expect_kind:
         raise EditorError(f"buffer is a {kind!r} template, expected {expect_kind!r}")
     if expect_task and meta.get("task") != expect_task:
@@ -296,19 +301,19 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
             f"cannot be retargeted by editing; abort and re-run"
         )
 
-    sections = editor._sections(text)
+    sections = d.sections(text)
     unknown = sorted(k for k in sections if k not in ALLOWED.get(kind, set()))
     if unknown:
-        names = ", ".join(f"** {sections[u][0]}" for u in unknown)
+        names = ", ".join(f"{d.mark2} {sections[u][0]}" for u in unknown)
         raise EditorError(f"unknown field(s) under Input: {names}")
-    f = {k: editor._body(v[1]) for k, v in sections.items()}
+    f = {k: d.body(v[1]) for k, v in sections.items()}
     if not any(f.values()):
         raise EditorAbort("template came back untouched — nothing staged")
 
     if kind == "add_task":
-        return _parse_add(tg, g, f, new_area=new_area)
+        return _parse_add(tg, g, f, new_area=new_area, tag=d.tag)
     if kind == "set_status":
-        return _parse_done(tg, meta, f)
+        return _parse_done(tg, meta, f, tag=d.tag)
     raise EditorError(f"cannot compose a {kind!r} task op")
 
 
@@ -349,7 +354,8 @@ def _targets(tg: TaskGraph, tid: str, raw: str, field: str) -> list[str]:
 
 
 def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
-               new_area: bool = False) -> list[dict]:
+               new_area: bool = False,
+               tag: str | None = "org") -> list[dict]:
     tid = _need(f, "id")
     if not ID_RE.fullmatch(tid):
         raise EditorError(f"malformed id {tid!r} — expected something like T07\n"
@@ -381,7 +387,7 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
     if f.get("probe", "").strip():
         op["probe"] = editor._parse_probe(f["probe"])
         op["date"] = _date.today().isoformat()
-    ops = [_org(op)]
+    ops = [_tag(op, tag)]
     # One group, in the order the CLI stages them: the task, then its edges.
     # A task landing without them is not a partial batch something refuses —
     # it is a task that reads as startable. Audit F28.
@@ -394,7 +400,8 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
     return ops
 
 
-def _parse_done(tg: TaskGraph, meta: dict, f: dict) -> list[dict]:
+def _parse_done(tg: TaskGraph, meta: dict, f: dict,
+                tag: str | None = "org") -> list[dict]:
     tid = meta.get("task")
     if tid not in tg.tasks:
         raise EditorError(f"unknown task {tid!r}")
@@ -404,26 +411,49 @@ def _parse_done(tg: TaskGraph, meta: dict, f: dict) -> list[dict]:
     # claim is checked against what the store will honour. A task carries one
     # `format` for its whole record, so the caller says so when the record
     # already held prose written somewhere else.
-    return [_org({
+    return [_tag({
         "op": "set_status", "task": tid, "status": meta.get("status", "DONE"),
         "outcome": _need(f, "outcome"),
         "done": meta.get("date") or _date.today().isoformat(),
-    })]
+    }, tag)]
+
+
+def _seed_in(seed: dict | None, dialect: str) -> dict | None:
+    """`editor.seed_in` for a task's prose — `PROSE`, the fields one
+    `Task.format` covers."""
+    if not seed:
+        return seed
+    tag = editor.DIALECTS[dialect].tag
+    frm = seed.get("format")
+    if (frm == "org") == (tag == "org"):
+        return seed
+    out = dict(seed)
+    for f in PROSE:
+        if out.get(f):
+            out[f] = orgmd.convert(out[f], frm, tag)
+    out["format"] = tag
+    return out
 
 
 def compose_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None,
-                new_area: bool = False, launcher=None) -> list[dict]:
+                new_area: bool = False, launcher=None,
+                dialect: str | None = None) -> list[dict]:
+    dialect = dialect or editor.cli_dialect()
+    seed = _seed_in(seed, dialect)
     return editor.run(
         render_add(tg, g, seed),
         lambda after: parse(after, tg=tg, g=g, expect_kind="add_task",
-                            new_area=new_area),
-        launcher=launcher)
+                            new_area=new_area, dialect=dialect),
+        launcher=launcher, dialect=dialect)
 
 
 def compose_done(tg: TaskGraph, g: Graph | None, tid: str,
-                 seed: dict | None = None, launcher=None) -> list[dict]:
+                 seed: dict | None = None, launcher=None,
+                 dialect: str | None = None) -> list[dict]:
+    dialect = dialect or editor.cli_dialect()
+    seed = _seed_in(seed, dialect)
     return editor.run(
         render_done(tg, g, tid, seed),
         lambda after: parse(after, tg=tg, g=g, expect_kind="set_status",
-                            expect_task=tid),
-        launcher=launcher)
+                            expect_task=tid, dialect=dialect),
+        launcher=launcher, dialect=dialect)

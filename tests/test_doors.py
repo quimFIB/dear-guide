@@ -545,6 +545,64 @@ eval(block + DRIVER);
 """
 
 
+#: `composeIn` alone, with the page's own `pickerValues`. The decide form's
+#: "opens" became a checklist in the commit that put edge-adding behind a
+#: button, and `stageClose` was moved to the picker's reader — while the
+#: editor's seed went on reading `.selectedOptions` off an element that no
+#: longer had any. So "Compose in emacs" threw before the request was sent,
+#: nothing was said above the trays, and no editor opened: the button did
+#: nothing, in every browser, until somebody opened the console. The stub
+#: below is that checklist, with one box ticked.
+COMPOSE_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
+const block = cut("function pickerValues(", "function bindPickers(")
+            + cut("async function composeIn(", "/* What a `set_fields` op writes");
+let sel = "D04", EDITING = null, PEND = [], DRAFTS = {};
+const ED = {emacs: true, available: true};
+const held = {answer: {value: "typed answer"}, source: {value: "discussion"},
+              fals: {value: "it fails"},
+              opens: {querySelectorAll: () => [{value: "D06"}]}};
+const $ = s => held[s.slice(1)];
+const panel = () => {}, tray = () => {}, captureDraft = () => {};
+const SAID = [];
+const say = (m, cls) => SAID.push([m, cls || ""]);
+const POSTED = [];
+const api = async (url, opts) => {
+  POSTED.push({url, body: JSON.parse(opts.body)});
+  return {staged: [{op: "close"}], pending: []};
+};
+eval(block + `
+composeIn("close").then(() => {
+  if (POSTED.length !== 1 || POSTED[0].url !== "/api/compose")
+    throw new Error("posted " + JSON.stringify(POSTED));
+  const seed = POSTED[0].body.seed;
+  if (JSON.stringify(seed.to) !== '["D06"]' || seed.answer !== "typed answer")
+    throw new Error("the seed read back as " + JSON.stringify(seed));
+  if (SAID.some(([, cls]) => cls === "bad"))
+    throw new Error("the page reported a failure: " + JSON.stringify(SAID));
+  if (EDITING !== null) throw new Error("the editing mark was not cleared");
+  console.log("ok");
+}).catch(e => { console.error(e.message); process.exit(1); });
+`);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_editor_seed_reads_the_opens_the_form_draws(tmp_path):
+    """The editor button's seed is built from the same controls the Stage
+    button reads. Read through a picker with a box ticked, so a seed built
+    off a control the form no longer draws throws here rather than in the
+    user's console."""
+    harness = tmp_path / "compose.js"
+    harness.write_text(COMPOSE_HARNESS, encoding="utf-8")
+    r = subprocess.run(["node", str(harness), str(server.STATIC / "app.html")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "ok"
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_the_forms_draw_every_field_their_post_function_reads(both, tmp_path):
     """Rendered against the real payloads, so an area the store has and the

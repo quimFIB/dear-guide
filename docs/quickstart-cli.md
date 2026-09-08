@@ -363,16 +363,20 @@ any decision by id. They live under their own prefix so that org keeps its
 `C-c C-<letter>` keys — `C-c C-v` alone is org-babel's whole prefix map. Each
 header lists only what that buffer has: `p` and `a` need the decision this
 buffer is composing, `v` only needs a decision store to read. Any editor works
-via `$DG_EDITOR`; you get the same buffer without the navigation.
+via `$DG_EDITOR`; you get the same buffer as markdown (`# Input`, `## Answer`,
+guidance in `<!-- -->`), without the navigation, and its prose is stored as
+markdown rather than tagged as org.
 
 Work has its own templates rather than the decision one relabelled. `dg task
 done --edit` is `** Outcome` alone, with what the task unblocks and the
 decision it was for beside it; `dg task add --edit` takes the whole record. One
 buffer per project, never one template.
 
-Prose is stored exactly as typed. Org composed in the editor is tagged as such,
-so `*bold*` and `/italic/` render with org's meaning in the generated views,
-while markdown typed anywhere else keeps markdown's meaning.
+Org composed in emacs is tagged as such, so `*bold*` and `/italic/` render
+with org's meaning in the generated views, while markdown — typed anywhere
+else, the markdown buffer included — keeps markdown's meaning. A record has one
+tag for all its prose, and it follows the last writer: prose beside a field
+written in the other dialect is converted to match, so the tag stays true.
 
 [Composing in an editor](emacs.md) is the whole of this path — every key, why
 they sit where they do, the same buffer opened from the browser, and what the

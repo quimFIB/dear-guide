@@ -310,10 +310,14 @@ def test_the_lock_is_released_after_a_failure(srv, monkeypatch):
 
 
 def test_editor_route_describes_the_editor(srv, monkeypatch):
+    monkeypatch.delenv("DG_EDIT_CMD", raising=False)
     monkeypatch.setenv("DG_GUI_EDITOR", "emacs")
     monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(editor.shutil, "which", lambda n: f"/usr/bin/{n}")
     body = jreq(srv, "/api/editor")[1]
-    assert body == {"editor": "emacs", "emacs": True, "available": True,
+    assert body == {"editor": "emacs", "name": "emacs", "emacs": True,
+                    "terminal": None, "source": "DG_GUI_EDITOR",
+                    "available": True, "reason": None, "dialect": "org",
                     "buffer": str(store_edit())}
 
 
@@ -321,7 +325,29 @@ def test_editor_route_reports_no_display(srv, monkeypatch):
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.delenv("DG_EDIT_CMD", raising=False)
-    assert jreq(srv, "/api/editor")[1]["available"] is False
+    body = jreq(srv, "/api/editor")[1]
+    assert body["available"] is False and "DISPLAY" in body["reason"]
+
+
+def test_editor_route_says_why_a_vim_user_has_no_button(srv, monkeypatch):
+    """The page prints `reason` where the button would be, so the variable
+    that would fix it reaches the person — it is one only the server knows."""
+    for var in ("DG_EDIT_CMD", "DG_GUI_EDITOR", "DG_EDITOR", "VISUAL",
+                "DG_TERMINAL", "TERMINAL"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setenv("EDITOR", "vim")
+    monkeypatch.setattr(editor.shutil, "which",
+                        lambda n: "/usr/bin/vim" if n == "vim" else None)
+    body = jreq(srv, "/api/editor")[1]
+    assert body["available"] is False and "$DG_TERMINAL" in body["reason"]
+    assert "ED.reason" in (server.STATIC / "app.html").read_text(encoding="utf-8")
+    # And with one: the button, and the terminal it will open in.
+    monkeypatch.setenv("DG_TERMINAL", "xfce4-terminal --disable-server -x")
+    monkeypatch.setattr(editor.shutil, "which", lambda n: f"/usr/bin/{n}")
+    body = jreq(srv, "/api/editor")[1]
+    assert body["available"] and body["name"] == "vim"
+    assert body["terminal"] == "xfce4-terminal"
 
 
 def store_edit():
@@ -1815,3 +1841,28 @@ def test_edit_route_refuses_to_rest_on_an_act_staged_after_it(srv, store, monkey
     assert code == 400, d
     assert "D95 is added by act b1" in d["error"] and "staged after" in d["error"]
     assert [o["ref"] for o in pending.load(store / ".dgraph-pending.json")] == ["aaaa", "bbbb", "b1", "b2"]
+
+
+def test_a_markdown_editor_composes_in_the_markdown_buffer(srv, monkeypatch):
+    """The browser's door hands a non-emacs editor the markdown buffer and
+    stages what it typed untagged — the same rule `dg decide --edit` has."""
+    monkeypatch.setenv("DG_EDIT_FORMAT", "markdown")
+    seen = {}
+
+    def launch(path):
+        seen["path"] = path
+        text = path.read_text(encoding="utf-8")
+        assert "## Answer\n" in text and ":PROPERTIES:" not in text
+        path.write_text(text.replace("## Answer\n", "## Answer\ntyped in vim\n", 1)
+                        .replace("## Source\n", "## Source\ns\n", 1)
+                        .replace("## Falsifier\n", "## Falsifier\nf\n", 1),
+                        encoding="utf-8")
+        return 0
+    monkeypatch.setattr(editor, "launch_gui", launch)
+    body = jreq(srv, "/api/editor")[1]
+    assert body["dialect"] == "markdown" and body["buffer"].endswith(".dgraph-edit.md")
+    code, body = jreq(srv, "/api/compose", "POST", CLOSE)
+    assert code == 200, body
+    assert seen["path"].name == ".dgraph-edit.md"
+    assert body["staged"][0]["answer"] == "typed in vim"
+    assert "format" not in body["staged"][0]

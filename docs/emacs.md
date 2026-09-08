@@ -67,14 +67,23 @@ The elisp ships with the package and is loaded by `dg` itself, so there is
 nothing to install. It is strictly read-only — it can look up decisions, never
 change them; staging happens in the CLI after emacs exits.
 
-Any other editor works too: set `$DG_EDITOR` (or `$VISUAL`/`$EDITOR`) and you get
-the same buffer as plain text, with the baked-in context but no navigation.
+Any other editor works too: set `$DG_EDITOR` (or `$VISUAL`/`$EDITOR`) and you
+get the same buffer **as markdown** — `.dgraph-edit.md`, with `# Input` and
+`## Answer` for the headings, `<!-- -->` around the guidance, the metadata as
+front matter, and the same baked-in context — but no navigation. Org is what
+emacs makes pleasant, and outside emacs it is a file whose headings and
+checkboxes nothing understands; so the buffer's dialect follows the editor,
+and so does the prose's tag: what is typed in the markdown buffer is stored
+untagged, which is what markdown is in the store, while the org buffer's prose
+is tagged `org` so the views convert its emphasis. `$DG_EDIT_FORMAT=org` or
+`=markdown` overrides the rule, for an editor that speaks the other dialect.
 
 There is one buffer per project, so only one compose session can be open at a
 time — the same property `COMMIT_EDITMSG` has. A second session, from the CLI
 or the web app alike, is refused rather than allowed to overwrite a buffer you
-are typing in; a session that crashed leaves a `.dgraph-edit.org.lock` naming
-its pid, which the next compose reclaims on its own.
+are typing in; a session that crashed leaves a `.dgraph-edit.lock` naming
+its pid, which the next compose reclaims on its own. One lock for both
+dialects, since there is one buffer however it is written.
 
 ### Prose in answers
 
@@ -89,14 +98,20 @@ That last conversion is possible because the store records **provenance**:
 `*single asterisks*` mean bold in org and italic in markdown — the same syntax
 with two meanings — so anything composed through the editor is tagged
 `format: "org"` and converted with org's meaning, while prose from the web
-form, an import, or an agent stays markdown and keeps markdown's meaning,
-untouched. Which door you type into is the only thing that decides, and the
-stored bytes are never rewritten either way.
+form, an import, an agent, or the markdown buffer stays markdown and keeps
+markdown's meaning. Which door you type into is the only thing that decides.
 
-A task records one dialect for its whole record — its note, its outcome and its
-reason for being dropped are converted through the same field — so composing an
-outcome in the editor makes the record org, and the command says so when the
-prose already there was typed as a flag.
+One tag covers a whole record — a decision's note and its rule, a task's note,
+outcome, criterion and every reason it stopped — and the rule for it is **the
+tag follows the last writer, and the rest follows the tag**. Write an outcome
+as markdown on a task whose note was composed in org and the note is
+converted to markdown beside it, and the record is untagged; compose an org
+outcome on a task whose note came from the web form and the note becomes org.
+The conversion is the one the views already apply, in either direction
+(`orgmd.convert`), so nothing you see changes — what changes is that the tag
+is true of every field under it, where before it could be true of only one.
+The same rule shows a record in the buffer you open it in: an op composed in
+emacs and revised in vim arrives as markdown, and goes back as markdown.
 
 
 ## From the browser
@@ -115,10 +130,16 @@ the things it shows:
 
 Two things are worth knowing about this path:
 
-- `$EDITOR` is **ignored** here; `$DG_GUI_EDITOR` (default `emacs`) is used
-  instead. `$EDITOR` names a terminal editor by convention and the server has no
-  terminal to lend it, so honouring it would hang the request. With no display
-  the button is not offered at all.
+- The editor is the one `dg` is configured with — `$DG_EDITOR`, `$VISUAL`,
+  `$EDITOR`, then `emacs` — with two variables in front that exist only for
+  this door: `$DG_EDIT_CMD` (an exact command, `{file}` substituted) and
+  `$DG_GUI_EDITOR` (an editor promised to draw its own window). A terminal
+  editor such as `vim` is opened in a terminal window that blocks until it
+  exits; `$DG_TERMINAL` names which (e.g. `xfce4-terminal --disable-server
+  -x`), else `$TERMINAL`, else the first of the usual ones on `PATH`. `emacs
+  -nw` becomes plain `emacs`, which draws its own window. Where none of this
+  can work — no display, no terminal emulator, an editor not on `PATH` — the
+  button is withheld and the panel says why, naming the variable to set.
 - Mutating routes require a token that `dg serve` mints per run and embeds in the
   page. Any page in your browser can POST to a localhost server — it just cannot
   read the response — which was tolerable while the API only moved data around

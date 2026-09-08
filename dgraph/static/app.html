@@ -425,7 +425,8 @@ async function boot(){
   const join = await api("/api/joined").catch(()=>({by_decision:{}}));
   const pend = await api("/api/pending");
   const tpend = t ? await api("/api/task-pending").catch(()=>[]) : [];
-  ED = ED || await api("/api/editor").catch(()=>({available:false}));
+  ED = ED || await api("/api/editor").catch(()=>
+    ({available:false, reason:"the server did not answer /api/editor"}));
   /* Once per page, not once per boot: `boot()` runs again after every Apply,
      and the process answering cannot have changed its own commit between two
      of them. A server too old to answer leaves the stamp empty, which `:empty`
@@ -1770,7 +1771,7 @@ function restoreDraft(){
    than no button at all. */
 const editBtn = () => {
   if(!(ED && ED.available)) return "";
-  const name = ED.emacs ? "emacs" : "editor";
+  const name = ED.name || (ED.emacs ? "emacs" : "editor");
   /* While an editor holds the project's one buffer, the button says so rather
      than letting the click come back as a bare 409. */
   if(EDITING) return EDITING.vertex===sel
@@ -1779,12 +1780,21 @@ const editBtn = () => {
          title="an editor is open for ${esc(EDITING.vertex)}">Compose in ${name}</button>`;
   return `<button class="ghost" id="doEdit">Compose in ${name}</button>`;
 };
-const editKeys = () => !(ED && ED.available) ? ""
+/* The reason there is no button is said where the button would be. A vim
+   user whose server found no terminal emulator, or a machine with no emacs,
+   otherwise sees a panel with nothing to click and nothing to read — and the
+   variable that would fix it is one only the server knows. */
+const editKeys = () => !ED ? ""
+  : !ED.available
+    ? (ED.reason ? `<div class="keys">No editor button: ${esc(ED.reason)}</div>` : "")
   : ED.emacs
     ? `<div class="keys">emacs opens with this decision's context ·
        <kbd>C-c C-c</kbd> stage · <kbd>C-c C-k</kbd> cancel ·
        <kbd>C-c C-o</kbd> follow a <code>dg:</code> link</div>`
-    : `<div class="keys">${esc(ED.editor)} opens on the buffer; save and exit to stage.</div>`;
+    : `<div class="keys">${esc(ED.name||ED.editor)} opens on the buffer${
+         ED.terminal ? ` in a terminal window (${esc(ED.terminal)})` : ""}${
+         ED.dialect==="markdown" ? ", as markdown" : ""}; save and exit
+       to stage, or empty the Input section to cancel.</div>`;
 /* ---- is the store sound? --------------------------------------------------
 
    The browser had no way to ask. An invalid store — the merge, rebase, partial
@@ -3152,14 +3162,14 @@ async function composeIn(kind){
   const seed = kind==="close"
     ? {answer:$("#answer").value, source:$("#source").value,
        falsifier:$("#fals").value,
-       to:[...$("#opens").selectedOptions].map(o=>o.value)}
+       to:pickerValues("opens")}
     : {why:$("#why").value, summary:$("#sumry").value};
   captureDraft();                 /* keep it: the editor may come back empty */
   EDITING={vertex:vid, kind};
   panel(); tray();                /* repaint: "waiting", and Apply held back */
   say(ED.emacs
       ? "emacs is open. Compose there, then C-c C-c to stage or C-c C-k to cancel."
-      : "The editor is open. Save and exit to stage, or leave it empty to cancel.",
+      : `${ED.name||"The editor"} is open. Save and exit to stage, or leave it empty to cancel.`,
       "wait", vid);
   try{
     const r=await api("/api/compose",{method:"POST",
@@ -3322,7 +3332,7 @@ function opRow(o, i, kind, act){
     : "";
   const ctl = head
     ? `<td style="white-space:nowrap"${grouped?` class="act-ctl" rowspan="${act.length}"`:""}>${eye}${take}${
-        editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" title="Revise this op in ${esc(ED.editor||"the editor")}">✎</button>`:""
+        editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" title="Revise this op in ${esc(ED.name||ED.editor||"the editor")}">✎</button>`:""
       }${drop}</td>`
     : "";
   const cls = grouped ? ` class="act${head?" act-head":""}${pos===act.length?" act-last":""}"` : "";
@@ -3687,7 +3697,7 @@ function confirmClear(task){
 async function reviseOp(ref){
   EDITING={vertex:ref, kind:"edit"};
   tray();
-  said(`${esc(ED.editor||"The editor")} is open on that op. Save and exit to
+  said(`${esc(ED.name||ED.editor||"The editor")} is open on that op. Save and exit to
     replace it, or leave it empty to cancel.`, "wait");
   try{
     const r=await api("/api/edit",{method:"POST",

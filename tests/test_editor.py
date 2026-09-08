@@ -267,25 +267,25 @@ def test_a_second_compose_is_refused_while_one_is_open(g, store):
 
     ops = editor.compose(g, "close", vertex="D05", launcher=nested)
     assert ops[0]["vertex"] == "D05"                 # the outer session finished
-    assert not (store / ".dgraph-edit.org.lock").exists()   # and released
+    assert not (store / ".dgraph-edit.lock").exists()   # and released
 
 
 def test_a_crashed_sessions_lock_is_reclaimed(g, store, fake_emacs):
     """A lock whose pid is gone is debris, not a session."""
     dead = subprocess.Popen(["true"])
     dead.wait()
-    (store / ".dgraph-edit.org.lock").write_text(str(dead.pid), encoding="utf-8")
+    (store / ".dgraph-edit.lock").write_text(str(dead.pid), encoding="utf-8")
     fake_emacs(complete)
     assert editor.compose(g, "close", vertex="D05")[0]["op"] == "close"
-    assert not (store / ".dgraph-edit.org.lock").exists()
+    assert not (store / ".dgraph-edit.lock").exists()
 
 
 def test_a_live_sessions_lock_refuses_and_names_the_pid(g, store, fake_emacs):
-    (store / ".dgraph-edit.org.lock").write_text(str(os.getpid()), encoding="utf-8")
+    (store / ".dgraph-edit.lock").write_text(str(os.getpid()), encoding="utf-8")
     fake_emacs(complete)
     with pytest.raises(EditorError, match=str(os.getpid())):
         editor.compose(g, "close", vertex="D05")
-    (store / ".dgraph-edit.org.lock").unlink()
+    (store / ".dgraph-edit.lock").unlink()
 
 
 def test_a_session_never_deletes_a_lock_that_is_no_longer_its_own(g, store):
@@ -304,7 +304,7 @@ def test_a_session_never_deletes_a_lock_that_is_no_longer_its_own(g, store):
     told anything. `project._release` checks the pid before unlinking for this
     reason; this release is now held to the same rule.
     """
-    lock = store / ".dgraph-edit.org.lock"
+    lock = store / ".dgraph-edit.lock"
     # A real live pid that is not this process: `_alive` asks the OS, so a
     # made-up number would be answered by whatever happens to hold it.
     other = subprocess.Popen([sys.executable, "-c",
@@ -339,17 +339,17 @@ def test_a_session_still_clears_its_own_lock_when_it_is_the_holder(g, store,
     unlinking: an ordinary session leaves nothing behind."""
     fake_emacs(complete)
     assert editor.compose(g, "close", vertex="D05")[0]["op"] == "close"
-    assert not (store / ".dgraph-edit.org.lock").exists()
+    assert not (store / ".dgraph-edit.lock").exists()
 
 
 def test_an_unreadable_lock_is_never_stolen(g, store, fake_emacs):
     """Stealing on a parse failure could race a live session; the safe answer
     is to make a human look."""
-    (store / ".dgraph-edit.org.lock").write_text("not a pid", encoding="utf-8")
+    (store / ".dgraph-edit.lock").write_text("not a pid", encoding="utf-8")
     fake_emacs(complete)
     with pytest.raises(EditorError, match="unreadable"):
         editor.compose(g, "close", vertex="D05")
-    (store / ".dgraph-edit.org.lock").unlink()
+    (store / ".dgraph-edit.lock").unlink()
 
 
 def test_untouched_template_aborts(g, store, fake_emacs):
@@ -502,30 +502,120 @@ def test_resolution_order(monkeypatch):
     assert editor.resolve_editor() == "emacs -nw"
 
 
-def test_the_gui_editor_ignores_EDITOR_and_VISUAL(monkeypatch):
-    """`$EDITOR` names a terminal editor by convention, and the web path has no
-    terminal to give it — honouring it there would hang the browser's request."""
-    for var in ("DG_GUI_EDITOR", "VISUAL", "EDITOR"):
+def _browser_env(monkeypatch, installed=(), display=True, **env):
+    """A machine as the browser's door sees it: which programs are on PATH,
+    whether there is a display, and what the person has set."""
+    for var in ("DG_EDIT_CMD", "DG_GUI_EDITOR", "DG_EDITOR", "VISUAL", "EDITOR",
+                "DG_TERMINAL", "TERMINAL", "DISPLAY", "WAYLAND_DISPLAY"):
         monkeypatch.delenv(var, raising=False)
-    assert editor.resolve_gui_editor() == "emacs"
+    if display:
+        monkeypatch.setenv("DISPLAY", ":0")
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(editor.shutil, "which",
+                        lambda n: f"/usr/bin/{n}" if n in installed else None)
+
+
+def test_the_browser_door_runs_the_editor_the_tool_is_configured_with(monkeypatch):
+    """`$EDITOR` used to be ignored here because the server has no terminal to
+    lend a terminal editor. It has one now — a terminal *window* — so the
+    door resolves the same way the CLI does, after the two variables that
+    exist only for it."""
+    _browser_env(monkeypatch, installed={"emacs", "vim", "xfce4-terminal"})
+    plan = editor.gui_editor()
+    assert (plan["editor"], plan["source"], plan["available"]) == ("emacs", "default", True)
     monkeypatch.setenv("EDITOR", "vim")
-    monkeypatch.setenv("VISUAL", "nano")
-    assert editor.resolve_gui_editor() == "emacs"
+    plan = editor.gui_editor()
+    assert plan["available"] and plan["source"] == "EDITOR"
+    assert (plan["name"], plan["terminal"], plan["emacs"]) == ("vim", "xfce4-terminal", False)
+    monkeypatch.setenv("VISUAL", "gvim")
+    monkeypatch.setattr(editor.shutil, "which", lambda n: f"/usr/bin/{n}")
+    plan = editor.gui_editor()
+    assert (plan["name"], plan["terminal"], plan["source"]) == ("gvim", None, "VISUAL")
+    monkeypatch.setenv("DG_EDITOR", "nano")
+    assert editor.gui_editor()["source"] == "DG_EDITOR"
     monkeypatch.setenv("DG_GUI_EDITOR", "gvim -f")
-    assert editor.resolve_gui_editor() == "gvim -f"
+    plan = editor.gui_editor()
+    assert (plan["editor"], plan["source"], plan["terminal"]) == ("gvim -f", "DG_GUI_EDITOR", None)
+    monkeypatch.setenv("DG_EDIT_CMD", "myed {file}")
+    assert editor.gui_editor()["source"] == "DG_EDIT_CMD"
 
 
-def test_the_gui_launcher_refuses_without_a_display(tmp_path, monkeypatch):
-    """Refused up front, because the alternative is a request that hangs with no
-    window to type in and no way to explain itself."""
-    monkeypatch.delenv("DG_EDIT_CMD", raising=False)
-    monkeypatch.delenv("DISPLAY", raising=False)
-    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-    assert editor.gui_available() is False
+def test_emacs_in_the_terminal_draws_its_own_window_from_the_browser(monkeypatch, tmp_path):
+    """`emacs -nw` says "no window, I was started from a terminal". Given a
+    display, the same emacs draws one — so the flag goes, and the elisp still
+    travels. Wrapping it in a terminal would work and be silly."""
+    _browser_env(monkeypatch, installed={"emacs", "xfce4-terminal"}, EDITOR="emacs -nw")
+    plan = editor.gui_editor()
+    assert (plan["editor"], plan["emacs"], plan["terminal"]) == ("emacs", True, None)
+    argv = editor.gui_command(tmp_path / "b.org")
+    assert argv[:1] == ["emacs"] and "-nw" not in argv and "-l" in argv
+    # emacsclient is another program: `-t` dropped would reuse a frame that
+    # may not exist, so it is a terminal editor and gets a terminal.
+    monkeypatch.setenv("EDITOR", "emacsclient -t")
+    monkeypatch.setattr(editor.shutil, "which", lambda n: f"/usr/bin/{n}")
+    assert editor.gui_editor()["terminal"] == "xfce4-terminal"
+
+
+def test_a_terminal_editor_is_opened_in_a_terminal_that_blocks(monkeypatch, tmp_path):
+    _browser_env(monkeypatch, installed={"vim", "xfce4-terminal", "kitty"}, EDITOR="vim")
+    f = tmp_path / "b.org"
+    assert editor.gui_command(f) == ["xfce4-terminal", "--disable-server", "-x", "vim", str(f)]
+    # `$TERMINAL` is the desktop's convention: a known name gets its own
+    # blocking flags, an unknown one the `-e` most of them take.
+    monkeypatch.setenv("TERMINAL", "kitty")
+    assert editor.gui_command(f) == ["kitty", "vim", str(f)]
+    monkeypatch.setenv("TERMINAL", "myterm")
+    monkeypatch.setattr(editor.shutil, "which", lambda n: f"/usr/bin/{n}")
+    assert editor.gui_command(f) == ["myterm", "-e", "vim", str(f)]
+    # `$DG_TERMINAL` is taken whole, flags included.
+    monkeypatch.setenv("DG_TERMINAL", "gnome-terminal --wait --")
+    assert editor.gui_command(f) == ["gnome-terminal", "--wait", "--", "vim", str(f)]
+
+
+def test_the_browser_door_says_why_there_is_no_button(monkeypatch, tmp_path):
+    """Every refusal is decided before a button is drawn, and names the
+    variable of *this* door. The CLI's remedies — `$DG_EDITOR`, the flags —
+    are wrong from a browser, and were what the old error offered."""
+    _browser_env(monkeypatch, installed={"vim"}, EDITOR="vim")
+    plan = editor.gui_editor()
+    assert plan["available"] is False
+    assert "terminal editor" in plan["reason"] and "$DG_TERMINAL" in plan["reason"]
+    with pytest.raises(EditorError, match=r"\$DG_TERMINAL"):
+        editor.launch_gui(tmp_path / "b.org")
+
+    _browser_env(monkeypatch, installed={"vim"})              # nothing set, no emacs
+    plan = editor.gui_editor()
+    assert not plan["available"] and "emacs is not installed" in plan["reason"]
+    assert "$EDITOR" in plan["reason"] and "$DG_GUI_EDITOR" in plan["reason"]
+
+    _browser_env(monkeypatch, installed=set(), EDITOR="vim")  # named, not there
+    plan = editor.gui_editor()
+    assert not plan["available"] and "'vim' is not on the server's PATH" in plan["reason"]
+    assert "$EDITOR" in plan["reason"]
+
+    _browser_env(monkeypatch, installed=set(), DG_GUI_EDITOR="gvim")
+    assert "$DG_GUI_EDITOR" in editor.gui_editor()["reason"]
+
+    _browser_env(monkeypatch, installed={"emacs"}, display=False)
+    plan = editor.gui_editor()
+    assert not plan["available"] and "DISPLAY" in plan["reason"]
+    assert not editor.gui_available()
     with pytest.raises(EditorError, match="windowed editor"):
         editor.launch_gui(tmp_path / "b.org")
-    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
-    assert editor.gui_available() is True
+    # `$DG_EDIT_CMD` needs no display: it may be a headless script, as in the
+    # tests below.
+    monkeypatch.setenv("DG_EDIT_CMD", "emacs {file}")
+    assert editor.gui_available()
+
+
+def test_the_browser_door_refuses_before_it_launches(monkeypatch, tmp_path):
+    """No subprocess is started for an editor that is not there."""
+    _browser_env(monkeypatch, installed=set())
+    monkeypatch.setattr(editor.subprocess, "call",
+                        lambda *a, **k: pytest.fail("launched anyway"))
+    with pytest.raises(EditorError, match="emacs is not installed"):
+        editor.launch_gui(tmp_path / "b.org")
 
 
 def test_launch_takes_an_explicit_editor(tmp_path, monkeypatch):
@@ -564,17 +654,23 @@ def test_a_missing_editor_is_reported_not_crashed(g, store, monkeypatch):
 
 
 def test_the_real_launcher_runs_a_subprocess(g, store, monkeypatch):
-    """Covers `launch` itself — no emacs needed, but a real child process."""
+    """Covers `launch` itself — no emacs needed, but a real child process.
+
+    And the dialect rule with it: the command is not emacs, so the buffer it
+    is handed is the markdown one, and what it types is untagged."""
+    monkeypatch.delenv("DG_EDIT_FORMAT", raising=False)
     monkeypatch.setenv(
         "DG_EDIT_CMD",
         'python -c "import sys,pathlib;p=pathlib.Path(sys.argv[1]);'
-        "p.write_text(p.read_text().replace('** Source\\n', "
-        "'** Source\\ndiscussion\\n',1).replace('** Answer\\n', "
-        "'** Answer\\nFrom a real subprocess.\\n',1).replace('** Falsifier\\n', "
-        "'** Falsifier\\nf\\n',1))\" {file}",
+        "p.write_text(p.read_text().replace('## Source\\n', "
+        "'## Source\\ndiscussion\\n',1).replace('## Answer\\n', "
+        "'## Answer\\nFrom a real subprocess.\\n',1).replace('## Falsifier\\n', "
+        "'## Falsifier\\nf\\n',1))\" {file}",
     )
     ops = editor.compose(g, "close", vertex="D05")
     assert ops[0]["answer"] == "From a real subprocess."
+    assert "format" not in ops[0]
+    assert (store / ".dgraph-edit.md").exists()
 
 
 def test_the_buffer_lands_in_the_project(g, store, fake_emacs):

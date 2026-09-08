@@ -663,13 +663,10 @@ def editor_payload() -> dict:
     Offering a button that cannot work is worse than not offering it: the
     failure would arrive as a hung request.
     """
-    ed = editor.resolve_gui_editor()
-    return {
-        "editor": ed,
-        "emacs": editor.is_emacs(ed),
-        "available": editor.gui_available(),
-        "buffer": str(project.find().edit),
-    }
+    plan = editor.gui_editor()
+    dialect = editor.gui_dialect()
+    return {**plan, "dialect": dialect,
+            "buffer": str(project.find().buffer(dialect))}
 
 
 def stage(g: Graph, op: dict) -> list[dict]:
@@ -1471,7 +1468,7 @@ class Handler(BaseHTTPRequestHandler):
 
             new = editor.compose(eff, kind, vertex=op.get("vertex"),
                                  index=i, op=op, launcher=editor.launch_gui,
-                                 explain=explain)
+                                 explain=explain, dialect=editor.gui_dialect())
             pending.vet_all(eff, new)
             before = pending.load() + pending.load(task_pending.path())
             pending.replace_group(op.get("ref") or i, new, against=eff,
@@ -1748,6 +1745,7 @@ class Handler(BaseHTTPRequestHandler):
                 vertex=body.get("vertex"),
                 seed=body.get("seed") or None,
                 launcher=editor.launch_gui,
+                dialect=editor.gui_dialect(),
             )
             # Re-read the store: the editor session can last minutes, and
             # another tab or a terminal may have applied meanwhile. The ops
@@ -1988,11 +1986,11 @@ def run(port: int = 8765) -> None:
     ed = editor_payload()
     print(f"decision graph → http://127.0.0.1:{port}   (ctrl-c to stop)")
     if ed["available"]:
-        print(f"compose in {ed['editor']}: click a decision, then “Compose in "
-              f"{'emacs' if ed['emacs'] else 'editor'}”")
+        where = f" in a {ed['terminal']} window" if ed["terminal"] else ""
+        print(f"compose in {ed['editor']}{where} (from ${ed['source']}): "
+              f"click a decision, then “Compose in {ed['name']}”")
     else:
-        print("no DISPLAY — the in-browser editor button is disabled; use "
-              "`dg decide <id> --edit` from a terminal")
+        print(f"the in-browser editor button is disabled: {ed['reason']}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

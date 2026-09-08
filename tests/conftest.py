@@ -23,6 +23,19 @@ def _no_pinned_project(monkeypatch):
     """
     monkeypatch.setattr(project, "_override", None)
 
+
+@pytest.fixture(autouse=True)
+def _org_buffer(monkeypatch):
+    """Every test composes in org unless it says otherwise.
+
+    The buffer's dialect follows the editor (`editor.cli_dialect`), and the
+    editor follows `$EDITOR` — so a suite run on a machine whose `$EDITOR` is
+    vim would compose every fixture in markdown and fail each `** Field`
+    assertion. Pinned here; a test of the markdown buffer sets
+    `DG_EDIT_FORMAT=markdown`, and a test of the *rule* deletes the variable.
+    """
+    monkeypatch.setenv("DG_EDIT_FORMAT", "org")
+
 FIXTURE = {
     "areas": ["Alpha", "Beta"],
     "vertices": [

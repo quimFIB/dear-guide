@@ -27,6 +27,11 @@ STORE_NAME = "decisions.json"
 VIEW_NAME = "decision-graph.md"
 PENDING_NAME = ".dgraph-pending.json"
 EDIT_NAME = ".dgraph-edit.org"
+#: The same buffer for an editor that is not emacs — see `dgraph/mdbuffer.py`.
+EDIT_MD_NAME = ".dgraph-edit.md"
+#: One lock for both: the project has one compose buffer, whichever dialect
+#: it is written in, and two locks would let two editors hold it at once.
+EDIT_LOCK_NAME = ".dgraph-edit.lock"
 
 TASKS_NAME = "tasks.json"
 TASK_VIEW_NAME = "tasks.md"
@@ -94,6 +99,15 @@ class Project:
         """The editor buffer. A stable name, not a tempfile, so emacs can key
         `auto-mode-alist` off it the way it does for COMMIT_EDITMSG."""
         return self.root / EDIT_NAME
+
+    def buffer(self, dialect: str = "org") -> Path:
+        """The compose buffer in one dialect: `.org` for emacs, `.md` for
+        everything else, so the editor's own mode keys off the name."""
+        return self.root / (EDIT_MD_NAME if dialect == "markdown" else EDIT_NAME)
+
+    @property
+    def edit_lock(self) -> Path:
+        return self.root / EDIT_LOCK_NAME
 
     @property
     def tasks(self) -> Path:

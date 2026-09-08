@@ -19,6 +19,7 @@ from datetime import date as _date
 from pathlib import Path
 
 from dgraph import areas as _areas
+from dgraph import orgmd
 from dgraph import env, limits, project, ranges
 from dgraph import tags as _tags
 from dgraph.model import (CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED, Bind,
@@ -50,6 +51,20 @@ FIELDS = ("title", "area", "note", "format", "tags")
 #: count and not a dated claim about what happened — so they join
 #: `set_fields` for the store that has them and are refused for the other.
 PROSE_OF = {"decision": ("rule",), "task": ("done_when",)}
+
+#: The prose one `Vertex.format` covers. Read by `_apply_one` where an op
+#: writes some of it, to convert the rest into the op's dialect.
+VERTEX_PROSE = ("note", "rule")
+
+
+def _retag(rec, prose: tuple[str, ...], old: str | None, new: str | None,
+           *, keep: list[str]):
+    """`rec` with its `format` set to `new` and every prose field not in
+    `keep` converted from `old` to `new`. The record-level half of the rule
+    the store keeps about dialects: one tag, true of every field it covers."""
+    changes = {f: orgmd.convert(getattr(rec, f), old, new)
+               for f in prose if f not in keep and getattr(rec, f)}
+    return _dc_replace(rec, format=new, **changes)
 
 #: Every field `set_fields` may write in *either* store, for sites that see
 #: an op without knowing which store it is for — a tray listing, a report.
@@ -2269,8 +2284,10 @@ def _apply_one(g: Graph, op: dict) -> None:
         g.vertices[op["id"]] = Vertex(
             id=op["id"], title=op["title"], area=op["area"],
             status=op.get("status", "OPEN"), note=op.get("note"),
-            # the tag describes the note; without one it describes nothing
-            format=op.get("format") if op.get("note") else None,
+            # the tag describes the note and the rule; with neither it
+            # describes nothing
+            format=(op.get("format")
+                    if op.get("note") or op.get("rule") else None),
             rule=op.get("rule"),
             tags=list(op.get(_tags.FIELD) or []),
             # The first entry of the appended list, dated by the op or today
@@ -2359,10 +2376,22 @@ def _apply_one(g: Graph, op: dict) -> None:
         _register(g, op.get("area"))
         out = _dc_replace(v, **{k: op[k] for k in fields_of("decision")
                                 if k in op})
-        if not out.note:
-            # The tag describes the note; without one it describes nothing.
-            # `add_vertex` applies the same rule above, and this op is the only
-            # other way a note reaches a vertex.
+        wrote = [k for k in VERTEX_PROSE if op.get(k)]  # written, not emptied
+        if wrote:
+            # **The tag follows the last writer, and the rest follows the
+            # tag.** `Vertex.format` covers the note *and* the rule, so a
+            # note written as markdown over a rule written as org leaves the
+            # one tag false for one of them whichever way it is set. The
+            # field this op did not write is converted into the dialect of
+            # the one it did — `orgmd.convert`, the identity when they
+            # already agree — and the tag says what both now are. An op
+            # composed in emacs claims `org`; one from the web form, the
+            # flags or a markdown buffer claims nothing, which is markdown.
+            new = op.get("format")
+            out = _retag(out, VERTEX_PROSE, v.format, new, keep=wrote)
+        if not out.note and not out.rule:
+            # The tag describes prose; without any it describes nothing.
+            # `add_vertex` applies the same rule above.
             out = _dc_replace(out, format=None)
         g.vertices[vid] = out
         return
@@ -2431,8 +2460,13 @@ def _apply_one(g: Graph, op: dict) -> None:
         for old in g.history(vid):
             if old.replaced_by is None:
                 old.replaced_by = label
-        g.vertices[vid] = _dc_replace(g.vertices[vid], status="DECIDED",
-                                      note=None, format=None)
+        # The note goes with the answer; the rule stays, and stays readable:
+        # it was tagged by the vertex's format, which is about to be dropped
+        # with the note, so it is converted to what untagged means.
+        v = g.vertices[vid]
+        g.vertices[vid] = _dc_replace(
+            v, status="DECIDED", note=None, format=None,
+            rule=orgmd.convert(v.rule, v.format, None))
         return
 
     if kind == "reject":
@@ -2508,7 +2542,13 @@ def _apply_one(g: Graph, op: dict) -> None:
         # the two dialects differ (a single `*…*` span: bold in org,
         # italic in markdown). The web panel renders the archived answer in
         # this dialect and can be that much wrong about its emphasis.
+        # …and the answer it archives is converted into that dialect, so
+        # the one tag is true of the prose beside it. `convert` is the
+        # identity where the two agree, which is every reopen composed the
+        # way the answer was.
         archived["format"] = op.get("format")
+        for k in ("answer", "falsifier"):
+            archived[k] = orgmd.convert(archived[k], e.format, op.get("format"))
         g.edges.append(Edge(
             src=vid, to=list(e.to), active=False, **archived,
             summary=op.get("summary") or _clip(e.answer or ""),
@@ -2516,9 +2556,12 @@ def _apply_one(g: Graph, op: dict) -> None:
         ))
         for k in PAYLOAD:
             setattr(e, k, None)
+        v = g.vertices[vid]
         g.vertices[vid] = _dc_replace(
-            g.vertices[vid], status="REOPENED",
+            v, status="REOPENED",
             note=op.get("note") or op["why"], format=op.get("format"),
+            # The rule follows the tag the note just set — `set_fields` above.
+            rule=orgmd.convert(v.rule, v.format, op.get("format")),
         )
         return
 

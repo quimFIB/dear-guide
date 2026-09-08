@@ -16,8 +16,10 @@ Two rules shape the parser:
   a buffer with prose but a missing required field raises. Quietly staging a
   decision missing its source is the failure this tool exists to prevent.
 
-Prose comes back as typed - full org is fine, and is stored verbatim. The views
-convert for display; see `dgraph/orgmd.py`.
+Prose comes back as typed - full org is fine in the org buffer, markdown in
+the markdown one (`dgraph/mdbuffer.py`) - and is tagged with its dialect. The
+views convert for display; see `dgraph/orgmd.py`, which also says what
+happens when the two dialects meet on one record.
 """
 
 from __future__ import annotations
@@ -26,12 +28,13 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import textwrap
 from datetime import date as _date
 from pathlib import Path
 
-from dgraph import areas, pending, project, ranges
+from dgraph import areas, mdbuffer, orgmd, pending, project, ranges
 from dgraph import tags as _tags
 from dgraph.model import Graph, probe_fault, status_fault
 
@@ -178,12 +181,16 @@ def _context(g: Graph, vid: str) -> str:
     deps = g.depends(vid)
     kids = g.children(vid)
     out.append(f"   depends on {', '.join(deps) or '—'} · opens {', '.join(kids) or '—'}")
+    # Every piece of prose below is shown as org, whatever dialect it was
+    # typed in: the buffer is an org file, and `mdbuffer` converts the whole
+    # of it to markdown for the other editors — which is only right if what
+    # it is given is uniformly org. `orgmd.convert` is the identity for org.
     if v.note:
-        out.append(_quote(v.note))
+        out.append(_quote(orgmd.convert(v.note, v.format, "org")))
     if v.rule:
         # Read back where the answer is composed (`D75`).
         out.append("   rule for settling:")
-        out.append(_quote(v.rule, "      "))
+        out.append(_quote(orgmd.convert(v.rule, v.format, "org"), "      "))
 
     chain = _ctx.chain(g, vid)
     by_id = {p.id: p for p in chain}
@@ -193,11 +200,12 @@ def _context(g: Graph, vid: str) -> str:
         out.append(f"** {p.status.split(':')[0]} {_node_line(g, parent)}")
         if p.answer is not None:
             out.append("   :PROPERTIES:")
-            out.append(f"   :FALSIFIER: {p.falsifier or '—'}")
+            out.append(f"   :FALSIFIER: "
+                       f"{orgmd.convert(p.falsifier, p.format, 'org') or '—'}")
             out.append(f"   :SOURCE:    {p.source or '—'}")
             out.append(f"   :DATE:      {p.date or '—'}")
             out.append("   :END:")
-            out.append(_quote(p.answer))
+            out.append(_quote(orgmd.convert(p.answer, p.format, "org")))
         if p.also_opened:
             out.append(f"   also opened: {', '.join(p.also_opened)}")
 
@@ -213,9 +221,10 @@ def _context(g: Graph, vid: str) -> str:
     if hist:
         out.append("** Superseded here")
         for h in hist:
-            out.append(f"   - “{h.summary}” → {h.replaced_by or '(undecided)'}")
+            out.append(f"   - “{orgmd.convert(h.summary, h.format, 'org')}” → "
+                       f"{h.replaced_by or '(undecided)'}")
             if h.why:
-                out.append(_quote(h.why, "     "))
+                out.append(_quote(orgmd.convert(h.why, h.format, "org"), "     "))
     return "\n".join(out) + "\n"
 
 
@@ -377,6 +386,33 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
 
 RENDERERS = {"close": render_close, "reopen": render_reopen, "add_vertex": render_add}
 
+#: The prose each buffer seeds and reads back — the fields a record's
+#: `format` covers, by op. `source` is not prose: the views never convert it.
+SEED_PROSE = {"close": ("answer", "falsifier", "summary"),
+              "reopen": ("why", "summary"),
+              "add_vertex": ("note", "rule")}
+
+
+def seed_in(seed: dict | None, kind: str, dialect: str) -> dict | None:
+    """`seed` as the buffer's dialect, so what the person sees is what the
+    buffer claims. A seed's `format` says what it was typed as — `"org"`
+    from an op composed in emacs, nothing from the web form, the flags or
+    an op composed in markdown. Converted here, once, for both doors: a
+    buffer that showed org prose and tagged what came back as markdown
+    would have relabelled every `*span*` in it."""
+    if not seed:
+        return seed
+    tag = DIALECTS[dialect].tag
+    frm = seed.get("format")
+    if (frm == "org") == (tag == "org"):
+        return seed
+    out = dict(seed)
+    for f in SEED_PROSE.get(kind, ()):
+        if out.get(f):
+            out[f] = orgmd.convert(out[f], frm, tag)
+    out["format"] = tag
+    return out
+
 
 def supersedes(kind: str, op: dict):
     """What a revision of `op` takes out of the tray, or None for "nothing".
@@ -496,6 +532,63 @@ def _meta(text: str) -> dict[str, str]:
             for m in _PROP.finditer(head) if m.group(1).startswith("DGRAPH_")}
 
 
+class Dialect:
+    """One reading of the buffer: how its metadata, its fields and their
+    bodies are found, and what the prose it yields is tagged as.
+
+    The org reading is this module's three primitives; the markdown reading
+    is `dgraph/mdbuffer.py`'s. `tag` is the `format` an op claims — org for
+    the org buffer, nothing for markdown, which is what untagged prose means
+    in the store (`dgraph/orgmd.py`). `mark1`/`mark2` are how a refusal
+    spells the headings the person typed.
+    """
+
+    def __init__(self, name, mark1, mark2, meta, sections, body, tag, no_op):
+        self.name, self.mark1, self.mark2 = name, mark1, mark2
+        self.meta, self.sections, self.body, self.tag = meta, sections, body, tag
+        self.no_op = no_op          # the refusal for a buffer naming no op
+
+
+ORG = Dialect("org", "* Input", "**", _meta, _sections, _body, "org",
+              "no :DGRAPH_OP: in the buffer's properties drawer")
+MARKDOWN = Dialect("markdown", "# Input", "##",
+                   mdbuffer.meta, mdbuffer.sections, mdbuffer.body, None,
+                   "no `op:` in the buffer's front matter")
+DIALECTS = {"org": ORG, "markdown": MARKDOWN}
+
+
+def _forced_dialect() -> str | None:
+    """`$DG_EDIT_FORMAT`, for a person whose non-emacs editor speaks org, or
+    who wants markdown in emacs — and for tests, which pin it."""
+    val = os.environ.get("DG_EDIT_FORMAT", "").strip().lower()
+    if not val:
+        return None
+    if val not in DIALECTS:
+        raise EditorError(f"$DG_EDIT_FORMAT is {val!r} — org or markdown")
+    return val
+
+
+def cli_dialect() -> str:
+    """The dialect `dg … --edit` composes in: org for emacs, markdown for any
+    other editor. The buffer's format follows the editor because the editor
+    is what makes a format pleasant: org outside emacs is a file whose
+    headings and checkboxes nothing understands, and whose `*emphasis*`
+    the store then converts as org's."""
+    forced = _forced_dialect()
+    if forced:
+        return forced
+    cmd = os.environ.get("DG_EDIT_CMD", "").strip()
+    return "org" if is_emacs(cmd or resolve_editor()) else "markdown"
+
+
+def gui_dialect() -> str:
+    """The same rule for the browser's door, over the editor it resolves."""
+    forced = _forced_dialect()
+    if forced:
+        return forced
+    return "org" if gui_editor()["emacs"] else "markdown"
+
+
 ALLOWED = {
     "close": {"answer", "source", "falsifier", "opens", "summary", "probe"},
     "reopen": {"why", "summary"},
@@ -513,8 +606,13 @@ def parse(
     expect_index: int | None = None,
     new_area: bool = False,
     explain=None,
+    dialect: str = "org",
 ) -> list[dict]:
     """Buffer -> op dicts ready for `pending.stage`. Raises rather than guessing.
+
+    `dialect` names the reading (`DIALECTS`): the org buffer or the markdown
+    one. The two differ only in how the buffer is *read* — every check below
+    is the same — and in the `format` the prose is tagged with.
 
     `explain(id)`, if given, answers why a record `g` lacks is unknown here —
     `dg edit` passes the tray's own account (*added by an act staged after
@@ -524,10 +622,11 @@ def parse(
     if not text.strip():
         raise EditorAbort("empty buffer — nothing staged")
 
-    meta = _meta(text)
+    d = DIALECTS[dialect]
+    meta = d.meta(text)
     kind = meta.get("op")
     if not kind:
-        raise EditorError("no :DGRAPH_OP: in the buffer's properties drawer")
+        raise EditorError(d.no_op)
     if expect_kind and kind != expect_kind:
         raise EditorError(f"buffer is a {kind!r} template, expected {expect_kind!r}")
     if expect_vertex and meta.get("vertex") != expect_vertex:
@@ -539,23 +638,23 @@ def parse(
         raise EditorError(f"buffer is for staged op {meta.get('index')}, "
                           f"not {expect_index}")
 
-    sections = _sections(text)
+    sections = d.sections(text)
     unknown = sorted(k for k in sections if k not in ALLOWED.get(kind, set()))
     if unknown:
         # quoted back as the user spelled them, so a typo is recognisable
-        names = ", ".join(f"** {sections[u][0]}" for u in unknown)
+        names = ", ".join(f"{d.mark2} {sections[u][0]}" for u in unknown)
         raise EditorError(f"unknown field(s) under Input: {names}")
     raw = {k: v[1] for k, v in sections.items()}
-    f = {k: _body(v) for k, v in raw.items()}
+    f = {k: d.body(v) for k, v in raw.items()}
     if not any(v for k, v in f.items() if k != "opens"):
         raise EditorAbort("template came back untouched — nothing staged")
 
     if kind == "close":
-        return _parse_close(g, meta, f, raw, explain=explain)
+        return _parse_close(g, meta, f, raw, explain=explain, tag=d.tag)
     if kind == "reopen":
-        return _parse_reopen(meta, f)
+        return _parse_reopen(meta, f, tag=d.tag)
     if kind == "add_vertex":
-        return _parse_add(g, f, new_area=new_area, explain=explain)
+        return _parse_add(g, f, new_area=new_area, explain=explain, tag=d.tag)
     raise EditorError(f"cannot compose a {kind!r} op")
 
 
@@ -574,7 +673,7 @@ def _unknown(fallback: str, ids: list[str], explain) -> EditorError:
 
 
 def _parse_close(g: Graph, meta: dict, f: dict, raw: dict,
-                 explain=None) -> list[dict]:
+                 explain=None, tag: str | None = "org") -> list[dict]:
     vid = meta.get("vertex")
     if vid not in g.vertices:
         raise EditorError(f"unknown vertex {vid!r}")
@@ -594,12 +693,14 @@ def _parse_close(g: Graph, meta: dict, f: dict, raw: dict,
         "falsifier": f.get("falsifier", "").strip() or None,
         "to": to,
         "date": meta.get("date") or _date.today().isoformat(),
-        # Provenance: this buffer is org, so the views may convert its
-        # emphasis. Applies to whatever the op writes — including an op that
-        # started life in the web form and was revised here, which makes it
-        # org by virtue of having been edited as org.
-        "format": "org",
     }
+    # Provenance: an org buffer's prose is org, so the views may convert its
+    # emphasis. Applies to whatever the op writes — including an op that
+    # started life in the web form and was revised here, which makes it org
+    # by virtue of having been edited as org. A markdown buffer claims
+    # nothing, because untagged is what markdown is in the store.
+    if tag:
+        op["format"] = tag
     if to and not op["falsifier"]:
         raise EditorError(
             "Falsifier is empty and this decision opens "
@@ -636,16 +737,17 @@ def _parse_probe(text: str) -> dict:
     return value
 
 
-def _parse_reopen(meta: dict, f: dict) -> list[dict]:
-    op = {"op": "reopen", "vertex": meta.get("vertex"), "why": _need(f, "why"),
-          "format": "org"}
+def _parse_reopen(meta: dict, f: dict, tag: str | None = "org") -> list[dict]:
+    op = {"op": "reopen", "vertex": meta.get("vertex"), "why": _need(f, "why")}
+    if tag:
+        op["format"] = tag
     if f.get("summary", "").strip():
         op["summary"] = f["summary"].strip()
     return [op]
 
 
 def _parse_add(g: Graph, f: dict, *, new_area: bool = False,
-               explain=None) -> list[dict]:
+               explain=None, tag: str | None = "org") -> list[dict]:
     vid = _need(f, "id")
     if not re.fullmatch(r"D\d+", vid):
         raise EditorError(f"malformed id {vid!r} — expected something like D07")
@@ -676,9 +778,12 @@ def _parse_add(g: Graph, f: dict, *, new_area: bool = False,
           "area": area, "status": status}
     if f.get("note", "").strip():
         op["note"] = f["note"].strip()
-        op["format"] = "org"
     if f.get("rule", "").strip():
         op["rule"] = f["rule"].strip()
+    # The tag covers both the note and the rule (`Vertex.format`), so it is
+    # claimed when either is written — a rule alone used to go untagged.
+    if tag and (op.get("note") or op.get("rule")):
+        op["format"] = tag
     if f.get("tags", "").strip():
         op["tags"] = _tags.clean(f["tags"])
     if f.get("probe", "").strip():
@@ -729,41 +834,226 @@ def command(editor: str, path: Path) -> list[str]:
 
 
 def resolve_gui_editor() -> str:
-    """The editor for the web app: `$DG_GUI_EDITOR`, else emacs.
+    """The editor string the browser's door runs — see `gui_editor` for the
+    whole answer, including why there might be none."""
+    return gui_editor()["editor"]
 
-    Deliberately does **not** consult `$EDITOR`/`$VISUAL`. Those name a terminal
-    editor by convention, and the web path has no terminal to lend it — the
-    server process holds whatever stdio `dg serve` was started with, so `vim`
-    would either die immediately or block the request forever with nowhere to
-    draw. Better to run emacs than to honour a variable that cannot work here.
-    """
-    return os.environ.get("DG_GUI_EDITOR", "").strip() or "emacs"
 
+# ---- the browser's door ---------------------------------------------------
 
 def _windowed() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
+#: Editors that draw their own window, by the name of the executable. Anything
+#: not here is taken to be a terminal editor and is given a terminal window to
+#: run in. The bias is deliberate: an unknown windowed editor wrapped in a
+#: terminal still works (the terminal sits blank behind it), while an unknown
+#: terminal editor run with no terminal dies or hangs, and the request with it.
+GUI_EDITORS = frozenset({
+    "gvim", "mvim", "gedit", "gnome-text-editor", "kate", "kwrite", "code",
+    "codium", "code-insiders", "subl", "sublime_text", "zed", "zeditor",
+    "mousepad", "xed", "pluma", "geany", "leafpad", "notepadqq", "atom",
+    "mate", "textmate",
+})
+
+#: Terminal emulators, with the argv that opens a window, runs the command
+#: inside it and **blocks until the command exits**. The blocking is the whole
+#: point and the one thing each entry had to get right: `xfce4-terminal -x`
+#: without `--disable-server` hands the command to a running instance and
+#: returns at once, so the request sees an unchanged buffer and says
+#: "cancelled" while the editor is still open. Probed in this order when
+#: neither `$DG_TERMINAL` nor `$TERMINAL` says which one to use.
+TERMINALS: tuple[tuple[str, list[str]], ...] = (
+    ("xfce4-terminal", ["xfce4-terminal", "--disable-server", "-x"]),
+    ("gnome-terminal", ["gnome-terminal", "--wait", "--"]),
+    ("konsole", ["konsole", "-e"]),
+    ("alacritty", ["alacritty", "-e"]),
+    ("kitty", ["kitty"]),
+    ("wezterm", ["wezterm", "start", "--always-new-process", "--"]),
+    ("foot", ["foot"]),
+    ("terminator", ["terminator", "--no-dbus", "-x"]),
+    ("xterm", ["xterm", "-e"]),
+    ("urxvt", ["urxvt", "-e"]),
+    ("st", ["st", "-e"]),
+)
+
+#: The flags that make emacs draw in the terminal instead of a window.
+_EMACS_TTY_FLAGS = frozenset({"-nw", "--no-window-system", "-t", "--tty"})
+
+
+def _is_terminal_editor(argv: list[str]) -> bool:
+    name = Path(argv[0]).name
+    if name.startswith("emacs"):
+        return any(a in _EMACS_TTY_FLAGS for a in argv[1:])
+    return name not in GUI_EDITORS
+
+
+def _windowed_form(editor: str) -> str | None:
+    """`emacs -nw` is emacs told not to draw a window because it was started
+    from a terminal. Given a display, the same emacs draws its own — so the
+    flag is dropped rather than the whole thing wrapped in a terminal it does
+    not need. Only emacs proper: `emacsclient -t` stripped of `-t` reuses a
+    frame that may not exist, which is a different program's behaviour, not
+    the same one's."""
+    argv = shlex.split(editor)
+    name = Path(argv[0]).name
+    if name.startswith("emacs") and not name.startswith("emacsclient"):
+        kept = [a for a in argv[1:] if a not in _EMACS_TTY_FLAGS]
+        if len(kept) != len(argv) - 1:
+            return shlex.join([argv[0]] + kept)
+    return None
+
+
+def _terminal() -> tuple[list[str] | None, str | None]:
+    """The terminal emulator to lend a terminal editor, as an argv prefix and
+    the name to say. `$DG_TERMINAL` is taken whole (it must carry its own
+    "run this" flag); `$TERMINAL` is the desktop convention and names a bare
+    program, looked up in the table or given `-e`, which is what most of them
+    take; then the table is probed in order."""
+    own = os.environ.get("DG_TERMINAL", "").strip()
+    if own:
+        argv = shlex.split(own)
+        return argv, Path(argv[0]).name
+    conv = os.environ.get("TERMINAL", "").strip()
+    if conv:
+        argv = shlex.split(conv)
+        name = Path(argv[0]).name
+        for known, prefix in TERMINALS:
+            if name == known:
+                return prefix, name
+        return argv + ["-e"], name
+    for name, prefix in TERMINALS:
+        if shutil.which(name):
+            return prefix, name
+    return None, None
+
+
+def gui_editor() -> dict:
+    """What the browser's door will run, or why it cannot.
+
+    The order is the CLI's, with two entries in front of it that exist only
+    here: `$DG_EDIT_CMD` (an exact argv, `{file}` substituted) and
+    `$DG_GUI_EDITOR` (an editor promised to draw its own window). After those,
+    the editor the tool is configured with — `$DG_EDITOR`, `$VISUAL`, `$EDITOR`
+    — and finally emacs. A terminal editor is not refused and not run bare:
+    it is opened in a terminal window that blocks until it exits, which is the
+    thing `$EDITOR` used to be ignored here for lacking.
+
+    Returns the same dict the page reads. `available` is decided *here*, before
+    a button is drawn, because the failure a click would otherwise meet is the
+    worst one there is: a request that hangs with nothing to type in. `reason`
+    is a sentence for the page when the answer is no, and it names the
+    variable that would change it — this door's, not the CLI's.
+    """
+    ans: dict = {"editor": None, "name": None, "emacs": False, "terminal": None,
+                 "source": None, "available": False, "reason": None}
+
+    def refuse(why: str) -> dict:
+        ans["reason"] = why
+        return ans
+
+    def missing(name: str, setting: str) -> dict:
+        return refuse(f"{name!r} is not on the server's PATH — {setting}")
+
+    override = os.environ.get("DG_EDIT_CMD", "").strip()
+    if override:
+        argv = shlex.split(override)
+        ans.update(editor=override, name=Path(argv[0]).name,
+                   emacs=is_emacs(override), source="DG_EDIT_CMD")
+        if not shutil.which(argv[0]):
+            return missing(argv[0], "fix $DG_EDIT_CMD")
+        ans["available"] = True
+        return ans
+
+    if not _windowed():
+        return refuse("no DISPLAY or WAYLAND_DISPLAY — the browser can only "
+                      "drive a windowed editor. Compose from the terminal "
+                      "instead: `dg decide <id> --edit`")
+
+    given = os.environ.get("DG_GUI_EDITOR", "").strip()
+    if given:
+        argv = shlex.split(given)
+        ans.update(editor=given, name=Path(argv[0]).name, emacs=is_emacs(given),
+                   source="DG_GUI_EDITOR")
+        if not shutil.which(argv[0]):
+            return missing(argv[0], "fix $DG_GUI_EDITOR, or unset it to fall "
+                           "back to $EDITOR")
+        ans["available"] = True
+        return ans
+
+    for var in ("DG_EDITOR", "VISUAL", "EDITOR"):
+        val = os.environ.get(var, "").strip()
+        if not val:
+            continue
+        editor = _windowed_form(val) or val
+        argv = shlex.split(editor)
+        ans.update(editor=editor, name=Path(argv[0]).name,
+                   emacs=is_emacs(editor), source=var)
+        if not shutil.which(argv[0]):
+            return missing(argv[0], f"it is what ${var} names; set "
+                           f"$DG_GUI_EDITOR to override it for the browser")
+        if _is_terminal_editor(argv):
+            prefix, term = _terminal()
+            if prefix is None:
+                return refuse(
+                    f"{ans['name']} (from ${var}) is a terminal editor and no "
+                    f"terminal emulator was found to open it in — set "
+                    f"$DG_TERMINAL (e.g. 'xfce4-terminal --disable-server -x') "
+                    f"or $DG_GUI_EDITOR to a windowed editor")
+            if not shutil.which(prefix[0]):
+                return missing(prefix[0], "fix $DG_TERMINAL or $TERMINAL")
+            ans["terminal"] = term
+        ans["available"] = True
+        return ans
+
+    ans.update(editor="emacs", name="emacs", emacs=True, source="default")
+    if not shutil.which("emacs"):
+        return refuse("no editor: emacs is not installed and no $EDITOR is "
+                      "set — set $EDITOR (a terminal editor is opened in a "
+                      "terminal window) or $DG_GUI_EDITOR")
+    ans["available"] = True
+    return ans
+
+
 def gui_available() -> bool:
     """Whether `launch_gui` can work at all — what the web app asks before it
     offers the button."""
-    return _windowed() or bool(os.environ.get("DG_EDIT_CMD"))
+    return gui_editor()["available"]
+
+
+def gui_command(path: Path) -> list[str]:
+    """The argv the browser's door runs: the editor's own command, inside a
+    terminal window when the editor needs one. Raises where `gui_editor` says
+    no, with its reason."""
+    plan = gui_editor()
+    if not plan["available"]:
+        raise EditorError(plan["reason"])
+    argv = command(plan["editor"], path)
+    if plan["terminal"]:
+        prefix, _ = _terminal()
+        argv = list(prefix) + argv
+    return argv
 
 
 def launch_gui(path: Path) -> int:
     """Launch a windowed editor and block — the launcher the web app passes.
 
-    The check is up front because the failure it prevents is the worst one
-    available: an editor with no window and no terminal leaves the browser's
-    request hanging with no way to tell it why.
+    Everything that could be refused is refused before the process starts,
+    because the failure it prevents is the worst one available: an editor with
+    no window and no terminal leaves the browser's request hanging with no way
+    to tell it why.
     """
-    if not os.environ.get("DG_EDIT_CMD") and not _windowed():
+    argv = gui_command(path)
+    env = dict(os.environ, DG_PROJECT=str(path.parent))
+    try:
+        return subprocess.call(argv, env=env)
+    except FileNotFoundError:
         raise EditorError(
-            "no DISPLAY or WAYLAND_DISPLAY — the browser can only drive a "
-            "windowed editor. Compose from the terminal instead: "
-            "`dg decide <id> --edit`"
-        )
-    return launch(path, editor=resolve_gui_editor())
+            f"{argv[0]!r} not found — set $DG_GUI_EDITOR (or $DG_EDIT_CMD "
+            f"with {{file}}), or compose from the terminal: "
+            f"`dg decide <id> --edit`"
+        ) from None
 
 
 def launch(path: Path, editor: str | None = None) -> int:
@@ -790,7 +1080,7 @@ def _acquire_buffer(path: Path) -> Path:
     session racing the web app — via a pid-stamped lock file beside the
     buffer. A lock whose pid is gone is a crashed session and is stolen.
     """
-    lock = path.with_name(path.name + ".lock")
+    lock = path.with_name(project.EDIT_LOCK_NAME)
     for _ in range(2):
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -842,8 +1132,15 @@ def compose(
     new_area: bool = False,
     launcher=None,
     explain=None,
+    dialect: str | None = None,
 ) -> list[dict]:
-    """Render a buffer, hand it to the editor, and parse what comes back."""
+    """Render a buffer, hand it to the editor, and parse what comes back.
+
+    `dialect` is the buffer's — `cli_dialect()` unless the caller has
+    resolved an editor of its own, as the browser's door has."""
+    dialect = dialect or cli_dialect()
+    seed = seed_in(seed, kind, dialect)
+    op = seed_in(op, kind, dialect)
     if op is not None and index is not None:
         text = render_op(g, index, op)
     elif kind == "add_vertex":
@@ -854,11 +1151,13 @@ def compose(
                                          expect_vertex=vertex,
                                          expect_index=index,
                                          new_area=new_area,
-                                         explain=explain),
-               launcher=launcher)
+                                         explain=explain,
+                                         dialect=dialect),
+               launcher=launcher, dialect=dialect)
 
 
-def run(text: str, parse_back, *, launcher=None) -> list[dict]:
+def run(text: str, parse_back, *, launcher=None,
+        dialect: str = "org") -> list[dict]:
     """The compose *workflow*, with the record type taken out of it.
 
     Take the project's one buffer, write `text`, run the editor, refuse a
@@ -871,8 +1170,13 @@ def run(text: str, parse_back, *, launcher=None) -> list[dict]:
     this for decisions; `dgraph/task_editor.py` is this for work, and calls in
     rather than teaching this module what a task is — a module that renders
     both records is one in which the two can drift into each other.
+
+    `text` is always the org rendering; the markdown buffer is derived from
+    it here (`mdbuffer.render`), so the renderers stay one per record.
     """
-    path = project.find().edit
+    path = project.find().buffer(dialect)
+    if dialect == "markdown":
+        text = mdbuffer.render(text)
     lock = _acquire_buffer(path)
     try:
         path.write_text(text, encoding="utf-8")

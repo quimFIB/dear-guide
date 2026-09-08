@@ -237,7 +237,7 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `decision-graph.md` | generated view; **never hand-edit** |
 | `tasks.json` · `tasks.md` | the task graph and its view — its own store, and usable on its own |
 | `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
-| `.dgraph-edit.org` | editor buffer, like `COMMIT_EDITMSG` |
+| `.dgraph-edit.org` · `.dgraph-edit.md` | editor buffer, like `COMMIT_EDITMSG` — org for emacs, markdown for any other editor |
 | `.dgraph-capture/` | a fan-out's recording, if one is running — scratch, and gitignored with the rest |
 | `quick-start-demo/` | **start here** — [the cookbook](../quick-start-demo/index.html): twenty worked examples of *how do I do that with dear-guide?*, every line a real transcript, with the graph drawn beside each step |
 | `demo/` | a runnable graph holding one of every record this keeps, served in the web app, and a walkthrough over it |

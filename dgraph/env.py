@@ -445,7 +445,8 @@ def _project_show(value) -> str:
 #: it all applies to.
 #:
 #: A second family -- `$DG_EDIT`, `$DG_EDITOR`, `$DG_EDIT_CMD`,
-#: `$DG_GUI_EDITOR`, `$DG_HOOK_OFF` -- is deliberately absent. Those are the
+#: `$DG_GUI_EDITOR`, `$DG_TERMINAL`, `$DG_EDIT_FORMAT`, `$DG_HOOK_OFF` -- is
+#: deliberately absent. Those are the
 #: person's own tooling rather than an agent's remit, they are read by `dg` and
 #: composed by nobody, and putting them in this table would make `dg-agent env`
 #: a report about the terminal instead of about the launch.

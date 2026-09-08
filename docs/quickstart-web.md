@@ -497,10 +497,18 @@ mid-thought costs nothing.
 
 Three things are worth knowing:
 
-- **`$EDITOR` is ignored here**; `$DG_GUI_EDITOR` (default `emacs`) is used
-  instead. `$EDITOR` names a terminal editor by convention and the server has
-  no terminal to lend it, so honouring it would hang the request. With no
-  display the button is not offered at all, rather than offered and hanging.
+- **It is your editor.** The button runs what `dg` is configured with —
+  `$DG_EDITOR`, `$VISUAL`, `$EDITOR`, then `emacs` — and is labelled with its
+  name. A terminal editor such as `vim` is opened in a terminal window that
+  blocks until it exits (`$DG_TERMINAL` says which, else `$TERMINAL`, else the
+  first usual one on `PATH`); `emacs -nw` draws its own window instead. Any
+  editor but emacs gets the buffer as markdown, and its prose is stored as
+  markdown, as [the editor page](emacs.md) explains. Two
+  variables exist only for this door and win over the rest: `$DG_EDIT_CMD`, an
+  exact command with `{file}` substituted, and `$DG_GUI_EDITOR`, an editor you
+  promise draws a window. Where none of it can work — no display, no terminal
+  emulator, an editor not on `PATH` — the button is withheld rather than
+  offered and hanging, and the panel says why, naming the variable to set.
 - **One editor at a time.** There is a single buffer per project — the property
   `COMMIT_EDITMSG` has — so a second compose is refused rather than allowed to
   overwrite a buffer someone is typing in. This holds across the browser and

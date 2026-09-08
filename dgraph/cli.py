@@ -2041,7 +2041,7 @@ def _ask(prompt: str, flag: str, default: str | None = None) -> str:
 def _compose(g: Graph, kind: str, **kw) -> list[dict]:
     """Run the editor, turning its refusals into clean CLI exits."""
     proj = project.find()
-    con.print(f"[dim]buffer: {proj.edit}[/]")
+    con.print(f"[dim]buffer: {proj.buffer(editor.cli_dialect())}[/]")
     if not editor.is_emacs(editor.resolve_editor()):
         premise = None
         if kw.get("vertex"):
@@ -4291,7 +4291,7 @@ def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
     what happened when they abort the other.
     """
     proj = project.find()
-    con.print(f"[dim]buffer: {proj.edit}[/]")
+    con.print(f"[dim]buffer: {proj.buffer(editor.cli_dialect())}[/]")
     if not editor.is_emacs(editor.resolve_editor()):
         con.print("[dim]note: in-buffer navigation needs emacs — "
                   "`dg task node <id>` for one piece of work in full[/]")
@@ -4320,18 +4320,24 @@ def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
 
 
 def _said_dialect(tg: TaskGraph, tid: str) -> None:
-    """Say when composing in org changes how prose already stored will read.
+    """Say when composing changes the dialect of prose already stored.
 
-    A task carries one `format` for its whole record, so an outcome written in
-    the buffer makes the record org — including a note that was typed as a
-    flag and has been markdown until now. The two dialects differ over
-    `*asterisks*`, which is small and not nothing, and the writer is the only
-    one who can tell whether it matters. Said, not refused.
+    A task carries one `format` for its whole record, so an outcome composed
+    in one dialect on a record whose note is in the other converts the note
+    to match (`task_pending._retag`): it reads the same in every view, but
+    the stored bytes change, and the writer should hear that from the
+    command rather than from a diff. Said, not refused.
     """
     t = tg.tasks.get(tid)
-    if t is not None and t.format is None and (t.note or t.stops):
-        con.print(f"[dim]{tid}'s prose was recorded as markdown and now reads "
-                  f"as org — *asterisks* mean bold there, not italic[/]")
+    if t is None or not (t.note or t.stops):
+        return
+    org = editor.cli_dialect() == "org"
+    if org and t.format is None:
+        con.print(f"[dim]{tid}'s prose was recorded as markdown — staging an "
+                  f"org outcome converts it to org beside it[/]")
+    elif not org and t.format == "org":
+        con.print(f"[dim]{tid}'s prose was recorded as org — staging a markdown "
+                  f"outcome converts it to markdown beside it[/]")
 
 
 def _twarn_stuck() -> None:

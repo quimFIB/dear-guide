@@ -940,8 +940,8 @@ def test_pending_lists_a_subject_that_is_not_a_string(run, store, cmd, tray,
 
 IGNORABLE = [
     ".dgraph-pending.json", ".dgraph-task-pending.json", ".dgraph-edit.org",
-    ".dgraph-pending.json.lock", ".dgraph-task-pending.json.lock",
-    ".dgraph-edit.org.lock", "decisions.json.lock", "tasks.json.lock",
+    ".dgraph-edit.md", ".dgraph-pending.json.lock", ".dgraph-task-pending.json.lock",
+    ".dgraph-edit.lock", "decisions.json.lock", "tasks.json.lock",
     ".decisions.json.ab12cd.dg-tmp", ".dgraph-serve.json", ".dgraph-serve.log",
 ]
 KEEPABLE = ["decisions.json", "decision-graph.md", "tasks.json", "tasks.md",

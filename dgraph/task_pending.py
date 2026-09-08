@@ -25,6 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dgraph import project, ranges
+from dgraph import orgmd
 from dgraph import tags as _tags
 from dgraph.pending import (FIELDS, ApplyError, already,
                             area_counts, owner, refuse_area,
@@ -270,6 +271,12 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
         for fld in fields_of("task"):
             if fld in op:
                 setattr(t, fld, op[fld])
+        wrote = [f for f in PROSE if op.get(f)]     # written, not emptied
+        if wrote:
+            # The tag follows the last writer and the rest follows the tag —
+            # `pending._apply_one`'s `set_fields` says why, and a task has
+            # more prose under its one tag than a vertex does.
+            _retag(t, op.get("format"), keep=wrote)
         return
 
     if kind == "set_status":
@@ -298,7 +305,9 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
                     f"{'parking' if t.parked else 'dropping'} {tid} needs a "
                     f"reason: --why")
             t.stops.append(Stop(why=op["why"], date=op["date"]))
-        wrote_prose = False
+        # A stop's `why` is prose the tag covers (`task_render` converts it
+        # through `t.format`), so writing one is writing prose.
+        wrote_prose = t.status in ("PARKED", "DROPPED")
         if t.status == "DONE":
             # An op-shape rule, beside `--why` above and `--note` on a reading,
             # not the record-completeness rule `validate` keeps: without an
@@ -328,9 +337,33 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
         # to follow the note alone, which meant an outcome composed in org (the
         # only door that produces org) was stored as org and rendered as
         # markdown: `*HNSW*` in, italic out, silently.
-        if op.get("format") is not None and wrote_prose:
-            t.format = op["format"]
+        #
+        # And the dialect *follows* — it is not merely claimed. An outcome
+        # composed in vim (markdown, untagged) on a task whose note was
+        # composed in emacs (org) cannot leave both under one true tag; the
+        # note is converted into the outcome's dialect and the tag says what
+        # every field now is. `orgmd.convert` is the identity where the
+        # dialects already agree, which is every task touched by one editor.
+        if wrote_prose:
+            _retag(t, op.get("format"),
+                   keep=[f for f in ("outcome", "note") if op.get(f) is not None]
+                        + (["why"] if t.status in ("PARKED", "DROPPED") else []))
         return
+
+
+def _retag(t, new: str | None, *, keep: list[str]) -> None:
+    """`t.format` becomes `new`, and every prose field the op did not just
+    write — `PROSE` on the record, and each stop's `why` — is converted
+    from the old dialect into it. In place: `Task` is mutable and
+    `_apply_one` writes it that way."""
+    old = t.format
+    for f in PROSE:
+        if f not in keep and getattr(t, f):
+            setattr(t, f, orgmd.convert(getattr(t, f), old, new))
+    for i, k in enumerate(t.stops):
+        if not ("why" in keep and i == len(t.stops) - 1):
+            k.why = orgmd.convert(k.why, old, new)
+    t.format = new
 
 
 #: What each relation spec is called, reads as, and refuses to do to itself.
