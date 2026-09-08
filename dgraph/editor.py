@@ -142,10 +142,16 @@ def _escape(body: str) -> str:
 
 
 def _field(name: str, hint: str = "", body: str = "") -> str:
-    out = [f"** {name}"]
+    # The value slot sits directly under the heading, above the hint, so the
+    # first line a cursor lands on is where the value goes. The hint follows
+    # as a comment. `_body` strips comments in any position, so the order is
+    # free to the parser — and putting the value first is what keeps a
+    # markdown editor with conceal on (which hides the `<!-- -->` delimiters)
+    # from making the comment interior look like the only place to type.
+    # D100, audit AA-F5.
+    out = [f"** {name}", _escape(body.rstrip("\n")) if body else ""]
     if hint:
         out += [f"# {ln}" for ln in hint.splitlines()]
-    out.append(_escape(body.rstrip("\n")) if body else "")
     # exactly one blank line after every field, whether or not it was seeded
     return "\n".join(out).rstrip("\n") + "\n\n"
 
@@ -661,7 +667,16 @@ def parse(
 def _need(f: dict[str, str], name: str) -> str:
     val = f.get(name, "").strip()
     if not val:
-        raise EditorError(f"{name.capitalize()} is empty — nothing staged")
+        # Name the slot: the value goes on the line under the heading, above
+        # the hint. A person can type among the hint by mistake, where the
+        # parser strips it — so an empty field says where the value belongs
+        # rather than only that it is empty. Dialect-agnostic: the org hint
+        # is a `#` line, the markdown hint a `>` line, and in both the value
+        # is the line under the heading. D100, audit AA-F5.
+        raise EditorError(
+            f"{name.capitalize()} is empty — nothing staged. The value goes "
+            f"on the line directly under the `{name.capitalize()}` heading, "
+            f"above the hint.")
     return val
 
 

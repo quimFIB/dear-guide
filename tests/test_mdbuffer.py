@@ -36,8 +36,10 @@ def test_the_buffer_is_markdown_shaped(g):
     for org_only in ("-*- mode", "#+TODO", ":PROPERTIES:", "C-c ", "Full org",
                      "[[dg:", "single asterisks"):
         assert org_only not in md, org_only
-    # The guidance is there, as comments an editor shows and markdown hides.
-    assert "<!--\nWhat was decided, and on what evidence. Markdown is fine.\n-->" in md
+    # The guidance is there, as blockquote lines an editor shows and never
+    # conceals — the value slot sits above them, under the heading (D100).
+    assert "## Answer\n\n> What was decided, and on what evidence. Markdown is fine." in md
+    assert "<!--" not in md and "-->" not in md
     assert 'Escape it as "\\#"' in md
     # The checklist is markdown's own syntax and survives untouched.
     assert re.search(r"^- \[ \] D03 — A terminal one$", md, re.M)
@@ -113,7 +115,7 @@ def test_refusals_spell_the_headings_the_person_typed(g, store):
     with pytest.raises(EditorError, match=r"## Bogus"):
         editor.parse(md.replace("## Summary", "## Bogus"), g=g, dialect="markdown")
     with pytest.raises(EditorError, match="front matter"):
-        editor.parse(md[md.index("<!--"):], g=g, dialect="markdown")
+        editor.parse(md[md.index("# Input"):], g=g, dialect="markdown")
     with pytest.raises(EditorError, match="no `# Input`"):
         editor.parse(md.replace("# Input", "# Inputs"), g=g, dialect="markdown")
 

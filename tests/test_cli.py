@@ -1557,11 +1557,17 @@ def test_dropping_an_unrecognised_op_still_confirms(run, store):
 
 
 def _after(text: str, value: str) -> str:
-    """Type into `** After`, over whatever the template pre-filled."""
-    head = "** After\n# Optional. Comma-separated parents that open this.\n"
-    assert head in text, "the After field is not where this test thought"
-    body, _, rest = text.partition(head)[2].partition("\n** ")
-    return body, text.replace(head + body, head + value + "\n", 1)
+    """Type into `** After`, over whatever the template pre-filled.
+
+    The value slot is the line directly under the heading, above the hint
+    (D100): `** After` / <value> / `# Optional…`. Returns the old body and the
+    text with the slot replaced."""
+    head = "** After\n"
+    hint = "# Optional. Comma-separated parents that open this."
+    i = text.index(head) + len(head)
+    j = text.index(hint, i)
+    body = text[i:j].strip("\n")
+    return body, text[:i] + (value + "\n" if value else "") + text[j:]
 
 
 def test_the_edit_buffer_shows_the_parents_the_batch_attaches(run, store, g,

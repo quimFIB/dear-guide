@@ -54,7 +54,7 @@ _DG_LINK = re.compile(r"\[\[dg:[^\]]*\]\[([^\]]*)\]\]")
 #: replacement drops the line. The key lines are matched by their `C-c`.
 _SAY = (
     ('Lines starting with "# " are ignored. Only the "Input" subtree is read back;',
-     'Text inside <!-- --> is ignored. Only the "Input" section is read back;'),
+     'Lines beginning with > are hints and are ignored. Only the "Input" section is read back;'),
     ('A "*" at column 0 ends a field - org reads it as a heading. Escape it as ",*".',
      'A "#" at column 0 starts a heading and ends a field. Escape it as "\\#".'),
     ("Full org is fine.", "Markdown is fine."),
@@ -108,10 +108,14 @@ def render(org: str) -> str:
     in_context = False
 
     def flush() -> None:
+        # Hints are blockquotes, not HTML comments. A markdown editor with
+        # conceal on hides `<!-- -->` delimiters, so the hint and the value
+        # slot become indistinguishable and a value typed among the hint is
+        # silently dropped (D100, audit AA-F5). A `>` blockquote is shown by
+        # every markdown editor, never concealed, so the hint stays visibly a
+        # hint. `body` strips leading `>` lines.
         if comments:
-            out.append("<!--")
-            out.extend(comments)
-            out.append("-->")
+            out.extend(("> " + c).rstrip() for c in comments)
             comments.clear()
 
     for ln in org.split("\n"):
@@ -142,6 +146,9 @@ def render(org: str) -> str:
         # `editor._escape` — and escape what markdown would read as a heading.
         ln = re.sub(r"^([ \t]*),(,*\*)", r"\1\2", ln)
         ln = re.sub(r"^([ \t]*)#", r"\1\\#", ln)
+        # A value line that begins with `>` would read back as a hint; escape
+        # it, the mirror of the `\#` escape. `body` unescapes both.
+        ln = re.sub(r"^([ \t]*)>", r"\1\\>", ln)
         out.append(ln)
     flush()
     text = "\n".join(out)
@@ -202,7 +209,11 @@ def sections(text: str) -> dict[str, tuple[str, str]]:
 
 
 def body(raw: str) -> str:
-    """Strip comments and the `\\#` escape, then common indentation."""
-    text = _COMMENT.sub("", raw)
+    """Strip hint blockquotes and the `\\#` escape, then common indentation.
+
+    A hint is a `>` line (see `render`); a value that genuinely begins with
+    `>` is escaped `\\>` and unescaped here, the mirror of the `\\#` escape."""
+    text = re.sub(r"^[ \t]*>.*(?:\n|$)", "", raw, flags=re.M)
     text = re.sub(r"^([ \t]*)\\#", r"\1#", text, flags=re.M)
+    text = re.sub(r"^([ \t]*)\\>", r"\1>", text, flags=re.M)
     return textwrap.dedent(text).strip()

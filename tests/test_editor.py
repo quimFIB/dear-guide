@@ -474,7 +474,8 @@ def test_new_area_says_the_resemblance_is_a_coincidence(g, store, fake_emacs):
 
 
 def test_add_rejects_an_existing_id(g, store, fake_emacs):
-    fake_emacs(lambda t: fill(t.replace("** Id\n# Like D07. Next unused: D07\nD07",
+    # The value slot is the line under the heading, above the hint (D100).
+    fake_emacs(lambda t: fill(t.replace("** Id\nD07\n# Like D07. Next unused: D07",
                                         "** Id\nD01"),
                               title="X", area="Alpha"))
     with pytest.raises(EditorError, match="D01 already exists"):
