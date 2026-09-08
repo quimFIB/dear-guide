@@ -2741,3 +2741,54 @@ def test_the_tasks_tab_tells_no_store_from_an_unreadable_one(tmp_path, fault):
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.strip() == "ok"
+
+
+# ---- the abort's reason reaches the page --------------------------------------
+# Audit AA-F5 (pass 26, found after close, in a browser with EDITOR=vim): the
+# server answers `{"aborted": <reason>}` with four different reasons — exited
+# with a status, buffer unchanged, template untouched, empty Input — and the
+# page said one sentence for all of them, so a session that came back
+# "cancelled" twice could not be told apart from one the user cancelled.
+
+ABORT_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
+const block = cut("function pickerValues(", "function bindPickers(")
+            + cut("async function composeIn(", "/* What a `set_fields` op writes")
+            + cut("async function reviseOp(", "/* ---- folding the panels");
+let sel = "D04", EDITING = null, PEND = [], DRAFTS = {};
+const ED = {emacs: false, name: "vim", available: true};
+const held = {answer: {value: ""}, source: {value: ""}, fals: {value: ""},
+              opens: {querySelectorAll: () => []}};
+const $ = s => held[s.slice(1)];
+const panel = () => {}, tray = () => {}, captureDraft = () => {};
+const soundness = async () => {}, unsay = () => {}, trayErr = () => {};
+const esc = s => s;
+const SAID = [];
+const say = (m) => SAID.push(m);
+const said = (m) => SAID.push(m);
+const REASON = "editor exited with status 1 — nothing staged";
+const api = async () => ({aborted: REASON, pending: []});
+eval(block + `
+composeIn("close").then(() => reviseOp("abcd")).then(() => {
+  const missing = ["composeIn", "reviseOp"].filter((_, i) =>
+    !SAID.some(m => m.includes(REASON)));
+  if (!SAID.some(m => m.includes(REASON)))
+    throw new Error("the reason never reached the page: " + JSON.stringify(SAID));
+  if (SAID.filter(m => m.includes(REASON)).length < 2)
+    throw new Error("only one door says the reason: " + JSON.stringify(SAID));
+  console.log("ok");
+}).catch(e => { console.error(e.message); process.exit(1); });
+`);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_a_cancelled_compose_says_the_servers_reason(tmp_path):
+    harness = tmp_path / "abort.js"
+    harness.write_text(ABORT_HARNESS, encoding="utf-8")
+    r = subprocess.run(["node", str(harness), str(server.STATIC / "app.html")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == "ok"

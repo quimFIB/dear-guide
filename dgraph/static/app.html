@@ -3200,7 +3200,11 @@ async function composeIn(kind){
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({op:kind, vertex:vid, seed})});
     PEND = r.pending || PEND; tray();
-    if(r.aborted) say("Cancelled in the editor — nothing staged. "
+    /* The server's reason travels with the abort — exited with a status,
+       buffer unchanged, template untouched, empty Input — and they call for
+       different next moves; one sentence for all four hid a terminal that
+       was returning nonzero. Audit `AA-F5`. */
+    if(r.aborted) say(`Cancelled in the editor — ${r.aborted}. `
                       + "What you typed here is still here.", "", vid);
     else{
       delete DRAFTS[vid];         /* staged; the form should come back empty */
@@ -3730,7 +3734,7 @@ async function reviseOp(ref){
     EDITING=null;
     PEND=r.pending||await api("/api/pending"); tray();
     await soundness();
-    said(r.aborted ? "Left unchanged."
+    said(r.aborted ? `Left unchanged — ${esc(r.aborted)}.`
                    : `Replaced with ${(r.staged||[]).length} op(s).`);
   }catch(err){
     EDITING=null; tray(); unsay();
