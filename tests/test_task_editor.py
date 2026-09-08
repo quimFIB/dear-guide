@@ -399,3 +399,27 @@ def test_a_decision_tray_that_will_not_apply_does_not_block_an_outcome(
     assert res.exit_code == 0, res.output
     assert "no longer apply cleanly" in res.output
     assert [o["op"] for o in tray(task_store)] == ["set_status"]
+
+
+# ---- task amend in an editor (D103, T110) -----------------------------------
+
+def test_task_amend_composes_only_the_changed_fields(tg, task_store):
+    t = tg.tasks["T01"]
+    seen = {}
+
+    def edit(text):
+        seen["t"] = text
+        return fill(text.replace(f"** Title\n{t.title}\n", "** Title\nReworded work\n"))
+
+    import dgraph.task_editor as te
+    import dgraph.editor as ed
+    ed.launch = lambda p: (p.write_text(edit(p.read_text())), 0)[1]
+    ops = te.compose_amend(tg, None, "T01")
+    assert ops == [{"op": "set_fields", "task": "T01", "title": "Reworded work"}]
+
+
+def test_task_amend_nothing_changed_aborts(tg, task_store, monkeypatch):
+    import dgraph.task_editor as te, dgraph.editor as ed
+    monkeypatch.setattr(ed, "launch", lambda p: 0)   # touches nothing
+    with pytest.raises(EditorAbort):
+        te.compose_amend(tg, None, "T01")

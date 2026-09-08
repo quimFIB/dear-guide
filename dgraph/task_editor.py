@@ -270,8 +270,67 @@ ALLOWED = {
     "add_task": {"id", "title", "area", "after", "discovered during",
                  "because", "evidence for", "note", "probe", "done when",
                  "tags"},
+    "amend": {"title", "area", "note", "done when"},
     "set_status": {"outcome"},
 }
+
+
+def render_amend(tg: TaskGraph, g: Graph | None, tid: str) -> str:
+    """`editor.render_amend`'s twin for a task (`D103`): the fields amend may
+    correct, prefilled with the task as it stands. Reuses the `## Note` and
+    `## Done when` fields the add buffer already renders."""
+    t = tg.tasks[tid]
+    return (
+        _header(f"dg task amend {tid}", op="amend", task=tid,
+                project=str(project.find().root))
+        + "\n* Input\n"
+        + editor._field("Title", "One line: the work to be done.", t.title)
+        + editor._field("Area", "One area, or a new one; areas accumulate.",
+                        t.area)
+        + editor._field("Note", "Optional prose: what this involves. May be "
+                                "emptied.", t.note or "")
+        + editor._field("Done when", "What finished looks like, in prose. May "
+                                     "be emptied.", t.done_when or "")
+        + "\n" + _task_context(tg, g, tid)
+    )
+
+
+def _parse_amend(tg: TaskGraph, meta: dict, f: dict,
+                 tag: str | None = "org") -> list[dict]:
+    """A task `set_fields` carrying only the fields the buffer changed. Title
+    and area cannot be blanked; note and done_when may be emptied. Nothing
+    changed is an abort. `format` rides along when done_when (the task's prose)
+    was touched. `editor._parse_amend`'s twin."""
+    tid = meta.get("task")
+    if tid not in tg.tasks:
+        raise EditorError(f"unknown task {tid!r}")
+    t = tg.tasks[tid]
+    op: dict = {"op": "set_fields", "task": tid}
+    for field, key, current in (("title", "title", t.title),
+                                ("area", "area", t.area),
+                                ("note", "note", t.note or ""),
+                                ("done when", "done_when", t.done_when or "")):
+        new = f.get(field, "").strip()
+        if key in ("title", "area") and not new:
+            raise EditorError(f"{field.capitalize()} is empty — a {key} is "
+                              f"required and cannot be blanked here")
+        if new != (current or "").strip():
+            op[key] = new if new or key in ("title", "area") else None
+    if len(op) == 2:
+        raise EditorAbort("nothing changed — nothing staged")
+    if tag and "done_when" in op:
+        op["format"] = tag
+    return [op]
+
+
+def compose_amend(tg: TaskGraph, g: Graph | None, tid: str, launcher=None,
+                  dialect: str | None = None) -> list[dict]:
+    dialect = dialect or editor.cli_dialect()
+    return editor.run(
+        render_amend(tg, g, tid),
+        lambda after: parse(after, tg=tg, g=g, expect_kind="amend",
+                            expect_task=tid, dialect=dialect),
+        launcher=launcher, dialect=dialect)
 
 
 def parse(text: str, *, tg: TaskGraph, g: Graph | None,
@@ -314,6 +373,8 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
         return _parse_add(tg, g, f, new_area=new_area, tag=d.tag)
     if kind == "set_status":
         return _parse_done(tg, meta, f, tag=d.tag)
+    if kind == "amend":
+        return _parse_amend(tg, meta, f, tag=d.tag)
     raise EditorError(f"cannot compose a {kind!r} task op")
 
 

@@ -818,3 +818,54 @@ Alpha
             editor.parse(buf.format(bad), g=g, expect_kind="add_vertex")
         assert says in str(exc.value)
         assert "Status" in str(exc.value)
+
+
+# ---- reprobe in an editor (D103, T109) --------------------------------------
+
+def test_reprobe_composes_the_probe_in_an_editor(g, store, fake_emacs):
+    """`dg reprobe --edit` opens the `## Probe` field the close buffer already
+    has (org: `** Probe`), parsed by the same `_parse_probe`."""
+    fake_emacs(lambda t: fill(t, probe='{"kind": "prose.note", "args": {"n": 1}}'))
+    ops = editor.compose(g, "reprobe", vertex="D05")
+    assert ops == [{"op": "reprobe", "vertex": "D05",
+                    "probe": {"kind": "prose.note", "args": {"n": 1}}}]
+    # it stages and applies like the flag path
+    out = pending.apply_all(g, ops)
+    assert out.vertices["D05"].probes[-1].kind == "prose.note"
+
+
+def test_reprobe_with_an_empty_probe_aborts(g, store, fake_emacs):
+    fake_emacs(lambda t: t)                      # touched nothing
+    with pytest.raises(editor.EditorAbort):
+        editor.compose(g, "reprobe", vertex="D05")
+
+
+def test_reprobe_refuses_malformed_json_by_the_field_name(g, store, fake_emacs):
+    fake_emacs(lambda t: fill(t, probe="not json"))
+    with pytest.raises(editor.EditorError, match="Probe"):
+        editor.compose(g, "reprobe", vertex="D05")
+
+
+# ---- amend in an editor (D103, T110) ----------------------------------------
+
+def test_amend_composes_only_the_changed_fields(g, store, fake_emacs):
+    v = g.vertices["D05"]
+    fake_emacs(lambda t: fill(t.replace(f"** Title\n{v.title}\n",
+                                        "** Title\nReworded question\n"),
+                              ))  # only the title line changed
+    ops = editor.compose(g, "amend", vertex="D05")
+    assert ops == [{"op": "set_fields", "vertex": "D05",
+                    "title": "Reworded question"}]
+
+
+def test_amend_with_nothing_changed_aborts(g, store, fake_emacs):
+    fake_emacs(lambda t: t)
+    with pytest.raises(editor.EditorAbort):
+        editor.compose(g, "amend", vertex="D05")
+
+
+def test_amend_cannot_blank_the_title(g, store, fake_emacs):
+    v = g.vertices["D05"]
+    fake_emacs(lambda t: t.replace(f"** Title\n{v.title}\n", "** Title\n\n"))
+    with pytest.raises(editor.EditorError, match="Title is empty"):
+        editor.compose(g, "amend", vertex="D05")

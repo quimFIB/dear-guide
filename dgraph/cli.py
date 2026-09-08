@@ -2572,9 +2572,11 @@ def add(
 def reprobe(
     vid: str,
     probe: str = typer.Option(
-        ..., "--probe",
+        None, "--probe",
         help='The new rule for settling it, as JSON: {"kind": '
              '"<domain>.<name>", "args": {...}}'),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="compose the probe in an editor"),
 ) -> None:
     """Append a rule for settling an open question. The old one is kept.
 
@@ -2583,8 +2585,33 @@ def reprobe(
     date beside the act it would produce, so a rule written the day the
     question was settled is visible to whoever reads the tray. Refused on a
     settled question, whose criterion is the probe on its answer.
+
+    `--edit` opens the probe in the `## Probe` buffer field the close buffer
+    already uses (`D103`) — a probe is structured JSON, which the flag makes
+    unpleasant to type.
     """
     eff = _eff(_g())
+    if _wants_editor(edit):
+        if probe is not None:
+            con.print("[red]--probe and --edit are two ways to give one "
+                      "probe; use one[/]")
+            raise typer.Exit(2)
+        # `refuse_reprobe` (settled question, malformed) is the composer's;
+        # here the same guard runs first so a bad target does not open an editor.
+        if vid not in eff.vertices:
+            con.print(f"[red]unknown vertex {vid!r}[/]")
+            raise typer.Exit(1)
+        ops = _compose(eff, "reprobe", vertex=vid)
+        _vet_all(eff, ops)
+        _stage_all(ops, against=eff)
+        n = len(eff.vertices[vid].probes) + 1
+        con.print(f"[green]staged[/] reprobe {vid}"
+                  + (f" — entry {n}; the earlier {n - 1} stay" if n > 1 else ""))
+        _warn_stuck()
+        return
+    if probe is None:
+        con.print("[red]give --probe (JSON) or --edit[/]")
+        raise typer.Exit(2)
     try:
         op = pending.compose_reprobe(eff, vid=vid, probe=_probe(probe))
     except pending.ApplyError as exc:
@@ -2681,6 +2708,8 @@ def amend(
         None, "--untag", help="a tag to drop; comma-separated or repeated"),
     clear_tags: bool = typer.Option(
         False, "--clear-tags", help="drop every tag"),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="compose the correction in an editor"),
 ) -> None:
     """Correct how a decision is worded or filed: its title, area, tags or note.
 
@@ -2701,6 +2730,21 @@ def amend(
     if vid not in eff.vertices:
         con.print(f"[red]unknown decision {vid}[/]")
         raise typer.Exit(1)
+    if _wants_editor(edit):
+        if any((title, area, note, rule, tag, untag, clear_tags)):
+            con.print("[red]--edit composes the whole correction; do not also "
+                      "pass field flags[/]")
+            raise typer.Exit(2)
+        ops = _compose(eff, "amend", vertex=vid)   # a set_fields op, or an abort
+        _vet_all(eff, ops)
+        _stage_all(ops, against=eff, new_area=new_area)
+        con.print(f"[green]staged[/] {vid}")
+        for line in _amended(eff.vertices[vid], ops[0]):
+            con.print(f"  [dim]{line}[/]")
+        if "title" in ops[0]:
+            con.print(CITED)
+        _warn_stuck()
+        return
     op = {"op": "set_fields", "vertex": vid}
     op.update({k: v for k, v in (("title", title), ("area", area),
                                  ("note", note), ("rule", rule),
@@ -4295,8 +4339,9 @@ def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
     if not editor.is_emacs(editor.resolve_editor()):
         con.print("[dim]note: in-buffer navigation needs emacs — "
                   "`dg task node <id>` for one piece of work in full[/]")
-    go = (task_editor.compose_add if kind == "add_task"
-          else task_editor.compose_done)
+    go = {"add_task": task_editor.compose_add,
+          "amend": task_editor.compose_amend}.get(
+              kind, task_editor.compose_done)
     # `compose_done` has no area to judge, so the flag is meaningless to it and
     # passing it would be a keyword it does not take.
     if kind != "add_task":
@@ -4665,6 +4710,8 @@ def task_amend(
         None, "--untag", help="a tag to drop; comma-separated or repeated"),
     clear_tags: bool = typer.Option(
         False, "--clear-tags", help="drop every tag"),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="compose the correction in an editor"),
 ) -> None:
     """Correct how a task is worded or filed: its title, area, tags or note.
 
@@ -4682,6 +4729,20 @@ def task_amend(
     """
     tg = _teff(_tg())
     _require_task(tid, tg)
+    if _wants_editor(edit):
+        if any((title, area, note, done_when, tag, untag, clear_tags)):
+            con.print("[red]--edit composes the whole correction; do not also "
+                      "pass field flags[/]")
+            raise typer.Exit(2)
+        ops = _tcompose("amend", tg, tid=tid)
+        _tstage(ops[0], new_area=new_area)
+        con.print(f"[green]staged[/] {tid}")
+        for line in _amended(tg.tasks[tid], ops[0]):
+            con.print(f"  [dim]{line}[/]")
+        if "title" in ops[0]:
+            con.print(CITED)
+        _twarn_stuck()
+        return
     op = {"op": "set_fields", "task": tid}
     op.update({k: v for k, v in (("title", title), ("area", area),
                                  ("note", note), ("done_when", done_when),

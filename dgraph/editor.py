@@ -300,6 +300,47 @@ def render_reopen(g: Graph, vid: str, seed: dict | None = None) -> str:
     )
 
 
+def render_reprobe(g: Graph, vid: str, seed: dict | None = None) -> str:
+    """The buffer for `dg reprobe --edit`: just the probe, as JSON. Reuses the
+    `## Probe` field the close/add buffers already carry (`D103`) so a probe —
+    structured JSON, the worst thing to type on a flag — can be composed in an
+    editor with the same hint and the same `_parse_probe` validation."""
+    seed = seed or {}
+    v = g.vertices[vid]
+    return (
+        _header(f"dg reprobe {vid} — {v.title}", op="reprobe", vertex=vid,
+                project=str(project.find().root))
+        + "\n* Input\n"
+        + _field("Probe",
+                 "The new rule for settling it, as JSON:\n"
+                 '{"kind": "<domain>.<name>", "args": {...}}. Appended and '
+                 "dated; the earlier probes stay.",
+                 _probe_text(seed.get("probe")))
+        + "\n" + _context(g, vid)
+    )
+
+
+def render_amend(g: Graph, vid: str, seed: dict | None = None) -> str:
+    """The buffer for `dg amend --edit`: the fields amend may correct, prefilled
+    with the record as it stands (`D103`). Parsed back to a `set_fields` op that
+    carries only what changed — an answer is never among them, the line amend is
+    drawn along. Reuses the `## Note` field the add buffer already renders."""
+    v = g.vertices[vid]
+    return (
+        _header(f"dg amend {vid}", op="amend", vertex=vid,
+                project=str(project.find().root))
+        + "\n* Input\n"
+        + _field("Title", "How the question is referred to — not a claim it "
+                          "makes.", v.title)
+        + _field("Area", "One area, or a new one; areas accumulate.", v.area)
+        + _field("Note", "What is undecided, and why. Prose; may be emptied.",
+                 v.note or "")
+        + _field("Rule", "What would settle this, in prose. May be emptied.",
+                 v.rule or "")
+        + "\n" + _context(g, vid)
+    )
+
+
 def next_id(g: Graph) -> str:
     """The next unused `D` id. `task_editor.next_id`'s twin, for this store.
 
@@ -390,13 +431,17 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
     )
 
 
-RENDERERS = {"close": render_close, "reopen": render_reopen, "add_vertex": render_add}
+RENDERERS = {"close": render_close, "reopen": render_reopen,
+             "add_vertex": render_add, "reprobe": render_reprobe,
+             "amend": render_amend}
 
 #: The prose each buffer seeds and reads back — the fields a record's
 #: `format` covers, by op. `source` is not prose: the views never convert it.
 SEED_PROSE = {"close": ("answer", "falsifier", "summary"),
               "reopen": ("why", "summary"),
-              "add_vertex": ("note", "rule")}
+              "add_vertex": ("note", "rule"),
+              "reprobe": (),  # a probe is JSON, not prose
+              "amend": ("note", "rule")}
 
 
 def seed_in(seed: dict | None, kind: str, dialect: str) -> dict | None:
@@ -597,6 +642,8 @@ def gui_dialect() -> str:
 
 ALLOWED = {
     "close": {"answer", "source", "falsifier", "opens", "summary", "probe"},
+    "reprobe": {"probe"},
+    "amend": {"title", "area", "note", "rule"},
     "reopen": {"why", "summary"},
     "add_vertex": {"id", "title", "area", "status", "after", "note", "probe",
                    "rule", "tags"},
@@ -661,7 +708,49 @@ def parse(
         return _parse_reopen(meta, f, tag=d.tag)
     if kind == "add_vertex":
         return _parse_add(g, f, new_area=new_area, explain=explain, tag=d.tag)
+    if kind == "reprobe":
+        return _parse_reprobe(meta, f)
+    if kind == "amend":
+        return _parse_amend(g, meta, f, tag=d.tag)
     raise EditorError(f"cannot compose a {kind!r} op")
+
+
+def _parse_amend(g: Graph, meta: dict, f: dict, tag: str | None = "org") -> list[dict]:
+    """A `set_fields` op carrying only the fields the buffer changed. Title and
+    area cannot be blanked; note and rule can be emptied to clear them. Nothing
+    changed is an abort, like an untouched template. `format` rides along when a
+    prose field (note, rule) was touched, since the buffer's prose is the tag's
+    dialect — the same rule `_parse_close` follows for an answer."""
+    vid = meta.get("vertex")
+    if vid not in g.vertices:
+        raise EditorError(f"unknown vertex {vid!r}")
+    v = g.vertices[vid]
+    op: dict = {"op": "set_fields", "vertex": vid}
+    for field, current in (("title", v.title), ("area", v.area),
+                           ("note", v.note or ""), ("rule", v.rule or "")):
+        new = f.get(field, "").strip()
+        if field in ("title", "area") and not new:
+            raise EditorError(f"{field.capitalize()} is empty — a {field} is "
+                              f"required and cannot be blanked here")
+        if new != (current or "").strip():
+            op[field] = new if new or field in ("title", "area") else None
+    if len(op) == 2:
+        raise EditorAbort("nothing changed — nothing staged")
+    if tag and any(k in op for k in ("note", "rule")):
+        op["format"] = tag
+    return [op]
+
+
+def _parse_reprobe(meta: dict, f: dict) -> list[dict]:
+    """A reprobe is the new rule, as JSON. Empty is an abort, like any
+    untouched field. `_parse_probe` refuses malformed JSON by the field's
+    name, the same as the close buffer's probe."""
+    text = f.get("probe", "").strip()
+    if not text:
+        raise EditorError("Probe is empty — a reprobe is the new rule for "
+                          "settling, as JSON")
+    return [{"op": "reprobe", "vertex": meta.get("vertex"),
+             "probe": _parse_probe(text)}]
 
 
 def _need(f: dict[str, str], name: str) -> str:
