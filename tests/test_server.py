@@ -1788,3 +1788,30 @@ def test_a_narrowed_clear_answers_which_acts_it_stranded(srv, store):
     assert d["cleared"] == 2 and d["stranded"] == ["b1"]
     code, d = jreq(srv, "/api/pending?agent=bob", "DELETE")
     assert code == 200 and d["cleared"] == 2 and d["stranded"] == []
+
+
+def test_edit_route_refuses_to_rest_on_an_act_staged_after_it(srv, store, monkeypatch):
+    """`D97` over `/api/edit`: the same buffer, the same prefix, the same
+    refusal by the name of the later act; the tray is untouched."""
+    dep = ACT_PREVIEW + [{"op": "add_vertex", "id": "D95", "title": "later",
+                          "area": "Alpha", "status": "OPEN", "ref": "b1",
+                          "group": "gb"},
+                         {"op": "add_edge", "from": "D01", "to": ["D95"],
+                          "ref": "b2", "group": "gb"}]
+    _stage(store, dep)
+
+    def launch(path):
+        text = path.read_text(encoding="utf-8")
+        head, rest = text.split("** After\n", 1)
+        lines = rest.split("\n")
+        i = 0
+        while lines[i].startswith("#"):
+            i += 1
+        lines[i] = "D95"
+        path.write_text(head + "** After\n" + "\n".join(lines), encoding="utf-8")
+        return 0
+    monkeypatch.setattr(editor, "launch_gui", launch)
+    code, d = jreq(srv, "/api/edit", "POST", {"ref": "aaaa"})
+    assert code == 400, d
+    assert "D95 is added by act b1" in d["error"] and "staged after" in d["error"]
+    assert [o["ref"] for o in pending.load(store / ".dgraph-pending.json")] == ["aaaa", "bbbb", "b1", "b2"]

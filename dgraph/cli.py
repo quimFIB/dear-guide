@@ -424,7 +424,8 @@ def _say_fell_back(review: str, fix: str) -> None:
               f"the record alone — `{review}` to review, `{fix}` to fix[/]")
 
 
-def _eff(g: Graph, skip: int | None = None) -> Graph:
+def _eff(g: Graph, skip: int | None = None,
+         revising: int | None = None) -> Graph:
     """The store plus the staged ops — what stage-time guards judge against.
 
     See `pending.preview`. If the staged batch itself no longer applies,
@@ -432,7 +433,7 @@ def _eff(g: Graph, skip: int | None = None) -> Graph:
     instead of guessing from the store alone.
     """
     try:
-        return pending.preview(g, skip=skip)
+        return pending.preview(g, skip=skip, revising=revising)
     except pending.ApplyError as exc:
         con.print(f"[red]the staged ops no longer apply cleanly, so this "
                   f"command cannot judge the graph they produce[/]\n{_x(exc)}\n"
@@ -3579,10 +3580,24 @@ def edit_cmd(ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
     # Deliberately not re-expanded: the derived ops are already staged, and
     # propagation depends only on which vertex is settled — never on the answer
     # text or the target list — so revising either cannot invalidate them.
-    # Rendered against the batch *without* op i: the other staged ops are
-    # context this revision should see, but the op being replaced is not.
-    eff = _eff(g, skip=i)
-    new = _compose(eff, kind, vertex=op.get("vertex"), index=i, op=op)
+    # Rendered against the ops *before* op i and the rest of its own act —
+    # never what is staged after it. The revision lands where the op sat,
+    # and a parent a later act adds would put an edge ahead of its vertex;
+    # judged against the prefix it is unknown there, and the refusal names
+    # the act instead (`D97`, audit `Z-F1`).
+    eff = _eff(g, revising=i)
+    ref = op.get("ref") or i
+
+    def explain(rid: str) -> str | None:
+        head = pending.later_act(ops, i, rid)
+        if head is None:
+            return None
+        return (f"{rid} is added by act {head}, staged after this one — "
+                f"drop this act and re-stage it (`dg drop {ref} --group`), "
+                f"or take {head} first (`dg apply --group {head}`)")
+
+    new = _compose(eff, kind, vertex=op.get("vertex"), index=i, op=op,
+                   explain=explain)
     # The whole group, not `new[0]`. An `add_vertex` comes back as the vertex
     # plus one `add_edge` per parent named in the buffer, and taking only the
     # first discarded every structural change the edit made — silently, under a

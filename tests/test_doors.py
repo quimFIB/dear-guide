@@ -2577,3 +2577,14 @@ def test_the_discard_by_writer_says_what_it_stranded():
     page = _page()
     handler = page.split('$("#clYes").onclick', 1)[1][:1500]
     assert "sayStranded(" in handler, handler
+
+
+def test_a_failure_about_the_page_is_said_above_the_trays():
+    """`Z-F4` / `T98`: a refresh, an areas report or a path report that fails
+    has no record to say it under, so it goes to `D94`'s line, not `#note`.
+    Vocabulary; the click is the pass's to make."""
+    page = _page()
+    for fn in ("async function refresh(", "async function showAreas(", "async function showPath("):
+        body = page.split(fn, 1)[1].split("\nasync function ", 1)[0].split("\nfunction ", 1)[0]
+        assert 'said(' in body and 'err.message' in body, fn
+        assert 'say(err.message' not in body, fn

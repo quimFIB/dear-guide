@@ -980,6 +980,17 @@ def rests_on_acts(ops: list[dict], act: list[dict]) -> list[str]:
     return seen
 
 
+def later_act(ops: list[dict], i: int, rid: str) -> str | None:
+    """The act staged **after** op `i` that adds `rid` — by the id a reviewer
+    would type — or `None`. `D97`: a revision of op `i` may not rest on it,
+    and the refusal names it rather than calling it unknown."""
+    own = ops[i].get("group") if i < len(ops) else None
+    for j, o in enumerate(ops):
+        if j > i and introduces(o) == rid and not (own and o.get("group") == own):
+            return group_of(ops, o)[0].get("ref")
+    return None
+
+
 def refuse_dependent(ops: list[dict], batch: list[dict], *,
                      what: str | None = None) -> str | None:
     """Why this batch may not be applied on its own — or `None`. `D89`.
@@ -1269,7 +1280,8 @@ def discard(applied: list[dict], path: Path | None = None) -> list[dict]:
         return remaining
 
 
-def preview(g: Graph, path: Path | None = None, *, skip: int | None = None) -> Graph:
+def preview(g: Graph, path: Path | None = None, *, skip: int | None = None,
+            revising: int | None = None) -> Graph:
     """The graph as it will stand once the staged ops apply.
 
     What every stage-time guard consults. A guard that reads the store alone
@@ -1277,8 +1289,14 @@ def preview(g: Graph, path: Path | None = None, *, skip: int | None = None) -> G
     just staged (`add --after` a staged vertex), accepts a duplicate of it
     (`dg decide` twice), demands a reopen that is already staged, and lets
     `expand` miss a descendant whose decision is staged but not applied.
-    `skip` leaves one op out — `dg edit N` revises op N against the graph as
-    it stands *without* that op.
+    `skip` leaves one op out. `revising` is what `dg edit N` uses: the store
+    plus the ops **before** op N and the rest of N's own act, never what is
+    staged after it. The tray is a sequence — each op was vetted against
+    what preceded it — and the edit is the one door that writes into its
+    middle; judged against the whole tray it could rest on an act staged
+    later, and every in-order reader then called that act missing. `D97`,
+    audit `Z-F1`. The act's own later members stay so the buffer can read
+    the vertex's parents back off its edges (`editor.render_op`).
 
     Deliberately not validated: mid-batch the combined state may be
     legitimately transitional (a child closed before its premise, with the
@@ -1287,8 +1305,14 @@ def preview(g: Graph, path: Path | None = None, *, skip: int | None = None) -> G
     anything more goes into it.
     """
     out = copy.deepcopy(g)
-    for i, op in enumerate(load(path)):
-        if i == skip:
+    ops = load(path)
+    keep = None
+    if revising is not None:
+        own = ops[revising].get("group") if revising < len(ops) else None
+        keep = {j for j, o in enumerate(ops)
+                if j < revising or (own and o.get("group") == own and j != revising)}
+    for i, op in enumerate(ops):
+        if i == skip or (keep is not None and i not in keep):
             continue
         try:
             _apply_one(out, op)

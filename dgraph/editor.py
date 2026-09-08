@@ -512,8 +512,15 @@ def parse(
     expect_vertex: str | None = None,
     expect_index: int | None = None,
     new_area: bool = False,
+    explain=None,
 ) -> list[dict]:
-    """Buffer -> op dicts ready for `pending.stage`. Raises rather than guessing."""
+    """Buffer -> op dicts ready for `pending.stage`. Raises rather than guessing.
+
+    `explain(id)`, if given, answers why a record `g` lacks is unknown here —
+    `dg edit` passes the tray's own account (*added by an act staged after
+    this one*, `D97`), which the parser cannot know and the refusal should
+    say instead of *unknown*.
+    """
     if not text.strip():
         raise EditorAbort("empty buffer — nothing staged")
 
@@ -544,11 +551,11 @@ def parse(
         raise EditorAbort("template came back untouched — nothing staged")
 
     if kind == "close":
-        return _parse_close(g, meta, f, raw)
+        return _parse_close(g, meta, f, raw, explain=explain)
     if kind == "reopen":
         return _parse_reopen(meta, f)
     if kind == "add_vertex":
-        return _parse_add(g, f, new_area=new_area)
+        return _parse_add(g, f, new_area=new_area, explain=explain)
     raise EditorError(f"cannot compose a {kind!r} op")
 
 
@@ -559,14 +566,22 @@ def _need(f: dict[str, str], name: str) -> str:
     return val
 
 
-def _parse_close(g: Graph, meta: dict, f: dict, raw: dict) -> list[dict]:
+def _unknown(fallback: str, ids: list[str], explain) -> EditorError:
+    """The refusal for ids `g` lacks: the caller's account where it has one,
+    the plain *unknown* otherwise."""
+    said = [w for w in (explain(i) for i in ids) if w] if explain else []
+    return EditorError("\n".join(said) if said else fallback)
+
+
+def _parse_close(g: Graph, meta: dict, f: dict, raw: dict,
+                 explain=None) -> list[dict]:
     vid = meta.get("vertex")
     if vid not in g.vertices:
         raise EditorError(f"unknown vertex {vid!r}")
     picked = _CHECKED.findall(raw.get("opens", ""))
     unknown = [t for t in picked if t not in g.vertices]
     if unknown:
-        raise EditorError(f"unknown target(s): {', '.join(unknown)}")
+        raise _unknown(f"unknown target(s): {', '.join(unknown)}", unknown, explain)
     # Already-linked children survive whatever the checkbox says: `_apply_one`
     # unions op["to"] with the edge's targets, so the buffer must not imply a
     # dependency can be dropped here.
@@ -629,7 +644,8 @@ def _parse_reopen(meta: dict, f: dict) -> list[dict]:
     return [op]
 
 
-def _parse_add(g: Graph, f: dict, *, new_area: bool = False) -> list[dict]:
+def _parse_add(g: Graph, f: dict, *, new_area: bool = False,
+               explain=None) -> list[dict]:
     vid = _need(f, "id")
     if not re.fullmatch(r"D\d+", vid):
         raise EditorError(f"malformed id {vid!r} — expected something like D07")
@@ -672,7 +688,7 @@ def _parse_add(g: Graph, f: dict, *, new_area: bool = False) -> list[dict]:
     parents = [p.strip() for p in f.get("after", "").split(",") if p.strip()]
     for parent in parents:
         if parent not in g.vertices:
-            raise EditorError(f"unknown parent {parent!r} in After")
+            raise _unknown(f"unknown parent {parent!r} in After", [parent], explain)
         ops.append({"op": "add_edge", "from": parent, "to": [vid]})
     return ops
 
@@ -825,6 +841,7 @@ def compose(
     op: dict | None = None,
     new_area: bool = False,
     launcher=None,
+    explain=None,
 ) -> list[dict]:
     """Render a buffer, hand it to the editor, and parse what comes back."""
     if op is not None and index is not None:
@@ -836,7 +853,8 @@ def compose(
     return run(text, lambda after: parse(after, g=g, expect_kind=kind,
                                          expect_vertex=vertex,
                                          expect_index=index,
-                                         new_area=new_area),
+                                         new_area=new_area,
+                                         explain=explain),
                launcher=launcher)
 
 

@@ -1456,11 +1456,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(
                 {"error": "an editor is already open for this project"}, 409)
         try:
-            # Rendered against the batch *without* this op: the others are
-            # context the revision should see, this one is not.
-            eff = pending.preview(Graph.load(), skip=i)
+            # Rendered against the ops *before* this one and the rest of
+            # its act, as `dg edit` does; a parent a later act adds is
+            # refused by that act's name (`D97`).
+            eff = pending.preview(Graph.load(), revising=i)
+
+            def explain(rid: str, ops=ops, i=i, ref=ref) -> str | None:
+                head = pending.later_act(ops, i, rid)
+                if head is None:
+                    return None
+                return (f"{rid} is added by act {head}, staged after this "
+                        f"one — drop this act and re-stage it, or take "
+                        f"{head} first")
+
             new = editor.compose(eff, kind, vertex=op.get("vertex"),
-                                 index=i, op=op, launcher=editor.launch_gui)
+                                 index=i, op=op, launcher=editor.launch_gui,
+                                 explain=explain)
             pending.vet_all(eff, new)
             before = pending.load() + pending.load(task_pending.path())
             pending.replace_group(op.get("ref") or i, new, against=eff,

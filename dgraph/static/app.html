@@ -115,6 +115,7 @@
     background:var(--panel);padding:5px 12px;font-size:12px;color:var(--ok)}
   #said[hidden]{display:none}
   #said.wait{color:var(--prov)}
+  #said.bad{color:var(--bad)}
   #said .body{flex:1}
   #said .x{color:var(--dim)}   /* a dismiss, not a drop */
   #said .warn{margin-top:4px}
@@ -542,7 +543,7 @@ async function refresh(){
        re-shown, and `select()` redraws and repaints the panel, so the kept
        inspector costs nothing extra. */
     reselect(keep);
-  }catch(err){ say(err.message,"bad"); }
+  }catch(err){ said(esc(err.message), "bad"); }   /* no record to say it under: D94's line (Z-F4) */
   finally{ BOOTING = false; refreshBadge(); }
 }
 
@@ -2837,7 +2838,7 @@ async function showChain(vid){
 async function showPath(a, b){
   let r;
   try{ r=await api(`/api/path?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}`); }
-  catch(err){ say(err.message,"bad"); return; }
+  catch(err){ said(esc(err.message), "bad"); return; }
   let h=`<h2>${esc(a)} → ${esc(b)}</h2>`;
   if(r.error||!r.path.length){
     h+=`<p class="muted">${esc(r.error||"no path")}</p>`;
@@ -2861,7 +2862,7 @@ async function showPath(a, b){
    questions and work as if they were the same thing. */
 async function showAreas(){
   let r;
-  try{ r=await api("/api/areas"); }catch(err){ say(err.message,"bad"); return; }
+  try{ r=await api("/api/areas"); }catch(err){ said(esc(err.message), "bad"); return; }
   sel=null; tsel=null; NEWKIND=null; RELATING=null; draw();
   const block=(title, b)=>{
     if(!b) return "";

@@ -2273,3 +2273,58 @@ def test_export_is_the_record_and_never_the_tray(run, store):
     payload = json.loads(run("export").output)
     assert "D07" not in {v["id"] for v in payload["vertices"]}
     assert run("export", "D07").exit_code == 1
+
+
+# ---- D97: the edit is judged against the ops before it ----------------------
+
+def _reparent(text, parents):
+    """Rewrite the buffer's `** After` body — the line after its hints."""
+    head, rest = text.split("** After\n", 1)
+    lines = rest.split("\n")
+    i = 0
+    while lines[i].startswith("#"):
+        i += 1
+    lines[i] = parents
+    return head + "** After\n" + "\n".join(lines)
+
+
+def test_edit_refuses_to_rest_on_an_act_staged_after_it(run, store, g, stub_editor):
+    """`D97`: the revision is vetted against the store plus the ops *before*
+    it, so a parent a later act adds is unknown there — refused, naming that
+    act and the way out, and the tray is untouched. Before this the edit was
+    vetted against the whole tray and landed in place, ahead of the act it
+    now rested on (`Z-F1`)."""
+    write(g)
+    assert run("add", "--id", "D90", "--area", "Alpha", "-t", "first",
+               "--after", "D01").exit_code == 0
+    assert run("add", "--id", "D95", "--area", "Alpha", "-t", "later",
+               "--after", "D01").exit_code == 0
+    before = pending.load()
+    later = before[2]["ref"]                          # add_vertex D95's act
+    stub_editor(lambda t: _reparent(t, "D95"))
+    res = run("edit", before[0]["ref"])
+    assert res.exit_code == 1, res.output
+    assert "nothing staged" in res.output
+    assert f"D95 is added by act {later}" in res.output, res.output
+    assert "staged after" in res.output and "re-stage" in res.output
+    assert pending.load() == before
+
+
+def test_edit_still_re_parents_onto_what_precedes_it(run, store, g, stub_editor):
+    """The other half of `D97`: a parent the store holds, or an earlier act
+    adds, is offered and taken, and the revision lands where the op sat."""
+    write(g)
+    assert run("add", "--id", "D90", "--area", "Alpha", "-t", "first",
+               "--after", "D01").exit_code == 0
+    assert run("add", "--id", "D95", "--area", "Alpha", "-t", "later",
+               "--after", "D01").exit_code == 0
+    before = pending.load()
+    stub_editor(lambda t: _reparent(t, "D02"))
+    assert run("edit", before[0]["ref"]).exit_code == 0
+    after = pending.load()
+    assert [o["op"] for o in after] == ["add_vertex", "add_edge", "add_vertex", "add_edge"]
+    assert after[0]["id"] == "D90" and after[1]["from"] == "D02"
+    stub_editor(lambda t: _reparent(t, "D90"))
+    assert run("edit", after[2]["ref"]).exit_code == 0     # D95 onto D90, staged earlier
+    assert pending.load()[3]["from"] == "D90"
+    assert run("apply").exit_code == 0
