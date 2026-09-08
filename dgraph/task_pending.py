@@ -813,14 +813,21 @@ def preview(tg: TaskGraph, p: Path | None = None, *, skip: int | None = None) ->
     return out
 
 
-def vet(tg: TaskGraph, op: dict, *, new_area: bool = False) -> None:
+def vet(tg: TaskGraph, op: dict, *, new_area: bool = False,
+        stored: TaskGraph | None = None) -> None:
     """Raise if `op` could not be staged against `tg`.
 
     The shared stage-time floor, matching `pending.vet`: the op must apply, its
     targets must exist, and any status it writes must be legal. Completeness
     rules (an outcome on a DONE task) stay with `apply`, where a transitional
-    mid-batch state is allowed.
+    mid-batch state is allowed. `stored` is `pending.vet`'s — see there: an
+    id the tray holds is said to be staged, not landed. Audit `AA-F4`.
     """
+    if op.get("op") == "add_task" and op.get("id") in tg.tasks:
+        tid = op["id"]
+        where = (" in the staging area — review the tray"
+                 if stored is not None and tid not in stored.tasks else "")
+        raise ApplyError(f"{tid} already exists{where}")
     probe = copy.deepcopy(tg)
     try:
         _apply_one(probe, op)
@@ -874,7 +881,7 @@ def vet(tg: TaskGraph, op: dict, *, new_area: bool = False) -> None:
 
 
 def vet_all(tg: TaskGraph, ops: list[dict], *,
-            new_area: bool = False) -> None:
+            new_area: bool = False, stored: TaskGraph | None = None) -> None:
     """Raise if these ops could not be staged **as a group**.
 
     The plural of `vet`, and the shape every group-building task command needs:
@@ -890,7 +897,7 @@ def vet_all(tg: TaskGraph, ops: list[dict], *,
     """
     probe = copy.deepcopy(tg)
     for op in ops:
-        vet(probe, op, new_area=new_area)
+        vet(probe, op, new_area=new_area, stored=stored)
         _apply_one(probe, op)
 
 

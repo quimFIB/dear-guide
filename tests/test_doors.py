@@ -2646,3 +2646,98 @@ def test_a_failure_about_the_page_is_said_above_the_trays():
         body = page.split(fn, 1)[1].split("\nasync function ", 1)[0].split("\nfunction ", 1)[0]
         assert 'said(' in body and 'err.message' in body, fn
         assert 'say(err.message' not in body, fn
+
+
+# ---- the two filters when the server does not answer ----------------------
+# Audit AA-F1 (pass 26): `runQuery` and `runFocus` caught a transport failure
+# with `return`, so a query typed against a restarted server (a 403 on the
+# guarded `/api/find`) or a stopped one left the query in the box, the canvas
+# unfiltered and nothing said — while the fault branch two lines down had the
+# right slot all along. Verified in Chrome before it was fixed.
+
+FILTER_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
+const block = cut("async function runQuery(", "/* ---- focus:")
+            + cut("const FOCUS_RE", "function setFocus(")
+            + cut("async function runFocus(", "/* Focus changes which nodes exist");
+let QUERY = "status:OPEN", FOUND = {D01: ["title"]}, QSEQ = 0, FSEQ = 0;
+let FOCUS = null, FNOTE = "";
+const el = () => ({textContent: "", value: "", cls: new Set(),
+  classList: {add(c){ this.owner.cls.add(c); }, remove(c){ this.owner.cls.delete(c); },
+              contains(c){ return this.owner.cls.has(c); }}});
+const held = {qnote: el(), q: el(), focusQ: el(), focusNote: el()};
+Object.values(held).forEach(e => e.classList.owner = e);
+held.focusQ.value = "D01";
+const $ = s => held[s.slice(1)];
+let drawn = 0, relaid = 0;
+const syncChips = () => {}, draw = () => { drawn++; }, relayout = () => { relaid++; };
+const api = async () => { throw new Error("Failed to fetch"); };
+eval(block + `
+runQuery().then(() => {
+  if (!held.qnote.textContent.includes("Failed to fetch"))
+    throw new Error("the find box said nothing: " + JSON.stringify(held.qnote.textContent));
+  if (!held.q.cls.has("bad")) throw new Error("the find box is not marked");
+  if (FOUND !== null) throw new Error("a stale result was kept as the answer");
+  return runFocus();
+}).then(() => {
+  if (!held.focusNote.textContent.includes("Failed to fetch"))
+    throw new Error("the focus box said nothing: " + JSON.stringify(held.focusNote.textContent));
+  if (!held.focusQ.cls.has("bad")) throw new Error("the focus box is not marked");
+  console.log("ok");
+}).catch(e => { console.error(e.message); process.exit(1); });
+`);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_a_filter_the_server_did_not_answer_says_so_in_its_own_slot(tmp_path):
+    harness = tmp_path / "filter.js"
+    harness.write_text(FILTER_HARNESS, encoding="utf-8")
+    r = subprocess.run(["node", str(harness), str(server.STATIC / "app.html")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == "ok"
+
+
+# ---- a tasks.json that cannot be read ---------------------------------------
+# Audit AA-F3 (pass 26): `/api/tasks` answers 500 for a store that does not
+# load — a merge left conflict markers in it — and the page's `.catch` mapped
+# that to `null`, which is the server's word for *this project has no
+# tasks.json*. The tab then said exactly that, beside a findings chip carrying
+# `store_loads`. Seen in Chrome on a real `git merge` conflict.
+
+TABS_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
+const block = cut("function tabs(", "/* ---- the one filter");
+let T = null, TFAULT = process.argv[3] || null, tab = "decisions";
+const tabsEl = {innerHTML: "", querySelectorAll: () => []};
+const $ = s => tabsEl, esc = s => s;
+eval(block + `
+tabs();
+const html = tabsEl.innerHTML;
+if (TFAULT) {
+  if (html.includes("no tasks.json"))
+    throw new Error("an unreadable tasks.json is drawn as no tasks.json: " + html);
+  if (!html.includes("could not be read"))
+    throw new Error("the tab does not say the store could not be read: " + html);
+} else if (!html.includes("no tasks.json")) {
+  throw new Error("a project with no tasks.json is not drawn as one: " + html);
+}
+console.log("ok");
+`);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+@pytest.mark.parametrize("fault", ["", "tasks.json could not be read: Expecting property name"])
+def test_the_tasks_tab_tells_no_store_from_an_unreadable_one(tmp_path, fault):
+    harness = tmp_path / "tabs.js"
+    harness.write_text(TABS_HARNESS, encoding="utf-8")
+    r = subprocess.run(["node", str(harness), str(server.STATIC / "app.html"), fault],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == "ok"

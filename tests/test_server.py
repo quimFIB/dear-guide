@@ -15,6 +15,7 @@ import urllib.request
 import pytest
 
 from dgraph import editor, pending, server, task_pending
+from dgraph.model import Graph
 
 
 @pytest.fixture
@@ -1352,7 +1353,9 @@ def test_the_editor_buffer_is_handed_the_effective_graph_not_the_store(srv, stor
         "render_add previews the tray, and both its callers already hand it "
         "the effective graph — the tray is now applied twice")
     # …and the claim about the callers, which is what makes the above safe.
-    assert "pending.preview(g), kind," in \
+    # `effective` is `pending.preview` with the tray's failure worded for the
+    # page (audit `AA-F2`); the claim is unchanged.
+    assert "effective(g), kind," in \
         (pathlib.Path(server.__file__).read_text(encoding="utf-8")), \
         "/api/compose no longer hands the editor the effective graph"
 
@@ -1866,3 +1869,71 @@ def test_a_markdown_editor_composes_in_the_markdown_buffer(srv, monkeypatch):
     assert seen["path"].name == ".dgraph-edit.md"
     assert body["staged"][0]["answer"] == "typed in vim"
     assert "format" not in body["staged"][0]
+
+
+# ---- a tray that no longer applies, and a record that is only staged ------
+# Audit AA-F2, AA-F4 (pass 26).
+
+def _strand_the_tray(srv):
+    """Two acts through the form's own route, the second resting on the first,
+    then the first dropped — the cut `D91` marks in the listing. What is left
+    is a tray `pending.preview` refuses with `unknown vertex 'D90'`."""
+    code, _ = jreq(srv, "/api/add", "POST",
+                   {"id": "D90", "title": "first", "area": "Alpha", "after": ["D01"]})
+    assert code == 200
+    code, _ = jreq(srv, "/api/add", "POST",
+                   {"id": "D91", "title": "second", "area": "Alpha", "after": ["D90"]})
+    assert code == 200
+    head = next(o["ref"] for o in pending.load() if o.get("id") == "D90")
+    pending.drop_group(head)
+    with pytest.raises(pending.ApplyError):
+        pending.preview(Graph.load())
+
+
+@pytest.mark.parametrize("path, body", [
+    pytest.param("/api/pending",
+                 {"op": "close", "vertex": "D05", "answer": "a", "source": "s",
+                  "falsifier": "f", "to": []}, id="stage"),
+    pytest.param("/api/expand", {"op": "close", "vertex": "D05"}, id="expand"),
+    pytest.param("/api/compose", {"op": "close", "vertex": "D05"}, id="compose"),
+])
+def test_a_tray_that_no_longer_applies_is_said_as_the_cause_on_every_staging_door(
+        srv, store, monkeypatch, path, body):
+    """The CLI's `_eff` says *the staged ops no longer apply cleanly, so this
+    command cannot judge the graph they produce* and names the way out; the
+    page's doors answered the floor's bare `unknown vertex 'D90'` under a
+    record the reader was not looking at. One sentence, every door."""
+    monkeypatch.setattr(server.editor, "launch_gui", lambda p: 0)
+    _strand_the_tray(srv)
+    code, out = jreq(srv, path, "POST", body)
+    assert code == 400, out
+    assert "no longer apply cleanly" in out["error"], out
+    assert "unknown vertex 'D90'" in out["error"], out
+    assert "tray" in out["error"], out
+
+
+def test_an_identical_add_of_a_staged_record_is_said_to_be_staged_not_stored(
+        srv, store, task_store):
+    """`pending.already(same=True)` says *another writer applied it … it is in
+    the store*, and its docstring says no door can reach it with a record that
+    is only staged. The raw op door can: it vets against the store plus the
+    tray and reads a tray-only record as a stored one."""
+    code, _ = jreq(srv, "/api/add", "POST",
+                   {"id": "D90", "title": "first", "area": "Alpha", "after": ["D01"]})
+    assert code == 200
+    code, out = jreq(srv, "/api/pending", "POST",
+                     {"op": "add_vertex", "id": "D90", "title": "first",
+                      "area": "Alpha"})
+    assert code == 400, out
+    assert "staging area" in out["error"], out
+    assert "in the store" not in out["error"], out
+    assert "D90" not in Graph.load().vertices
+
+    code, _ = jreq(srv, "/api/add-task", "POST",
+                   {"id": "T90", "title": "t", "area": "Alpha"})
+    assert code == 200
+    code, out = jreq(srv, "/api/task-pending", "POST",
+                     [{"op": "add_task", "id": "T90", "title": "t", "area": "Alpha"}])
+    assert code == 400, out
+    assert "staging area" in out["error"], out
+    assert "in the store" not in out["error"], out

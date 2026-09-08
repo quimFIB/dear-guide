@@ -1419,7 +1419,8 @@ def retargets_all(g: Graph, ops: list[dict]) -> list[tuple[str, list[str], list[
     return [v for v in seen.values() if sorted(v[1]) != sorted(v[2])]
 
 
-def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
+def vet(g: Graph, op: dict, *, new_area: bool = False,
+        stored: Graph | None = None) -> None:
     """Raise ApplyError if `op` could not be staged against `g`.
 
     The stage-time guard for callers that receive ops as data — the web API,
@@ -1428,7 +1429,20 @@ def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
     names must exist, and any status it writes must be legal. Validation-level
     rules (propagation, falsifiers) stay with `apply`, where a transitional
     mid-batch state is allowed.
+
+    `stored` is the store without the tray, where the caller has it. An id
+    already in `g` is refused here, before the probe, because the probe's
+    own refusal — `already(same=True)`, *another writer applied it … it is in
+    the store* — is written for `apply`, where `g` is the store; through this
+    door `g` is the store plus the tray, and a record that is only staged
+    read as one somebody had landed. `compose_add` makes the same split for
+    the CLI. Audit `AA-F4`.
     """
+    if op.get("op") == "add_vertex" and op.get("id") in g.vertices:
+        vid = op["id"]
+        where = (" in the staging area — review the tray"
+                 if stored is not None and vid not in stored.vertices else "")
+        raise ApplyError(f"{vid} already exists{where}")
     probe = copy.deepcopy(g)
     try:
         _apply_one(probe, op)
@@ -1636,7 +1650,7 @@ def vet_fields(op: dict, *, own: dict, other: dict, current: dict,
 
 
 def vet_all(g: Graph, ops: list[dict], *,
-            new_area: bool = False) -> None:
+            new_area: bool = False, stored: Graph | None = None) -> None:
     """Raise if these ops could not be staged **as a group**.
 
     The plural of `vet`, and the twin of `task_pending.vet_all`. Each op is
@@ -1652,7 +1666,7 @@ def vet_all(g: Graph, ops: list[dict], *,
     """
     probe = copy.deepcopy(g)
     for op in ops:
-        vet(probe, op, new_area=new_area)
+        vet(probe, op, new_area=new_area, stored=stored)
         _apply_one(probe, op)
 
 

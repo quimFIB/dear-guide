@@ -313,7 +313,7 @@ let BUILD=null;
 /* The second store, and the reading that joins them. `T` is null in a project
    with no tasks.json — which is not the same as a project whose backlog is
    empty, and the tab says which. */
-let T=null, TPEND=[], JOIN=null, tsel=null;
+let T=null, TPEND=[], JOIN=null, tsel=null, TFAULT=null;
 /* The preview (D88): while one is on, `G`, `T` and `JOIN` hold the previewed
    payloads and `STORE` keeps the store's, so every drawer and panel reads
    the previewed graph with the code it already has, and `previewOff` puts
@@ -421,7 +421,13 @@ async function api(path, opts){
    the graph in `G` disagree. */
 async function boot(){
   const g = await api("/api/graph");
-  const t = await api("/api/tasks").catch(()=>null);
+  /* `null` is the server's word for "this project has no tasks.json". A
+     store that does not load — a merge left conflict markers in it — is a
+     500, and mapping that to `null` too made the tab say the file was absent
+     beside a findings chip saying it could not be read. The reason is kept
+     so `tabs()` can tell the two apart. Audit `AA-F3`. */
+  let tfault = null;
+  const t = await api("/api/tasks").catch(err=>{ tfault = err.message; return null; });
   const join = await api("/api/joined").catch(()=>({by_decision:{}}));
   const pend = await api("/api/pending");
   const tpend = t ? await api("/api/task-pending").catch(()=>[]) : [];
@@ -441,7 +447,7 @@ async function boot(){
      without knowing this exists, which is the point of putting it here rather
      than in the click handler. */
   const st = await api("/api/stat").catch(()=>null);
-  G = g; T = t; JOIN = join; PEND = pend; TPEND = tpend;
+  G = g; T = t; TFAULT = tfault; JOIN = join; PEND = pend; TPEND = tpend;
   if(st){ STAT = st; STALE = 0; }
   /* One palette across both stores, so an area is the same colour whichever
      graph you are looking at — that is most of what makes the joined view
@@ -573,7 +579,11 @@ function tabs(){
   const names=[["decisions","decisions"],["tasks","tasks"],["joined","joined"]];
   $("#tabs").innerHTML=names.map(([k,label])=>{
     const off = k!=="decisions" && !T;
-    return `<button class="tab${k===tab?" on":""}" data-t="${k}"${off?" disabled title=\"this project has no tasks.json\"":""}>${label}</button>`;
+    /* Two facts, told apart: no file, or a file that could not be read. */
+    const why = TFAULT
+      ? `tasks.json could not be read — see the findings chip. ${esc(TFAULT)}`
+      : "this project has no tasks.json";
+    return `<button class="tab${k===tab?" on":""}" data-t="${k}"${off?` disabled title="${why}"`:""}>${label}</button>`;
   }).join(" ");
   $("#tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{
     if(b.disabled) return;
@@ -630,7 +640,16 @@ async function runQuery(){
   if(!QUERY){ FOUND = null; $("#qnote").textContent = ""; syncChips(); draw(); return; }
   let r;
   try { r = await api("/api/find?q=" + encodeURIComponent(QUERY)); }
-  catch(e){ return; }
+  catch(e){
+    /* A transport failure is a fault like a bad query, said in the same
+       slot. It used to `return`, which left the query in the box and the
+       previous answer on the canvas as though it were this one: against a
+       restarted server (`/api/find` is guarded, so a stale token is a 403)
+       or a stopped one, the OPEN chip lit and every DECIDED node stayed
+       drawn. Audit `AA-F1`, verified in Chrome. */
+    if(seq !== QSEQ) return;
+    r = {fault: e.message};
+  }
   /* A slow answer to an old keystroke must not overwrite a fast answer to a
      new one. */
   if(seq !== QSEQ) return;
@@ -733,7 +752,12 @@ async function runFocus(){
   try {
     r = await api("/api/find?q=" + encodeURIComponent(seed)
                   + "&subgraph=" + (hops==null ? "" : hops));
-  } catch(e){ return; }
+  } catch(e){
+    /* `runQuery`'s reason: a slice the server did not answer is a fault,
+       said where a fault is said, with the previous slice kept. `AA-F1`. */
+    if(seq !== FSEQ) return;
+    r = {fault: e.message};
+  }
   if(seq !== FSEQ) return;              /* an older seed, answered late */
   if(r.fault || !r.subgraph){
     /* The chip keeps its text and the canvas keeps its previous slice: a typo

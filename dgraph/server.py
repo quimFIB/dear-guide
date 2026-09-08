@@ -208,7 +208,46 @@ def _next(prefix: str, offer):
         # rather than raised, for the reason above — every other reading on
         # this page still holds, and the form is the only thing that cannot be
         # filled.
-        return None, f"the staged ops no longer apply cleanly: {exc}"
+        return None, f"{TRAY_BROKEN}: {exc}"
+
+
+#: The sentence every door says when the tray itself no longer applies.
+#: One wording, because the CLI's `_eff` says it once for every command,
+#: and the page's doors were each answering the floor's bare `unknown
+#: vertex` under a record the reader was not looking at — while `_next`,
+#: two functions up, already said it for the offer. Audit `AA-F2`.
+TRAY_BROKEN = "the staged ops no longer apply cleanly"
+
+
+def effective(g: Graph, *, revising: int | None = None) -> Graph:
+    """`pending.preview` for a route: the store plus the tray, or a refusal
+    that names the tray as the cause and the way out.
+
+    The CLI's `_eff` at the HTTP layer. Staging more on top of a tray that
+    does not apply helps nobody, and the refusal has to say which of the two
+    things went wrong: not the op the reader just wrote, the tray under it.
+    The page draws the sentence where the door was clicked, so it names the
+    tray's own controls rather than a command.
+    """
+    try:
+        return pending.preview(g, revising=revising)
+    except pending.ApplyError as exc:
+        raise pending.ApplyError(
+            f"{TRAY_BROKEN}, so nothing can be judged against them: {exc} — "
+            f"review the tray; drop or revise the act that no longer applies"
+        ) from None
+
+
+def effective_tasks(tg: TaskGraph) -> TaskGraph:
+    """`effective`'s twin for the task tray."""
+    try:
+        return task_pending.preview(tg)
+    except pending.ApplyError as exc:
+        raise pending.ApplyError(
+            f"the staged task ops no longer apply cleanly, so nothing can be "
+            f"judged against them: {exc} — review the task tray; drop or "
+            f"revise the act that no longer applies"
+        ) from None
 
 
 def task_depth(tg: TaskGraph) -> dict[str, int]:
@@ -679,7 +718,7 @@ def stage(g: Graph, op: dict) -> list[dict]:
     for a decided vertex, or a dangling target is refused here rather than
     staged as a batch-poisoning op `apply` rejects later.
     """
-    eff = pending.preview(g)
+    eff = effective(g)
     # The same policy the CLI applies, at the same moment. The page itself
     # stages as nobody and is never refused; this bites for a caller driving the
     # API with an `X-DG-Agent` header, which is the other way an agent reaches
@@ -692,7 +731,7 @@ def stage(g: Graph, op: dict) -> list[dict]:
             raise pending.ApplyError(why)
     fresh = bool(op.pop("new_area", False))
     fresh_tag = bool(op.pop("new_tag", False))
-    pending.vet(eff, op, new_area=fresh)
+    pending.vet(eff, op, new_area=fresh, stored=g)
     ops = pending.expand(eff, op)
     # The area guard lives in `stage_all` now, so the page's `new_area` has to
     # reach it — scoped to this request, never written into the op. `expand`
@@ -783,7 +822,8 @@ def stage_tasks(tg: TaskGraph, ops: list[dict], *,
             new_area = True
         if isinstance(op, dict) and op.pop("new_tag", False):
             new_tag = True
-    task_pending.vet_all(task_pending.preview(tg), ops, new_area=new_area)
+    task_pending.vet_all(effective_tasks(tg), ops, new_area=new_area,
+                         stored=tg)
     # `stage`'s twin — see there. Audit `R-F2`.
     with pending.new_area_allowed(new_area), pending.new_tag_allowed(new_tag):
         pending.stage_all(ops, task_pending.path())
@@ -1192,7 +1232,7 @@ class Handler(BaseHTTPRequestHandler):
             # preview propagation without staging
             g = Graph.load()
             try:
-                self._json({"ops": pending.expand(pending.preview(g), self._body())})
+                self._json({"ops": pending.expand(effective(g), self._body())})
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
         elif self.path == "/api/apply":
@@ -1456,7 +1496,7 @@ class Handler(BaseHTTPRequestHandler):
             # Rendered against the ops *before* this one and the rest of
             # its act, as `dg edit` does; a parent a later act adds is
             # refused by that act's name (`D97`).
-            eff = pending.preview(Graph.load(), revising=i)
+            eff = effective(Graph.load(), revising=i)
 
             def explain(rid: str, ops=ops, i=i, ref=ref) -> str | None:
                 head = pending.later_act(ops, i, rid)
@@ -1741,7 +1781,7 @@ class Handler(BaseHTTPRequestHandler):
             # The buffer's context and the parser's target checks see the
             # staged ops too, matching the CLI's `_eff`.
             ops = editor.compose(
-                pending.preview(g), kind,
+                effective(g), kind,
                 vertex=body.get("vertex"),
                 seed=body.get("seed") or None,
                 launcher=editor.launch_gui,
