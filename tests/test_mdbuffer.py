@@ -91,6 +91,9 @@ _MARKERS = [
     "\\#literal hash", "\\> literal gt", "\\\\# two slashes",
     # `AC-F7`(a): two blank lines inside a value are the value's.
     "para one\n\n\npara two",
+    # `D104`: so is its indentation — a value that is only an indented code
+    # block used to come back dedented into a paragraph.
+    "    dg edit 0\n    dg apply", "  two spaces in, one line",
 ]
 
 
@@ -224,3 +227,18 @@ def test_one_lock_guards_both_buffers(g, store, monkeypatch):
     with pytest.raises(EditorError, match="already open"):
         editor.compose(g, "close", vertex="D05")
     (store / ".dgraph-edit.lock").unlink()
+
+
+@pytest.mark.parametrize("dialect", ["org", "markdown"])
+def test_a_typed_value_keeps_its_indentation(g, store, dialect):
+    """`D104`: the parser strips blank lines at either end of a field and
+    nothing else. A body indented the old org way is stored indented; a code
+    block typed as the whole value stays a code block."""
+    org = editor.render_reopen(g, "D01")
+    typed = "\n   indented the org way\n   second line\n\n"
+    if dialect == "markdown":
+        buf = mdbuffer.render(org).replace("## Why\n", "## Why\n" + typed, 1)
+    else:
+        buf = org.replace("** Why\n", "** Why\n" + typed, 1)
+    (op,) = editor.parse(buf, g=g, expect_kind="reopen", dialect=dialect)
+    assert op["why"] == "   indented the org way\n   second line"

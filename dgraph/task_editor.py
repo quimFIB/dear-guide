@@ -343,13 +343,15 @@ def _parse_amend(tg: TaskGraph, meta: dict, f: dict,
                                 ("area", "area", t.area),
                                 ("note", "note", t.note or ""),
                                 ("done when", "done_when", t.done_when or "")):
-        new = f.get(field, "").strip()
+        new = editor._val(f, field)
         if key in ("title", "area") and not new:
             raise EditorError(f"{field.capitalize()} is empty — a {key} is "
                               f"required and cannot be blanked here")
         if key in PROSE:
-            current = orgmd.convert(current, t.format, tag) or ""
-        if new != (current or "").strip():
+            current = editor.mdbuffer.trim(orgmd.convert(current, t.format, tag) or "")
+        else:
+            current = (current or "").strip()
+        if new != current:
             op[key] = new if new or key in ("title", "area") else None
     if len(op) == 2:
         raise EditorAbort("nothing changed — nothing staged")
@@ -485,7 +487,7 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
 
 
 def _need(f: dict[str, str], name: str) -> str:
-    val = f.get(name, "").strip()
+    val = editor._val(f, name)      # prose as typed, one-liners stripped (D104)
     if not val:
         raise EditorError(f"{name.capitalize()} is empty — nothing staged")
     return val
@@ -540,8 +542,8 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
     if why is not None:
         raise EditorError(f"Area: {why}")
     op = {"op": "add_task", "id": tid, "title": _need(f, "title"), "area": area}
-    if f.get("note", "").strip():
-        op["note"] = f["note"].strip()
+    if editor._val(f, "note"):
+        op["note"] = editor._val(f, "note")
     because_raw = f.get("because", "").strip()
     if because_raw:
         op["because"] = [_premise(g, d.strip(), "Because")
@@ -549,8 +551,8 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
     ef_raw = f.get("evidence for", "").strip()
     if ef_raw:
         op["evidence_for"] = _premise(g, ef_raw, "Evidence for")
-    if f.get("done when", "").strip():
-        op["done_when"] = f["done when"].strip()
+    if editor._val(f, "done when"):
+        op["done_when"] = editor._val(f, "done when")
     if f.get("tags", "").strip():
         op["tags"] = _tags.clean(f["tags"])
     if f.get("probe", "").strip():

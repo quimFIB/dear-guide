@@ -589,7 +589,7 @@ def _body(raw: str) -> str:
     """
     text = _COMMENT.sub("", raw)
     text = re.sub(r"^([ \t]*),(,*[#*])", r"\1\2", text, flags=re.M)
-    return textwrap.dedent(text).strip()
+    return mdbuffer.trim(text)      # blank lines at the ends, never a dedent (D104)
 
 
 def _meta(text: str) -> dict[str, str]:
@@ -744,7 +744,7 @@ def _parse_amend(g: Graph, meta: dict, f: dict, tag: str | None = "org") -> list
     op: dict = {"op": "set_fields", "vertex": vid}
     for field, current in (("title", v.title), ("area", v.area),
                            ("note", v.note or ""), ("rule", v.rule or "")):
-        new = f.get(field, "").strip()
+        new = _val(f, field)
         if field in ("title", "area") and not new:
             raise EditorError(f"{field.capitalize()} is empty — a {field} is "
                               f"required and cannot be blanked here")
@@ -752,8 +752,10 @@ def _parse_amend(g: Graph, meta: dict, f: dict, tag: str | None = "org") -> list
             # Judged against the record as the buffer showed it — converted
             # into the buffer's dialect, as `render_amend` seeded it — so a
             # note left alone is not staged as a rewrite of itself (`AC-F4`).
-            current = orgmd.convert(current, v.format, tag) or ""
-        if new != (current or "").strip():
+            current = mdbuffer.trim(orgmd.convert(current, v.format, tag) or "")
+        else:
+            current = (current or "").strip()
+        if new != current:
             op[field] = new if new or field in ("title", "area") else None
     if len(op) == 2:
         raise EditorAbort("nothing changed — nothing staged")
@@ -774,8 +776,23 @@ def _parse_reprobe(meta: dict, f: dict) -> list[dict]:
              "probe": _parse_probe(text)}]
 
 
+#: The fields whose bytes are kept as typed — leading indentation included
+#: (`D104`). Everything else is a one-line value and is stripped.
+PROSE_FIELDS = frozenset({"answer", "falsifier", "summary", "why", "note",
+                          "rule", "outcome", "done when"})
+
+
+def _val(f: dict[str, str], name: str) -> str:
+    """A parsed field's value: prose as `_body` left it, a one-line value
+    stripped. `""` when absent or blank."""
+    val = f.get(name, "")
+    if not val.strip():
+        return ""
+    return val if name in PROSE_FIELDS else val.strip()
+
+
 def _need(f: dict[str, str], name: str) -> str:
-    val = f.get(name, "").strip()
+    val = _val(f, name)
     if not val:
         # Name the slot: the value goes on the line under the heading, above
         # the hint. A person can type among the hint by mistake, where the
@@ -815,7 +832,7 @@ def _parse_close(g: Graph, meta: dict, f: dict, raw: dict,
     op = {
         "op": "close", "vertex": vid,
         "answer": _need(f, "answer"), "source": _need(f, "source"),
-        "falsifier": f.get("falsifier", "").strip() or None,
+        "falsifier": _val(f, "falsifier") or None,
         "to": to,
         "date": meta.get("date") or _date.today().isoformat(),
     }
@@ -831,8 +848,8 @@ def _parse_close(g: Graph, meta: dict, f: dict, raw: dict,
             "Falsifier is empty and this decision opens "
             f"{', '.join(to)} — state what evidence would reopen it, or open nothing"
         )
-    if f.get("summary", "").strip():
-        op["summary"] = f["summary"].strip()
+    if _val(f, "summary"):
+        op["summary"] = _val(f, "summary")
     if f.get("probe", "").strip():
         op["probe"] = _parse_probe(f["probe"])
     return [op]
@@ -866,8 +883,8 @@ def _parse_reopen(meta: dict, f: dict, tag: str | None = "org") -> list[dict]:
     op = {"op": "reopen", "vertex": meta.get("vertex"), "why": _need(f, "why")}
     if tag:
         op["format"] = tag
-    if f.get("summary", "").strip():
-        op["summary"] = f["summary"].strip()
+    if _val(f, "summary"):
+        op["summary"] = _val(f, "summary")
     return [op]
 
 
@@ -901,10 +918,10 @@ def _parse_add(g: Graph, f: dict, *, new_area: bool = False,
         raise EditorError(f"Status: {fault} — one of {', '.join(STATUSES)}")
     op = {"op": "add_vertex", "id": vid, "title": _need(f, "title"),
           "area": area, "status": status}
-    if f.get("note", "").strip():
-        op["note"] = f["note"].strip()
-    if f.get("rule", "").strip():
-        op["rule"] = f["rule"].strip()
+    if _val(f, "note"):
+        op["note"] = _val(f, "note")
+    if _val(f, "rule"):
+        op["rule"] = _val(f, "rule")
     # The tag covers both the note and the rule (`Vertex.format`), so it is
     # claimed when either is written — a rule alone used to go untagged.
     if tag and (op.get("note") or op.get("rule")):

@@ -33,7 +33,6 @@ tested.
 from __future__ import annotations
 
 import re
-import textwrap
 
 from dgraph import orgmd
 
@@ -230,4 +229,13 @@ def body(raw: str) -> str:
     the identity for any content. Audit `AC-F6`."""
     text = re.sub(r"^[ \t]*>.*(?:\n|$)", "", raw, flags=re.M)
     text = re.sub(r"^([ \t]*)\\(\\*[#>])", r"\1\2", text, flags=re.M)
-    return textwrap.dedent(text).strip()
+    return trim(text)
+
+
+def trim(text: str) -> str:
+    """A field's body with the blank lines at either end removed, and nothing
+    else. The parsers used to `dedent` and `strip` here, which flattened a
+    value that was all indented — a markdown code block — into a paragraph on
+    any edit of the record; the value slot sits at column 0 (`D100`), so
+    indentation in a body is the writer's. `D104`, audit `AC-F7`."""
+    return re.sub(r"\A(?:[ \t]*\n)+", "", text.rstrip())
