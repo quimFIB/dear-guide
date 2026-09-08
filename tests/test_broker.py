@@ -1831,3 +1831,36 @@ def _kill(pid):
     if pid:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.kill(pid, signal.SIGTERM)
+
+
+def test_broker_holds_back_the_act_resting_on_a_staged_decision_and_lands_the_rest(tmp_path, monkeypatch):
+    """`Z-F3`: the unit the broker judges is the act, and *whole acts, or
+    nothing of them* is per act. A writer's task act that rests on a decision
+    act still in the other tray (`because` naming what `add_vertex` is about
+    to add) cannot land unattended — the decision is a supervisor's to apply
+    — so that act stays staged with the reason naming the act it waits for,
+    and the writer's other acts land. Before this the floor's `refuse_dependent`
+    refused the whole batch, the clean filing with it, with a remedy naming
+    `dg apply --group`, which is sealed to the writer."""
+    monkeypatch.chdir(tmp_path)
+    _project(tmp_path, [
+        {"op": "add_task", "id": "T8", "title": "clean", "area": "x", "by": "a",
+         "ref": "aaaa", "group": "g1"},
+        {"op": "add_task", "id": "T9", "title": "rests on D90", "area": "x",
+         "by": "a", "because": ["D90"], "ref": "bbbb", "group": "g2"},
+    ])
+    (tmp_path / "decisions.json").write_text(json.dumps(
+        {"areas": ["x"], "vertices": [], "edges": []}), encoding="utf-8")
+    (tmp_path / ".dgraph-pending.json").write_text(json.dumps([
+        {"op": "add_vertex", "id": "D90", "title": "q", "area": "x", "by": "a",
+         "ref": "dddd", "group": "g0"}]), encoding="utf-8")
+    b = broker.Broker(root=tmp_path)
+    res = b._decide(broker.request(broker.APPLY_KIND, "tasks.json", "a", "sealed"))
+    assert res["verdict"] == "allow", res
+    assert "applied 1 op(s)" in res["reason"]
+    assert "bbbb" in res["reason"] and "dddd" in res["reason"], res
+    assert "dg apply --group" not in res["reason"], res
+    stored = json.loads((tmp_path / "tasks.json").read_text())
+    assert [t["id"] for t in stored["tasks"]] == ["T8"]
+    left = json.loads((tmp_path / ".dgraph-task-pending.json").read_text())
+    assert [o["ref"] for o in left] == ["bbbb"]

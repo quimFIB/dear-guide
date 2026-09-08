@@ -1771,3 +1771,20 @@ def test_dropping_the_act_another_rests_on_is_not_refused_and_the_tray_still_lis
     assert code == 200, left
     assert [o["ref"] for o in left] == ["b1", "b2"]
     assert pending.stranded(left, {"D01", "D05"}) == {"b2": ["D90"]}
+
+
+def test_a_narrowed_clear_answers_which_acts_it_stranded(srv, store):
+    """`Z-F2`: `DELETE /api/pending?agent=` is the page's Discard-by-writer,
+    and the cut it makes is the one `D91` says is *said*. The answer carries
+    the stranded acts so the page can say them, as it does after a ✕."""
+    dep = [dict(o, by="alice") for o in ACT_PREVIEW] + [
+        {"op": "add_vertex", "id": "D91", "title": "second", "area": "Alpha",
+         "status": "OPEN", "ref": "b1", "group": "gb", "by": "bob"},
+        {"op": "add_edge", "from": "D90", "to": ["D91"], "ref": "b2",
+         "group": "gb", "by": "bob"}]
+    _stage(store, dep)
+    code, d = jreq(srv, "/api/pending?agent=alice", "DELETE")
+    assert code == 200, d
+    assert d["cleared"] == 2 and d["stranded"] == ["b1"]
+    code, d = jreq(srv, "/api/pending?agent=bob", "DELETE")
+    assert code == 200 and d["cleared"] == 2 and d["stranded"] == []

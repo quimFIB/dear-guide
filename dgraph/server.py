@@ -1784,11 +1784,17 @@ class Handler(BaseHTTPRequestHandler):
                 agent = who[0] if who else None
                 if self._blank("agent", agent):
                     return
-                if route == "/api/pending":
-                    return self._json({"cleared": _clear(None, agent)})
-                if route == "/api/task-pending":
-                    return self._json({"cleared": _clear(task_pending.path(),
-                                                         agent)})
+                if route in ("/api/pending", "/api/task-pending"):
+                    # A narrowed clear is a cut like the ✕, and `D91` says a
+                    # cut is said: the answer names the acts it stranded so
+                    # the page can say them. Both trays, before and after,
+                    # since a task act may rest on a decision act. `Z-F2`.
+                    both = lambda: pending.load() + pending.load(task_pending.path())
+                    before = both()
+                    n = _clear(None if route == "/api/pending"
+                               else task_pending.path(), agent)
+                    return self._json({"cleared": n,
+                                       "stranded": pending.strands(before, both())})
                 # `?group=1` is the way out `refuse_split` names, and the
                 # page has to have one: a refusal whose remedy exists only as
                 # a CLI flag is a dead end in a browser. `G-F11`.

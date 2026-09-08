@@ -346,3 +346,37 @@ def test_a_task_act_stranded_by_a_decision_drop_is_marked_in_its_own_tray(task_s
     assert "act t1 rests on it" in res.output, res.output
     out = CliRunner().invoke(app, ["--project", str(task_store), "task", "pending"]).output
     assert "will not apply" in out and "D90" in out, out
+
+
+# ---- pass 25: the narrowed clear is a cutter too (`Z-F2`) ------------------
+#
+# `dg clear --agent` takes one writer's acts out of a shared tray, which is the
+# same cut `dg drop --group` makes, one writer at a time — and `D91` says such
+# a cut is said. The drop and the edit said it; the clear was silent, and the
+# reader learnt it from the listing's mark, or from `dg check --staged`.
+
+def _by(ops, who):
+    return [dict(o, by=who[o.get("group") or o["ref"]]) for o in ops]
+
+
+TWO_WRITERS = _by(CHAIN, {"ga": "alice", "gb": "bob", "c1": "bob", "d1": "alice"})
+
+
+def test_clear_agent_says_which_act_it_strands(store, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "160")
+    _tray(store / ".dgraph-pending.json", TWO_WRITERS)
+    res = CliRunner().invoke(app, ["--project", str(store), "clear", "--agent", "alice"])
+    assert res.exit_code == 0, res.output
+    assert "cleared 3 op(s) staged by alice" in res.output
+    assert "act b1 rests on what was cleared and will no longer apply" in res.output
+    # And the listing marks it, as after a drop.
+    res = CliRunner().invoke(app, ["--project", str(store), "pending"])
+    assert "will not apply" in res.output and "D90" in res.output
+
+
+def test_clear_agent_says_nothing_when_nothing_is_stranded(store, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "160")
+    _tray(store / ".dgraph-pending.json", TWO_WRITERS)
+    res = CliRunner().invoke(app, ["--project", str(store), "clear", "--agent", "bob"])
+    assert res.exit_code == 0, res.output
+    assert "will no longer apply" not in res.output

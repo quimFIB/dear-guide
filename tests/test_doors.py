@@ -2568,3 +2568,12 @@ def test_no_tray_outcome_is_written_into_the_inspector():
     assert '<div id="said" hidden></div>' in page
     assert page.index('<div id="said"') < page.index('<footer id="tray">'), \
         "the line sits above the trays, so it is read with them folded"
+
+
+def test_the_discard_by_writer_says_what_it_stranded():
+    """`Z-F2`: the page's Discard for one writer is a cut like the ✕, and
+    says the acts it strands the same way. Vocabulary: the handler reads the
+    stranded set before the DELETE and says the difference after."""
+    page = _page()
+    handler = page.split('$("#clYes").onclick', 1)[1][:1500]
+    assert "sayStranded(" in handler, handler

@@ -3663,6 +3663,9 @@ function confirmClear(task){
          behind this panel, and a narrowing changed between opening it and
          clicking Discard would discard a set the question was never asked
          about. */
+      /* A discard by writer is a cut like the ✕ (`D91`, `Z-F2`): read what
+         was stranded before, say what this one stranded after. */
+      const stranded = strandedRefs();
       const r=await api((task?"/api/task-pending":"/api/pending")
                         + (who?`?agent=${encodeURIComponent(who)}`:""),
                         {method:"DELETE"});
@@ -3671,6 +3674,7 @@ function confirmClear(task){
       tray(); await soundness();
       restorePanel();
       said(`Discarded ${esc(r.cleared)} op(s).`);
+      sayStranded(stranded);
     }catch(err){ trayErr(err.message); }
   };
 }

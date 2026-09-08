@@ -574,6 +574,16 @@ class Broker:
                 landing: set = set()
                 held_back: list[str] = []
                 seen: set = set()
+                # Both trays in apply order, for the walk below: a task act
+                # may rest on a decision act (`because` naming what an
+                # `add_vertex` still staged will add), and a decision is
+                # never this door's to land.
+                both = pending.load() + tray
+
+                def key_of(ref: str) -> object:
+                    o = next((o for o in both if o.get("ref") == ref), None)
+                    return (o.get("group") or o.get("ref")) if o else ref
+
                 for op in own:
                     key = op.get("group") or op.get("ref") or id(op)
                     if key in seen:
@@ -586,8 +596,26 @@ class Broker:
                         held_back.append("; ".join(
                             f"{o.get('ref') or o.get('op')} {o.get('op')}: {w}"
                             for o, w in bad))
-                    else:
-                        landing.add(key)
+                        continue
+                    # An act resting on one this apply does not take -- a
+                    # decision act, another writer's, or one of this writer's
+                    # own held back above -- is held back too, by the name
+                    # of what it waits for. Per act, like the rest of this
+                    # loop: before this the floor's `refuse_dependent`
+                    # refused the whole batch, the clean acts with it, and
+                    # its remedy named `dg apply --group`, which is sealed to
+                    # the writer reading it. Audit `Z-F3`.
+                    waits = [h for h in pending.rests_on_acts(both, act)
+                             if key_of(h) not in landing]
+                    if waits:
+                        head = act[0]
+                        held_back.append(
+                            f"{head.get('ref') or head.get('op')} "
+                            f"{head.get('op')}: rests on act {', '.join(waits)} "
+                            f"staged earlier and not yet applied -- it waits "
+                            f"for whoever applies that act")
+                        continue
+                    landing.add(key)
                 mine = [op for op in own
                         if (op.get("group") or op.get("ref") or id(op)) in landing]
                 if not mine:

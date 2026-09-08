@@ -3117,14 +3117,17 @@ def _known_ids() -> set[str]:
     return ids
 
 
-def _say_stranded(before: list[dict]) -> None:
-    """After a drop or an edit: name the acts left naming what it took. `D91` —
-    said, never refused, so a writer can withdraw a proposal another writer
-    built on, and the reader hears which act now waits on nothing."""
+def _say_stranded(before: list[dict], what: str = "it") -> None:
+    """After a drop, an edit or a narrowed clear: name the acts left naming
+    what it took. `D91` — said, never refused, so a writer can withdraw a
+    proposal another writer built on, and the reader hears which act now
+    waits on nothing. `what` is the removal as the sentence names it: *it*
+    after a drop of one act, *what was cleared* after `--agent` took several
+    (audit `Z-F2`)."""
     for head in pending.strands(before, _both_trays()):
-        con.print(f"[yellow]·[/] act {_x(head)} rests on it and will no longer "
-                  f"apply — `dg pending` marks it; drop it, or stage what it "
-                  f"names again")
+        con.print(f"[yellow]·[/] act {_x(head)} rests on {what} and will no "
+                  f"longer apply — `dg pending` marks it; drop it, or stage "
+                  f"what it names again")
 
 
 def _tray(ops: list[dict], full: bool, *, details: dict, subject: str,
@@ -3202,6 +3205,11 @@ def _clear_tray(clear_all, clear_one, agent: str | None, path, unit: str, *,
         clear_all(path)
         con.print("[green]cleared[/]")
         return
+    # The narrowed clear is a cut of the tray like `drop --group`, one writer
+    # at a time, and `D91` says a cut is *said*: another writer's act may rest
+    # on what this takes out. Read before, judged after, like the drop.
+    # Audit `Z-F2`.
+    before = _both_trays()
     n = clear_one(agent, path)
     if not n:
         known = _trays_roster()
@@ -3210,6 +3218,7 @@ def _clear_tray(clear_all, clear_one, agent: str | None, path, unit: str, *,
                   f"[dim]staged by  {listed or 'nobody'}[/]")
         raise typer.Exit(1)
     con.print(f"[green]cleared[/] {n} {unit}(s) staged by {_x(agent)}")
+    _say_stranded(before, "what was cleared")
     try:
         rest = len(pending.mine(pending.load(other),
                                 pending.addressed(agent))[0])
