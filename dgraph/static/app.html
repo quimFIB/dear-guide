@@ -3373,8 +3373,10 @@ function opRow(o, i, kind, act){
   /* Revise, and only where it can work: a derived op is not composed and has
      no buffer, and the editor is offered only where a windowed one exists —
      the same rule the panel's "Compose in" button follows. */
-  const editable = kind==="d" && ED && ED.available &&
-                   ["close","reopen","add_vertex"].includes(o.op) && o.ref;
+  const editable = ED && ED.available && o.ref && (
+    (kind==="d" && ["close","reopen","add_vertex"].includes(o.op)) ||
+    (kind==="t" && (o.op==="add_task"
+                    || (o.op==="set_status" && o.status==="DONE"))));
   /* **Take this one act.** The finest grain the tray can offer: one op where
      one op is the whole judgement, and all of it where it is not. Before
      groups the accept half was per *writer* at best while the reject half was
@@ -3416,7 +3418,7 @@ function opRow(o, i, kind, act){
     : "";
   const ctl = head
     ? `<td style="white-space:nowrap"${grouped?` class="act-ctl" rowspan="${act.length}"`:""}>${eye}${take}${
-        editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" title="Revise this op in ${esc(ED.name||ED.editor||"the editor")}">✎</button>`:""
+        editable?`<button class="x" style="color:var(--accent)" data-edit="${esc(o.ref)}" data-store="${kind==="t"?"tasks":"decisions"}" title="Revise this op in ${esc(ED.name||ED.editor||"the editor")}">✎</button>`:""
       }${drop}</td>`
     : "";
   const cls = grouped ? ` class="act${head?" act-head":""}${pos===act.length?" act-last":""}"` : "";
@@ -3537,7 +3539,7 @@ function tray(){
   $("#tray").querySelectorAll("button[data-clear]").forEach(b=>b.onclick=()=>
     confirmClear(b.dataset.clear==="t"));
   $("#tray").querySelectorAll("button[data-edit]").forEach(b=>b.onclick=()=>
-    reviseOp(b.dataset.edit));
+    reviseOp(b.dataset.edit, b.dataset.store));
   $("#tray").querySelectorAll("button[data-preview]").forEach(b=>b.onclick=()=>
     previewOn(b.dataset.preview));
   $("#tray").querySelectorAll("button[data-preview-off]").forEach(b=>b.onclick=()=>
@@ -3778,7 +3780,8 @@ function confirmClear(task){
    end of the batch and any derived `set_status` would then apply before the
    change it was derived from — which is why this posts a `ref` and lets
    `pending.replace_group` do the work. */
-async function reviseOp(ref){
+async function reviseOp(ref, store){
+  const tasks = store==="tasks";
   EDITING={vertex:ref, kind:"edit"};
   tray();
   said(`${esc(ED.name||ED.editor||"The editor")} is open on that op. Save and exit to
@@ -3786,9 +3789,13 @@ async function reviseOp(ref){
   try{
     const r=await api("/api/edit",{method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ref})});
+      body:JSON.stringify({ref, store})});
     EDITING=null;
-    PEND=r.pending||await api("/api/pending"); tray();
+    /* Refresh the tray the op lives in — the task route answers with the task
+       tray (D102). */
+    if(tasks) TPEND=r.pending||await api("/api/task-pending");
+    else PEND=r.pending||await api("/api/pending");
+    tray();
     await soundness();
     said(r.aborted ? `Left unchanged — ${esc(r.aborted)}.`
                    : `Replaced with ${(r.staged||[]).length} op(s).`);

@@ -208,6 +208,9 @@ def test_every_staging_command_is_covered():
         ("task", "init"), ("task", "pending"), ("task", "render"),
         ("task", "node"), ("task", "tree"), ("task", "independent"), ("task", "drop-op"),
         ("task", "clear"), ("task", "import"), ("task", "export"),
+        # `dg edit`'s twin: replaces a staged op in place via `replace_group`,
+        # one atomic write and not a staging append — classed with `edit`.
+        ("task", "edit"),
     }
 
     #: The launcher's own commands, walked from its own app. `dg-agent` is a

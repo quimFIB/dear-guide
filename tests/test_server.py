@@ -615,7 +615,7 @@ def test_a_refused_task_batch_does_not_stop_a_decision_batch(srv, dual):
 
 
 def test_dropping_a_task_op_touches_only_the_task_tray(srv, dual):
-    from dgraph import task_pending
+    from dgraph import pending, task_pending
     jreq(srv, "/api/pending", "POST",
          dict(CLOSE, answer="a", source="s", falsifier="f", to=[]))
     jreq(srv, "/api/task-pending", "POST",
@@ -1967,3 +1967,36 @@ def test_stat_carries_a_stable_non_secret_run_id(srv):
     b = jreq(srv, "/api/stat", token=False)[1]
     assert a["run"] and a["run"] == b["run"]
     assert a["run"] != server.TOKEN
+
+
+# ---- revise a staged task op in the browser (D102, T107) --------------------
+
+def test_edit_route_revises_a_staged_task_op(srv, dual, monkeypatch):
+    from dgraph import pending, task_pending
+
+    def launch(path):
+        t = path.read_text(encoding="utf-8")
+        path.write_text(t.replace("** Title\ndraft\n", "** Title\nrevised\n"),
+                        encoding="utf-8")
+        return 0
+    monkeypatch.setattr(server.editor, "launch_gui", launch)
+    code, _ = jreq(srv, "/api/task-pending", "POST",
+                   [{"op": "add_task", "id": "T60", "title": "draft",
+                     "area": "Alpha"}])
+    assert code == 200
+    ref = pending.load(task_pending.path())[0]["ref"]
+    code, body = jreq(srv, "/api/edit", "POST", {"ref": ref, "store": "tasks"})
+    assert code == 200, body
+    assert body["staged"][0]["title"] == "revised"
+    # the task tray now holds the revision, not the original
+    tray = pending.load(task_pending.path())
+    assert [o["title"] for o in tray if o["op"] == "add_task"] == ["revised"]
+
+
+def test_edit_route_refuses_a_derived_task_op(srv, dual):
+    from dgraph import pending, task_pending
+    jreq(srv, "/api/task-pending", "POST",
+         {"op": "set_status", "task": "T02", "status": "DOING"})
+    ref = pending.load(task_pending.path())[0]["ref"]
+    code, body = jreq(srv, "/api/edit", "POST", {"ref": ref, "store": "tasks"})
+    assert code == 400 and "derived or structural" in body["error"]

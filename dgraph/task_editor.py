@@ -333,6 +333,35 @@ def compose_amend(tg: TaskGraph, g: Graph | None, tid: str, launcher=None,
         launcher=launcher, dialect=dialect)
 
 
+def render_op(tg: TaskGraph, g: Graph | None, i: int, op: dict) -> str:
+    """Re-render a staged task op for revision (`dg task edit N`).
+    `editor.render_op`'s twin: the composed task ops are an `add_task` and a
+    `set_status` that finishes work; the rest are derived or structural and are
+    not edited in place, the same line `editor.render_op` draws for decisions."""
+    kind = op.get("op")
+    seed = dict(op)
+    if kind == "add_task":
+        text = render_add(tg, g, seed)
+    elif kind == "set_status" and op.get("status") == "DONE":
+        text = render_done(tg, g, op["task"], seed)
+    else:
+        raise EditorError(
+            f"op {i} is {kind!r} — derived or structural, not composed in an "
+            f"editor; `dg task drop-op {i}` removes it")
+    return text.replace(":END:", f":DGRAPH_INDEX: {i}\n:END:", 1)
+
+
+def compose_edit(tg: TaskGraph, g: Graph | None, i: int, op: dict,
+                 launcher=None, dialect: str | None = None) -> list[dict]:
+    dialect = dialect or editor.cli_dialect()
+    kind = op.get("op")
+    return editor.run(
+        render_op(tg, g, i, op),
+        lambda after: parse(after, tg=tg, g=g, expect_kind=kind,
+                            expect_task=op.get("task"), dialect=dialect),
+        launcher=launcher, dialect=dialect)
+
+
 def parse(text: str, *, tg: TaskGraph, g: Graph | None,
           expect_kind: str | None = None,
           expect_task: str | None = None,

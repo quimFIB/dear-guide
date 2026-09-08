@@ -1490,7 +1490,10 @@ class Handler(BaseHTTPRequestHandler):
         `dg edit` opens, and there is no second parser. A derived op is refused
         here as it is there — the tray's ✕ is what removes one.
         """
-        ref = self._body().get("ref")
+        body = self._body()
+        if body.get("store") == "tasks":
+            return self._edit_task(body)
+        ref = body.get("ref")
         ops = pending.load()
         try:
             i = pending.resolve(ops, ref)
@@ -1535,6 +1538,48 @@ class Handler(BaseHTTPRequestHandler):
         # `D91`: a replaced `add_vertex` under another id strands every act
         # that named the old one; said in the answer, and the tray marks it.
         self._json({"staged": new, "pending": pending.load(),
+                    "stranded": pending.strands(
+                        before, pending.load() + pending.load(task_pending.path()))})
+
+    def _edit_task(self, body: dict) -> None:
+        """`_edit`'s twin for the task tray (`D102`, `T107`). The composed task
+        ops are an `add_task` and a finishing `done`; a derived or structural
+        op is refused, as `dg task edit` and the decision route refuse one."""
+        ref = body.get("ref")
+        tops = pending.load(task_pending.path())
+        try:
+            i = pending.resolve(tops, ref)
+        except LookupError as exc:
+            return self._json({"error": str(exc)}, 400)
+        op = tops[i]
+        kind = op.get("op")
+        if not (kind == "add_task"
+                or (kind == "set_status" and op.get("status") == "DONE")):
+            return self._json(
+                {"error": f"op {i} is {kind} — derived or structural, not "
+                          f"composed; remove it with the ✕ instead"}, 400)
+        if not _editing.acquire(blocking=False):
+            return self._json(
+                {"error": "an editor is already open for this project"}, 409)
+        try:
+            proj = project.find()
+            g = pending.preview(Graph.load()) if proj.has_decisions else None
+            # Without op i, so a revised `add_task` sees its own id free.
+            tg = task_pending.preview(TaskGraph.load(proj.tasks), skip=i)
+            new = task_editor.compose_edit(tg, g, i, op,
+                                           launcher=editor.launch_gui,
+                                           dialect=editor.gui_dialect())
+            task_pending.vet_all(tg, new)
+            before = pending.load() + pending.load(task_pending.path())
+            pending.replace_group(op.get("ref") or i, new, task_pending.path())
+        except editor.EditorAbort as exc:
+            return self._json({"aborted": str(exc),
+                               "pending": pending.load(task_pending.path())})
+        except (editor.EditorError, pending.ApplyError) as exc:
+            return self._json({"error": str(exc)}, 400)
+        finally:
+            _editing.release()
+        self._json({"staged": new, "pending": pending.load(task_pending.path()),
                     "stranded": pending.strands(
                         before, pending.load() + pending.load(task_pending.path()))})
 

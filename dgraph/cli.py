@@ -108,7 +108,7 @@ TASK_LAYOUT = (
     (T_HONEST, ("render",)),
     (T_RECORD, ("add", "start", "park", "done", "drop", "amend", "reprobe",
                 "bind", "unbind", "link", "unlink", "dep", "undep", "rm")),
-    (T_STAGE, ("pending", "drop-op", "clear")),
+    (T_STAGE, ("pending", "edit", "drop-op", "clear")),
     (T_STORE, ("init", "import", "export")),
 )
 
@@ -5707,6 +5707,46 @@ def task_drop_op(
     for one in gone:
         con.print(f"[green]dropped[/] task op {_x(one.get('ref', ref))}: "
                   f"{_op_summary(one, _TASK_DETAIL, 'task')}")
+    _say_stranded(before)
+
+
+@task_app.command("edit", rich_help_panel=T_STAGE)
+def task_edit_cmd(
+    ref: str = typer.Argument(..., metavar="ID_OR_INDEX",
+                              help="the task op's id, or its position"),
+) -> None:
+    """Revise a staged task op in the editor, in place. `dg edit`'s twin for the
+    task tray (`D102`): replaces rather than re-stages, for the reason `dg edit`
+    gives. The composed task ops are an `add_task` and a finishing `done`;
+    a derived or structural op is not edited here."""
+    ops = pending.load(task_pending.path())
+    try:
+        i = pending.resolve(ops, ref)
+    except LookupError as exc:
+        con.print(f"[red]{_x(exc)}[/]")
+        raise typer.Exit(1) from None
+    op = ops[i]
+    # Without this op: like `dg edit`'s `_eff(g, skip=i)`, so an `add_task`
+    # being revised sees its own id as free and every staged dep still applies.
+    tg = _teff(_tg(), skip=i)
+    g = _decisions_eff_or_none()
+    try:
+        new = task_editor.compose_edit(tg, g, i, op)
+    except (editor.EditorAbort,) as exc:
+        con.print(f"[yellow]aborted[/] {_x(exc)}")
+        raise typer.Exit(1) from None
+    except editor.EditorError as exc:
+        con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
+    try:
+        task_pending.vet_all(tg, new)
+    except pending.ApplyError as exc:
+        con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
+        raise typer.Exit(1) from None
+    before = _both_trays()
+    pending.replace_group(op.get("ref") or i, new, task_pending.path())
+    con.print(f"[green]updated[/] task op {i} — {len(new)} op(s), review with "
+              f"`dg task pending`")
     _say_stranded(before)
 
 

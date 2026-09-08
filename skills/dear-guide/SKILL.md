@@ -241,6 +241,7 @@ Two things to know before using them:
 | `dg import-md FILE` | rebuild a store from the `decision-graph.md` this tool generated. The recovery path when the *store* is the file that was lost |
 | `dg repair` | stage the PROVISIONAL marks a reopen would have derived. What `dg apply` names when a merge, a rebase or a second clone left a decision resting on a premise under review without saying so |
 | `dg edit N` | revise a staged op in place, rather than dropping it and retyping what was written |
+| `dg task edit N` | the same for a staged task op — revise it in place rather than dropping and retyping |
 
 ### Before building on something, or handing it off
 

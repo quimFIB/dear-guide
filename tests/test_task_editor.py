@@ -423,3 +423,29 @@ def test_task_amend_nothing_changed_aborts(tg, task_store, monkeypatch):
     monkeypatch.setattr(ed, "launch", lambda p: 0)   # touches nothing
     with pytest.raises(EditorAbort):
         te.compose_amend(tg, None, "T01")
+
+
+# ---- dg task edit: revise a staged task op (D102, T107) ---------------------
+
+def test_task_edit_revises_a_staged_add_task_in_place(run_cli, task_store, monkeypatch):
+    run_cli("task", "add", "--id", "T50", "--area", "Alpha", "--title", "draft")
+    def edit(text):
+        return fill(text.replace("** Title\ndraft\n", "** Title\nrevised\n"))
+    import dgraph.editor as ed
+    monkeypatch.setattr(ed, "launch",
+                        lambda p: (p.write_text(edit(p.read_text())), 0)[1])
+    res = run_cli("task", "edit", "0")
+    assert res.exit_code == 0, res.output
+    staged = [o for o in tray(task_store) if o["op"] == "add_task"]
+    assert len(staged) == 1 and staged[0]["title"] == "revised"
+
+
+def test_task_edit_refuses_a_derived_op(run_cli, task_store, monkeypatch):
+    run_cli("task", "add", "--id", "T51", "--area", "Alpha", "--title", "w")
+    run_cli("apply")
+    run_cli("task", "start", "T51")                      # a set_status DOING op
+    import dgraph.editor as ed
+    monkeypatch.setattr(ed, "launch", lambda p: 0)
+    res = run_cli("task", "edit", "0")
+    assert res.exit_code == 1
+    assert "derived or structural" in res.output
