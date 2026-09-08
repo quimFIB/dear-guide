@@ -341,6 +341,27 @@ let ESEL=null;
    a snapshot from the moment it loaded, refreshed only by the viewer's own
    staging, with nothing to say another writer had moved underneath it. */
 let STAT=null, STALE=0, POLL=null, BOOTING=false;
+/* The run this page was served by, captured once and never updated by a soft
+   refresh — because a refresh re-reads the data but keeps the page's original
+   token, so if it silently adopted the new run the warning would clear while
+   writes still 403. Only a full reload (which re-fetches the page, and its
+   token) resets this by re-running the script. `RESTARTED` latches so the line
+   is said once. D98, audit AA-F1. */
+let RUN0=null, RESTARTED=false;
+/* The server's run id, from every `/api/stat`. First sight sets the origin;
+   a later change means this page was served by an earlier run, so a write —
+   which carries the page's now-stale token — will be refused. Say it above
+   the trays before that happens, not as the 403 at submit. */
+function noteRun(run){
+  if(run==null) return;
+  if(RUN0===null){ RUN0=run; return; }
+  if(run!==RUN0 && !RESTARTED){
+    RESTARTED=true;
+    said("This page was served by an earlier run of <code>dg serve</code> — "
+       + "reload it to write. Reads still work; anything typed here is not "
+       + "saved, so copy it before reloading.", "bad");
+  }
+}
 /* An editor's composed fields, waiting to be staged from the form (D99).
    Carries the fields the form cannot show; cleared when staged or recomposed. */
 let COMPOSED=null;
@@ -451,7 +472,7 @@ async function boot(){
      than in the click handler. */
   const st = await api("/api/stat").catch(()=>null);
   G = g; T = t; TFAULT = tfault; JOIN = join; PEND = pend; TPEND = tpend;
-  if(st){ STAT = st; STALE = 0; }
+  if(st){ STAT = st; STALE = 0; noteRun(st.run); }
   /* One palette across both stores, so an area is the same colour whichever
      graph you are looking at — that is most of what makes the joined view
      readable. Task-only areas are appended rather than recoloured. */
@@ -508,6 +529,11 @@ function refreshBadge(){
 async function pollStat(){
   if(BOOTING || document.hidden) return;
   let now; try{ now = await api("/api/stat"); }catch(err){ return; }
+  /* Before the token check below: a restart that leaves the files untouched
+     does not move `token`, so this is the one signal the poll has that the
+     server was replaced, and it must not be skipped by the unchanged-token
+     early return. */
+  noteRun(now.run);
   const before = STAT ? JSON.stringify(STAT.token) : null;
   if(before === null){ STAT = now; return; }
   if(JSON.stringify(now.token) === before) return;

@@ -58,6 +58,14 @@ STATIC = Path(__file__).resolve().parent / "static"
 TOKEN = secrets.token_urlsafe(24)
 TOKEN_HEADER = "X-DG-Token"
 
+#: A non-secret per-run id. `stat_payload`'s file-stat token does not move when
+#: a restart leaves the files unchanged, so a page left open across a restart
+#: polls happily while every write 403s on the new `TOKEN` — the reader learns
+#: only at submit. The poll carries this instead: a page remembers the first
+#: value and, when it changes, knows it was served by an earlier run. Not the
+#: `TOKEN`, which `/api/stat` does not guard and must not echo. D98, audit AA-F1.
+RUN = secrets.token_hex(8)
+
 #: How a caller that is *not* a person names itself. Absent on every request the
 #: page makes, which is the point: the browser is a person's door and a person is
 #: the supervisor, so what it stages is unowned.
@@ -960,6 +968,11 @@ def stat_payload() -> dict:
     The staged counts travel beside it so the badge can say *how many* without
     a second request. They are the one thing a reader wants before deciding
     whether the refresh is worth taking.
+
+    `run` is this run's non-secret id (`RUN`). The file-stat token cannot tell
+    a restart from no change when the files are unchanged; `run` moves with the
+    process, so a page that polled an earlier run learns of the new one here
+    rather than at its first refused write. D98.
     """
     proj = project.find()
     token = {}
@@ -977,7 +990,7 @@ def stat_payload() -> dict:
                           else pending.load())
         except Exception:
             pass
-    return {"token": token, "staged": staged}
+    return {"token": token, "staged": staged, "run": RUN}
 
 
 def _stores() -> tuple[Graph | None, TaskGraph | None]:

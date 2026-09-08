@@ -2858,3 +2858,56 @@ def test_compose_fills_the_form_and_stage_carries_the_hidden_fields(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.strip() == "ok"
+
+
+# ---- the poll tells the page its server was replaced (D98, T105) -------------
+# A restart leaves the files unchanged, so `/api/stat`'s token does not move
+# and the token early-return would skip the change — the run check runs before
+# it. Captured at load and latched, so a soft refresh cannot clear it while the
+# page's token is still stale. Audit AA-F1.
+
+RESTART_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
+const block = cut("function noteRun(", "/* An editor's composed fields")
+            + cut("async function pollStat(", "/* Take what the poll found");
+let BOOTING = false; const document = {hidden: false};
+let STAT = null, STALE = 0, RUN0 = null, RESTARTED = false;
+const SAID = []; const said = (h, c) => SAID.push([h, c]);
+const refreshBadge = () => {};
+let RESP = [];
+const api = async () => RESP.shift();
+eval(block + `
+(async () => {
+  RESP = [
+    {run:"r1", token:{s:[1,10]}, staged:0},   // load
+    {run:"r1", token:{s:[1,10]}, staged:0},   // nothing changed, same run
+    {run:"r2", token:{s:[1,10]}, staged:0},   // RESTART: token unchanged, new run
+    {run:"r2", token:{s:[1,10]}, staged:0},   // still the new run
+  ];
+  await pollStat();
+  if (RUN0 !== "r1") throw new Error("the origin run was not captured");
+  await pollStat();
+  if (RESTARTED || SAID.length) throw new Error("flagged a restart on no change");
+  await pollStat();
+  if (!RESTARTED) throw new Error("a restart with unchanged files went unnoticed");
+  if (!SAID.some(([h]) => /reload/.test(h) && /earlier run/.test(h)))
+    throw new Error("the reload line was not said above the trays: " + JSON.stringify(SAID));
+  const n = SAID.length;
+  await pollStat();
+  if (SAID.length !== n) throw new Error("the warning was said more than once");
+  console.log("ok");
+})().catch(e => { console.error(e.message); process.exit(1); });
+`);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_poll_says_the_server_was_replaced_even_with_files_unchanged(tmp_path):
+    harness = tmp_path / "restart.js"
+    harness.write_text(RESTART_HARNESS, encoding="utf-8")
+    r = subprocess.run(["node", str(harness), str(server.STATIC / "app.html")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == "ok"

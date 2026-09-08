@@ -1955,3 +1955,15 @@ def test_an_identical_add_of_a_staged_record_is_said_to_be_staged_not_stored(
     assert code == 400, out
     assert "staging area" in out["error"], out
     assert "in the store" not in out["error"], out
+
+
+# ---- a page learns its server was replaced (D98, T105) -----------------------
+
+def test_stat_carries_a_stable_non_secret_run_id(srv):
+    """The poll's file-stat token cannot tell a restart from no change; `run`
+    can. It is stable within a run and is not the auth token, which `/api/stat`
+    does not guard and must not echo."""
+    a = jreq(srv, "/api/stat", token=False)[1]
+    b = jreq(srv, "/api/stat", token=False)[1]
+    assert a["run"] and a["run"] == b["run"]
+    assert a["run"] != server.TOKEN
