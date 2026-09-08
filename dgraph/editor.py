@@ -56,7 +56,7 @@ class EditorError(RuntimeError):
 #: Comment lines are stripped, git-style. `#+` keywords and drawer lines are
 #: not comments and must survive - getting this regex wrong silently eats the
 #: metadata drawer.
-_COMMENT = re.compile(r"^[ \t]*#(?!\+).*$\n?", re.M)
+_COMMENT = re.compile(r"^[ \t]*#(?!\+)(?: .*)?$\n?", re.M)
 
 _HEAD = re.compile(r"^(\*+)[ \t]+(.*?)[ \t]*$", re.M)
 _PROP = re.compile(r"^[ \t]*:([A-Z_]+):[ \t]*(.*?)[ \t]*$", re.M)
@@ -97,7 +97,7 @@ _HEADER = """\
 #   C-c C-c  save and stage        C-c C-k  abort, stage nothing
 {keys}
 # An empty Input aborts, exactly like an empty git commit message.
-# A "*" at column 0 ends a field - org reads it as a heading. Escape it as ",*".
+# A "*" (heading) or "#" (comment) at column 0 ends a field. Escape as ",*" / ",#".
 #+TODO: {todo} | {done}
 :PROPERTIES:
 {props}
@@ -131,14 +131,14 @@ def _header(title: str, *, decisions: bool = True, **props: str) -> str:
 def _escape(body: str) -> str:
     """The inverse of `_body`'s comma-unescape, applied to seeded content.
 
-    A stored line whose first non-blank character is `*` would otherwise come
-    back as an org heading: the parser would read it as the end of the field —
-    or of the whole Input subtree — and refuse the tool's own output
-    (`dg edit N` on a close whose answer carries such a line). One comma is
-    added per line and `_body` removes exactly one, so any stored text,
-    including one already starting with `,*`, round-trips unchanged.
+    A stored line whose first non-blank character is `*` (an org heading) or
+    `#` (a comment) would otherwise be read as the end of the field or stripped
+    — and `#` also decides, one module over, whether `mdbuffer.render` treats
+    the line as a comment on the way to markdown. One comma is added before
+    such a run and `_body` removes exactly one, so any stored text — including
+    one already starting with `,*` or `,#` — round-trips unchanged. D101.
     """
-    return re.sub(r"^([ \t]*)(,*\*)", r"\1,\2", body, flags=re.M)
+    return re.sub(r"^([ \t]*)(,*[#*])", r"\1,\2", body, flags=re.M)
 
 
 def _field(name: str, hint: str = "", body: str = "") -> str:
@@ -527,7 +527,7 @@ def _body(raw: str) -> str:
     any content, however many literal commas it starts with.
     """
     text = _COMMENT.sub("", raw)
-    text = re.sub(r"^([ \t]*),(,*\*)", r"\1\2", text, flags=re.M)
+    text = re.sub(r"^([ \t]*),(,*[#*])", r"\1\2", text, flags=re.M)
     return textwrap.dedent(text).strip()
 
 

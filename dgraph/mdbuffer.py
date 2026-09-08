@@ -55,8 +55,8 @@ _DG_LINK = re.compile(r"\[\[dg:[^\]]*\]\[([^\]]*)\]\]")
 _SAY = (
     ('Lines starting with "# " are ignored. Only the "Input" subtree is read back;',
      'Lines beginning with > are hints and are ignored. Only the "Input" section is read back;'),
-    ('A "*" at column 0 ends a field - org reads it as a heading. Escape it as ",*".',
-     'A "#" at column 0 starts a heading and ends a field. Escape it as "\\#".'),
+    ('A "*" (heading) or "#" (comment) at column 0 ends a field. Escape as ",*" / ",#".',
+     'A "#" (heading) or ">" (hint) at column 0 ends a field. Escape as "\\#" / "\\>".'),
     ("Full org is fine.", "Markdown is fine."),
     ("*single asterisks* render as italic outside emacs; use **bold**.", ""),
     ("file: links welcome.", "Links welcome."),
@@ -143,12 +143,12 @@ def render(org: str) -> str:
                 out.append(conv)
             continue
         # Input: undo org's comma-escape — one comma, the mirror of
-        # `editor._escape` — and escape what markdown would read as a heading.
-        ln = re.sub(r"^([ \t]*),(,*\*)", r"\1\2", ln)
-        ln = re.sub(r"^([ \t]*)#", r"\1\\#", ln)
-        # A value line that begins with `>` would read back as a hint; escape
-        # it, the mirror of the `\#` escape. `body` unescapes both.
-        ln = re.sub(r"^([ \t]*)>", r"\1\\>", ln)
+        # `editor._escape` — then escape what markdown itself would read: a
+        # leading `#` is a heading, a leading `>` a hint (`body` strips them).
+        # A leading `*` needs no markdown escape — it is an ordinary list item,
+        # not a heading — so it is only un-commaed. D101.
+        ln = re.sub(r"^([ \t]*),(,*[#*])", r"\1\2", ln)
+        ln = re.sub(r"^([ \t]*)([#>])", r"\1\\\2", ln)
         out.append(ln)
     flush()
     text = "\n".join(out)
