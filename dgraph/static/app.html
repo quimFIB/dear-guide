@@ -1990,6 +1990,26 @@ function areaField(known, current){
       use</span></label>`;
 }
 
+/* The tags a record carries, beside its area (`D95`). Words for a person,
+   drawn as dim pills so they read as labels and not as a status. Nothing when
+   there are none: most records carry none, and an empty row teaches the eye
+   past the line on the ones that say something. */
+function tagPills(tags){
+  return (tags||[]).map(t=>` <span class="muted">#${esc(t)}</span>`).join("");
+}
+
+/* A tags control: free words, comma-separated. Tags accumulate like areas and
+   meet the same similarity guard at the staging door; the checkbox is
+   `--new-tag`, and it is the same rule the CLI has. */
+function tagsField(){
+  return `<label>Tags — words this is filed under beside its area (optional)</label>
+    <input id="nTags" placeholder="e.g. perf, recall">
+    <label style="font-weight:normal;display:flex;gap:6px;align-items:center">
+      <input type="checkbox" id="nNewTag">
+      <span class="muted">a new tag is meant, even if it resembles one in
+      use</span></label>`;
+}
+
 /* Every area either store knows. The two share their vocabulary, so an area
    used only for work is one a question may be filed under — offering only this
    store's would send somebody to invent a synonym for one that exists. */
@@ -2009,6 +2029,7 @@ function newDecisionForm(){
     <label>Title — the question this decision answers, in one line</label>
     <input id="nTitle" placeholder="e.g. Which index for the served vectors?">
     ${areaField(knownAreas())}
+    ${tagsField()}
     <label>Status</label>
     <select id="nStatus">
       <option value="OPEN">OPEN — nobody has answered it yet</option>
@@ -2031,6 +2052,7 @@ async function stageNewDecision(){
   const status = $("#nStatus").value;
   await postNew("/api/add", {
     id, title, area:$("#nArea").value.trim(), new_area:$("#nNewArea").checked,
+    tags:$("#nTags").value, new_tag:$("#nNewTag").checked,
     status,
     after:pickerValues("nAfter"),
     note:$("#nNote").value.trim()||null,
@@ -2049,6 +2071,7 @@ function newTaskForm(){
     <label>Title — what doing this means</label>
     <input id="nTitle" placeholder="e.g. Build the HNSW index and sweep efSearch">
     ${areaField(knownAreas())}
+    ${tagsField()}
     <label>After — work that must be resolved first</label>
     ${idPicker("nAfter", T.tasks)}
     <label>Discovered during — work whose doing turned this up</label>
@@ -2078,6 +2101,7 @@ async function stageNewTask(){
   await postNew("/api/add-task", {
     id, title, area:$("#nArea").value.trim(),
     new_area:$("#nNewArea").checked,
+    tags:$("#nTags").value, new_tag:$("#nNewTag").checked,
     after:pickerValues("nAfter"),
     discovered_during:pickerValues("nDuring"),
     /* A set, joined the way the CLI's `--because D01,D05` arrives. The server
@@ -2141,7 +2165,7 @@ function taskPanel(){
   const x=T.tasks.find(y=>y.id===tsel), d=T.derived[tsel], c=d.cross;
   let h=previewBanner(x.id)+`<h2>${esc(x.id)} — ${esc(x.title)}</h2>
     <span class="pill" style="background:${TASK_COLOR[x.status]};color:#04121f">${esc(x.status)}</span>
-    <span class="muted"> ${esc(x.area)}</span>
+    <span class="muted"> ${esc(x.area)}</span>${tagPills(x.tags)}
     <div class="kv">
       <div>after</div><div>${esc(d.prerequisites.join(", "))||"—"}</div>
       <div>unblocks</div><div>${esc(d.unblocks.join(", "))||"—"}</div>`;
@@ -2864,7 +2888,7 @@ function panel(){
     <span class="pill" style="background:${STATUS_COLOR[st]};color:#04121f">${esc(v.status)}</span>${
       (st==="OPEN" && (d.waiting_on||[]).length)
         ? ` <span class="muted">waits ${d.waiting_on.map(esc).join(", ")}</span>` : ""}
-    <span class="muted"> ${esc(v.area)}</span>
+    <span class="muted"> ${esc(v.area)}</span>${tagPills(v.tags)}
     <div class="kv">
       <div>depends on</div><div>${idList(d.depends)}${
         d.depends.length?` <a href="#" data-chain="${esc(v.id)}" class="muted">why…</a>`:""}</div>`;

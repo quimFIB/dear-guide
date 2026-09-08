@@ -233,6 +233,7 @@ Two things to know before using them:
 | `dg path A B` | the chain of evidence between two decisions, through staged edges too, the hop marked |
 | `dg tree` | the graph as a tree, staged vertices marked |
 | `dg areas` | counts by area and status, one table per store |
+| `dg tags` | counts by tag, both stores in one table; `dg tags rename OLD NEW` refiles every record carrying one across both stores |
 | `dg export ID` | the same data as JSON, for machine reading. `dg import` reads it back unchanged — so it is the record alone, never the tray, the one reader that ignores staged ops |
 | `dg check` | every invariant, and it names the rule that broke. `--staged` judges the graph the tray would produce instead, as a diff: what the batch fixes, what it introduces, what stands either way |
 | `dg probe` | every pre-commitment beside what it is judged against — a falsifier, a PROVISIONAL decision beside the premises dated after it, a task's definition of done, an open question's rule beside its evidence. Asks for a scope (an id, `--provisional`, `--area`, `--since`, `--domain PREFIX`, `--all`) past a screenful; each domain runs under its own deadline unless `--timeout` overrides. On a plain install it presents and the verdict is the command you run next |

@@ -202,7 +202,15 @@ dg amend D40 --tag latency --untag recall
 dg amend D40 --clear-tags
 dg task add --id T20 ... --tag perf
 dg find 'tags:perf'                      # a word, matched exactly
+dg tags                                  # counts, both stores
+dg tags rename perf performance          # refile across both stores, staged
 ```
+
+The listings print a record's tags after its area, `dg node` and `dg task
+node` give them a line, the browser's inspector and add forms carry them, and
+the markdown views write a `- **Tags:**` line that `dg import-md` reads back.
+There is no `dg tags prune`: a tag is held by the records that carry it and
+registered nowhere, so a tag nobody uses is already gone.
 
 ### The one seam
 
@@ -275,6 +283,8 @@ dg tree                                  # the DAG, store plus tray, staged vert
 dg areas                                 # counts by area, in both stores
 dg areas rename Corpus corpus            # refile everything in one area under another
 dg areas prune                           # drop registered areas holding nothing
+dg tags                                  # counts by tag, both stores in one table
+dg tags rename perf performance          # refile every record carrying one tag under another
 dg find embedding                        # every decision and task that says so
 dg find 'under:D04 is:unsettled'         # ...still open in what D04 opened
 dg find 'is:decidable' --ids             # ...ids alone, for a pipe

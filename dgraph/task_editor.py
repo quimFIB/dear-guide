@@ -28,6 +28,7 @@ from __future__ import annotations
 from datetime import date as _date
 
 from dgraph import areas, cross, editor, pending, project, ranges
+from dgraph import tags as _tags
 from dgraph.editor import EditorAbort, EditorError
 from dgraph.model import Graph
 #: The prose a task's `format` covers. Imported rather than restated, and read
@@ -176,6 +177,9 @@ def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
         + editor._field("Area",
                         "One in use, or a new one — areas accumulate.",
                         seed.get("area", ""))
+        + editor._field("Tags", "Optional. Comma-separated words this is "
+                                "filed under beside its area.",
+                        ", ".join(seed.get("tags", ())))
         + editor._field("After", "Optional. Comma-separated tasks that must be\n"
                                  "resolved before this can start.",
                         ", ".join(seed.get("after", ())))
@@ -261,7 +265,8 @@ def render_done(tg: TaskGraph, g: Graph | None, tid: str,
 
 ALLOWED = {
     "add_task": {"id", "title", "area", "after", "discovered during",
-                 "because", "evidence for", "note", "probe", "done when"},
+                 "because", "evidence for", "note", "probe", "done when",
+                 "tags"},
     "set_status": {"outcome"},
 }
 
@@ -371,6 +376,8 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
         op["evidence_for"] = _premise(g, ef_raw, "Evidence for")
     if f.get("done when", "").strip():
         op["done_when"] = f["done when"].strip()
+    if f.get("tags", "").strip():
+        op["tags"] = _tags.clean(f["tags"])
     if f.get("probe", "").strip():
         op["probe"] = editor._parse_probe(f["probe"])
         op["date"] = _date.today().isoformat()

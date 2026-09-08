@@ -93,6 +93,10 @@ def _section(g: Graph, vid: str, _by=None, _into=None) -> str:
     if v.binds:
         out.append("- **Bound to:** "
                    + ", ".join(f"`{b.spelled}`" for b in v.binds))
+    if v.tags:
+        # Only when there are any, so a view of a store with none is
+        # byte-identical to the view before the field existed.
+        out.append("- **Tags:** " + ", ".join(v.tags))
     if v.rule:
         out.append(f"- **Rule:** {orgmd.to_markdown(v.rule, fmt=v.format)}")
     if e is not None and e.probe:

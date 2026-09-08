@@ -27,6 +27,7 @@ RE_DEPENDS = re.compile(r"^- \*\*Depends on:\*\* (.+)$", re.M)
 RE_FALSIFIER = re.compile(r"^- \*\*Falsifier:\*\* (.+)$", re.M)
 RE_RESOLVES = re.compile(r"^\*\*Resolves to → (.+)\*\*$", re.M)
 RE_SOURCE = re.compile(r"^\*Source:\* (.+)$", re.M)
+RE_TAGS = re.compile(r"^- \*\*Tags:\*\* (.+)$", re.M)
 RE_SUP_ROW = re.compile(r"^\| (D\d+) \| (.+?) \| (.+?) \| (.+?) \|$", re.M)
 
 NONE = "—"
@@ -75,6 +76,7 @@ def parse(text: str) -> tuple[list[str], list[dict], list[dict]]:
         bits = [b.strip() for b in status.group(1).split("·")]
         res, fal = RE_RESOLVES.search(body), RE_FALSIFIER.search(body)
         src, dep = RE_SOURCE.search(body), RE_DEPENDS.search(body)
+        tags = RE_TAGS.search(body)
 
         targets = []
         if res and res.group(1).strip() != "TERMINAL":
@@ -96,6 +98,8 @@ def parse(text: str) -> tuple[list[str], list[dict], list[dict]]:
             note=None if res else (prose or None),
             falsifier=None if f in (None, NONE) else f,
             source=src.group(1).strip() if src else None,
+            tags=[t.strip() for t in tags.group(1).split(",") if t.strip()]
+            if tags else [],
         ))
 
     sup = []
@@ -118,7 +122,7 @@ def import_markdown(path: Path) -> Graph:
     for n in nodes:
         g.vertices[n["id"]] = Vertex(
             id=n["id"], title=n["title"], area=n["area"],
-            status=n["status"], note=n["note"],
+            status=n["status"], note=n["note"], tags=n["tags"],
         )
 
     targets = {n["id"]: list(n["targets"]) for n in nodes}

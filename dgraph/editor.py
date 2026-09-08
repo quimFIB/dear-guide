@@ -32,6 +32,7 @@ from datetime import date as _date
 from pathlib import Path
 
 from dgraph import areas, pending, project, ranges
+from dgraph import tags as _tags
 from dgraph.model import Graph, probe_fault, status_fault
 
 ELISP = Path(__file__).resolve().parent / "elisp" / "dgraph.el"
@@ -347,6 +348,9 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
                  seed.get("title", ""))
         + _field("Area", "One in use, or a new one — areas accumulate.",
                  seed.get("area", ""))
+        + _field("Tags", "Optional. Comma-separated words this is filed under "
+                         "beside its area.",
+                 ", ".join(seed.get("tags", ())))
         + _field("Status", f"One of: {', '.join(STATUSES)}. Default OPEN.\n"
                            "A vertex waits on whatever in After is unsettled.",
                  seed.get("status", "OPEN"))
@@ -496,7 +500,7 @@ ALLOWED = {
     "close": {"answer", "source", "falsifier", "opens", "summary", "probe"},
     "reopen": {"why", "summary"},
     "add_vertex": {"id", "title", "area", "status", "after", "note", "probe",
-                   "rule"},
+                   "rule", "tags"},
 }
 
 
@@ -659,6 +663,8 @@ def _parse_add(g: Graph, f: dict, *, new_area: bool = False) -> list[dict]:
         op["format"] = "org"
     if f.get("rule", "").strip():
         op["rule"] = f["rule"].strip()
+    if f.get("tags", "").strip():
+        op["tags"] = _tags.clean(f["tags"])
     if f.get("probe", "").strip():
         op["probe"] = _parse_probe(f["probe"])
         op["date"] = _date.today().isoformat()

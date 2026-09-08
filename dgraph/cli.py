@@ -71,7 +71,7 @@ WEB = "In a browser"
 #: exist, and looking for the difference between them.
 LAYOUT = (
     (READ, ("show", "find", "brief", "node", "why/context", "tree", "path",
-            "areas")),
+            "areas", "tags")),
     (HONEST, ("check", "probe", "gate", "render")),
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
               "reprobe", "bind", "unbind", "dep", "undep", "rm")),
@@ -610,7 +610,7 @@ def _show_listing(g: Graph, att: list[dict],
         base = g.vertices[r.id].status
         entries.append((r.id, f"[{_style(base)}]{base}[/]", _x(r.title),
                         "[dim]" + _x(" · ".join(aside)) + "[/]"))
-        areas.append(f"[dim]{_x(r.area)}[/]")
+        areas.append(_tail(r.area, g.vertices[r.id].tags))
     _say(compact.listing(entries, width=_width(), markup=True, tails=areas))
     if not entries:
         con.print("  [dim]nothing open — every question here is settled[/]")
@@ -1125,6 +1125,7 @@ def node(
         + ("  [dim](staged — proposed in the tray, not applied)[/]"
            if vid in staged else ""),
         f"area        {_x(v.area)}",
+        *([f"tags        {_x(', '.join(v.tags))}"] if v.tags else []),
         f"depends on  {', '.join(g.depends(vid)) or '—'}",
     ]
     # Before the answer, not after it. `node` exists to show what a question
@@ -1559,6 +1560,126 @@ def areas_prune() -> None:
     con.print(f"[green]released[/] {len(freed)}: {_x(', '.join(freed))}\n"
               f"[dim]`dg render` and `dg task render` to regenerate the "
               f"views[/]")
+
+
+tags_app = typer.Typer(
+    help="Counts by tag in both stores, and the rename that refiles one.",
+    no_args_is_help=False, invoke_without_command=True)
+app.add_typer(tags_app, name="tags", rich_help_panel=READ)
+
+
+@tags_app.callback(invoke_without_command=True)
+def tags_cmd(ctx: typer.Context) -> None:
+    """Counts by tag, over both stores.
+
+    `dg areas`' twin, in one table rather than two: a tag is a word rather
+    than a partition, so there is no per-status breakdown worth a column,
+    and the question is *how many records carry it*, on each side. First-use
+    order across the two stores, decisions first, the way `dg areas` reads.
+
+    **No `prune`**, and that is the field rather than an omission: an area is
+    registered on the store by the op that first files under it, so a name
+    can hold nothing and still be listed. A tag is held by the records that
+    carry it and nowhere else, so a tag nobody uses is already gone.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    proj = project.find()
+    g, unreadable = _decisions_state()
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    if g is None and tg is None and unreadable is None:
+        con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
+                  f"[dim]run `dg init` there, or pass --project PATH[/]")
+        raise typer.Exit(2)
+    d = _tags.counts(g.vertices.values()) if g else {}
+    t = _tags.counts(tg.tasks.values()) if tg else {}
+    every = list(d)
+    every += [x for x in t if x not in every]
+    if every:
+        table = Table(header_style="bold", title="Tags")
+        table.add_column("Tag")
+        if g is not None:
+            table.add_column("Decisions", justify="right")
+        if tg is not None:
+            table.add_column("Tasks", justify="right")
+        table.add_column("Total", justify="right")
+        for tag in every:
+            cells = [_x(tag)]
+            if g is not None:
+                cells.append(str(d.get(tag, 0)))
+            if tg is not None:
+                cells.append(str(t.get(tag, 0)))
+            cells.append(str(d.get(tag, 0) + t.get(tag, 0)))
+            table.add_row(*cells)
+        con.print(table)
+    else:
+        con.print("[dim]no tags yet — `--tag` on add or amend files the "
+                  "first[/]")
+    if unreadable is not None:
+        con.print(f"[red]no decision counts: {project.STORE_NAME} could not be "
+                  f"read[/]\n[dim]{_x(unreadable)}[/]\n"
+                  f"[dim]`dg check` for what else it breaks[/]")
+        raise typer.Exit(1)
+
+
+@tags_app.command("rename")
+def tags_rename(
+    old: str = typer.Argument(..., help="the tag to take off every record"),
+    new: str = typer.Argument(..., help="the tag to put on them instead"),
+) -> None:
+    """Refile every record carrying one tag under another, across both stores.
+
+    `dg areas rename`'s twin: one `set_fields` per affected record, each
+    carrying the record's whole tag set with `old` replaced by `new` in
+    place, staged like everything else. A record already carrying `new`
+    simply loses `old`. Nothing in a tag needs an override, so none is
+    taken: the person typed the target.
+    """
+    proj = project.find()
+    g, unreadable = _decisions_state()
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    if unreadable is not None:
+        con.print(f"[red]{project.STORE_NAME} could not be read[/]\n"
+                  f"[dim]{_x(unreadable)}[/]")
+        raise typer.Exit(1)
+    new = _tags.clean([new])
+    if len(new) != 1:
+        con.print("[red]✗ the new tag is one word[/]")
+        raise typer.Exit(2)
+    new = new[0]
+    if old == new:
+        con.print(f"[red]✗ {_x(old)} is already what it would be renamed to[/]")
+        raise typer.Exit(2)
+
+    def refiled(tags: list[str]) -> list[str]:
+        out = [t for t in tags if t != old]
+        if new not in out:
+            out.insert(tags.index(old), new)
+        return out
+
+    d_ops = [{"op": "set_fields", "vertex": v.id, "tags": refiled(v.tags)}
+             for v in sorted((g.vertices if g else {}).values(),
+                             key=lambda v: v.id) if old in v.tags]
+    t_ops = [{"op": "set_fields", "task": t.id, "tags": refiled(t.tags)}
+             for t in sorted((tg.tasks if tg else {}).values(),
+                             key=lambda t: t.id) if old in t.tags]
+    if not d_ops and not t_ops:
+        con.print(f"[dim]nothing carries {_x(old)} — `dg tags` lists what "
+                  f"is[/]")
+        return
+    if d_ops:
+        eff = _eff(g)
+        _vet_all(eff, d_ops)
+        _stage_all(d_ops, against=eff, new_tag=True)
+    if t_ops:
+        _tstage_all(t_ops, new_tag=True)
+    con.print(f"[green]staged[/] {len(d_ops) + len(t_ops)} op(s): "
+              f"{_x(old)} → {_x(new)}")
+    for op in d_ops + t_ops:
+        con.print(f"  [dim]set_fields {op.get('vertex') or op['task']} "
+                  f"tags={_x(', '.join(op['tags']))}[/]")
+    con.print("[dim]`dg pending` to review, `dg apply` to take them — the two "
+              "stores apply as independent batches[/]")
 
 
 @app.command(rich_help_panel=READ)
@@ -2483,6 +2604,13 @@ def reprobe(
 #: left is telling whoever is making the change, here, where it can be acted on.
 CITED = ("[dim]citations of the old title elsewhere — commits, docs, a pasted "
          "`dg why` — are not updated, and nothing can find them[/]")
+
+
+def _tail(area: str, tags: list[str]) -> str:
+    """A listing row's tail: the area, then the tags it is filed under.
+    Both stores', so the two listings read the same way."""
+    words = " · ".join([area, *tags])
+    return f"[dim]{_x(words)}[/]"
 
 
 def _tag_set(current: list[str], tag: list[str] | None,
@@ -5115,7 +5243,7 @@ def _task_listing(tg: TaskGraph, waiting_for,
         entries.append((tid, f"[{TASK_STYLE.get(task.status, 'white')}]"
                              f"{task.status}[/]", _x(task.title),
                         f"[{style}]" + _x(" · ".join(aside)) + "[/]"))
-        areas.append(f"[dim]{_x(task.area)}[/]")
+        areas.append(_tail(task.area, task.tags))
     _say(compact.listing(entries, width=_width(), markup=True, tails=areas))
     if not entries:
         con.print("  [dim]nothing outstanding[/]")
@@ -5231,6 +5359,7 @@ def task_node(tid: str) -> None:
         f"status      [{TASK_STYLE.get(t.status, 'white')}]{t.status}[/]  "
         f"[dim]({state})[/]",
         f"area        {_x(t.area)}",
+        *([f"tags        {_x(', '.join(t.tags))}"] if t.tags else []),
         f"waiting on  {', '.join(tg.waiting_on(tid)) or '—'}",
         f"unblocks    {', '.join(tg.unblocks(tid)) or '—'}",
     ]

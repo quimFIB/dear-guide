@@ -288,3 +288,102 @@ def test_area_and_tag_induce_the_slice(run, both):
     assert [v["id"] for v in out["decisions"]["vertices"]] == ["D07"]
     assert [t["id"] for t in out["tasks"]["tasks"]] == ["T05"]
     assert out["tasks"]["tasks"][0]["tags"] == ["perf"]
+
+
+# ---- the readings (`T94`) ---------------------------------------------------
+
+
+def _tagged(run):
+    run("add", "--id", "D07", "-t", "Shape", "--area", "Alpha",
+        "--tag", "perf,recall", "--no-edit")
+    run("task", "add", "--id", "T05", "-t", "Sweep", "--area", "Alpha",
+        "--tag", "perf", "--no-edit")
+    _apply(run)
+
+
+def test_listings_print_the_tags_after_the_area(run, both):
+    _tagged(run)
+    r = run("show")
+    assert r.exit_code == 0, r.output
+    line = [ln for ln in r.output.splitlines() if ln.strip().startswith("D07")][0]
+    assert "Alpha · perf · recall" in line
+    r = run("task")
+    line = [ln for ln in r.output.splitlines() if ln.strip().startswith("T05")][0]
+    assert "Alpha · perf" in line
+    # A record with none reads as it always did.
+    line = [ln for ln in r.output.splitlines() if ln.strip().startswith("T02")][0]
+    assert line.rstrip().endswith("Alpha")
+
+
+def test_node_panels_give_tags_a_line_only_when_held(run, both):
+    _tagged(run)
+    r = run("node", "D07")
+    assert "tags        perf, recall" in r.output
+    assert "tags" not in run("node", "D01").output.split("area")[1].split("depends")[0]
+    r = run("task", "node", "T05")
+    assert "tags        perf" in r.output
+
+
+def test_dg_tags_counts_both_stores_in_one_table(run, both):
+    r = run("tags")
+    assert r.exit_code == 0, r.output
+    assert "no tags yet" in r.output
+    _tagged(run)
+    r = run("tags")
+    assert r.exit_code == 0, r.output
+    rows = {ln.split("│")[1].strip(): [c.strip() for c in ln.split("│")[2:-1]]
+            for ln in r.output.splitlines() if ln.startswith("│")}
+    assert rows["perf"] == ["1", "1", "2"]
+    assert rows["recall"] == ["1", "0", "1"]
+
+
+def test_dg_tags_rename_refiles_across_both_stores(run, both):
+    _tagged(run)
+    r = run("tags", "rename", "perf", "performance")
+    assert r.exit_code == 0, r.output
+    assert "staged 2 op(s): perf → performance" in r.output
+    _apply(run)
+    assert _g(both).vertices["D07"].tags == ["performance", "recall"]
+    assert _tg(both).tasks["T05"].tags == ["performance"]
+    r = run("tags", "rename", "perf", "x")
+    assert "nothing carries perf" in r.output
+    # Into a tag the record already holds: the old one simply goes.
+    r = run("tags", "rename", "recall", "performance")
+    assert r.exit_code == 0, r.output
+    _apply(run)
+    assert _g(both).vertices["D07"].tags == ["performance"]
+    assert run("tags", "prune").exit_code == 2, "no registry, so nothing to prune"
+
+
+def test_the_markdown_view_carries_tags_and_import_md_reads_them_back(run, both, tmp_path):
+    _tagged(run)
+    r = run("render")
+    assert r.exit_code == 0, r.output
+    view = (both / "decision-graph.md").read_text(encoding="utf-8")
+    assert "- **Tags:** perf, recall" in view
+    r = run("task", "render")
+    assert "- **Tags:** perf" in (both / "tasks.md").read_text(encoding="utf-8")
+    # A store with no tags renders as it did before the field existed.
+    assert "Tags" not in view.split("### D07")[0]
+
+    rebuilt = tmp_path / "rebuilt"
+    rebuilt.mkdir()
+    r = runner.invoke(app, ["--project", str(rebuilt), "import-md",
+                            str(both / "decision-graph.md")])
+    assert r.exit_code == 0, r.output
+    got = Graph.load(rebuilt / "decisions.json")
+    assert {v.id: v.tags for v in got.vertices.values()} == \
+        {v.id: v.tags for v in _g(both).vertices.values()}
+
+
+def test_the_editor_buffers_take_a_tags_field(both):
+    from dgraph import editor, task_editor
+    g = Graph.load(both / "decisions.json")
+    ops = editor._parse_add(g, {"id": "D07", "title": "Shape", "area": "Alpha",
+                                "tags": "perf, recall"})
+    assert ops[0]["tags"] == ["perf", "recall"]
+    assert "** Tags" in editor.render_add(g, {"tags": ["perf"]})
+    tg = TaskGraph.load(both / "tasks.json")
+    ops = task_editor._parse_add(tg, g, {"id": "T05", "title": "Sweep",
+                                         "area": "Alpha", "tags": "perf"})
+    assert ops[0]["tags"] == ["perf"]

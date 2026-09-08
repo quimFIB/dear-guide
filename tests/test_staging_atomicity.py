@@ -136,6 +136,10 @@ CASES = [
     # rename that tried to be a single act across both would give that up for
     # the one command whose whole job is undoing a divergence.
     ([], ("areas", "rename", "Alpha", "Gamma")),
+    # The same shape for a tag, for the same reason.
+    ([("amend", "D01", "--tag", "perf"),
+      ("task", "amend", "T02", "--tag", "perf")],
+     ("tags", "rename", "perf", "performance")),
 ]
 
 
@@ -179,7 +183,7 @@ def test_every_staging_command_is_covered():
     #: `clear`s (which empty a tray in one write by definition).
     NO_TRAY = {
         ("show",), ("find",), ("tree",), ("node",), ("path",), ("context",),
-        ("why",), ("areas",),
+        ("why",), ("areas",), ("tags",),
         ("brief",), ("gate",), ("check",), ("probe",), ("pending",), ("export",),
         ("apply",), ("render",), ("init",), ("import",), ("import-md",),
         ("serve",),
@@ -249,7 +253,8 @@ def test_every_staging_command_is_covered():
     COVERED_ELSEWHERE = {("expire",), ("run",)}
     covered = {tuple(a for a in argv if not a.startswith("-"))[:2]
                for _, argv in CASES}
-    covered = {c[:2] if c[0] in ("task", "areas") else c[:1] for c in covered}
+    covered = {c[:2] if c[0] in ("task", "areas", "tags") else c[:1]
+               for c in covered}
     missing = names(app) - NO_TRAY - covered
     assert not missing, (
         f"staging command(s) with no write-count case: {sorted(missing)} — "
