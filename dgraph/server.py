@@ -1761,12 +1761,24 @@ class Handler(BaseHTTPRequestHandler):
                          for v in task_pending.introduced(eff, ops)]})
 
     def _compose(self) -> None:
-        """Open the editor, block until it exits, stage what came back.
+        """Open the editor, block until it exits, and return what it composed —
+        for the page to fill its form with. **It does not stage.**
 
-        The request is held for the whole editing session on purpose: it is the
-        same blocking contract `dg decide --edit` has, and it means the browser
-        learns the outcome without polling for a result that has nowhere else to
-        go. `ThreadingHTTPServer` keeps the rest of the app responsive meanwhile.
+        `D99`: the editor is a text-entry aid, not a second staging door. The
+        browser used to stage on exit, matching `dg decide --edit`; that put a
+        missing required field's refusal *after* the editor window had closed,
+        and — the reason it is dropped here — no buffer format the tool picks
+        survives an arbitrary editor's rendering (conceal, folding and a
+        sticky-header each hid the structure in use, audit `AA-F5`). So the
+        parsed fields come back to the page, which fills the decide or reopen
+        form the reader already knows and stages through its one door. The
+        whole op is returned, including fields the form has no input for
+        (`summary`, `probe`, the prose `format`), so filling the form drops
+        nothing — the coverage `D99` turns on.
+
+        The request is still held for the whole editing session: the same
+        blocking contract, and the page learns the fields without polling.
+        `ThreadingHTTPServer` keeps the rest of the app responsive meanwhile.
         """
         body = self._body()
         kind = body.get("op")
@@ -1787,21 +1799,15 @@ class Handler(BaseHTTPRequestHandler):
                 launcher=editor.launch_gui,
                 dialect=editor.gui_dialect(),
             )
-            # Re-read the store: the editor session can last minutes, and
-            # another tab or a terminal may have applied meanwhile. The ops
-            # must expand against the graph as it is now, not as it was when
-            # the buffer was written.
-            fresh = Graph.load()
-            staged: list[dict] = []
-            for op in ops:
-                staged += stage(fresh, op)
         except editor.EditorAbort as exc:
-            return self._json({"aborted": str(exc), "pending": pending.load()})
+            return self._json({"aborted": str(exc)})
         except (editor.EditorError, pending.ApplyError) as exc:
             return self._json({"error": str(exc)}, 400)
         finally:
             _editing.release()
-        self._json({"staged": staged, "pending": pending.load()})
+        # A close or reopen is one op; the browser composes only those. The
+        # page fills its form from these fields and stages through it.
+        self._json({"fields": ops[0] if ops else {}})
 
     def do_DELETE(self) -> None:
         with self._staging_as():

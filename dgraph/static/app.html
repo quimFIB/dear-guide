@@ -341,6 +341,9 @@ let ESEL=null;
    a snapshot from the moment it loaded, refreshed only by the viewer's own
    staging, with nothing to say another writer had moved underneath it. */
 let STAT=null, STALE=0, POLL=null, BOOTING=false;
+/* An editor's composed fields, waiting to be staged from the form (D99).
+   Carries the fields the form cannot show; cleared when staged or recomposed. */
+let COMPOSED=null;
 const POLL_EVERY = 4000;
 let tab="decisions";
 const TASK_COLOR = {TODO:"var(--warn)", DOING:"var(--accent)",
@@ -3146,8 +3149,22 @@ function stageClose(){
   /* local date, not toISOString(): that is UTC, and near midnight it disagrees
      with the date `dg decide` would file for the same decision */
   const d=new Date(), pad=n=>String(n).padStart(2,"0");
-  post({op:"close",vertex:sel,answer:a,source:s,falsifier:f||null,to,
-        date:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`});
+  const op={op:"close",vertex:sel,answer:a,source:s,falsifier:f||null,to,
+        date:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
+  carryComposed(op);
+  post(op);
+}
+
+/* Put back the fields an editor composed that the form has no input for —
+   `summary`, `probe`, the prose `format` — so staging a composed decision
+   from the form drops nothing (D99). The visible fields are the reader's,
+   read straight off the form; these are carried because the form cannot show
+   them. Consumed once, for the vertex it was composed against. */
+function carryComposed(op){
+  if(!(COMPOSED && COMPOSED.vertex===sel)) return;
+  for(const k of ["summary","probe","format"])
+    if(COMPOSED.op[k]!==undefined && op[k]===undefined) op[k]=COMPOSED.op[k];
+  COMPOSED=null;
 }
 /* Its own route, not a status control. `set_status` is derived everywhere else
    in this store — `pending.expand` and `repairs` produce it and stamp it — so a
@@ -3170,7 +3187,9 @@ async function stageConfirm(){
 function stageReopen(){
   const w=$("#why").value.trim();
   if(!w){ say("Say what challenges it.", "bad"); return; }
-  post({op:"reopen",vertex:sel,why:w,summary:$("#sumry").value.trim()||null});
+  const op={op:"reopen",vertex:sel,why:w,summary:$("#sumry").value.trim()||null};
+  carryComposed(op);
+  post(op);
 }
 
 /* ---- composing in an editor ----------------------------------------------
@@ -3192,14 +3211,13 @@ async function composeIn(kind){
   EDITING={vertex:vid, kind};
   panel(); tray();                /* repaint: "waiting", and Apply held back */
   say(ED.emacs
-      ? "emacs is open. Compose there, then C-c C-c to stage or C-c C-k to cancel."
-      : `${ED.name||"The editor"} is open. Save and exit to stage, or leave it empty to cancel.`,
+      ? "emacs is open. Compose there, then C-c C-c to bring it back into the form, or C-c C-k to cancel."
+      : `${ED.name||"The editor"} is open. Save and exit to bring what you wrote back into the form, or leave it empty to cancel.`,
       "wait", vid);
   try{
     const r=await api("/api/compose",{method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({op:kind, vertex:vid, seed})});
-    PEND = r.pending || PEND; tray();
     /* The server's reason travels with the abort — exited with a status,
        buffer unchanged, template untouched, empty Input — and they call for
        different next moves; one sentence for all four hid a terminal that
@@ -3207,8 +3225,20 @@ async function composeIn(kind){
     if(r.aborted) say(`Cancelled in the editor — ${r.aborted}. `
                       + "What you typed here is still here.", "", vid);
     else{
-      delete DRAFTS[vid];         /* staged; the form should come back empty */
-      say(`Staged ${r.staged.length} op(s) from the editor.`, "ok", vid);
+      /* D99: the editor fills the form, it does not stage. The parsed fields
+         populate the form the reader already knows (via the draft the panel
+         restores below), and `COMPOSED` carries the fields the form has no
+         input for — `summary`, `probe`, the prose `format` — so `stageClose`
+         / `stageReopen` put them back and nothing composed is lost. The
+         reader reviews and presses Stage; that is the one staging door. */
+      const f = r.fields || {};
+      DRAFTS[vid] = kind==="close"
+        ? {answer:f.answer||"", source:f.source||"", fals:f.falsifier||"",
+           opens:f.to||[]}
+        : {why:f.why||"", sumry:f.summary||""};
+      COMPOSED = {vertex:vid, op:f};
+      say("Filled the form from the editor — review it and press Stage.",
+          "ok", vid);
     }
   }catch(err){ say(err.message, "bad", vid); }
   finally{

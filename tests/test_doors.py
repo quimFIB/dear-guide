@@ -559,7 +559,7 @@ const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
 const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
 const block = cut("function pickerValues(", "function bindPickers(")
             + cut("async function composeIn(", "/* What a `set_fields` op writes");
-let sel = "D04", EDITING = null, PEND = [], DRAFTS = {};
+let sel = "D04", EDITING = null, PEND = [], DRAFTS = {}, COMPOSED = null;
 const ED = {emacs: true, available: true};
 const held = {answer: {value: "typed answer"}, source: {value: "discussion"},
               fals: {value: "it fails"},
@@ -2757,7 +2757,7 @@ const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
 const block = cut("function pickerValues(", "function bindPickers(")
             + cut("async function composeIn(", "/* What a `set_fields` op writes")
             + cut("async function reviseOp(", "/* ---- folding the panels");
-let sel = "D04", EDITING = null, PEND = [], DRAFTS = {};
+let sel = "D04", EDITING = null, PEND = [], DRAFTS = {}, COMPOSED = null;
 const ED = {emacs: false, name: "vim", available: true};
 const held = {answer: {value: ""}, source: {value: ""}, fals: {value: ""},
               opens: {querySelectorAll: () => []}};
@@ -2788,6 +2788,72 @@ composeIn("close").then(() => reviseOp("abcd")).then(() => {
 def test_a_cancelled_compose_says_the_servers_reason(tmp_path):
     harness = tmp_path / "abort.js"
     harness.write_text(ABORT_HARNESS, encoding="utf-8")
+    r = subprocess.run(["node", str(harness), str(server.STATIC / "app.html")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == "ok"
+
+
+# ---- the editor fills the form; Stage carries what the form cannot show ------
+# Audit T103 (D99): composeIn populates the form from the parsed fields and
+# stashes the rest in COMPOSED; stageClose merges summary/probe/format so a
+# composed decision staged from the form drops nothing.
+
+FORM_FILL_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const js = src.slice(src.indexOf("<script>") + 8, src.lastIndexOf("</script>"));
+const cut = (from, to) => js.slice(js.indexOf(from), js.indexOf(to));
+const block = cut("function stageClose(", "/* Its own route,")
+            + cut("async function composeIn(", "/* What a `set_fields` op writes");
+let sel = "D05", EDITING = null, PEND = [], DRAFTS = {}, COMPOSED = null;
+const ED = {emacs: false, name: "vim", available: true};
+const vals = {answer:"a", source:"s", fals:"f"};
+const held = {answer:{value:""}, source:{value:""}, fals:{value:""},
+              why:{value:""}, sumry:{value:""},
+              opens:{querySelectorAll:()=>[]}};
+const $ = s => held[s.slice(1)];
+const panel=()=>{}, tray=()=>{}, captureDraft=()=>{};
+const pickerValues = () => (held.opens._picked || []);
+const say=()=>{};
+const POSTED=[];
+const post = op => POSTED.push(op);
+// the server returns the parsed op — a summary and probe the form cannot show
+const api = async () => ({fields:{op:"close", vertex:"D05", answer:"chose bge",
+  source:"bench.md", falsifier:"recall drops", to:["D03"], summary:"the small one",
+  probe:{kind:"prose.note", args:{}}, format:"org"}});
+eval(block + `
+composeIn("close").then(() => {
+  // the visible fields landed in the draft the panel would restore
+  const d = DRAFTS["D05"];
+  if (d.answer !== "chose bge" || d.source !== "bench.md" || d.fals !== "recall drops")
+    throw new Error("the form draft was not filled: " + JSON.stringify(d));
+  if (!COMPOSED || COMPOSED.op.summary !== "the small one")
+    throw new Error("COMPOSED did not keep the unshowable fields");
+  // the reader reviews (say, edits the answer) and presses Stage
+  held.answer.value = "chose bge, reviewed"; held.source.value = "bench.md";
+  held.fals.value = "recall drops"; held.opens._picked = ["D03"];
+  stageClose();
+  if (POSTED.length !== 1) throw new Error("Stage did not post once");
+  const op = POSTED[0];
+  if (op.answer !== "chose bge, reviewed")
+    throw new Error("the reviewed answer was not staged: " + op.answer);
+  if (op.summary !== "the small one")
+    throw new Error("the composed summary was dropped: " + JSON.stringify(op));
+  if (!op.probe || op.probe.kind !== "prose.note")
+    throw new Error("the composed probe was dropped");
+  if (op.format !== "org")
+    throw new Error("the composed prose dialect was dropped");
+  if (COMPOSED !== null) throw new Error("COMPOSED was not consumed");
+  console.log("ok");
+}).catch(e => { console.error(e.message); process.exit(1); });
+`);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_compose_fills_the_form_and_stage_carries_the_hidden_fields(tmp_path):
+    harness = tmp_path / "fill.js"
+    harness.write_text(FORM_FILL_HARNESS, encoding="utf-8")
     r = subprocess.run(["node", str(harness), str(server.STATIC / "app.html")],
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr

@@ -201,18 +201,36 @@ def test_stage_expands_against_the_staged_ops_too(srv, store):
 # ---- composing -----------------------------------------------------------
 
 
-def test_compose_stages_what_the_editor_returned(srv, monkeypatch):
+def test_compose_returns_the_fields_and_stages_nothing(srv, monkeypatch):
+    """D99: the editor fills the form, it does not stage. The parsed fields
+    come back for the page to populate the decide form; the tray is untouched
+    until the reader presses Stage."""
     monkeypatch.setattr(editor, "launch_gui",
                         fill(answer="Chose the small one.", source="report/x.md",
                              falsifier="the corpus changes"))
     code, body = jreq(srv, "/api/compose", "POST", CLOSE)
     assert code == 200, body
-    op = body["staged"][0]
-    assert op["op"] == "close" and op["vertex"] == "D05"
-    assert op["answer"] == "Chose the small one."
-    # and nothing for D06: it waits on D05 by its edge, and stops by derivation
-    assert [o["op"] for o in body["staged"]] == ["close"]
-    assert body["pending"] == pending.load()
+    f = body["fields"]
+    assert f["op"] == "close" and f["vertex"] == "D05"
+    assert f["answer"] == "Chose the small one." and f["source"] == "report/x.md"
+    assert "staged" not in body
+    assert pending.load() == [], "compose must not stage"
+
+
+def test_compose_carries_the_fields_the_form_has_no_input_for(srv, monkeypatch):
+    """The coverage D99 turns on: a `summary` and a `probe` typed in the editor
+    come back in the fields, so the page can carry them to the stage even
+    though the close form shows neither."""
+    monkeypatch.setattr(editor, "launch_gui", fill(
+        answer="a", source="s", falsifier="f",
+        summary="the small one", probe='{"kind": "prose.note", "args": {}}'))
+    code, body = jreq(srv, "/api/compose", "POST", CLOSE)
+    assert code == 200, body
+    f = body["fields"]
+    assert f["summary"] == "the small one"
+    assert f["probe"] == {"kind": "prose.note", "args": {}}
+    assert f.get("format") == "org", "the prose dialect is carried too"
+    assert pending.load() == []
 
 
 def test_compose_seeds_the_buffer_from_the_form(srv, monkeypatch):
@@ -260,16 +278,16 @@ def test_compose_refuses_a_derived_op(srv):
     assert code == 400 and "set_status" in body["error"]
 
 
-def test_compose_reopen_round_trips(srv, monkeypatch):
+def test_compose_reopen_returns_the_reopen_fields(srv, monkeypatch):
+    """D99: compose returns the reopen's fields for the form; the propagation
+    to descendants happens when the reader stages it, not here."""
     monkeypatch.setattr(editor, "launch_gui", fill(why="the sweep was wrong"))
     code, body = jreq(srv, "/api/compose", "POST",
                       {"op": "reopen", "vertex": "D01"})
     assert code == 200, body
-    assert body["staged"][0] == {"op": "reopen", "vertex": "D01",
-                                 "why": "the sweep was wrong", "format": "org"}
-    # reopening D01 drags its decided descendants into PROVISIONAL
-    assert {o["vertex"] for o in body["staged"] if o["op"] == "set_status"} == {
-        "D02", "D03", "D04"}
+    assert body["fields"] == {"op": "reopen", "vertex": "D01",
+                              "why": "the sweep was wrong", "format": "org"}
+    assert pending.load() == [], "compose must not stage or propagate"
 
 
 def test_a_second_editor_is_refused_while_one_is_open(srv, monkeypatch):
@@ -1867,8 +1885,8 @@ def test_a_markdown_editor_composes_in_the_markdown_buffer(srv, monkeypatch):
     code, body = jreq(srv, "/api/compose", "POST", CLOSE)
     assert code == 200, body
     assert seen["path"].name == ".dgraph-edit.md"
-    assert body["staged"][0]["answer"] == "typed in vim"
-    assert "format" not in body["staged"][0]
+    assert body["fields"]["answer"] == "typed in vim"
+    assert "format" not in body["fields"]
 
 
 # ---- a tray that no longer applies, and a record that is only staged ------
