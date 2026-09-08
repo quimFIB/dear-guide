@@ -1463,6 +1463,16 @@ class Handler(BaseHTTPRequestHandler):
                 because=_ids(body, "because"),
                 evidence_for=(body.get("evidence_for") or "").strip() or None,
                 note=(body.get("note") or "").strip() or None,
+                # `done_when` and `probe` are the two fields a composed
+                # `add_task` can carry that the new-task form has no input
+                # for (`T108`): the editor renders them, the form fills what
+                # it can and hands these back untouched, so a task composed in
+                # an editor stages whole. `dg task add` passes both; without
+                # them here the browser's stage door silently dropped a
+                # definition-of-done the compose had just written.
+                done_when=(body.get("done_when") or "").strip() or None,
+                probe=body.get("probe") or None,
+                fmt=(body.get("format") or None),
                 tags=_tags.clean(body.get("tags")),
                 stored=tg)
             staged = stage_tasks(eff, ops, new_area=fresh,
@@ -1839,6 +1849,8 @@ class Handler(BaseHTTPRequestHandler):
         `ThreadingHTTPServer` keeps the rest of the app responsive meanwhile.
         """
         body = self._body()
+        if body.get("store") == "tasks":
+            return self._compose_task(body)
         kind = body.get("op")
         if kind not in editor.RENDERERS:
             return self._json({"error": f"cannot compose {kind!r}"}, 400)
@@ -1863,9 +1875,71 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, 400)
         finally:
             _editing.release()
-        # A close or reopen is one op; the browser composes only those. The
-        # page fills its form from these fields and stages through it.
+        # A close, reopen or amend is one op; the browser composes only those.
+        # The page fills its form from these fields and stages through it.
         self._json({"fields": ops[0] if ops else {}})
+
+    def _compose_task(self, body: dict) -> None:
+        """`_compose`'s twin for the task store (`T108`, `T110`).
+
+        Composes an `add_task` (the new-task form's Compose button) or an
+        `amend` (the shared Reword form's) and hands the parsed fields back to
+        the page. It does not stage, for the reason `_compose` gives: the
+        form is the guarantee, the buffer is best-effort (`D99`). An
+        `add_task` comes back as a group — the task op and its edges — so its
+        fields are flattened for the one form that fills from them; an amend
+        is one op.
+        """
+        kind = body.get("op")
+        if kind not in ("add_task", "amend"):
+            return self._json({"error": f"cannot compose {kind!r}"}, 400)
+        proj = project.find()
+        if not proj.has_tasks:
+            return self._json({"error": "this project has no tasks.json"}, 400)
+        if not _editing.acquire(blocking=False):
+            return self._json(
+                {"error": "an editor is already open for this project — finish "
+                          "it with C-c C-c, or cancel with C-c C-k"}, 409)
+        try:
+            g = pending.preview(Graph.load()) if proj.has_decisions else None
+            tg = task_pending.preview(TaskGraph.load(proj.tasks))
+            if kind == "add_task":
+                ops = task_editor.compose_add(
+                    tg, g, seed=body.get("seed") or None,
+                    new_area=bool(body.get("new_area")),
+                    launcher=editor.launch_gui,
+                    dialect=editor.gui_dialect())
+                fields = self._add_task_fields(ops)
+            else:
+                ops = task_editor.compose_amend(
+                    tg, g, body.get("vertex"),
+                    launcher=editor.launch_gui,
+                    dialect=editor.gui_dialect())
+                fields = ops[0] if ops else {}
+        except editor.EditorAbort as exc:
+            return self._json({"aborted": str(exc)})
+        except (editor.EditorError, pending.ApplyError) as exc:
+            return self._json({"error": str(exc)}, 400)
+        finally:
+            _editing.release()
+        self._json({"fields": fields})
+
+    @staticmethod
+    def _add_task_fields(ops: list[dict]) -> dict:
+        """A composed `add_task` group as the flat fields the new-task form
+        fills from. The task op carries its own fields; `after` and
+        `discovered_during` are separate `add_dep` ops (audit F28), read back
+        off them by edge kind so the two pickers refill the way they were
+        typed."""
+        if not ops:
+            return {}
+        fields = dict(ops[0])
+        by_kind = {"precedes": "after", "prompted": "discovered_during"}
+        for op in ops[1:]:
+            slot = by_kind.get(op.get("kind"))
+            if slot and op.get("op") == "add_dep":
+                fields.setdefault(slot, []).append(op.get("from"))
+        return fields
 
     def do_DELETE(self) -> None:
         with self._staging_as():

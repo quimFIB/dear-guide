@@ -2000,3 +2000,135 @@ def test_edit_route_refuses_a_derived_task_op(srv, dual):
     ref = pending.load(task_pending.path())[0]["ref"]
     code, body = jreq(srv, "/api/edit", "POST", {"ref": ref, "store": "tasks"})
     assert code == 400 and "derived or structural" in body["error"]
+
+
+# ---- compose a task, and an amendment, in the editor from the browser -------
+# T108 (the new-task form's Compose) and T110 (the shared Reword form's).
+
+def _fill_task(**fields):
+    """A launcher for a task buffer: drop a value on the line under each
+    `** Heading`. Unlike `fill`, headings may contain spaces (`Done when`)."""
+    def launch(path):
+        text = path.read_text(encoding="utf-8")
+        for heading, val in fields.items():
+            head = f"** {heading}\n"
+            i = text.index(head) + len(head)
+            text = text[:i] + val + "\n" + text[i:]
+        path.write_text(text, encoding="utf-8")
+        return 0
+    return launch
+
+
+def test_task_compose_returns_the_add_fields_and_stages_nothing(srv, dual,
+                                                                 monkeypatch):
+    """T108, on D99: composing a new task fills the form, it does not stage.
+    The `Done when` field is one the new-task form has no input for — it must
+    still come back so the page can carry it to the one staging door."""
+    monkeypatch.setattr(editor, "launch_gui", _fill_task(
+        **{"Title": "Composed task", "Area": "Alpha",
+           "Done when": "the sweep runs"}))
+    code, body = jreq(srv, "/api/compose", "POST",
+                      {"store": "tasks", "op": "add_task", "seed": {"id": "T60"}})
+    assert code == 200, body
+    f = body["fields"]
+    assert f["title"] == "Composed task" and f["area"] == "Alpha"
+    assert f["done_when"] == "the sweep runs"
+    assert pending.load(task_pending.path()) == [], "compose must not stage"
+
+
+def test_task_compose_reads_the_relations_back_off_the_dep_ops(srv, dual,
+                                                               monkeypatch):
+    """A composed `add_task` comes back as the task op and its edges (F28);
+    the route flattens `after`/`discovered_during` off those `add_dep` ops so
+    the form's pickers refill the way they were typed."""
+    monkeypatch.setattr(editor, "launch_gui", _fill_task(
+        **{"Title": "Composed", "Area": "Alpha", "After": "T02"}))
+    code, body = jreq(srv, "/api/compose", "POST",
+                      {"store": "tasks", "op": "add_task", "seed": {"id": "T60"}})
+    assert code == 200, body
+    assert body["fields"]["after"] == ["T02"]
+    assert "op" not in body["fields"].get("after", []), "an edge op leaked in"
+
+
+def test_add_task_route_stages_done_when_probe_and_format(srv, dual):
+    """The two fields the new-task form has no input for, plus the buffer's
+    dialect, carried from a Compose (T108). `dg task add` passes all three; the
+    route must too, or the browser's stage door silently drops a
+    definition-of-done the compose just wrote."""
+    code, body = jreq(srv, "/api/add-task", "POST",
+                      {"id": "T60", "title": "T", "area": "Alpha",
+                       "note": "*org* prose", "format": "org",
+                       "done_when": "it renders",
+                       "probe": {"kind": "prose.note", "args": {"n": 1}}})
+    assert code == 200, body
+    op = [o for o in body["staged"] if o["op"] == "add_task"][0]
+    assert op["done_when"] == "it renders"
+    assert op["probe"] == {"kind": "prose.note", "args": {"n": 1}}
+    assert op["format"] == "org", "the org note would render as markdown untagged"
+
+
+def test_add_task_without_prose_claims_no_format(srv, dual):
+    """`format` rides only where the op writes prose, the `_tag` rule: a claim
+    on an op writing none of it does nothing and is left off."""
+    code, body = jreq(srv, "/api/add-task", "POST",
+                      {"id": "T60", "title": "T", "area": "Alpha",
+                       "format": "org"})
+    assert code == 200, body
+    op = [o for o in body["staged"] if o["op"] == "add_task"][0]
+    assert "format" not in op
+
+
+def test_amend_compose_returns_the_changed_decision_fields(srv, store,
+                                                           monkeypatch):
+    """T110: composing an amendment on a decision fills the Reword form and
+    stages nothing. Only what the buffer changed comes back (D103)."""
+    def launch(path):
+        text = path.read_text(encoding="utf-8")
+        head = "** Note\n"
+        i = text.index(head) + len(head)
+        path.write_text(text[:i] + "a fresh note\n" + text[i:], encoding="utf-8")
+        return 0
+    monkeypatch.setattr(editor, "launch_gui", launch)
+    code, body = jreq(srv, "/api/compose", "POST",
+                      {"store": "decisions", "op": "amend", "vertex": "D01"})
+    assert code == 200, body
+    f = body["fields"]
+    assert f["op"] == "set_fields" and f["vertex"] == "D01"
+    assert f["note"] == "a fresh note"
+    assert "title" not in f, "an unchanged field was staged"
+    assert pending.load() == [], "compose must not stage"
+
+
+def test_amend_compose_returns_a_tasks_done_when(srv, dual, monkeypatch):
+    """T110, the task half: the Reword form has no input for a task's
+    `done_when`, so a composed one comes back in the fields for the page to
+    carry to the stage."""
+    monkeypatch.setattr(editor, "launch_gui", _fill_task(
+        **{"Done when": "the index builds"}))
+    code, body = jreq(srv, "/api/compose", "POST",
+                      {"store": "tasks", "op": "amend", "vertex": "T04"})
+    assert code == 200, body
+    f = body["fields"]
+    assert f["op"] == "set_fields" and f["task"] == "T04"
+    assert f["done_when"] == "the index builds"
+    assert pending.load(task_pending.path()) == [], "compose must not stage"
+
+
+def test_task_compose_refuses_an_op_it_cannot_compose(srv, dual):
+    code, body = jreq(srv, "/api/compose", "POST",
+                      {"store": "tasks", "op": "set_status"})
+    assert code == 400 and "cannot compose" in body["error"]
+
+
+def test_the_new_task_form_and_reword_form_carry_a_compose_button():
+    """Pinned in the file that holds them (T108, T110): the two forms outside
+    the decision inspector reach the editor through `composeBtn`, and the fill
+    paths are named. Without this the buttons could be dropped in an edit and
+    only a browser would notice."""
+    html = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    add = html.split("function newTaskForm")[1].split("\nasync function")[0]
+    assert 'composeBtn("nCompose")' in add
+    assert "composeNewTask" in add
+    amend = html.split("function amendForm")[1].split("\nfunction amendOp")[0]
+    assert 'composeBtn("doComposeAmend")' in amend
+    assert "composeAmend" in html and "carryAmend" in html

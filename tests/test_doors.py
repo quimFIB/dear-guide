@@ -407,6 +407,11 @@ const block = cut("let NEWKIND=null;", "/* ---- the task panel")
             + cut("const REL_FORMS = {", "/* ---- what a drop leaves standing");
 const G = JSON.parse(process.argv[3]), T = JSON.parse(process.argv[4]);
 let tab = "decisions", sel = null, tsel = null;
+// Page state the sliced blocks read but do not declare — the editor-composed
+// fields waiting to be carried to a form's stage (T108, T110). `amendOp` reads
+// `COMPOSED_AMEND` through `carryAmend`, so it must exist here the way `sel`
+// does, or the reader throws before it can be checked.
+let COMPOSED_ADD = null, COMPOSED_AMEND = null;
 const held = {};
 const el = id => (held[id] = held[id] || {id, value:"", options:[],
   selectedOptions:[], style:{}, onclick:null, onchange:null, innerHTML:"",
@@ -421,6 +426,11 @@ const $ = s => (s === "#side" ? side : el(s.slice(1)));
 const esc = x => String(x == null ? "" : x);
 const draw = () => {}, fit = () => {}, boot = async () => {};
 const say = () => {};
+// The editor-Compose button and its key hint the forms draw beside their own
+// controls (T108, T110). Defined near `editBtn`, outside the sliced blocks, so
+// stubbed to empty here — the compose button is not one of the fields these
+// forms are checked to draw, and its own wiring is pinned elsewhere.
+const composeBtn = () => "", composeKeys = () => "";
 // A recorder, not a stub returning nothing: two assertions below are about
 // *what was posted*, and a stub that forgets its argument cannot fail them.
 const POSTED = [];

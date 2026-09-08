@@ -365,6 +365,14 @@ function noteRun(run){
 /* An editor's composed fields, waiting to be staged from the form (D99).
    Carries the fields the form cannot show; cleared when staged or recomposed. */
 let COMPOSED=null;
+/* The same, for the two forms that are not the decision inspector's close /
+   reopen. The new-task form (T108) has no input for a composed `done_when` or
+   `probe`, and carries the buffer's `format` so an org note is not stored as
+   markdown; the shared Reword form (T110) has no input for a decision's `rule`
+   or a task's `done_when`. Each is keyed so a fill meant for one record cannot
+   be staged onto another, and cleared when its form is rebuilt or staged. */
+let COMPOSED_ADD=null;
+let COMPOSED_AMEND=null;
 const POLL_EVERY = 4000;
 let tab="decisions";
 const TASK_COLOR = {TODO:"var(--warn)", DOING:"var(--accent)",
@@ -1848,6 +1856,46 @@ const editKeys = () => !ED ? ""
          ED.terminal ? ` in a terminal window (${esc(ED.terminal)})` : ""}${
          ED.dialect==="markdown" ? ", as markdown" : ""}; save and exit
        to stage, or empty the Input section to cancel.</div>`;
+
+/* A "Compose in <editor>" button for a form that is *not* the decision
+   inspector's — the new-task form (`T108`) and the shared Reword form
+   (`T110`). Same gate as `editBtn`: only where the server says a windowed
+   editor can be launched, and disabled while one already holds the project's
+   one buffer. These forms fill on exit and stage through their own door, so
+   the hint says "back into the form", never "stage". */
+function composeBtn(id){
+  if(!(ED && ED.available)) return "";
+  const name=ED.name||(ED.emacs?"emacs":"editor");
+  return `<button class="ghost" id="${esc(id)}"${EDITING?" disabled":""
+    }>Compose in ${esc(name)}</button>`;
+}
+function composeKeys(){
+  if(!(ED && ED.available))
+    return ED && ED.reason
+      ? `<div class="keys">No editor button: ${esc(ED.reason)}</div>` : "";
+  return ED.emacs
+    ? `<div class="keys">emacs opens on the buffer ·
+       <kbd>C-c C-c</kbd> bring it back into the form ·
+       <kbd>C-c C-k</kbd> cancel</div>`
+    : `<div class="keys">${esc(ED.name||ED.editor)} opens on the buffer${
+         ED.dialect==="markdown" ? ", as markdown" : ""}; save and exit to
+       bring what you wrote back into the form, or leave it empty to
+       cancel.</div>`;
+}
+
+/* Set a picker's checked boxes to `values`, and refresh its "picked:" count.
+   Used to reflect the relations an editor composed (`after`, `because`, …)
+   back into the form's pickers, so a Compose fills them the way it fills the
+   text inputs. A radio picker's "— none —" row has an empty value and is
+   checked when nothing is wanted. */
+function setPicker(id, values){
+  const p=$("#"+id); if(!p) return;
+  const want=new Set(values||[]);
+  p.querySelectorAll('input[type=checkbox],input[type=radio]').forEach(c=>{
+    c.checked = c.value ? want.has(c.value) : want.size===0;
+  });
+  p.dispatchEvent(new Event("change"));
+}
 /* ---- is the store sound? --------------------------------------------------
 
    The browser had no way to ask. An invalid store — the merge, rebase, partial
@@ -2153,15 +2201,23 @@ function newTaskForm(){
     <textarea id="nNote"></textarea>
     <p style="margin:10px 0;display:flex;gap:8px">
       <button class="primary" id="nGo">Stage new task</button>
+      ${composeBtn("nCompose")}
       <button class="ghost" id="nNo">Cancel</button></p>
+    ${composeKeys()}
     <div class="note" id="note"></div>`;
+  COMPOSED_ADD=null;
   $("#nNo").onclick=closeNew;
   $("#nGo").onclick=stageNewTask;
+  $("#nCompose")&&($("#nCompose").onclick=composeNewTask);
 }
 
 async function stageNewTask(){
   const id=$("#nId").value.trim(), title=$("#nTitle").value.trim();
   if(!id || !title){ say("An id and a title are required.","bad"); return; }
+  /* The two fields the form has no input for, plus the buffer's dialect,
+     carried from a Compose (`T108`). Read once and cleared, so a second Stage
+     of a hand-typed task does not resurrect a composed definition-of-done. */
+  const c=COMPOSED_ADD; COMPOSED_ADD=null;
   await postNew("/api/add-task", {
     id, title, area:$("#nArea").value.trim(),
     new_area:$("#nNewArea").checked,
@@ -2173,7 +2229,62 @@ async function stageNewTask(){
     because:$("#nBecause")?pickerValues("nBecause").join(","):null,
     evidence_for:$("#nEvidence")?(pickerValues("nEvidence")[0]||null):null,
     note:$("#nNote").value.trim()||null,
+    done_when:c?c.done_when||null:null,
+    probe:c?c.probe||null:null,
+    format:c?c.format||null:null,
   }, id);
+}
+
+/* Compose a new task in an editor, then fill the form (`T108`, on `D99`). The
+   request blocks for the whole editing session, exactly as `composeIn` does
+   for a decision; whatever is already typed is sent as a seed so switching to
+   the editor mid-thought costs no work. On exit the parsed fields fill every
+   input the form has — text and pickers alike — and `COMPOSED_ADD` carries the
+   two the form does not (`done_when`, `probe`) plus the buffer's `format`, so
+   Stage loses nothing. The form is the one staging door. */
+async function composeNewTask(){
+  const seed={
+    id:$("#nId").value.trim(), title:$("#nTitle").value.trim(),
+    area:$("#nArea").value.trim(), note:$("#nNote").value.trim(),
+    tags:$("#nTags").value.split(",").map(s=>s.trim()).filter(Boolean),
+    after:pickerValues("nAfter"), discovered_during:pickerValues("nDuring"),
+    because:$("#nBecause")?pickerValues("nBecause").join(","):"",
+    evidence_for:$("#nEvidence")?(pickerValues("nEvidence")[0]||""):"",
+  };
+  const go=$("#nGo"), cmp=$("#nCompose");
+  EDITING={vertex:"a new task", kind:"add_task"};
+  if(go) go.disabled=true; if(cmp) cmp.disabled=true;
+  say(ED.emacs
+      ? "emacs is open. Compose there, then C-c C-c to bring it back into the form, or C-c C-k to cancel."
+      : `${ED.name||"The editor"} is open. Save and exit to bring what you wrote back into the form, or leave it empty to cancel.`,
+      "wait");
+  try{
+    const r=await api("/api/compose",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({store:"tasks", op:"add_task", seed,
+                           new_area:!!($("#nNewArea")&&$("#nNewArea").checked)})});
+    if(r.aborted)
+      say(`Cancelled in the editor — ${r.aborted}. What you typed here is still here.`,"");
+    else{
+      const f=r.fields||{};
+      if(f.id!==undefined) $("#nId").value=f.id;
+      if(f.title!==undefined) $("#nTitle").value=f.title;
+      if(f.area!==undefined) $("#nArea").value=f.area;
+      if(f.note!==undefined) $("#nNote").value=f.note||"";
+      if(f.tags!==undefined) $("#nTags").value=(f.tags||[]).join(", ");
+      setPicker("nAfter", f.after||[]);
+      setPicker("nDuring", f.discovered_during||[]);
+      if($("#nBecause")) setPicker("nBecause", f.because||[]);
+      if($("#nEvidence")) setPicker("nEvidence", f.evidence_for?[f.evidence_for]:[]);
+      COMPOSED_ADD={done_when:f.done_when, probe:f.probe, format:f.format};
+      say("Filled the form from the editor — review it and press Stage new task.","ok");
+    }
+  }catch(err){ say(err.message,"bad"); }
+  finally{
+    EDITING=null;
+    const g2=$("#nGo"), c2=$("#nCompose");
+    if(g2) g2.disabled=false; if(c2) c2.disabled=false;
+  }
 }
 
 /* One post path for both forms. The reload is the part worth explaining: an
@@ -2346,6 +2457,7 @@ function taskPanel(){
   restoreDraft();
   const n=NOTES[tsel]; if(n) say(n.msg, n.cls);
   $("#doAmend")&&($("#doAmend").onclick=()=>postTask(amendOp("task", tsel)));
+  $("#doComposeAmend")&&($("#doComposeAmend").onclick=()=>composeAmend("tasks", tsel));
   $("#doStart")&&($("#doStart").onclick=()=>
     postTask({op:"set_status",task:tsel,status:"DOING"}));
   $("#doPark")&&($("#doPark").onclick=()=>{
@@ -2427,7 +2539,10 @@ function amendForm(areas, rec){
       use</span></label>
     <label>Note — replaces the one above</label>
     <textarea id="amNote" placeholder="blank leaves it as it is"></textarea>
-    <p style="margin:10px 0"><button class="ghost" id="doAmend">Stage the correction</button></p>
+    <p style="margin:10px 0;display:flex;gap:8px">
+      <button class="ghost" id="doAmend">Stage the correction</button>
+      ${composeBtn("doComposeAmend")}</p>
+    ${composeKeys()}
     <p class="muted">A title, an area and a note are how this record is referred
       to and where it is filed, so nothing is superseded and the old wording is
       not kept — citations of it elsewhere are not updated, and nothing can find
@@ -2450,7 +2565,56 @@ function amendOp(key, id){
      staging door and never stored, so sending it on an op that names no area
      would be a permission nothing is asking about. */
   if(area && $("#amNewArea") && $("#amNewArea").checked) op.new_area=true;
+  carryAmend(op, id);
   return op;
+}
+
+/* Put back the two fields the Reword form has no input for that a composed
+   amend can carry (`T110`): a decision's `rule`, a task's `done_when`, and the
+   buffer's `format` so their dialect is not lost. Keyed to the record it was
+   composed against and consumed once, like `carryComposed`. The form's own
+   title / area / note are the reader's and are read straight off it. */
+function carryAmend(op, id){
+  if(!(COMPOSED_AMEND && COMPOSED_AMEND.id===id)) return;
+  for(const k of ["rule","done_when","format"])
+    if(COMPOSED_AMEND[k]!==undefined && op[k]===undefined) op[k]=COMPOSED_AMEND[k];
+  COMPOSED_AMEND=null;
+}
+
+/* Compose an amendment in an editor, then fill the Reword form (`T110`, on
+   `D99`). One path for both stores — the amend op is the same `set_fields`
+   through the same rules — so the caller passes which store and which record.
+   The editor prefills the record as it stands and returns only what changed;
+   the form shows title / area / note, and `COMPOSED_AMEND` carries `rule` or
+   `done_when`. The form stays the one staging door. */
+async function composeAmend(store, id){
+  const btn=$("#doComposeAmend"), stage=$("#doAmend");
+  EDITING={vertex:id, kind:"amend"};
+  if(btn) btn.disabled=true; if(stage) stage.disabled=true;
+  say(ED.emacs
+      ? "emacs is open. Edit there, then C-c C-c to bring the changes into the form, or C-c C-k to cancel."
+      : `${ED.name||"The editor"} is open. Save and exit to bring the changes into the form, or leave it unchanged to cancel.`,
+      "wait", id);
+  try{
+    const r=await api("/api/compose",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({store, op:"amend", vertex:id})});
+    if(r.aborted)
+      say(`Cancelled in the editor — ${r.aborted}. What you typed here is still here.`,"",id);
+    else{
+      const f=r.fields||{};
+      if(f.title!==undefined) $("#amTitle").value=f.title;
+      if(f.area!==undefined) $("#amArea").value=f.area;
+      if(f.note!==undefined && f.note!==null) $("#amNote").value=f.note;
+      COMPOSED_AMEND={id, rule:f.rule, done_when:f.done_when, format:f.format};
+      say("Filled the correction from the editor — review it and press Stage the correction.","ok",id);
+    }
+  }catch(err){ say(err.message,"bad",id); }
+  finally{
+    EDITING=null;
+    const b2=$("#doComposeAmend"), s2=$("#doAmend");
+    if(b2) b2.disabled=false; if(s2) s2.disabled=false;
+  }
 }
 
 /* Why the id could not be prefilled, where that is the case. This clone
@@ -3089,6 +3253,7 @@ function panel(){
   if(n) say(n.msg, n.cls);
   $("#doClose")&&($("#doClose").onclick=stageClose);
   $("#doAmend")&&($("#doAmend").onclick=()=>post(amendOp("vertex", sel)));
+  $("#doComposeAmend")&&($("#doComposeAmend").onclick=()=>composeAmend("decisions", sel));
   $("#doReopen")&&($("#doReopen").onclick=stageReopen);
   $("#doConfirm")&&($("#doConfirm").onclick=stageConfirm);
   $("#side").querySelectorAll("button[data-ev]").forEach(b=>

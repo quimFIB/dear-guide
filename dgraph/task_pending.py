@@ -673,6 +673,7 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
                 probe: dict | None = None,
                 done_when: str | None = None,
                 tags: list[str] | None = None,
+                fmt: str | None = None,
                 stored: TaskGraph | None = None) -> list[dict]:
     """The op list that records a new task, validated against `tg`.
 
@@ -766,6 +767,14 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
     if probe is not None:
         op["probe"] = probe
         op["date"] = _date.today().isoformat()
+    # The composed buffer's dialect, where a browser composed the prose in an
+    # editor (`T108`). Tagged only when the op actually writes one of `PROSE`,
+    # the same rule `task_editor._tag` follows and for the same reason: a
+    # `format` claim on an op writing no prose does nothing, and prose written
+    # without one renders org as markdown. The flag path passes nothing and is
+    # unchanged — flags are the store's canonical dialect.
+    if fmt and any(op.get(f) for f in PROSE):
+        op["format"] = fmt
     ops = [op]
     for others, kind in rels:
         ops += relation_ops(tg, tid, others, kind)[0]
