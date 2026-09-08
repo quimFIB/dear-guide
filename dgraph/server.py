@@ -44,6 +44,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from dgraph import areas
+from dgraph import tags as _tags
 from dgraph import (applying, check, cross, editor, pending, previewing,
                     project, ranges, render, task_editor, task_pending)
 from dgraph.model import Graph, rival_note
@@ -693,13 +694,14 @@ def stage(g: Graph, op: dict) -> list[dict]:
         if why is not None:
             raise pending.ApplyError(why)
     fresh = bool(op.pop("new_area", False))
+    fresh_tag = bool(op.pop("new_tag", False))
     pending.vet(eff, op, new_area=fresh)
     ops = pending.expand(eff, op)
     # The area guard lives in `stage_all` now, so the page's `new_area` has to
     # reach it — scoped to this request, never written into the op. `expand`
     # sits between the two and knows nothing about either, which is the reason
     # the permission is carried rather than passed. Audit `R-F2`.
-    with pending.new_area_allowed(fresh):
+    with pending.new_area_allowed(fresh), pending.new_tag_allowed(fresh_tag):
         pending.stage_all(ops, against=eff)   # one write, each op stamped
     return ops
 
@@ -755,7 +757,7 @@ def _decide_note(op: dict) -> str | None:
 
 
 def stage_tasks(tg: TaskGraph, ops: list[dict], *,
-                new_area: bool = False) -> list[dict]:
+                new_area: bool = False, new_tag: bool = False) -> list[dict]:
     """Vet a batch of task ops and stage them as **one** tray write.
 
     A drop and the cascade its verdicts imply are one judgement — the operator
@@ -782,9 +784,11 @@ def stage_tasks(tg: TaskGraph, ops: list[dict], *,
     for op in ops:
         if isinstance(op, dict) and op.pop("new_area", False):
             new_area = True
+        if isinstance(op, dict) and op.pop("new_tag", False):
+            new_tag = True
     task_pending.vet_all(task_pending.preview(tg), ops, new_area=new_area)
     # `stage`'s twin — see there. Audit `R-F2`.
-    with pending.new_area_allowed(new_area):
+    with pending.new_area_allowed(new_area), pending.new_tag_allowed(new_tag):
         pending.stage_all(ops, task_pending.path())
     return ops
 
@@ -1367,9 +1371,11 @@ class Handler(BaseHTTPRequestHandler):
                 status=(body.get("status") or "OPEN").strip(),
                 after=[x for x in (body.get("after") or []) if x],
                 note=(body.get("note") or "").strip() or None,
+                tags=_tags.clean(body.get("tags")),
                 stored=g)
             pending.vet_all(eff, ops)
-            pending.stage_all(ops, against=eff)   # one write, each op stamped
+            with pending.new_tag_allowed(bool(body.get("new_tag"))):
+                pending.stage_all(ops, against=eff)   # one write, each op stamped
         except pending.ApplyError as exc:
             return self._json({"error": str(exc)}, 400)
         # `ops`, not the tray: every other route reports what *this* act
@@ -1407,8 +1413,10 @@ class Handler(BaseHTTPRequestHandler):
                 because=_ids(body, "because"),
                 evidence_for=(body.get("evidence_for") or "").strip() or None,
                 note=(body.get("note") or "").strip() or None,
+                tags=_tags.clean(body.get("tags")),
                 stored=tg)
-            staged = stage_tasks(eff, ops, new_area=fresh)
+            staged = stage_tasks(eff, ops, new_area=fresh,
+                                 new_tag=bool(body.get("new_tag")))
         except Exception as exc:
             return self._json({"error": str(exc)}, 400)
         # No notes: `dg task add` prints none either. The staged-anyway warnings

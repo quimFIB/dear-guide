@@ -20,6 +20,7 @@ from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import env, limits, project, ranges
+from dgraph import tags as _tags
 from dgraph.model import (CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED, Bind,
                           Edge, Graph, Probe, Vertex, bind_fault, probe_fault,
                           status_fault)
@@ -39,7 +40,9 @@ OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
 #: with an archival record behind them, and rewriting one in place is the act
 #: this whole model exists to refuse. A title and an area are not claims — a
 #: title is how a question is referred to, not something the question says.
-FIELDS = ("title", "area", "note", "format")
+#: `tags` joined on the same reading (`D95`): the words a record is filed
+#: under beside its area, rewritten as a set and archived never.
+FIELDS = ("title", "area", "note", "format", "tags")
 
 #: The one prose pre-commitment each record kind carries beyond those four
 #: (`D75`): a decision's `rule` for settling, a task's `done_when`. Amendable
@@ -414,6 +417,27 @@ def new_area_ok() -> bool:
     return getattr(_fresh_area, "ok", False)
 
 
+_fresh_tag = threading.local()
+
+
+@contextlib.contextmanager
+def new_tag_allowed(allowed: bool = True):
+    """`new_area_allowed`'s twin for `--new-tag`, and the same carrier for the
+    same reason: a permission scoped to the call, never written into the
+    tray. Only the doors offering `--new-tag` use it."""
+    prev = getattr(_fresh_tag, "ok", False)
+    _fresh_tag.ok = allowed
+    try:
+        yield
+    finally:
+        _fresh_tag.ok = prev
+
+
+def new_tag_ok() -> bool:
+    """Whether the caller has said these tags are deliberate."""
+    return getattr(_fresh_tag, "ok", False)
+
+
 def mine(ops: list[dict], me=_INHERIT) -> tuple[list[dict], list[dict]]:
     """`ops` split into the caller's and everybody else's.
 
@@ -747,6 +771,47 @@ def _refuse_new_areas(ops: list[dict], tray: list[dict],
         own[area] = own.get(area, 0) + 1
 
 
+def _refuse_new_tags(ops: list[dict], tray: list[dict],
+                     path: Path | None) -> None:
+    """Raise if any op files a tag that resembles one already in use.
+
+    `_refuse_new_areas`'s twin, judged at the same door for the same reason:
+    the tray is shared, and a refusal here leaves it untouched. The union is
+    both stores' tags plus what the tray already carries, so a second record
+    under a tag staged a minute ago is silent. Sequential and accumulating,
+    so a group filing two records under one new tag is one new tag. There is
+    no `$DG_TAG`: `D95` left the coining policy to the day an agent abuses
+    it, so the similarity guard is the whole of this.
+    """
+    if not any(op.get(_tags.FIELD) for op in ops):
+        return
+    proj = project.find()
+    p = path or proj.pending
+    is_task = p.name == project.TASK_PENDING_NAME
+    own_store, other_store = ((proj.tasks, proj.store) if is_task
+                              else (proj.store, proj.tasks))
+    known = dict(_tags.stored_counts(own_store))
+    for t, n in _tags.stored_counts(other_store).items():
+        known[t] = known.get(t, 0) + n
+    # Both trays, where the areas guard widens by its own alone: a decision
+    # staged under `perf` and the work under `pref` a minute later is the
+    # typo this exists for, and the two land in different trays.
+    other_tray = (proj.pending if is_task else proj.task_pending)
+    for staged in [*tray, *(load(other_tray) if other_tray.exists() else [])]:
+        for t in staged.get(_tags.FIELD) or ():
+            known[t] = known.get(t, 0) + 1
+    allowed = new_tag_ok()
+    for op in ops:
+        tags = list(op.get(_tags.FIELD) or [])
+        if not tags:
+            continue
+        why = _tags.refuse(tags, known=known, new_tag=allowed)
+        if why is not None:
+            raise ApplyError(why)
+        for t in tags:
+            known[t] = known.get(t, 0) + 1
+
+
 def stage_all(ops: list[dict], path: Path | None = None, *,
               against: Graph | None = None) -> list[dict]:
     """Stage a group of ops as one write. The plural of `stage`, and the one to
@@ -802,6 +867,7 @@ def stage_all(ops: list[dict], path: Path | None = None, *,
         # is the tray it is about to be part of, and a refusal leaves the file
         # untouched — the property every other stage-time guard is for.
         _refuse_new_areas(ops, current, path)
+        _refuse_new_tags(ops, current, path)
         # Under the lock, so uniqueness is judged against the tray as it is —
         # another writer may have staged since this call started.
         current.extend(_with_refs(ops, current))
@@ -1360,6 +1426,12 @@ def vet(g: Graph, op: dict, *, new_area: bool = False) -> None:
             fault = bind_fault(b)
             if fault:
                 raise ApplyError(f"bind: {fault}")
+    # A tag list arriving as data is held to the flag's shape here, the way a
+    # probe is: `_apply_one` copies it onto the record without reading it.
+    if op.get("op") == "add_vertex" and op.get(_tags.FIELD) is not None:
+        fault = _tags.fault(op[_tags.FIELD])
+        if fault:
+            raise ApplyError(f"tags: {fault}")
     # `set_status` is a **derived** op for decisions: `expand` and `repairs`
     # produce it, and both stamp `derived_from`. The single exception is
     # re-affirming a PROVISIONAL one, which `compose_confirm` composes and
@@ -1512,11 +1584,16 @@ def vet_fields(op: dict, *, own: dict, other: dict, current: dict,
                           new_area=new_area)
         if why is not None:
             raise ApplyError(why)
+    if _tags.FIELD in op:
+        fault = _tags.fault(op[_tags.FIELD])
+        if fault:
+            raise ApplyError(f"tags: {fault}")
     if all(op[k] == current.get(k) for k in named):
         one = len(named) == 1
+        what = ("those tags" if named == [_tags.FIELD]
+                else "that " + named[0] if one else "those values")
         raise ApplyError(
-            f"{op.get('vertex') or op.get('task')} already has "
-            f"{'that ' + named[0] if one else 'those values'}")
+            f"{op.get('vertex') or op.get('task')} already has {what}")
 
 
 def vet_all(g: Graph, ops: list[dict], *,
@@ -1711,7 +1788,8 @@ def _same_vertex(g: Graph, op: dict) -> bool:
     v = g.vertices[op["id"]]
     return (v.title == op["title"] and v.area == op["area"]
             and v.status == op.get("status", "OPEN")
-            and v.note == op.get("note"))
+            and v.note == op.get("note")
+            and list(v.tags) == list(op.get(_tags.FIELD) or []))
 
 
 def already(vid: str, same: bool, what: str) -> ApplyError:
@@ -1751,6 +1829,7 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
                 note: str | None = None,
                 probe: dict | None = None,
                 rule: str | None = None,
+                tags: list[str] | None = None,
                 stored: Graph | None = None) -> list[dict]:
     """The op list that records a new decision, validated against `g`.
 
@@ -1837,6 +1916,11 @@ def compose_add(g: Graph, *, vid: str, title: str, area: str,
         op["note"] = note
     if rule:
         op["rule"] = rule
+    if tags:
+        fault = _tags.fault(list(tags))
+        if fault:
+            raise ApplyError(f"--tag: {fault}")
+        op[_tags.FIELD] = list(tags)
     if probe is not None:
         op["probe"] = probe
         op["date"] = _date.today().isoformat()
@@ -2164,6 +2248,7 @@ def _apply_one(g: Graph, op: dict) -> None:
             # the tag describes the note; without one it describes nothing
             format=op.get("format") if op.get("note") else None,
             rule=op.get("rule"),
+            tags=list(op.get(_tags.FIELD) or []),
             # The first entry of the appended list, dated by the op or today
             # — the same date rule `close` uses for its payload.
             probes=[e for e in (probe_entry(op),) if e is not None],

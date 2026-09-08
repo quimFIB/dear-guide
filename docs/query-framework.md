@@ -179,10 +179,11 @@ withheld from the generic field table and re-offered as the structural terms
 `because:` and `evidence:` below — a plain string match on them would be a
 second implementation of `cross.rests_on`, which is the one thing §5 forbids.
 
-#### `id`, `status` and `area` match exactly; the prose fields match substrings
+#### `id`, `status`, `area` and `tags` match exactly; the prose fields match substrings
 
-A record's id, status and area are things it **is**, drawn from a closed
-vocabulary. The rest — `title note answer falsifier summary why outcome
+A record's id, status, area and tags are things it **is**, drawn from a closed
+vocabulary (`tags` joined later, on the same reading: `tags:perf` asking for
+`performance` would be the substring surprise below). The rest — `title note answer falsifier summary why outcome
 source` — are prose it *contains*. The two want opposite defaults, and giving
 them one shared default was a mistake with a memorable symptom: `id:0` returned
 every record in a ten-record store, because ids are zero-padded and every id

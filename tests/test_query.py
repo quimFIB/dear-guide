@@ -1113,6 +1113,7 @@ DEC80 = {"areas": ["Alpha"], "edges": [
     "vertices": [
         {"id": "D01", "title": "Pick an index", "area": "Alpha",
          "status": "DECIDED", "rule": "settle by measurement",
+         "tags": ["perf"],
          "binds": [{"kind": "rocq.constant", "ref": "Closure.closed"}]},
         {"id": "D02", "title": "Still open", "area": "Alpha", "status": "OPEN",
          "note": "nobody has decided this", "probes": [
@@ -1124,6 +1125,7 @@ TSK80 = {"areas": ["Alpha"], "edges": [], "tasks": [
     {"id": "T01", "title": "Measure it", "area": "Alpha", "status": "DONE",
      "done": "2026-01-01", "outcome": "recall 0.94",
      "done_when": "recall over the sample",
+     "tags": ["perf"],
      "binds": [{"kind": "rocq.constant", "ref": "Closure.closed"}],
      "probes": [{"kind": "prose.rule", "args": {"needle": "hnsw"},
                  "date": "2026-01-02"}],
@@ -1139,7 +1141,7 @@ NEEDLE = {
                   "answer": "HNSW", "falsifier": "recall",
                   "source": "discussion", "date": "2026-01-01",
                   "probe": "prose.rule", "probes": "prose.rule",
-                  "binds": "rocq.constant",
+                  "binds": "rocq.constant", "tags": "perf",
                   # No fixture value: a store this tool writes has no rival
                   # answer and no reversal, so `summary`, `why` and
                   # `from_source` have nothing to carry.
@@ -1147,7 +1149,7 @@ NEEDLE = {
     "tasks": {"id": "T01", "title": "Measure", "area": "Alpha",
               "status": "DONE", "outcome": "recall", "done": "2026-01-01",
               "done_when": "recall", "probes": "prose.rule",
-              "binds": "rocq.constant", "readings": "D01",
+              "binds": "rocq.constant", "readings": "D01", "tags": "perf",
               "note": "scripted", "because": "D01", "evidence_for": "D02",
               # `why` reads `stops`, and this fixture's task never stopped.
               "why": None},

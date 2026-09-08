@@ -25,6 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dgraph import project, ranges
+from dgraph import tags as _tags
 from dgraph.pending import (FIELDS, ApplyError, already,
                             area_counts, owner, refuse_area,
                             stored_area_counts, vet_fields)
@@ -76,6 +77,7 @@ def _apply_one(tg: TaskGraph, op: dict) -> None:
             id=op["id"], title=op["title"], area=op["area"],
             status=op.get("status", "TODO"), note=op.get("note"),
             format=op.get("format") if op.get("note") else None,
+            tags=list(op.get(_tags.FIELD) or []),
             because=_fold_because(op.get("because")),
             evidence_for=op.get("evidence_for"),
             done_when=op.get("done_when"),
@@ -637,6 +639,7 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
                 note: str | None = None,
                 probe: dict | None = None,
                 done_when: str | None = None,
+                tags: list[str] | None = None,
                 stored: TaskGraph | None = None) -> list[dict]:
     """The op list that records a new task, validated against `tg`.
 
@@ -718,6 +721,11 @@ def compose_add(tg: TaskGraph, g: Graph | None, *, tid: str, title: str,
         op["note"] = note
     if done_when:
         op["done_when"] = done_when
+    if tags:
+        fault = _tags.fault(list(tags))
+        if fault:
+            raise ApplyError(f"--tag: {fault}")
+        op[_tags.FIELD] = list(tags)
     if because:
         op["because"] = list(because)
     if evidence_for:
@@ -800,6 +808,10 @@ def vet(tg: TaskGraph, op: dict, *, new_area: bool = False) -> None:
         raise ApplyError(f"illegal status {status!r} — one of {', '.join(STATUSES)}")
     # `pending.vet`'s twin: the shape is refused at the door, in one sentence,
     # rather than by `apply` against a batch somebody else may share by then.
+    if op.get("op") == "add_task" and op.get(_tags.FIELD) is not None:
+        fault = _tags.fault(op[_tags.FIELD])
+        if fault:
+            raise ApplyError(f"tags: {fault}")
     if op.get("op") in ("add_task", "reprobe") and op.get("probe") is not None:
         fault = probe_fault(op["probe"])
         if fault:

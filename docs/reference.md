@@ -179,6 +179,31 @@ existing area is the fix for a typo, and refusing it would be backwards.
 `dg areas rename` refiles a whole area across both stores when one gets in
 anyway, and `dg areas prune` drops registered names holding nothing.
 
+### Tags — free labels beside the area
+
+A record may also carry **tags**: an optional set of words, in either store,
+answering *what does this touch* where the area answers *where is this
+filed*. A tag is not a claim any more than an area is — `dg amend --tag`
+rewrites the set and supersedes nothing — and it is not a bind: a bind is an
+address a domain's evaluator resolves, a tag is a word for a person. The area
+stays the one required partition every section and sort reads; tags are
+beside it, not instead of it.
+
+They accumulate the way areas do, and the same guard stands at the staging
+door: a new tag that resembles one already in use — in either store, or
+already staged — is refused naming what it resembles, with `--new-tag` as the
+override. There is no `$DG_TAG` policy. `tags:perf` matches exactly in
+`dg find`, so `dg find 'area:Search tags:perf' --subgraph --hops 0` is the
+subgraph one area and one tag induce.
+
+```
+dg add --id D40 ... --tag perf,recall    # filed under two tags
+dg amend D40 --tag latency --untag recall
+dg amend D40 --clear-tags
+dg task add --id T20 ... --tag perf
+dg find 'tags:perf'                      # a word, matched exactly
+```
+
 ### The one seam
 
 A task may name **the decisions** it exists **`because`** of — a task can rest
@@ -260,6 +285,7 @@ dg find --subgraph --derived 'id:D04'    # ...plus what the whole graph says of 
 dg decide D37                            # compose a decision -> staged
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg amend  D06 --title "..."              # correct a wording; nothing else is touched
+dg amend  D06 --tag perf --untag draft   # the tag set: add, drop, or --clear-tags
 dg add --id D40 --rule "…" --probe '{…}' # ...an open question born with its rule for settling, prose and/or typed
 dg reprobe D40 --probe '{"kind":"prose.rule","args":{}}'   # a new typed rule; the old one stays, dated
 dg bind D40 rocq.constant:Closure.closed   # what it is about, in a domain's terms; accumulates
@@ -341,7 +367,7 @@ it names what is wrong in the file:
 ```
 ✗ not imported
 decisions.json: decision D01 has "owner", which a decision does not have.
-The fields are: id, title, area, status (required), note, format.
+The fields are: id, title, area, status (required), note, format, tags.
 ```
 
 The schema is the Model section above; `dg export` prints a real one. `--force`
@@ -425,6 +451,7 @@ dg task park T02 --why "stuck on the upstream bug"   # put down, not given up on
 dg task done T02 --outcome "PR #241"
 dg task drop T02 --why "the index ships with the library"
 dg task amend T02 --title "Build the HNSW index over the 48M corpus"
+dg task amend T02 --tag perf
 dg task pending                          # the task tray; `dg task clear` empties it
 dg task export                           # the backlog as JSON
 dg task import backlog.json              # adopt a backlog prepared elsewhere

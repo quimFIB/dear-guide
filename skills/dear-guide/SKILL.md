@@ -459,6 +459,7 @@ dg task export / dg task import    # move a backlog between projects
 dg task unlink T14 --because D02   # drop one premise; work rests on several, so name which
 dg amend D07 --title "..."         # a typo'd or since-clarified wording
 dg task amend T14 --area Eval      # ...the same op, in the other store
+dg amend D07 --tag perf --untag draft   # the tag set beside the area: add, drop, --clear-tags
 dg dep   D07 --after D03           # a premise discovered later
 dg undep D07 --after D03           # ...and removing one
 dg reprobe D07 --probe '{"kind": "prose.rule", "args": {}}'   # a new rule for settling an open question; the old one stays
@@ -525,9 +526,9 @@ compute the same next id *every time*, not sometimes. Never set or clear a
 grant yourself: it is a fact about how this checkout was set up, and changing
 it silently is how two workers end up holding one range.
 
-**`dg amend` reaches a title, an area and a note, and nothing else.** That is
-the line, and it is worth knowing which side of it a field is on: those three
-are how a record is *referred to* and where it is filed, so nothing is
+**`dg amend` reaches a title, an area, the tags and a note, and nothing
+else.** That is the line, and it is worth knowing which side of it a field is
+on: those are how a record is *referred to* and where it is filed, so nothing is
 superseded when one changes and nothing is archived — a changed title leaves no
 record, deliberately. An answer, a falsifier, an outcome and a reason work
 stopped are dated claims about what happened, and none of them is ever edited

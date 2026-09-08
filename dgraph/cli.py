@@ -21,6 +21,7 @@ from rich.tree import Tree
 
 from dgraph import agents, applying
 from dgraph import areas as _areas
+from dgraph import tags as _tags
 from dgraph import brief as _brief
 from dgraph import check as _check
 from dgraph import compact
@@ -449,7 +450,8 @@ def _vet_all(g: Graph, ops: list[dict], *, new_area: bool = False) -> None:
         raise typer.Exit(1) from None
 
 
-def _stage_all(ops, path=None, *, against=None, new_area: bool = False) -> None:
+def _stage_all(ops, path=None, *, against=None, new_area: bool = False,
+               new_tag: bool = False) -> None:
     """`pending.stage_all`, with a refusal turned into a clean CLI exit.
 
     `_vet_all`'s twin, and here for the same reason. Staging is where
@@ -470,7 +472,8 @@ def _stage_all(ops, path=None, *, against=None, new_area: bool = False) -> None:
         # that nothing between here and the write has to carry it and nothing
         # writes it into the tray. See `pending.new_area_allowed`; audit
         # `R-F2`.
-        with pending.new_area_allowed(new_area):
+        with pending.new_area_allowed(new_area), \
+                pending.new_tag_allowed(new_tag):
             pending.stage_all(ops, path, against=against)
     except pending.ApplyError as exc:
         con.print(f"[red]✗ nothing staged[/]\n{_x(exc)}")
@@ -2376,6 +2379,14 @@ def add(
         None, "--probe",
         help='The rule for settling this, as JSON: {"kind": "<domain>.<name>", '
              '"args": {...}}. Appended, dated; `dg reprobe` changes it.'),
+    tag: list[str] = typer.Option(
+        None, "--tag",
+        help="a word this is filed under beside its area; comma-separated "
+             "or repeated. Tags accumulate like areas"),
+    new_tag: bool = typer.Option(
+        False, "--new-tag",
+        help="file under a tag nobody has used yet, even where it resembles "
+             "one that is in use"),
     edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
                               help="Compose in $EDITOR (default: emacs)."),
 ) -> None:
@@ -2423,14 +2434,14 @@ def add(
         ops = pending.compose_add(eff, vid=vid, title=title, area=area,
                                   new_area=new_area, status=status,
                                   after=parents, note=note, probe=probe_v,
-                                  rule=rule, stored=g)
+                                  rule=rule, tags=_tags.clean(tag), stored=g)
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
     # One write, and the site that most needed it: a vertex staged without its
     # edges is only a `no_orphans` warning, so unlike every other group here a
     # half-staged one could be applied and pass.
-    _stage_all(ops, against=eff, new_area=new_area)
+    _stage_all(ops, against=eff, new_area=new_area, new_tag=new_tag)
     con.print(f"[green]staged[/] add {vid}")
     _warn_stuck()
 
@@ -2474,9 +2485,45 @@ CITED = ("[dim]citations of the old title elsewhere — commits, docs, a pasted 
          "`dg why` — are not updated, and nothing can find them[/]")
 
 
+def _tag_set(current: list[str], tag: list[str] | None,
+             untag: list[str] | None, clear: bool) -> list[str] | None:
+    """The tag list an amend writes, or None when the op leaves tags alone.
+
+    Set semantics, the way `bind`/`unbind` read: `--tag` adds to what the
+    record holds, `--untag` removes, `--clear-tags` empties, and the three
+    resolve here against the effective record into the one list the op
+    carries — so the op stays a `set_fields` naming the whole set, and a
+    reader of the tray sees what the record will hold rather than a delta it
+    has to compute. `--clear-tags` with `--tag` is "these and no others";
+    with `--untag` it is a contradiction and refused as one. Dropping a tag
+    the record does not hold is refused too, since it is the same lost-track
+    the no-op guard in `vet_fields` catches.
+    """
+    if not (tag or untag or clear):
+        return None
+    if clear and untag:
+        con.print("[red]--clear-tags and --untag contradict — one or the other[/]")
+        raise typer.Exit(2)
+    out = [] if clear else list(current)
+    gone = _tags.clean(untag)
+    missing = [t for t in gone if t not in out]
+    if missing:
+        con.print(f"[red]not filed under {', '.join(missing)} — "
+                  f"tags held: {', '.join(out) or 'none'}[/]")
+        raise typer.Exit(1)
+    out = [t for t in out if t not in gone]
+    for t in _tags.clean(tag):
+        if t not in out:
+            out.append(t)
+    return out
+
+
 def _amended(record, op: dict) -> list[str]:
     """One line per field this op changes, old and new. Both stores' twin."""
-    return [f"{k:<9} {_x(getattr(record, k, None) or '—')} → {_x(op[k] or '—')}"
+    def words(v):
+        return ", ".join(v) if isinstance(v, list) else v
+    return [f"{k:<9} {_x(words(getattr(record, k, None)) or '—')} → "
+            f"{_x(words(op[k]) or '—')}"
             for k in pending.ALL_FIELDS if k in op]
 
 
@@ -2493,8 +2540,20 @@ def amend(
                              help="what is undecided, and why"),
     rule: str = typer.Option(None, "--rule",
                              help="what would settle this, in prose"),
+    tag: list[str] = typer.Option(
+        None, "--tag",
+        help="a word this is filed under beside its area; comma-separated "
+             "or repeated. Tags accumulate like areas"),
+    new_tag: bool = typer.Option(
+        False, "--new-tag",
+        help="file under a tag nobody has used yet, even where it resembles "
+             "one that is in use"),
+    untag: list[str] = typer.Option(
+        None, "--untag", help="a tag to drop; comma-separated or repeated"),
+    clear_tags: bool = typer.Option(
+        False, "--clear-tags", help="drop every tag"),
 ) -> None:
-    """Correct how a decision is worded or filed: its title, area or note.
+    """Correct how a decision is worded or filed: its title, area, tags or note.
 
     The op every other repair already had. Until it existed, an agent finding a
     typo'd or since-clarified title had no legitimate move — it hand-edited
@@ -2515,7 +2574,9 @@ def amend(
         raise typer.Exit(1)
     op = {"op": "set_fields", "vertex": vid}
     op.update({k: v for k, v in (("title", title), ("area", area),
-                                 ("note", note), ("rule", rule))
+                                 ("note", note), ("rule", rule),
+                                 ("tags", _tag_set(eff.vertices[vid].tags,
+                                                   tag, untag, clear_tags)))
                if v is not None})
     lines = _amended(eff.vertices[vid], op)
     try:
@@ -2526,7 +2587,7 @@ def amend(
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    _stage_all([op], against=eff, new_area=new_area)
+    _stage_all([op], against=eff, new_area=new_area, new_tag=new_tag)
     con.print(f"[green]staged[/] {vid}")
     for line in lines:
         con.print(f"  [dim]{line}[/]")
@@ -3953,7 +4014,8 @@ def _teff(tg: TaskGraph, skip: int | None = None) -> TaskGraph:
         raise typer.Exit(1) from None
 
 
-def _tstage(op: dict, *, new_area: bool = False) -> None:
+def _tstage(op: dict, *, new_area: bool = False,
+            new_tag: bool = False) -> None:
     """Vet an op against the effective task graph, then stage it. The singular
     of `_tstage_all`, for a command whose whole change really is one op.
 
@@ -3964,10 +4026,11 @@ def _tstage(op: dict, *, new_area: bool = False) -> None:
     it. `dg amend`, its decision-store twin, went through `_stage_all` and
     worked. Audit `R-F8`.
     """
-    _tstage_all([op], new_area=new_area)
+    _tstage_all([op], new_area=new_area, new_tag=new_tag)
 
 
-def _tstage_all(ops: list[dict], *, new_area: bool = False) -> None:
+def _tstage_all(ops: list[dict], *, new_area: bool = False,
+                new_tag: bool = False) -> None:
     """Vet a group against the effective task graph, then stage it as one write.
 
     `pending.stage_all`'s argument, applied to the store that did not have it.
@@ -3994,7 +4057,7 @@ def _tstage_all(ops: list[dict], *, new_area: bool = False) -> None:
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
-    _stage_all(ops, task_pending.path(), new_area=new_area)
+    _stage_all(ops, task_pending.path(), new_area=new_area, new_tag=new_tag)
     _lease_staged(ops)
 
 
@@ -4211,6 +4274,14 @@ def task_add(
     done_when: str = typer.Option(
         None, "--done-when",
         help="what finished looks like, in prose — shown back at `dg task done`"),
+    tag: list[str] = typer.Option(
+        None, "--tag",
+        help="a word this is filed under beside its area; comma-separated "
+             "or repeated. Tags accumulate like areas"),
+    new_tag: bool = typer.Option(
+        False, "--new-tag",
+        help="file under a tag nobody has used yet, even where it resembles "
+             "one that is in use"),
     probe: str = typer.Option(
         None, "--probe",
         help='Its definition of done as a criterion, JSON: {"kind": '
@@ -4262,14 +4333,15 @@ def task_add(
             tg, _decisions_eff_or_none(), tid=tid, title=title, area=area,
             new_area=new_area, after=parents, discovered_during=prompted,
             because=_ids(because, "--because"), evidence_for=evidence_for, note=note,
-            probe=probe_v, done_when=done_when, stored=_tg())
+            probe=probe_v, done_when=done_when, tags=_tags.clean(tag),
+            stored=_tg())
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
     said = [(kind, *task_pending.relation_ops(tg, tid, others, kind)[1:])
             for others, kind in ((parents, "precedes"),
                                  (prompted, "prompted")) if others]
-    _tstage_all(ops, new_area=new_area)
+    _tstage_all(ops, new_area=new_area, new_tag=new_tag)
     con.print(f"[green]staged[/] add {tid}")
     for kind, fresh, already in said:
         _say_relation(tid, kind, fresh, already)
@@ -4423,8 +4495,20 @@ def task_amend(
                              help="what this work involves"),
     done_when: str = typer.Option(None, "--done-when",
                                   help="what finished looks like, in prose"),
+    tag: list[str] = typer.Option(
+        None, "--tag",
+        help="a word this is filed under beside its area; comma-separated "
+             "or repeated. Tags accumulate like areas"),
+    new_tag: bool = typer.Option(
+        False, "--new-tag",
+        help="file under a tag nobody has used yet, even where it resembles "
+             "one that is in use"),
+    untag: list[str] = typer.Option(
+        None, "--untag", help="a tag to drop; comma-separated or repeated"),
+    clear_tags: bool = typer.Option(
+        False, "--clear-tags", help="drop every tag"),
 ) -> None:
-    """Correct how a task is worded or filed: its title, area or note.
+    """Correct how a task is worded or filed: its title, area, tags or note.
 
     `dg amend`'s twin, and the same op — see there for what it will not touch
     and why. Here the line falls in the same place: a title and an area are how
@@ -4442,12 +4526,14 @@ def task_amend(
     _require_task(tid, tg)
     op = {"op": "set_fields", "task": tid}
     op.update({k: v for k, v in (("title", title), ("area", area),
-                                 ("note", note), ("done_when", done_when))
+                                 ("note", note), ("done_when", done_when),
+                                 ("tags", _tag_set(tg.tasks[tid].tags,
+                                                   tag, untag, clear_tags)))
                if v is not None})
     lines = _amended(tg.tasks[tid], op)
     # `_tstage` vets, and `task_pending.vet` holds every rule for the same
     # reason the decision store's does: the browser can post this op as data.
-    _tstage(op, new_area=new_area)
+    _tstage(op, new_area=new_area, new_tag=new_tag)
     con.print(f"[green]staged[/] {tid}")
     for line in lines:
         con.print(f"  [dim]{line}[/]")

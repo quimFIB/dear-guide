@@ -55,7 +55,9 @@ PROSE = ("title", "note", "answer", "falsifier", "summary", "why", "outcome",
 #: prose fields keep substring matching for the opposite reason: exact-matching
 #: a sentence is never the question, so `note:` would have required a regex
 #: every single time, and a default that is never right is not a default.
-EXACT = ("id", "status", "area")
+#: `tags` too: a tag is a word a person filed under, and `tags:perf` asking
+#: for `performance` would be the substring surprise the area rule refuses.
+EXACT = ("id", "status", "area", "tags")
 
 #: Fields compared as dates rather than matched as text, so `date:>2026-01-01`
 #: means what it looks like. ISO-8601 sorts lexicographically, which is why the

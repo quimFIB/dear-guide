@@ -395,6 +395,9 @@ class Task:
     #: What this work is about, in a domain's terms — `probe.Bind` has the
     #: argument. A set held as a list, written only by `bind`/`unbind`.
     binds: list[Bind] = field(default_factory=list)
+    #: The words this work is filed under beside its area — `tags.py` has the
+    #: argument (`D95`). Optional, not a claim, absent when empty.
+    tags: list[str] = field(default_factory=list)
     #: What the store holds that this version cannot read, carried verbatim
     #: and warned about by `dg check`. `model.Vertex.extra` has the argument;
     #: this is the same field for the same reason.
@@ -721,6 +724,7 @@ class TaskGraph:
                                       for r in t.readings] or None),
                         ("probes", probes_to(t.probes)),
                         ("binds", binds_to(t.binds)),
+                        ("tags", list(t.tags) or None),
                     )
                     if val is not None},
                     **t.extra,     # written back as read: see `Task.extra`

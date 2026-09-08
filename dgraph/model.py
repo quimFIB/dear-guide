@@ -91,7 +91,7 @@ EDGE_FIELDS = ("answer", "falsifier", "source", "date", "summary",
 #: Every field a vertex record holds. `id`, `title`, `area` and `status` are
 #: required; the rest optional. Anything else is `Vertex.extra`.
 VERTEX_FIELDS = ("id", "title", "area", "status", "note", "format", "probes",
-                 "binds", "rule")
+                 "binds", "rule", "tags")
 
 #: What a store written before 2026-09-03 spells a waiting vertex as. Folded to
 #: `OPEN` on load and never written again: whether a vertex waits is derived
@@ -167,6 +167,10 @@ class Vertex:
     #: What this question is about, in a domain's terms — `probe.Bind` has
     #: the argument. A set held as a list, written only by `bind`/`unbind`.
     binds: list[Bind] = field(default_factory=list)
+    #: The words a person filed this under beside its area — `tags.py` has
+    #: the argument (`D95`). A set held as a list, optional, not a claim:
+    #: `set_fields` rewrites it and archives nothing. Absent when empty.
+    tags: list[str] = field(default_factory=list)
     #: Fields the store holds that this version of the tool does not read.
     #: Carried from load to save verbatim, and reported by `dg check` as
     #: `unknown_field`, a warning — from `check.py` and not from `validate`,
@@ -306,10 +310,11 @@ class Graph:
             areas=raw.get("areas", []),
             vertices={v["id"]: Vertex(
                 **{k: v[k] for k in VERTEX_FIELDS
-                   if k in v and k not in ("status", "probes", "binds")},
+                   if k in v and k not in ("status", "probes", "binds", "tags")},
                 status=fold_status(v["status"]),
                 probes=probes_from(v.get("probes"), v["id"]),
                 binds=binds_from(v.get("binds"), v["id"]),
+                tags=list(v.get("tags") or []),
                 extra={k: x for k, x in v.items() if k not in VERTEX_FIELDS})
                 for v in raw["vertices"]},
             edges=[
@@ -355,6 +360,10 @@ class Graph:
                         ("format", v.format), ("rule", v.rule),
                         ("probes", probes_to(v.probes)),
                         ("binds", binds_to(v.binds)),
+                        # Absent rather than `[]`, like every optional field
+                        # here: a store written before tags existed saves
+                        # byte-for-byte as it loaded.
+                        ("tags", list(v.tags) or None),
                     ) if val is not None},
                     **v.extra,     # written back as read: see `Vertex.extra`
                 }
