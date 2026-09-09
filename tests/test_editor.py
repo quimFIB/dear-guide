@@ -869,3 +869,28 @@ def test_amend_cannot_blank_the_title(g, store, fake_emacs):
     fake_emacs(lambda t: t.replace(f"** Title\n{v.title}\n", "** Title\n\n"))
     with pytest.raises(editor.EditorError, match="Title is empty"):
         editor.compose(g, "amend", vertex="D05")
+
+
+def test_the_area_hint_names_the_areas_in_use(g, store):
+    """T131: the vocabulary beside the slot, not only under Context."""
+    text = editor.render_add(g)
+    block = text.split("** Area\n")[1].split("** Tags")[0]
+    assert "Alpha" in block and "Beta" in block
+
+
+def test_the_task_area_hint_names_the_areas_in_use(tg, task_store):
+    import dgraph.task_editor as te
+    text = te.render_add(tg, None)
+    block = text.split("** Area\n")[1].split("** Tags")[0]
+    assert "Alpha" in block and "Beta" in block
+
+
+def test_two_lines_in_a_one_line_field_are_refused_naming_the_slot(g, store, fake_emacs):
+    """T132: `D211\\nTEST1` under Id was refused as *malformed id* with the
+    two lines quoted; the person had typed the next value under the wrong
+    heading, and the message that helps is the empty case's — where the
+    value goes."""
+    fake_emacs(lambda t: t.replace("** Id\nD07\n", "** Id\nD07\nTEST1\n", 1)
+               if "** Id\nD07\n" in t else fill(t, title="x", area="Alpha"))
+    with pytest.raises(editor.EditorError, match=r"Id has 2 lines — one value, on the line directly under the `Id` heading"):
+        editor.compose(g, "add_vertex")

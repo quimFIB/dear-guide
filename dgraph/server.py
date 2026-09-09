@@ -1433,8 +1433,17 @@ class Handler(BaseHTTPRequestHandler):
                 status=(body.get("status") or "OPEN").strip(),
                 after=[x for x in (body.get("after") or []) if x],
                 note=(body.get("note") or "").strip() or None,
+                # `rule`, `probe` and `format` are what a composed decision
+                # carries that the form has no input for (`T129`, as `T108`
+                # for a task): the compose hands them back, the form carries
+                # them here, and the op stages whole.
+                rule=(body.get("rule") or "").strip() or None,
+                probe=body.get("probe") or None,
                 tags=_tags.clean(body.get("tags")),
                 stored=g)
+            fmt = body.get("format") or None
+            if fmt and any(ops[0].get(f) for f in editor.SEED_PROSE["add_vertex"]):
+                ops[0]["format"] = fmt
             pending.vet_all(eff, ops)
             with pending.new_tag_allowed(bool(body.get("new_tag"))):
                 pending.stage_all(ops, against=eff)   # one write, each op stamped
@@ -1892,6 +1901,7 @@ class Handler(BaseHTTPRequestHandler):
                 effective(g), kind,
                 vertex=body.get("vertex"),
                 seed=body.get("seed") or None,
+                new_area=bool(body.get("new_area")),
                 launcher=editor.launch_gui,
                 dialect=editor.gui_dialect(),
             )
@@ -1901,9 +1911,26 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, 400)
         finally:
             _editing.release()
-        # A close, reopen or amend is one op; the browser composes only those.
-        # The page fills its form from these fields and stages through it.
-        self._json({"fields": ops[0] if ops else {}})
+        # A close, reopen or amend is one op. An `add_vertex` is a group — the
+        # vertex and the edges that attach it — flattened for the new-decision
+        # form the way `_add_task_fields` flattens a task (`T129`). The page
+        # fills its form from these fields and stages through it.
+        fields = (self._add_vertex_fields(ops) if kind == "add_vertex"
+                  else ops[0] if ops else {})
+        self._json({"fields": fields})
+
+    @staticmethod
+    def _add_vertex_fields(ops: list[dict]) -> dict:
+        """A composed `add_vertex` group as the flat fields the new-decision
+        form fills from: the vertex op's own fields plus `after`, read off the
+        `add_edge` ops — each names the premise as its `from`."""
+        if not ops:
+            return {}
+        fields = dict(ops[0])
+        for op in ops[1:]:
+            if op.get("op") == "add_edge" and op.get("from"):
+                fields.setdefault("after", []).append(op["from"])
+        return fields
 
     def _compose_task(self, body: dict) -> None:
         """`_compose`'s twin for the task store (`T108`, `T110`).

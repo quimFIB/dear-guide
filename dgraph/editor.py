@@ -412,6 +412,16 @@ def next_offer(stored: Graph | None = None) -> str:
         Graph.load() if stored is None else stored))
 
 
+def _area_hint(counts: dict) -> str:
+    """The Area field's hint, naming the areas in use beside the slot. The
+    same list sits under Context, which is where nobody looked (T131)."""
+    names = ", ".join(counts)
+    if not names:
+        return "One in use, or a new one — areas accumulate."
+    return textwrap.fill(f"In use: {names}. One of those, or a new one — "
+                         f"areas accumulate.", 72)
+
+
 def render_add(g: Graph, seed: dict | None = None) -> str:
     seed = seed or {}
     nxt = next_id(g)
@@ -422,7 +432,7 @@ def render_add(g: Graph, seed: dict | None = None) -> str:
         + _field("Id", f"Like D07. Next unused: {nxt}", seed.get("id") or nxt)
         + _field("Title", "One line: the question this decision answers.",
                  seed.get("title", ""))
-        + _field("Area", "One in use, or a new one — areas accumulate.",
+        + _field("Area", _area_hint(areas.counts(g.areas, g.vertices.values())),
                  seed.get("area", ""))
         + _field("Tags", "Optional. Comma-separated words this is filed under "
                          "beside its area.",
@@ -799,7 +809,21 @@ def _val(f: dict[str, str], name: str) -> str:
     val = f.get(name, "")
     if not val.strip():
         return ""
-    return val if name in PROSE_FIELDS else val.strip()
+    if name in PROSE_FIELDS:
+        return val
+    one = val.strip()
+    if "\n" in one:
+        # Two lines in a one-line field is the person having typed under the
+        # wrong heading, or over a hint — `D211\nTEST1` came back from vim
+        # with the next field's value under this one. Say where the value
+        # goes, as the empty case does (D100), rather than quote the mess
+        # as *malformed*. T132, met running T125.
+        n = len(one.splitlines())
+        raise EditorError(
+            f"{name.capitalize()} has {n} lines — one value, on the line "
+            f"directly under the `{name.capitalize()}` heading, above the "
+            f"hint; the rest belongs under its own heading.")
+    return one
 
 
 def _need(f: dict[str, str], name: str) -> str:

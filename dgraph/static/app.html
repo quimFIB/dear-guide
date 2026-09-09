@@ -2089,11 +2089,15 @@ function idOptions(rows, idKey, titleKey){
    because two spellings of one area is what that guard is for. Ticking this says
    the resemblance is a coincidence. It is unticked by default and stays that way
    for the ordinary case, which is picking an area that already exists. */
+/* Empty on a new form, never the first known area: a datalist filters its
+   options by what the box holds, so a prefilled "scope" offered nothing but
+   "scope" until it was deleted, and travelled into the compose buffer as if
+   somebody had chosen it (T130, met running T125). */
 function areaField(known, current){
   const id = "areaOptions";
   const opts = known.map(a=>`<option value="${esc(a)}"></option>`).join("");
   return `<label>Area</label>
-    <input id="nArea" list="${id}" value="${esc(current||known[0]||"")}"
+    <input id="nArea" list="${id}" value="${esc(current||"")}"
            placeholder="one in use, or a new one">
     <datalist id="${id}">${opts}</datalist>
     <label style="font-weight:normal;display:flex;gap:6px;align-items:center">
@@ -2152,23 +2156,80 @@ function newDecisionForm(){
     <textarea id="nNote"></textarea>
     <p style="margin:10px 0;display:flex;gap:8px">
       <button class="primary" id="nGo">Stage new decision</button>
+      ${composeBtn("nCompose")}
       <button class="ghost" id="nNo">Cancel</button></p>
+    ${composeKeys()}
     <div class="note" id="note"></div>`;
+  COMPOSED_ADD=null;
   $("#nNo").onclick=closeNew;
   $("#nGo").onclick=stageNewDecision;
+  $("#nCompose")&&($("#nCompose").onclick=composeNewDecision);
 }
 
 async function stageNewDecision(){
   const id=$("#nId").value.trim(), title=$("#nTitle").value.trim();
   if(!id || !title){ say("An id and a title are required.","bad"); return; }
   const status = $("#nStatus").value;
+  /* The fields the form has no input for, carried from a Compose (`T129`,
+     as `T108` for a task): read once and cleared. */
+  const c=COMPOSED_ADD; COMPOSED_ADD=null;
   await postNew("/api/add", {
     id, title, area:$("#nArea").value.trim(), new_area:$("#nNewArea").checked,
     tags:$("#nTags").value, new_tag:$("#nNewTag").checked,
     status,
     after:pickerValues("nAfter"),
     note:$("#nNote").value.trim()||null,
+    rule:c?c.rule||null:null,
+    probe:c?c.probe||null:null,
+    format:c?c.format||null:null,
   }, id);
+}
+
+/* Compose a new decision in an editor, then fill the form (`T129`, on `D99`):
+   `composeNewTask`'s twin for the other store, and the same rule — the form
+   is the one staging door; what it has no input for (`rule`, `probe`, the
+   buffer's `format`) rides in `COMPOSED_ADD` to Stage. */
+async function composeNewDecision(){
+  const seed={
+    id:$("#nId").value.trim(), title:$("#nTitle").value.trim(),
+    area:$("#nArea").value.trim(), note:$("#nNote").value.trim(),
+    status:$("#nStatus").value,
+    tags:$("#nTags").value.split(",").map(s=>s.trim()).filter(Boolean),
+    after:pickerValues("nAfter"),
+  };
+  const go=$("#nGo"), cmp=$("#nCompose");
+  EDITING={vertex:"a new decision", kind:"add_vertex"};
+  if(go) go.disabled=true; if(cmp) cmp.disabled=true;
+  say(ED.emacs
+      ? "emacs is open. Compose there, then C-c C-c to bring it back into the form, or C-c C-k to cancel."
+      : `${ED.name||"The editor"} is open. Save and exit to bring what you wrote back into the form, or leave it empty to cancel.`,
+      "wait");
+  try{
+    const r=await api("/api/compose",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({op:"add_vertex", seed,
+                           new_area:!!($("#nNewArea")&&$("#nNewArea").checked)})});
+    if(r.aborted)
+      say(`Cancelled in the editor — ${r.aborted}. What you typed here is still here.`,"");
+    else{
+      const f=r.fields||{};
+      if(f.id!==undefined) $("#nId").value=f.id;
+      if(f.title!==undefined) $("#nTitle").value=f.title;
+      if(f.area!==undefined) $("#nArea").value=f.area;
+      if(f.note!==undefined) $("#nNote").value=f.note||"";
+      if(f.tags!==undefined) $("#nTags").value=(f.tags||[]).join(", ");
+      if(f.status!==undefined && $("#nStatus").querySelector(`option[value="${f.status}"]`))
+        $("#nStatus").value=f.status;
+      setPicker("nAfter", f.after||[]);
+      COMPOSED_ADD={rule:f.rule, probe:f.probe, format:f.format};
+      say("Filled the form from the editor — review it and press Stage new decision.","ok");
+    }
+  }catch(err){ say(err.message,"bad"); }
+  finally{
+    EDITING=null;
+    const g2=$("#nGo"), c2=$("#nCompose");
+    if(g2) g2.disabled=false; if(c2) c2.disabled=false;
+  }
 }
 
 function newTaskForm(){

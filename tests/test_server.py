@@ -2178,3 +2178,48 @@ def test_the_page_close_records_a_reading_for_evidence_in_hand(srv, task_store):
     ops = pending.load(task_pending.path())
     assert [(o["op"], o["task"], o["against"], o["note"]) for o in ops] == \
         [("read_evidence", "T01", "D05", "read at decide")]
+
+
+# T129 (on D99): the new-decision form's Compose, `composeNewTask`'s twin.
+
+def test_decision_compose_returns_the_add_fields_with_after_and_stages_nothing(
+        srv, monkeypatch):
+    monkeypatch.setattr(editor, "launch_gui", fill(
+        title="A composed question", area="Alpha", after="D01, D02",
+        rule="a benchmark", note="why it is open"))
+    code, body = jreq(srv, "/api/compose", "POST", {"op": "add_vertex"})
+    assert code == 200, body
+    f = body["fields"]
+    assert f["op"] == "add_vertex" and f["title"] == "A composed question"
+    assert f["after"] == ["D01", "D02"]
+    assert f["rule"] == "a benchmark" and f["note"] == "why it is open"
+    assert f["format"] == "org"
+    assert pending.load() == [], "compose must not stage"
+
+
+def test_the_add_route_carries_a_composed_rule_probe_and_format(srv):
+    code, body = jreq(srv, "/api/add", "POST",
+                      {"id": "D40", "title": "q", "area": "Alpha",
+                       "after": ["D01"], "rule": "a benchmark",
+                       "probe": {"kind": "prose.rule", "args": {"text": "x"}},
+                       "format": "org"})
+    assert code == 200, body
+    op = pending.load()[0]
+    assert op["op"] == "add_vertex" and op["rule"] == "a benchmark"
+    assert op["probe"]["kind"] == "prose.rule" and op["format"] == "org"
+
+
+def test_the_new_decision_form_carries_a_compose_button():
+    html = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    add = html.split("function newDecisionForm")[1].split("\nasync function")[0]
+    assert 'composeBtn("nCompose")' in add and "composeNewDecision" in add
+    stage = html.split("async function stageNewDecision")[1].split("\n}")[0]
+    assert "rule:" in stage and "probe:" in stage and "format:" in stage
+
+
+def test_a_new_form_starts_with_an_empty_area_box():
+    """T130: a datalist filters by the box's text, so a prefilled first area
+    offered nothing; the record's area is a choice, not a default."""
+    html = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    fn = html.split("function areaField")[1].split("\n}")[0]
+    assert "known[0]" not in fn and 'value="${esc(current||"")}"' in fn

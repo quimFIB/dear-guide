@@ -188,7 +188,7 @@ def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
         + editor._field("Title", "One line: the work to be done.",
                         seed.get("title", ""))
         + editor._field("Area",
-                        "One in use, or a new one — areas accumulate.",
+                        editor._area_hint(areas.counts(tg.areas, tg.tasks.values())),
                         seed.get("area", ""))
         + editor._field("Tags", "Optional. Comma-separated words this is "
                                 "filed under beside its area.",

@@ -1,4 +1,4 @@
-"""The pack that emptied FINDINGS.md's *still standing* list into the graph
+"""The pack that emptied the audit's *still standing* list into the graph
 (T121–T128, under D98, D35, D103, D100, D106, D107, D108). One claim each.
 """
 
