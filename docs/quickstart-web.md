@@ -379,6 +379,10 @@ them apart.
   on the task goes on waiting.
 - **Drop it** says the work is not happening, and releases what waited on it.
   That is the only difference between the two buttons.
+- Each reason has its own **Compose in emacs**, as Outcome does: `dg task park
+  --edit` and `dg task drop --edit` from the browser, filling the box for the
+  button to stage. The verdicts a drop asks about other work are not in the
+  buffer; they are asked after **Drop it**, as they are flags at the terminal.
 
 **Reword this record**, folded shut under the buttons, corrects the title, the
 area or the note — `dg amend`'s op, through the same rules. Blank fields are

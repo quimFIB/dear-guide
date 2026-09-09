@@ -351,7 +351,7 @@ evidence. `--edit` works like `git commit`:
 
 ```sh
 dg decide D37 --edit        # also: dg reopen --edit, dg add --edit, dg edit N
-dg task done T14 --edit     # and the work: dg task add --edit
+dg task done T14 --edit     # and the work: dg task add, park, drop --edit
 export DG_EDIT=1            # make it the default; --no-edit overrides
 ```
 

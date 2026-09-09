@@ -4385,7 +4385,9 @@ def _tcompose(kind: str, tg: TaskGraph, **kw) -> list[dict]:
         con.print("[dim]note: in-buffer navigation needs emacs — "
                   "`dg task node <id>` for one piece of work in full[/]")
     go = {"add_task": task_editor.compose_add,
-          "amend": task_editor.compose_amend}.get(
+          "amend": task_editor.compose_amend,
+          "park": task_editor.compose_park,
+          "drop": task_editor.compose_drop}.get(
               kind, task_editor.compose_done)
     # `compose_done` has no area to judge, so the flag is meaningless to it and
     # passing it would be a keyword it does not take.
@@ -4972,8 +4974,14 @@ def task_park(
     tid: str,
     why: str = typer.Option(None, "--why", "-w",
                             help="what stopped it — kept after it resumes"),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="Compose the reason in $EDITOR."),
 ) -> None:
     """Stage a task as put down, and record what stopped it.
+
+    `--edit` composes the reason in a buffer with the work's own context
+    beside it, as `dg task done --edit` composes an outcome (`D121`: a field
+    a person composes gets the editor on both surfaces or on neither).
 
     The status between `DOING` and `DROPPED`, for work nobody is doing and
     nobody has given up on. Unlike dropping, it settles nothing downstream:
@@ -5003,6 +5011,13 @@ def task_park(
         # is not the one the caller was looking at.
         con.print(f"[yellow]note: {tid} was {t.status}; parking it makes it "
                   f"outstanding again[/]")
+    if _wants_editor(edit):
+        ops = _tcompose("park", tg, tid=tid, seed={"why": why} if why else None)
+        _tstage_all(ops)
+        con.print(f"[green]staged[/] {tid} → PARKED")
+        _said_dialect(tg, tid)
+        _twarn_stuck()
+        return
     why = why or _ask("Why is this being put down?", "--why/-w")
     _tstage({"op": "set_status", "task": tid, "status": "PARKED",
              "why": why, "date": _date.today().isoformat()})
@@ -5184,8 +5199,16 @@ def task_drop(
                              help="affected tasks that are still worth doing"),
     drop_too: list[str] = typer.Option(None, "--drop-too",
                                  help="affected tasks to abandon along with it"),
+    edit: bool = typer.Option(None, "--edit/--no-edit", "-e",
+                              help="Compose the reason in $EDITOR."),
 ) -> None:
     """Stage a task as abandoned, and settle what that leaves behind.
+
+    `--edit` composes the reason in a buffer with the work's own context
+    beside it (`D121`). The fallout verdicts stay `--keep`/`--drop-too`, or
+    the questions at the terminal: they are about other work, and are asked
+    before the editor opens so the reason is written knowing what goes with
+    it.
 
     Dropping is the one status change that acts on other work: it releases what
     waited on this task and orphans what this task turned up. Each of those
@@ -5248,10 +5271,15 @@ def task_drop(
     # that gets cleared, so a drop without one writes an empty entry into the
     # one part of this store that is kept forever — and the two doors onto the
     # same act should not disagree about what it takes to walk through them.
-    why = why or _ask("Why is this not being done?", "--why/-w")
-    today = _date.today().isoformat()
-    op = {"op": "set_status", "task": tid, "status": "DROPPED",
-          "why": why, "date": today}
+    if _wants_editor(edit):
+        op = _tcompose("drop", tg, tid=tid,
+                       seed={"why": why} if why else None)[0]
+        today = op["date"]
+    else:
+        why = why or _ask("Why is this not being done?", "--why/-w")
+        today = _date.today().isoformat()
+        op = {"op": "set_status", "task": tid, "status": "DROPPED",
+              "why": why, "date": today}
     # The drop and its cascade are one write. They are one judgement — the
     # operator was asked about each cascaded task and answered — and a tray
     # holding only the first half says the opposite of what they answered.
@@ -5260,6 +5288,8 @@ def task_drop(
                for t in sorted(doomed)]
     _tstage_all([op] + cascade)
     con.print(f"[green]staged[/] {tid} → DROPPED")
+    if _wants_editor(edit):
+        _said_dialect(tg, tid)
     for c in cascade:
         con.print(f"[green]staged[/] {c['task']} → DROPPED")
     if kept:

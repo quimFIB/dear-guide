@@ -378,6 +378,9 @@ let COMPOSED_AMEND=null;
    itself, so only the buffer's `format` needs carrying — an org outcome
    composed in emacs must not be stored as markdown. Keyed to the task. */
 let COMPOSED_DONE=null;
+/* And for a park's or a drop's reason (T143, on D121), the same one field —
+   keyed to the task and to which of the two boxes it was composed for. */
+let COMPOSED_WHY=null;
 const POLL_EVERY = 4000;
 let tab="decisions";
 const TASK_COLOR = {TODO:"var(--warn)", DOING:"var(--accent)",
@@ -2557,11 +2560,13 @@ function taskPanel(){
       ${composeKeys()}
       <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
       <label>Or put it down — what stopped it?</label>
-      <input id="pwhy" placeholder="what you are stuck on">
-      <p style="margin:10px 0"><button class="ghost" id="doPark">Park it</button></p>
+      <textarea id="pwhy" placeholder="what you are stuck on"></textarea>
+      <p style="margin:10px 0"><button class="ghost" id="doPark">Park it</button>
+      ${composeBtn("doComposePark")}</p>
       <label>Or drop it — why is it not being done?</label>
-      <input id="dwhy" placeholder="what made this unnecessary">
-      <p style="margin:10px 0"><button class="ghost" id="doDrop">Drop it</button></p>`;
+      <textarea id="dwhy" placeholder="what made this unnecessary"></textarea>
+      <p style="margin:10px 0"><button class="ghost" id="doDrop">Drop it</button>
+      ${composeBtn("doComposeDrop")}</p>`;
   }else{
     h+=`<p class="muted">${x.status==="DONE"?"Finished":"Dropped"}. Reopening finished work is a correction, and corrections live in <code>dg task</code>.</p>`;
   }
@@ -2590,11 +2595,15 @@ function taskPanel(){
        is the record, and this one is the half that survives being resumed. */
     if(!w){ say("Say what stopped it — that is the part that is kept.","bad"); return; }
     const dt=new Date(), pad=n=>String(n).padStart(2,"0");
-    postTask({op:"set_status",task:tsel,status:"PARKED",why:w,
-              date:`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`});
+    const op={op:"set_status",task:tsel,status:"PARKED",why:w,
+              date:`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`};
+    carryWhy(op, tsel, "park");
+    postTask(op);
   });
   $("#doDrop")&&($("#doDrop").onclick=()=>askFallout(tsel));
   $("#doComposeDone")&&($("#doComposeDone").onclick=()=>composeDone(tsel));
+  $("#doComposePark")&&($("#doComposePark").onclick=()=>composeWhy(tsel,"park"));
+  $("#doComposeDrop")&&($("#doComposeDrop").onclick=()=>composeWhy(tsel,"drop"));
   $("#doDone")&&($("#doDone").onclick=()=>{
     const o=$("#outcome").value.trim();
     /* `dg task done` requires it, so the form does too — a DONE task with no
@@ -2749,6 +2758,53 @@ function carryDone(op, id){
   if(!(COMPOSED_DONE && COMPOSED_DONE.id===id)) return;
   if(COMPOSED_DONE.format!==undefined && op.format===undefined) op.format=COMPOSED_DONE.format;
   COMPOSED_DONE=null;
+}
+
+/* `carryDone` for a composed reason (`T143`): the buffer's `format`, keyed to
+   the task and to which box — a park's reason composed in emacs must not be
+   staged as a drop's because the reader changed their mind between. */
+function carryWhy(op, id, kind){
+  if(!(COMPOSED_WHY && COMPOSED_WHY.id===id && COMPOSED_WHY.kind===kind)) return;
+  if(COMPOSED_WHY.format!==undefined && op.format===undefined) op.format=COMPOSED_WHY.format;
+  COMPOSED_WHY=null;
+}
+
+/* Compose a park's or a drop's reason in an editor, then fill its box (`T143`,
+   on `D121`): the browser half of `dg task park --edit` and `dg task drop
+   --edit`. `composeDone`'s shape exactly — seeded from the box, filled on
+   exit, nothing staged. A drop's fallout is not in the buffer: the verdicts
+   are asked here, after Drop it, as the CLI asks them as flags. */
+async function composeWhy(id, kind){
+  const boxId = kind==="park" ? "pwhy" : "dwhy";
+  const btn=$(kind==="park" ? "#doComposePark" : "#doComposeDrop"),
+        stage=$(kind==="park" ? "#doPark" : "#doDrop");
+  const seed=$("#"+boxId)?$("#"+boxId).value.trim():"";
+  EDITING={vertex:id, kind};
+  if(btn) btn.disabled=true; if(stage) stage.disabled=true;
+  say(ED.emacs
+      ? "emacs is open. Write the reason there, then C-c C-c to bring it into the box, or C-c C-k to cancel."
+      : `${ED.name||"The editor"} is open. Save and exit to bring the reason back into the box, or leave it unchanged to cancel.`,
+      "wait", id);
+  try{
+    const r=await api("/api/compose",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({store:"tasks", op:kind, vertex:id,
+                           seed: seed?{why:seed}:null})});
+    if(r.aborted)
+      say(`Cancelled in the editor — ${r.aborted}. What you typed here is still here.`,"",id);
+    else{
+      const f=r.fields||{};
+      if(f.why!==undefined && $("#"+boxId)){ $("#"+boxId).value=f.why; captureDraft(); }
+      COMPOSED_WHY={id, kind, format:f.format};
+      say(`Filled the reason from the editor — review it and press ${kind==="park"?"Park it":"Drop it"}.`,"ok",id);
+    }
+  }catch(err){ say(err.message,"bad",id); }
+  finally{
+    EDITING=null;
+    const b2=$(kind==="park" ? "#doComposePark" : "#doComposeDrop"),
+          s2=$(kind==="park" ? "#doPark" : "#doDrop");
+    if(b2) b2.disabled=false; if(s2) s2.disabled=false;
+  }
 }
 
 /* Compose the outcome in an editor, then fill the box (`T142`, on `D121` and
@@ -3047,7 +3103,9 @@ async function askFallout(tid){
    `dg check` picks up whatever the cascade releases. */
 function dropWith(tid, why, doomed){
   const date=today();
-  postTasks([{op:"set_status",task:tid,status:"DROPPED",why,date}].concat(
+  const op={op:"set_status",task:tid,status:"DROPPED",why,date};
+  carryWhy(op, tid, "drop");
+  postTasks([op].concat(
     doomed.map(t=>({op:"set_status",task:t,status:"DROPPED",
                     why:`abandoned along with ${tid}`,date}))));
 }

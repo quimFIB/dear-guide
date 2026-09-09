@@ -1598,7 +1598,8 @@ class Handler(BaseHTTPRequestHandler):
         op = tops[i]
         kind = op.get("op")
         if not (kind == "add_task"
-                or (kind == "set_status" and op.get("status") == "DONE")):
+                or (kind == "set_status"
+                    and op.get("status") in ("DONE", "PARKED", "DROPPED"))):
             return self._json(
                 {"error": f"op {i} is {kind} — derived or structural, not "
                           f"composed; remove it with the ✕ instead"}, 400)
@@ -1949,22 +1950,25 @@ class Handler(BaseHTTPRequestHandler):
         """`_compose`'s twin for the task store (`T108`, `T110`).
 
         Composes an `add_task` (the new-task form's Compose button), an
-        `amend` (the shared Reword form's) or a `done` (the task panel's
-        Compose beside Outcome, `T142`) and hands the parsed fields back to
-        the page. It does not stage, for the reason `_compose` gives: the
+        `amend` (the shared Reword form's), a `done` (the task panel's
+        Compose beside Outcome, `T142`) or a `park` / `drop` (the same beside
+        the two reasons, `T143`) and hands the parsed fields back to the
+        page. It does not stage, for the reason `_compose` gives: the
         form is the guarantee, the buffer is best-effort (`D99`). An
         `add_task` comes back as a group — the task op and its edges — so its
         fields are flattened for the one form that fills from them; an amend
         or a done is one op.
 
-        `done` is a named act, as the decision route's `close` and `reopen`
-        are, not the `set_status` it becomes: the CLI composes the outcome
-        with `dg task done --edit`, and `D121` says a prose field gets the
+        `done`, `park` and `drop` are named acts, as the decision route's
+        `close` and `reopen` are, not the `set_status` each becomes: the CLI
+        composes them with `--edit`, and `D121` says a prose field gets the
         editor on both surfaces or on neither. What was already typed into
-        the box travels in as the seed, as the other two do with theirs.
+        the box travels in as the seed, as the other two do with theirs. A
+        drop's fallout is not composed: the verdicts stay the form's radio
+        buttons, as they stay flags at the terminal.
         """
         kind = body.get("op")
-        if kind not in ("add_task", "amend", "done"):
+        if kind not in ("add_task", "amend", "done", "park", "drop"):
             return self._json({"error": f"cannot compose {kind!r}"}, 400)
         proj = project.find()
         if not proj.has_tasks:
@@ -1993,10 +1997,12 @@ class Handler(BaseHTTPRequestHandler):
                 tid = body.get("vertex")
                 if tid not in tg.tasks:
                     return self._json({"error": f"unknown task {tid!r}"}, 400)
-                ops = task_editor.compose_done(
-                    tg, g, tid, seed=body.get("seed") or None,
-                    launcher=editor.launch_gui,
-                    dialect=editor.gui_dialect())
+                go = {"done": task_editor.compose_done,
+                      "park": task_editor.compose_park,
+                      "drop": task_editor.compose_drop}[kind]
+                ops = go(tg, g, tid, seed=body.get("seed") or None,
+                         launcher=editor.launch_gui,
+                         dialect=editor.gui_dialect())
                 fields = ops[0] if ops else {}
         except editor.EditorAbort as exc:
             return self._json({"aborted": str(exc)})

@@ -2165,6 +2165,28 @@ def test_done_compose_seeds_the_buffer_with_what_the_box_held(
     assert "aborted" in body and "fields" not in body
 
 
+@pytest.mark.parametrize("kind,status", [("park", "PARKED"),
+                                          ("drop", "DROPPED")])
+def test_stop_compose_returns_the_reason_and_stages_nothing(
+        srv, dual, monkeypatch, kind, status):
+    """T143, on D121: the browser half of `dg task park --edit` and `dg task
+    drop --edit`. The reason comes back for its box; the org buffer's
+    `format` comes with it for `carryWhy`; nothing is staged (D99). A drop's
+    fallout is not here — the form asks it after Drop it."""
+    monkeypatch.setattr(editor, "launch_gui", _fill_task(
+        Why="the *licence* fell through"))
+    code, body = jreq(srv, "/api/compose", "POST",
+                      {"store": "tasks", "op": kind, "vertex": "T04"})
+    assert code == 200, body
+    f = body["fields"]
+    assert f["op"] == "set_status" and f["task"] == "T04"
+    assert f["status"] == status
+    assert f["why"] == "the *licence* fell through"
+    assert f["format"] == "org" and f["date"]
+    assert "outcome" not in f
+    assert pending.load(task_pending.path()) == [], "compose must not stage"
+
+
 def test_done_compose_refuses_an_unknown_task(srv, dual):
     code, body = jreq(srv, "/api/compose", "POST",
                       {"store": "tasks", "op": "done", "vertex": "T99"})
@@ -2198,6 +2220,11 @@ def test_the_task_panels_outcome_is_a_textarea_with_a_compose_button():
     assert '<input id="outcome"' not in panel
     assert 'composeBtn("doComposeDone")' in panel
     assert "composeDone" in html and "carryDone" in html
+    # T143: the two reasons, the last text-shaped inputs without the editor.
+    for box, btn in (("pwhy", "doComposePark"), ("dwhy", "doComposeDrop")):
+        assert f'<textarea id="{box}"' in panel and f'<input id="{box}"' not in panel
+        assert f'composeBtn("{btn}")' in panel
+    assert "composeWhy" in html and "carryWhy" in html
 
 
 def test_edit_route_revises_an_add_task_with_its_premise_and_edges_whole(

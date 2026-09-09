@@ -116,6 +116,33 @@ def test_the_done_template_shows_the_premise_from_the_other_store(
     assert "dg decide" in t
 
 
+def test_the_stop_template_is_one_field_with_the_earlier_stops_in_view(
+        tg, task_store):
+    """T143, on D121: `render_done`'s shape for a park or a drop — the reason
+    is the field, the record is beside it, and because a stop is appended and
+    never cleared, the earlier ones are shown so the third says something the
+    first two did not."""
+    from dgraph.tasks import Stop
+    tg.tasks["T04"].stops.append(Stop(why="waiting on the dataset",
+                                      date="2026-01-03"))
+    t = task_editor.render_stop(tg, None, "T04", "PARKED")
+    assert ":DGRAPH_OP: set_status" in t and ":DGRAPH_TASK: T04" in t
+    assert ":DGRAPH_STATUS: PARKED" in t
+    body = t[t.index("* Input"):t.index("* Context")]
+    assert body.count("** ") == 1 and "** Why" in body
+    assert "waiting on the dataset" in body
+    d = task_editor.render_stop(tg, None, "T04", "DROPPED")
+    assert ":DGRAPH_STATUS: DROPPED" in d and "dg task drop T04" in d
+
+
+def test_the_fields_a_status_buffer_takes_follow_its_status():
+    """A finishing buffer takes the outcome, a stopping one the reason; a
+    `** Why` under a done buffer is an unknown field, not a second door."""
+    assert task_editor._allowed("set_status", {"status": "DONE"}) == {"outcome"}
+    assert task_editor._allowed("set_status", {"status": "PARKED"}) == {"why"}
+    assert task_editor._allowed("set_status", {"status": "DROPPED"}) == {"why"}
+
+
 def test_a_task_keyword_line_is_the_task_store_s(tg, task_store):
     """Org colours the keywords it is told about; the decision list would
     colour the wrong words in a task buffer."""
@@ -161,6 +188,52 @@ def test_done_stages_the_outcome_it_was_given(run_cli, fake_emacs, task_store):
     assert op == {**op, "op": "set_status", "task": "T02", "status": "DONE",
                   "outcome": "PR #241, and the numbers in bench/x.md"}
     assert op["done"]
+
+
+def test_park_edit_stages_the_reason_it_was_given(run_cli, fake_emacs,
+                                                  task_store):
+    """T143: `dg task park --edit` is `dg task done --edit` for the reason —
+    the same op `--why` stages, composed in the buffer instead."""
+    fake_emacs(lambda t: fill(t, why="blocked on the dataset licence"))
+    res = run_cli("task", "park", "T04", "--edit")
+    assert res.exit_code == 0, res.output
+    op = tray(task_store)[0]
+    assert op == {**op, "op": "set_status", "task": "T04", "status": "PARKED",
+                  "why": "blocked on the dataset licence"}
+    assert op["date"]
+    assert "outcome" not in op
+
+
+def test_drop_edit_composes_the_reason_and_keeps_the_fallout_as_flags(
+        run_cli, fake_emacs, task_store):
+    """The reason is composed; the verdicts on other work are not in the
+    buffer. T02 precedes T03, so dropping it needs a verdict on T03, given
+    here as `--drop-too`, and the cascade op is staged beside the composed
+    one as one write, exactly as the flag path stages it."""
+    fake_emacs(lambda t: fill(t, why="the index it fed is gone"))
+    res = run_cli("task", "drop", "T02", "--edit", "--drop-too", "T03")
+    assert res.exit_code == 0, res.output
+    ops = tray(task_store)
+    assert [o["task"] for o in ops] == ["T02", "T03"]
+    assert ops[0] == {**ops[0], "status": "DROPPED",
+                      "why": "the index it fed is gone"}
+    assert ops[1]["why"] == "abandoned along with T02"
+    assert ops[0]["date"] == ops[1]["date"]
+
+
+def test_a_reason_composed_in_org_claims_org(run_cli, fake_emacs, task_store):
+    """A stop's `why` is prose the record's one `format` covers
+    (`task_pending._apply_one`, `task_render`), so a reason with org emphasis
+    must be tagged as an outcome is, or it renders as markdown's italic."""
+    fake_emacs(lambda t: fill(t, why="*stuck* on the licence"))
+    assert run_cli("task", "park", "T04", "--edit").exit_code == 0
+    op = tray(task_store)[0]
+    assert op["format"] == "org"
+    assert run_cli("apply").exit_code == 0
+    stored = json.loads((task_store / "tasks.json").read_text())
+    t04 = next(t for t in stored["tasks"] if t["id"] == "T04")
+    assert t04["format"] == "org"
+    assert t04["stops"][-1]["why"] == "*stuck* on the licence"
 
 
 def test_prose_composed_here_is_org_and_renders_as_org(run_cli, fake_emacs,

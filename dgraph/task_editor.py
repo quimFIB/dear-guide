@@ -86,9 +86,18 @@ def _tag(op: dict, tag: str | None = "org") -> dict:
     defect this pairing exists to have closed. Both sides read `PROSE`, so
     neither can be extended without the other following.
     """
-    if tag and any(op.get(f) for f in PROSE):
+    if tag and any(op.get(f) for f in _TAGGED):
         op["format"] = tag
     return op
+
+
+#: What `_tag` and `_seed_in` treat as prose: `PROSE` plus a stop's `why`.
+#: `task_pending.PROSE` leaves `why` out because its loop assigns fields and a
+#: `why` is appended to `stops` instead — but the tag covers it all the same
+#: (`task_render` converts it through `t.format`, `_apply_one` counts it as
+#: prose written), so a reason composed in org must claim org as an outcome
+#: does, or `*what stopped it*` renders as italic (`T143`).
+_TAGGED = PROSE + ("why",)
 
 
 def next_id(tg: TaskGraph) -> str:
@@ -276,13 +285,63 @@ def render_done(tg: TaskGraph, g: Graph | None, tid: str,
     )
 
 
+_STOP_VERB = {"PARKED": "park", "DROPPED": "drop"}
+
+
+def render_stop(tg: TaskGraph, g: Graph | None, tid: str, status: str,
+                seed: dict | None = None) -> str:
+    """The template for putting work down or giving it up (`T143`, on `D121`).
+
+    `render_done`'s shape — one field, the record beside it — for the other
+    two acts a person composes a reason for. The reason is the store's only
+    archived record: nothing clears it, and a task put down three times says
+    so three times, which is why the earlier stops are in view here. The
+    fallout of a drop is not in the buffer: `--keep`/`--drop-too` are verdicts
+    on other work and stay flags, as the browser keeps them radio buttons.
+    """
+    seed = seed or {}
+    t = tg.tasks[tid]
+    verb = _STOP_VERB[status]
+    hint = ("What stopped it? Kept after it resumes — a task put down three\n"
+            "times says so three times." if status == "PARKED" else
+            "Why is this not being done? Nothing clears it — the record is\n"
+            "the point.") + "\nFull org is fine."
+    if t.stops:
+        hint += "\nStopped before: " + "; ".join(
+            f"{k.date} — {k.why}" for k in t.stops)
+    return (
+        _header(f"dg task {verb} {tid} — {t.title}", op="set_status", task=tid,
+                decisions=g is not None,
+                status=status,
+                project=str(project.find().root),
+                date=seed.get("date") or _date.today().isoformat())
+        + "\n* Input\n"
+        + editor._field("Why", hint, seed.get("why", ""))
+        + "\n" + _task_context(tg, g, tid)
+    )
+
+
 ALLOWED = {
     "add_task": {"id", "title", "area", "after", "discovered during",
                  "because", "evidence for", "note", "probe", "done when",
                  "tags"},
     "amend": {"title", "area", "note", "done when", "tags"},
+    # By status: a finishing buffer takes the outcome, a stopping one the
+    # reason. `_allowed` picks; the key here is the one `parse` falls back to.
     "set_status": {"outcome"},
+    "set_status:PARKED": {"why"},
+    "set_status:DROPPED": {"why"},
 }
+
+
+def _allowed(kind: str, meta: dict) -> set[str]:
+    """The fields a buffer of this kind may carry under Input — for a
+    `set_status`, the ones its status writes."""
+    if kind == "set_status":
+        keyed = ALLOWED.get(f"set_status:{meta.get('status')}")
+        if keyed is not None:
+            return keyed
+    return ALLOWED.get(kind, set())
 
 
 def amend_seed(tg: TaskGraph, tid: str) -> dict:
@@ -402,6 +461,11 @@ def render_op(tg: TaskGraph, g: Graph | None, i: int, op: dict) -> str:
         text = render_add(tg, g, seed)
     elif kind == "set_status" and op.get("status") == "DONE":
         text = render_done(tg, g, op["task"], seed)
+    elif kind == "set_status" and op.get("status") in _STOP_VERB:
+        # Composed since `T143`, so revised where it was composed. A drop's
+        # cascade op is the same shape and opens here too; revising the
+        # reason it carries is harmless.
+        text = render_stop(tg, g, op["task"], op["status"], seed)
     else:
         raise EditorError(
             f"op {i} is {kind!r} — derived or structural, not composed in an "
@@ -477,7 +541,7 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
         )
 
     sections = d.sections(text)
-    unknown = sorted(k for k in sections if k not in ALLOWED.get(kind, set()))
+    unknown = sorted(k for k in sections if k not in _allowed(kind, meta))
     if unknown:
         names = ", ".join(f"{d.mark2} {sections[u][0]}" for u in unknown)
         raise EditorError(f"unknown field(s) under Input: {names}")
@@ -489,7 +553,7 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
         return _parse_add(tg, g, f, new_area=new_area, tag=d.tag,
                           explain=explain)
     if kind == "set_status":
-        return _parse_done(tg, meta, f, tag=d.tag)
+        return _parse_status(tg, meta, f, tag=d.tag)
     if kind == "amend":
         return _parse_amend(tg, meta, f, tag=d.tag)
     raise EditorError(f"cannot compose a {kind!r} task op")
@@ -580,21 +644,30 @@ def _parse_add(tg: TaskGraph, g: Graph | None, f: dict, *,
     return ops
 
 
-def _parse_done(tg: TaskGraph, meta: dict, f: dict,
-                tag: str | None = "org") -> list[dict]:
+def _parse_status(tg: TaskGraph, meta: dict, f: dict,
+                  tag: str | None = "org") -> list[dict]:
+    """A finishing or a stopping buffer, by the status its header carries:
+    `DONE` writes the outcome and the date it was done, `PARKED` and `DROPPED`
+    the reason and the date of the stop — the op shapes `dg task done`, `park`
+    and `drop` stage from flags."""
     tid = meta.get("task")
     if tid not in tg.tasks:
         raise EditorError(f"unknown task {tid!r}")
+    status = meta.get("status", "DONE")
+    date = meta.get("date") or _date.today().isoformat()
     # Provenance, exactly as `editor._parse_close` records it: this buffer is
     # org, so the views must convert its emphasis rather than read `*HNSW*` as
     # markdown's italic. Claimed through `_org` rather than written in, so the
     # claim is checked against what the store will honour. A task carries one
     # `format` for its whole record, so the caller says so when the record
     # already held prose written somewhere else.
+    if status in _STOP_VERB:
+        return [_tag({"op": "set_status", "task": tid, "status": status,
+                      "why": _need(f, "why"), "date": date}, tag)]
     return [_tag({
-        "op": "set_status", "task": tid, "status": meta.get("status", "DONE"),
+        "op": "set_status", "task": tid, "status": status,
         "outcome": _need(f, "outcome"),
-        "done": meta.get("date") or _date.today().isoformat(),
+        "done": date,
     }, tag)]
 
 
@@ -608,7 +681,7 @@ def _seed_in(seed: dict | None, dialect: str) -> dict | None:
     if (frm == "org") == (tag == "org"):
         return seed
     out = dict(seed)
-    for f in PROSE:
+    for f in _TAGGED:
         if out.get(f):
             out[f] = orgmd.convert(out[f], frm, tag)
     out["format"] = tag
@@ -637,3 +710,25 @@ def compose_done(tg: TaskGraph, g: Graph | None, tid: str,
         lambda after: parse(after, tg=tg, g=g, expect_kind="set_status",
                             expect_task=tid, dialect=dialect),
         launcher=launcher, dialect=dialect)
+
+
+def compose_stop(tg: TaskGraph, g: Graph | None, tid: str, status: str,
+                 seed: dict | None = None, launcher=None,
+                 dialect: str | None = None) -> list[dict]:
+    """`compose_done` for the reason a task is parked or dropped (`T143`): the
+    one op, with the fallout of a drop left to the caller's flags."""
+    dialect = dialect or editor.cli_dialect()
+    seed = _seed_in(seed, dialect)
+    return editor.run(
+        render_stop(tg, g, tid, status, seed),
+        lambda after: parse(after, tg=tg, g=g, expect_kind="set_status",
+                            expect_task=tid, dialect=dialect),
+        launcher=launcher, dialect=dialect)
+
+
+def compose_park(tg, g, tid, seed=None, launcher=None, dialect=None):
+    return compose_stop(tg, g, tid, "PARKED", seed, launcher, dialect)
+
+
+def compose_drop(tg, g, tid, seed=None, launcher=None, dialect=None):
+    return compose_stop(tg, g, tid, "DROPPED", seed, launcher, dialect)
