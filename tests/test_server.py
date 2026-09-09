@@ -2122,33 +2122,34 @@ def test_task_compose_refuses_an_op_it_cannot_compose(srv, dual):
     assert code == 400 and "cannot compose" in body["error"]
 
 
-def test_done_compose_returns_a_multiline_outcome_and_stages_nothing(
+def test_resolve_compose_returns_the_three_boxes_and_stages_nothing(
         srv, dual, monkeypatch):
-    """T142, on D121: the browser half of `dg task done --edit`. The outcome
-    comes back for the box to hold — two paragraphs, since the record takes
-    them and the box is a textarea now — and nothing is staged (D99). The
-    buffer is org, so the op carries `format` for the page to carry to the
-    stage, as `carryAmend` does for an amend."""
+    """D122, T144: the task panel's one Compose. The buffer carries Outcome,
+    Why parked and Why dropped; whatever is filled comes back for its box —
+    two paragraphs, since the boxes are textareas — with the org buffer's
+    `format` for `carryResolve`; the blank ones come back empty so the page
+    can clear a box emptied in the buffer. It is not an op: no status is
+    known until a button is pressed. Nothing is staged (D99)."""
     monkeypatch.setattr(editor, "launch_gui", _fill_task(
         Outcome="Bench table in results/bench.md.\n\n2.1x faster warm, no "
                 "change cold."))
     code, body = jreq(srv, "/api/compose", "POST",
-                      {"store": "tasks", "op": "done", "vertex": "T04"})
+                      {"store": "tasks", "op": "resolve", "vertex": "T04"})
     assert code == 200, body
     f = body["fields"]
-    assert f["op"] == "set_status" and f["task"] == "T04"
-    assert f["status"] == "DONE"
+    assert f["op"] == "resolve" and f["task"] == "T04"
     assert f["outcome"] == ("Bench table in results/bench.md.\n\n2.1x faster "
                             "warm, no change cold.")
+    assert f["why_park"] == "" and f["why_drop"] == ""
     assert f["format"] == "org"
+    assert "status" not in f
     assert pending.load(task_pending.path()) == [], "compose must not stage"
 
 
-def test_done_compose_seeds_the_buffer_with_what_the_box_held(
-        srv, dual, monkeypatch):
-    """What was typed into the box before Compose travels into the buffer, as
-    the CLI's `-o` does with `--edit`: switching to the editor mid-thought
-    costs nothing."""
+def test_resolve_compose_seeds_each_field_from_its_box(srv, dual, monkeypatch):
+    """What the boxes already hold travels into the buffer under its own
+    field, so switching to the editor mid-thought costs nothing. Left as
+    seeded is left unchanged, and an unchanged buffer is a cancel."""
     seen = {}
 
     def launch(path):
@@ -2156,40 +2157,44 @@ def test_done_compose_seeds_the_buffer_with_what_the_box_held(
         return 0
     monkeypatch.setattr(editor, "launch_gui", launch)
     code, body = jreq(srv, "/api/compose", "POST",
-                      {"store": "tasks", "op": "done", "vertex": "T04",
-                       "seed": {"outcome": "half an outcome"}})
+                      {"store": "tasks", "op": "resolve", "vertex": "T04",
+                       "seed": {"outcome": "half an outcome",
+                                "why_park": "half a reason"}})
     assert code == 200, body
-    assert "half an outcome" in seen["text"]
-    # Left as seeded is left unchanged, and an unchanged buffer is a cancel —
-    # the rule `dg task done -o … --edit` has, and the page's hint says.
+    t = seen["text"]
+    assert t.index("** Outcome") < t.index("half an outcome") \
+        < t.index("** Why parked") < t.index("half a reason") \
+        < t.index("** Why dropped")
     assert "aborted" in body and "fields" not in body
 
 
-@pytest.mark.parametrize("kind,status", [("park", "PARKED"),
-                                          ("drop", "DROPPED")])
-def test_stop_compose_returns_the_reason_and_stages_nothing(
-        srv, dual, monkeypatch, kind, status):
-    """T143, on D121: the browser half of `dg task park --edit` and `dg task
-    drop --edit`. The reason comes back for its box; the org buffer's
-    `format` comes with it for `carryWhy`; nothing is staged (D99). A drop's
-    fallout is not here — the form asks it after Drop it."""
+def test_resolve_compose_takes_a_reason_as_well(srv, dual, monkeypatch):
+    """A reason filled in the one buffer comes back for its box, as the
+    outcome does — the same three fields `dg task park --edit` and `dg task
+    drop --edit` compose one at a time (D121)."""
     monkeypatch.setattr(editor, "launch_gui", _fill_task(
-        Why="the *licence* fell through"))
+        **{"Why dropped": "the *licence* fell through"}))
     code, body = jreq(srv, "/api/compose", "POST",
-                      {"store": "tasks", "op": kind, "vertex": "T04"})
+                      {"store": "tasks", "op": "resolve", "vertex": "T04"})
     assert code == 200, body
     f = body["fields"]
-    assert f["op"] == "set_status" and f["task"] == "T04"
-    assert f["status"] == status
-    assert f["why"] == "the *licence* fell through"
-    assert f["format"] == "org" and f["date"]
-    assert "outcome" not in f
-    assert pending.load(task_pending.path()) == [], "compose must not stage"
+    assert f["why_drop"] == "the *licence* fell through"
+    assert f["outcome"] == "" and f["why_park"] == ""
+    assert f["format"] == "org"
 
 
-def test_done_compose_refuses_an_unknown_task(srv, dual):
+def test_the_per_act_compose_kinds_are_gone(srv, dual):
+    """D122 retired them: the browser has one buffer for the three boxes, and
+    the CLI does not go through this route."""
+    for kind in ("done", "park", "drop"):
+        code, body = jreq(srv, "/api/compose", "POST",
+                          {"store": "tasks", "op": kind, "vertex": "T04"})
+        assert code == 400 and "cannot compose" in body["error"], kind
+
+
+def test_resolve_compose_refuses_an_unknown_task(srv, dual):
     code, body = jreq(srv, "/api/compose", "POST",
-                      {"store": "tasks", "op": "done", "vertex": "T99"})
+                      {"store": "tasks", "op": "resolve", "vertex": "T99"})
     assert code == 400 and "unknown task" in body["error"]
 
 
@@ -2207,24 +2212,24 @@ def test_the_new_task_form_and_reword_form_carry_a_compose_button():
     assert "composeAmend" in html and "carryAmend" in html
 
 
-def test_the_task_panels_outcome_is_a_textarea_with_a_compose_button():
-    """T142, on D121: the one prose field the CLI composed and the browser did
-    not. Pinned as the other two are — and the box is a textarea, since an
-    `<input>` cannot hold the two-paragraph outcome `dg task done --edit`
+def test_the_task_panels_three_boxes_are_textareas_with_one_compose_button():
+    """D121, D122: the three prose fields the CLI composes one act at a time
+    have the editor here too — through one button and one buffer, since the
+    three acts are exclusive and the button pressed decides. Textareas, since
+    an `<input>` cannot hold the two-paragraph outcome `dg task done --edit`
     stores, and the browser must not stage a narrower record than the CLI
-    for the same field."""
+    for the same field. Pinned as the other forms' buttons are."""
     html = (server.STATIC / "app.html").read_text(encoding="utf-8")
     panel = html.split("/* ---- the task panel")[1].split(
         "/* ---- structure: prerequisites")[0]
-    assert '<textarea id="outcome"' in panel
-    assert '<input id="outcome"' not in panel
-    assert 'composeBtn("doComposeDone")' in panel
-    assert "composeDone" in html and "carryDone" in html
-    # T143: the two reasons, the last text-shaped inputs without the editor.
-    for box, btn in (("pwhy", "doComposePark"), ("dwhy", "doComposeDrop")):
-        assert f'<textarea id="{box}"' in panel and f'<input id="{box}"' not in panel
-        assert f'composeBtn("{btn}")' in panel
-    assert "composeWhy" in html and "carryWhy" in html
+    for box in ("outcome", "pwhy", "dwhy"):
+        assert f'<textarea id="{box}"' in panel
+        assert f'<input id="{box}"' not in panel
+    assert panel.count('composeBtn(') == 1
+    assert 'composeBtn("doComposeResolve")' in panel
+    assert "composeResolve" in html and "carryResolve" in html
+    for gone in ("composeDone", "composeWhy", "carryDone", "carryWhy"):
+        assert gone not in html, gone
 
 
 def test_edit_route_revises_an_add_task_with_its_premise_and_edges_whole(

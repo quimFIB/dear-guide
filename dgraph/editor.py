@@ -800,7 +800,9 @@ def _parse_reprobe(meta: dict, f: dict) -> list[dict]:
 #: The fields whose bytes are kept as typed — leading indentation included
 #: (`D104`). Everything else is a one-line value and is stripped.
 PROSE_FIELDS = frozenset({"answer", "falsifier", "summary", "why", "note",
-                          "rule", "outcome", "done when"})
+                          "rule", "outcome", "done when",
+                          # the browser's three-box buffer (`D122`)
+                          "why parked", "why dropped"})
 
 
 def _val(f: dict[str, str], name: str) -> str:

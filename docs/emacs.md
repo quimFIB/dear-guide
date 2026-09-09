@@ -121,9 +121,10 @@ above — the browser writes it, waits, and fills the form with what emacs sends
 back; the form's own button stages. Anything already typed into the form
 carries over, so switching editors mid-thought costs nothing. Every button
 answers a `--edit` on the CLI side — the decision forms, the new-task and
-Reword forms, and the task panel's three boxes — Outcome, and the reasons a
-task is parked or dropped, which are `dg task done`, `park` and `drop` with
-`--edit` from the browser — and a field gets the editor on both surfaces or on
+Reword forms, and the task panel's three closing boxes — Outcome and the
+reasons a task is parked or dropped, which one button composes in one
+three-field buffer, where the CLI's `dg task done`, `park` and `drop --edit`
+each open their own — and a field gets the editor on both surfaces or on
 neither. [`demo/`](../demo/) is a self-contained walkthrough over a graph
 arranged so that every kind of record here — a reversal, a reopen, a park, a
 drop, evidence that landed late — is in it somewhere, and this button is one of

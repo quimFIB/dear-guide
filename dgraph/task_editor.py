@@ -321,10 +321,59 @@ def render_stop(tg: TaskGraph, g: Graph | None, tid: str, status: str,
     )
 
 
+def render_resolve(tg: TaskGraph, g: Graph | None, tid: str,
+                   seed: dict | None = None) -> str:
+    """The browser's one buffer for the task panel's three closing boxes
+    (`D122`, `T144`): Outcome, Why parked, Why dropped — the fields of
+    `render_done` and the two `render_stop`s side by side, each seeded from
+    its box and filled back to it. Browser only: the CLI's three commands are
+    three acts and keep their one-field buffers. It parses to fields, not to
+    an op, because no status is known until the reader presses a button — and
+    the boxes the pressed button does not read are discarded, which the
+    decision accepts and the hint says.
+    """
+    seed = seed or {}
+    t = tg.tasks[tid]
+    waiting = tg.waiting_on(tid)
+    stops = ("\nStopped before: " + "; ".join(
+        f"{k.date} — {k.why}" for k in t.stops)) if t.stops else ""
+    return (
+        _header(f"dg task done | park | drop {tid} — {t.title}", op="resolve",
+                task=tid, decisions=g is not None,
+                project=str(project.find().root),
+                date=_date.today().isoformat())
+        + "\n* Input\n"
+        + editor._field(
+            "Outcome",
+            "Fill the field for the act you mean; the browser fills all three\n"
+            "boxes and the button you press decides — the other two are\n"
+            "discarded.\n\n"
+            "What did this produce? A path, a PR, a measurement — enough that\n"
+            "somebody who did not do the work can find what it left behind.\n"
+            "Full org is fine."
+            + (f"\nDone when: {t.done_when}" if t.done_when else "")
+            + (f"\nNote: {tid} still waits on {', '.join(waiting)}."
+               if waiting else ""),
+            seed.get("outcome", ""))
+        + editor._field(
+            "Why parked",
+            "What stopped it? Kept after it resumes — a task put down three\n"
+            "times says so three times." + stops,
+            seed.get("why_park", ""))
+        + editor._field(
+            "Why dropped",
+            "Why is this not being done? Nothing clears it — the record is\n"
+            "the point.",
+            seed.get("why_drop", ""))
+        + "\n" + _task_context(tg, g, tid)
+    )
+
+
 ALLOWED = {
     "add_task": {"id", "title", "area", "after", "discovered during",
                  "because", "evidence for", "note", "probe", "done when",
                  "tags"},
+    "resolve": {"outcome", "why parked", "why dropped"},
     "amend": {"title", "area", "note", "done when", "tags"},
     # By status: a finishing buffer takes the outcome, a stopping one the
     # reason. `_allowed` picks; the key here is the one `parse` falls back to.
@@ -554,6 +603,8 @@ def parse(text: str, *, tg: TaskGraph, g: Graph | None,
                           explain=explain)
     if kind == "set_status":
         return _parse_status(tg, meta, f, tag=d.tag)
+    if kind == "resolve":
+        return _parse_resolve(tg, meta, f, tag=d.tag)
     if kind == "amend":
         return _parse_amend(tg, meta, f, tag=d.tag)
     raise EditorError(f"cannot compose a {kind!r} task op")
@@ -671,6 +722,29 @@ def _parse_status(tg: TaskGraph, meta: dict, f: dict,
     }, tag)]
 
 
+def _parse_resolve(tg: TaskGraph, meta: dict, f: dict,
+                   tag: str | None = "org") -> list[dict]:
+    """The three-box buffer's fields (`D122`). Not an op: `op` says `resolve`
+    so nothing downstream mistakes it for one, and the page reads the three
+    values and the dialect they were typed in. Whichever are filled come
+    back; the ones left blank come back empty so the page can clear a box
+    the reader emptied in the buffer."""
+    tid = meta.get("task")
+    if tid not in tg.tasks:
+        raise EditorError(f"unknown task {tid!r}")
+    out = {"op": "resolve", "task": tid,
+           "outcome": editor._val(f, "outcome"),
+           "why_park": editor._val(f, "why parked"),
+           "why_drop": editor._val(f, "why dropped")}
+    if tag and any(out[k] for k in _RESOLVE):
+        out["format"] = tag
+    return [out]
+
+
+#: The three-box buffer's values, as the page and the seed name them.
+_RESOLVE = ("outcome", "why_park", "why_drop")
+
+
 def _seed_in(seed: dict | None, dialect: str) -> dict | None:
     """`editor.seed_in` for a task's prose — `PROSE`, the fields one
     `Task.format` covers."""
@@ -681,7 +755,9 @@ def _seed_in(seed: dict | None, dialect: str) -> dict | None:
     if (frm == "org") == (tag == "org"):
         return seed
     out = dict(seed)
-    for f in _TAGGED:
+    # Each field once: `outcome` is in both tuples, and converting it twice
+    # turns org bold into org italic.
+    for f in dict.fromkeys(_TAGGED + _RESOLVE):
         if out.get(f):
             out[f] = orgmd.convert(out[f], frm, tag)
     out["format"] = tag
@@ -722,6 +798,21 @@ def compose_stop(tg: TaskGraph, g: Graph | None, tid: str, status: str,
     return editor.run(
         render_stop(tg, g, tid, status, seed),
         lambda after: parse(after, tg=tg, g=g, expect_kind="set_status",
+                            expect_task=tid, dialect=dialect),
+        launcher=launcher, dialect=dialect)
+
+
+def compose_resolve(tg: TaskGraph, g: Graph | None, tid: str,
+                    seed: dict | None = None, launcher=None,
+                    dialect: str | None = None) -> list[dict]:
+    """The browser's three-box buffer (`D122`): one `resolve` fields record,
+    never an op. `_tcompose` does not reach this — the CLI has no act it
+    would be."""
+    dialect = dialect or editor.cli_dialect()
+    seed = _seed_in(seed, dialect)
+    return editor.run(
+        render_resolve(tg, g, tid, seed),
+        lambda after: parse(after, tg=tg, g=g, expect_kind="resolve",
                             expect_task=tid, dialect=dialect),
         launcher=launcher, dialect=dialect)
 

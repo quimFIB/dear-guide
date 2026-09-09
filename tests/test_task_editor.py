@@ -135,6 +135,33 @@ def test_the_stop_template_is_one_field_with_the_earlier_stops_in_view(
     assert ":DGRAPH_STATUS: DROPPED" in d and "dg task drop T04" in d
 
 
+def test_the_resolve_template_is_the_three_closing_fields_side_by_side(
+        tg, task_store):
+    """D122: the browser's one buffer for the task panel's three boxes — the
+    field of `render_done` and the fields of the two `render_stop`s, each
+    seeded from its box, with the earlier stops in view as the park buffer
+    shows them. It parses to fields, not to an op."""
+    from dgraph.tasks import Stop
+    tg.tasks["T04"].stops.append(Stop(why="waiting on the dataset",
+                                      date="2026-01-03"))
+    t = task_editor.render_resolve(tg, None, "T04",
+                                   {"outcome": "seeded", "why_park": "stuck"})
+    assert ":DGRAPH_OP: resolve" in t and ":DGRAPH_TASK: T04" in t
+    assert ":DGRAPH_STATUS:" not in t
+    body = t[t.index("* Input"):t.index("* Context")]
+    assert body.count("** ") == 3
+    assert body.index("** Outcome") < body.index("** Why parked") \
+        < body.index("** Why dropped")
+    assert "seeded" in body and "stuck" in body
+    assert "waiting on the dataset" in body
+    got = task_editor.parse(fill(t, why_dropped="the licence fell through"),
+                            tg=tg, g=None, expect_kind="resolve",
+                            expect_task="T04")
+    assert got == [{"op": "resolve", "task": "T04", "outcome": "seeded",
+                    "why_park": "stuck",
+                    "why_drop": "the licence fell through", "format": "org"}]
+
+
 def test_the_fields_a_status_buffer_takes_follow_its_status():
     """A finishing buffer takes the outcome, a stopping one the reason; a
     `** Why` under a done buffer is an unknown field, not a second door."""
