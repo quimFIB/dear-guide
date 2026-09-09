@@ -11,7 +11,9 @@ from dataclasses import replace
 import pytest
 from typer.testing import CliRunner
 
-from dgraph import cross, gate, pending, project
+from datetime import date
+
+from dgraph import cross, gate, pending, project, task_pending
 from dgraph.check import run
 from dgraph.cli import app
 from dgraph.model import Graph
@@ -1181,7 +1183,9 @@ def _evidence(root, status, done=None, outcome=None):
     ("PARKED",  None,         "evidence_stalled_after_deciding"),
     ("DROPPED", None,         "evidence_dropped_after_deciding"),
     ("DONE",    "2025-12-01", None),          # measured, then decided: quiet
-    ("DONE",    DECIDED_ON,   None),          # same day: not "afterwards"
+    # Same day, no reading: unread (`D105`). The close writes a reading for
+    # what it saw, so an unread same-day result is one that landed after it.
+    ("DONE",    DECIDED_ON,   "evidence_after_deciding"),
     ("DONE",    "2026-06-01", "evidence_after_deciding"),
 ])
 def test_exactly_one_settled_half_check_owns_each_cell(both, status, done,
@@ -2001,3 +2005,90 @@ def test_dg_find_subgraph_derived_flag(run_cli):
     res = run_cli("find", "--derived", "id:T03")
     assert res.exit_code == 2 and "--derived needs --subgraph" in res.output
 
+
+
+# ---- D105 · the close is the reading; a same-day result is late until read --
+
+def test_a_same_day_result_with_no_reading_is_late(both):
+    """D01 was settled 2026-01-01. Evidence finished that day, with no
+    reading, is neither *coming* nor *read* — it is unread, and the check
+    used to fold the equal date into *before* and say nothing (`AD-F2`)."""
+    _evidence(both, "DONE", done="2026-01-01", outcome="a number")
+    hits = [v for v in run() if v.check == "evidence_after_deciding"]
+    assert len(hits) == 1
+    assert "T04" in str(hits[0]) and "same day" in str(hits[0])
+
+
+def test_a_same_day_result_read_at_the_close_is_silent(both):
+    _evidence(both, "DONE", done="2026-01-01", outcome="a number")
+    _read(both, date="2026-01-01", note="read at decide")
+    assert not [v for v in run() if v.check == "evidence_after_deciding"]
+
+
+def test_a_result_on_the_readings_own_day_is_not_late_again(both):
+    """With a reading the comparison stays strict: a result and its reading
+    on one day is the result being read, not a later result."""
+    _evidence(both, "DONE", done="2026-07-01", outcome="a number")
+    _read(both, date="2026-07-01")
+    assert not [v for v in run() if v.check == "evidence_after_deciding"]
+
+
+def test_confirm_against_takes_a_same_day_result(run_cli, both):
+    _evidence(both, "DONE", done="2026-01-01", outcome="a number")
+    r = run_cli("confirm", "D01", "--against", "T04", "--note", "holds")
+    assert r.exit_code == 0, r.output
+    ops = pending.load(task_pending.path())
+    assert [o["op"] for o in ops] == ["read_evidence"]
+    assert ops[0]["task"] == "T04" and ops[0]["against"] == "D01"
+
+
+def test_decide_records_a_reading_for_evidence_already_in_hand(run_cli, both):
+    """The close is the reading: what was DONE in its sight is read by it, so
+    only work finishing afterwards is ever late. One reading per finished
+    evidence task, none for one still running, in the task tray beside the
+    close."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T04"].evidence_for = "D05"
+    finished(tg.tasks["T04"], "2026-06-01", "a number")
+    tg.tasks["T02"].evidence_for = "D05"          # TODO: nothing to read yet
+    tg.save(both / "tasks.json")
+    r = run_cli("decide", "D05", "--no-edit", "-a", "yes", "-s", "discussion",
+                "-f", "a counter-example")
+    assert r.exit_code == 0, r.output
+    assert "T04" in r.output and "read at decide" in r.output
+    ops = pending.load(task_pending.path())
+    assert len(ops) == 1
+    op = ops[0]
+    assert op["op"] == "read_evidence" and op["task"] == "T04"
+    assert op["against"] == "D05" and op["note"] == "read at decide"
+    assert op["date"] == date.today().isoformat()
+    assert pending.load()[0]["op"] == "close"
+    r = run_cli("apply")
+    assert r.exit_code == 0, r.output
+    assert not [v for v in run() if v.check == "evidence_after_deciding"
+                and "T04" in str(v)]
+
+
+def test_decide_with_no_finished_evidence_stages_no_reading(run_cli, both):
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D05"
+    tg.save(both / "tasks.json")
+    r = run_cli("decide", "D05", "--no-edit", "-a", "yes", "-s", "discussion",
+                "-f", "a counter-example")
+    assert r.exit_code == 0, r.output
+    assert pending.load(task_pending.path()) == []
+
+
+def test_finishing_evidence_on_the_answers_day_introduces_the_finding(run_cli, both):
+    """`dg check --staged` said finishing the task *would fix* the warning;
+    the finish is what makes the result unread."""
+    tg = TaskGraph.load(both / "tasks.json")
+    tg.tasks["T02"].evidence_for = "D05"
+    tg.save(both / "tasks.json")
+    assert run_cli("decide", "D05", "--no-edit", "-a", "yes", "-s", "d",
+                   "-f", "f").exit_code == 0
+    assert run_cli("apply").exit_code == 0
+    assert run_cli("task", "done", "T02", "--outcome", "3x slower").exit_code == 0
+    out = " ".join(run_cli("check", "--staged").output.split())
+    i = out.index("would introduce")
+    assert "evidence_after_deciding" in out[i:] and "same day, unread" in out[i:]

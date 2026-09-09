@@ -39,6 +39,7 @@ import json
 import os
 import secrets
 import threading
+from datetime import date as _date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -747,6 +748,17 @@ def stage(g: Graph, op: dict) -> list[dict]:
     # the permission is carried rather than passed. Audit `R-F2`.
     with pending.new_area_allowed(fresh), pending.new_tag_allowed(fresh_tag):
         pending.stage_all(ops, against=eff)   # one write, each op stamped
+    # The close is the reading (`D105`): the same helper `dg decide` calls,
+    # so the page and the CLI record the same act for the same evidence.
+    if op.get("op") == "close":
+        proj = project.find()
+        if proj.has_tasks:
+            tg = TaskGraph.load(proj.tasks)
+            reads = cross.readings_at_close(
+                tg, op["vertex"],
+                op.get("date") or _date.today().isoformat())
+            if reads:
+                stage_tasks(tg, reads)
     return ops
 
 

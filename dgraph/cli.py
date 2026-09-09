@@ -2093,12 +2093,21 @@ def _stage_close(g: Graph, op: dict) -> None:
     _stage_all(ops, against=g)
     con.print(f"[green]staged[/] {len(ops)} op(s) — review with `dg pending`, "
               f"then `dg apply`")
+    # The close is the reading (`D105`): evidence already DONE is read by
+    # it, as a task op in the other tray, from the helper the page shares.
+    proj = project.find()
+    tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
+    reads = cross.readings_at_close(
+        tg, op["vertex"], op.get("date") or _date.today().isoformat())
+    if reads:
+        _tstage_all(reads)
+        con.print(f"[green]read at decide[/] "
+                  f"{', '.join(r['task'] for r in reads)} — a *task* op, so "
+                  f"`dg task pending` to review")
     # Said here rather than in `decide`, so `--edit` and the prompt path — both
     # of which end up here — cannot differ about it, and so the browser's
     # compose path can call the same helper.
-    proj = project.find()
-    note = cross.deciding_ahead_of_evidence(
-        TaskGraph.load(proj.tasks) if proj.has_tasks else None, op["vertex"])
+    note = cross.deciding_ahead_of_evidence(tg, op["vertex"])
     if note:
         con.print(f"[yellow]note: {note}[/]")
     _warn_stuck()

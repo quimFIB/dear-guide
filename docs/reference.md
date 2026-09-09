@@ -292,7 +292,7 @@ dg find 'brute force' --active           # ...skipping answers since overturned
 dg find --subgraph 'id:D04'              # the subgraph D04 induces, both stores
 dg find --subgraph --hops 1 'id:D04'     # ...D04 and its neighbours only
 dg find --subgraph --derived 'id:D04'    # ...plus what the whole graph says of each
-dg decide D37                            # compose a decision -> staged
+dg decide D37                            # compose a decision -> staged; evidence already in hand is read by it
 dg decide D37 --edit                     # ...in emacs, with context to hand
 dg amend  D06 --title "..."              # correct a wording; nothing else is touched
 dg amend  D06 --tag perf --untag draft   # the tag set: add, drop, or --clear-tags
@@ -534,8 +534,9 @@ cause must never block a commit* — work resting on a premise under review, and
 five ways evidence and an answer can come apart: the work finished and its
 conclusion was never recorded; every task meant to inform a question was
 abandoned, before or after it was settled; the work stopped without being
-abandoned, before or after; and the work reported *after* the answer was
-settled, which `dg confirm --against` is the honest exit from.
+abandoned, before or after; and the work reported on or after the answer's
+day and never read against it — `dg decide` records a reading for results
+already in hand, and `dg confirm --against` is the honest exit for the rest.
 
 **The view.** `decision-graph.md` and `tasks.md` are generated, so a view that
 has fallen behind its store is a warning and `dg render` rebuilds it.

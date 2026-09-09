@@ -22,8 +22,10 @@ $ dg decide D09 --answer 'No: search runs on Enter. At 340 ms a keystroke would 
 │ type. Over: search on Enter.                                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 staged 1 op(s) — review with `dg pending`, then `dg apply`
+read at decide T12 — a *task* op, so `dg task pending` to review
 $ dg apply
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
 # Judged, this time: no line of the file has a p95 of one or two digits, so the falsifier holds.
 $ dg probe D09
 D09  DECIDED  Does search run on every keystroke?
@@ -55,7 +57,7 @@ $ env CI=1 pytest -q --tb=no --decision-graph-probe -k probe
 ...F...                                                                                  [100%]
 =================================== short test summary info ====================================
 FAILED tests/test_graph.py::test_decision_graph_probe[probe_fired] - AssertionError: [probe_fired] D09: grep.matches fired — bench/search.md: p95: 60 ms  prefix
-1 failed, 6 passed, 43 deselected in 0.05s
+1 failed, 6 passed, 43 deselected in 0.06s
 [exit 1]
 $ dg reopen D09 --why 'bench/search.md: p95 60 ms with the prefix index, which is the falsifier' -y
 ╭───────────────────────────────────────── reopen D09 ─────────────────────────────────────────╮
@@ -93,14 +95,15 @@ $ dg node D09
 │ Enter.                                                                                       │
 │                                                                                              │
 │ Rule for settling (probe)                                                                    │
-│   2026-09-04  prose.rule {"text": "p95 under 100 ms: as you type; else on Enter"}            │
-│   2026-09-04  prose.rule {"text": "p95 under 100 ms on the slowest team laptop: as you type; │
+│   2026-09-09  prose.rule {"text": "p95 under 100 ms: as you type; else on Enter"}            │
+│   2026-09-09  prose.rule {"text": "p95 under 100 ms on the slowest team laptop: as you type; │
 │ else on Enter"}  (live)                                                                      │
 │ evidence from T12 (DONE) — p95 340 ms on 50k notes                                           │
+│                 read 2026-09-09 — read at decide                                             │
 │                                                                                              │
 │ Superseded                                                                                   │
 │                                                                                              │
-│   “No: search runs on Enter. At 340 ms a keystroke would stutt…” → (undecided)   2026-09-04  │
+│   “No: search runs on Enter. At 340 ms a keystroke would stutt…” → (undecided)   2026-09-09  │
 │     why         bench/search.md: p95 60 ms with the prefix index, which is the falsifier     │
 │     falsifier   p95 under 100 ms on the 50k-note set                                         │
 │     source      T12                                                                          │
@@ -122,7 +125,7 @@ D09  REOPENED  Does search run on every keystroke?
     rule for settling Time a search over the 50k-note set. p95 under 100 ms: search as you type.
 Over: search on Enter.
     probe             pytest.passes {"node": "tests/test_search.py::test_p95_under_100ms"}  
-(2026-09-04)
+(2026-09-09)
     verdict           unjudged
     T12 DONE — p95 340 ms on 50k notes
 

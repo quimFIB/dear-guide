@@ -639,6 +639,35 @@ def settled_on_stalled_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
     return _stalled_evidence(tg, g, settled=True)
 
 
+def readings_at_close(tg: TaskGraph | None, did: str, date: str) -> list[dict]:
+    """The `read_evidence` ops a close stages beside itself: one per evidence
+    task already DONE, dated the close, noted *read at decide* (`D105`).
+
+    The close is the reading. What was finished in its sight was read by
+    it — `evidence_unharvested` is the check that sends a person to `dg
+    decide` to record what a result showed — and recording that as a dated
+    act is what lets `evidence_after_deciding` treat an unread result on the
+    answer's own day as late without calling this flow late too. One helper
+    for both doors, as `deciding_ahead_of_evidence` is.
+
+    Nothing for work still running, nothing for a task already read against
+    this question on this date (the tray would refuse the second copy), and
+    nothing where there is no task store.
+    """
+    if tg is None:
+        return []
+    out = []
+    for tid in evidence(tg, did):
+        t = tg.tasks[tid]
+        if t.status != "DONE" or not t.done:
+            continue
+        if any(r.against == did and r.date == date for r in t.readings):
+            continue
+        out.append({"op": "read_evidence", "task": tid, "against": did,
+                    "note": "read at decide", "date": date})
+    return out
+
+
 def deciding_ahead_of_evidence(tg: TaskGraph | None, did: str) -> str | None:
     """What to say when a decision is settled while its evidence is still out.
 
@@ -665,8 +694,8 @@ def deciding_ahead_of_evidence(tg: TaskGraph | None, did: str) -> str | None:
             f"{'is' if len(waiting) == 1 else 'are'} still outstanding — "
             f"that is a legitimate call, but read the result against this "
             f"answer when it lands. `dg check` goes on saying so until the "
-            f"work finishes before the answer, the link goes, or the "
-            f"decision is reopened.")
+            f"result is read against it (`dg confirm --against`), the link "
+            f"goes, or the decision is reopened.")
 
 
 def _one_line(text: str | None, limit: int = 90) -> str:
@@ -747,10 +776,24 @@ def evidence_after_deciding(tg: TaskGraph, g: Graph) -> list[dict]:
             # answer date to be late against, which is what it meant before a
             # reading could move the baseline.
             read = t.read_against(did)
-            base = max(when, read) if (when and read) else when
-            if t.status == "DONE" and when and t.done and t.done > base:
+            # Dates are days. With a reading the comparison is strict — a
+            # result and its reading on one day is the result being read.
+            # Without one it is not: a result dated the answer's own day is
+            # *unread*, whichever came first, and the strict form folded it
+            # into *before*, where nothing fires — the whole of a
+            # spike-and-decide session (`AD-F2`, `D105`). The close writes a
+            # reading for what it saw (`readings_at_close`), so the only
+            # unread same-day result is one that finished afterwards.
+            if t.status != "DONE" or not when or not t.done:
+                continue
+            if read:
+                late_now = t.done > max(when, read)
+            else:
+                late_now = t.done >= when
+            if late_now:
                 late.append({"id": tid, "status": "DONE", "read": read,
-                             "outcome": t.outcome, "done": t.done})
+                             "outcome": t.outcome, "done": t.done,
+                             "same_day": t.done == when})
         if late:
             out.append({"id": did, "title": v.title, "status": v.status,
                         "date": when, "tasks": late})
@@ -1534,6 +1577,7 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
             else f"{t['id']} finished {t['done']} — {_one_line(t['outcome'])}"
             for t in u["tasks"])
         running = any(t["outcome"] is None for t in u["tasks"])
+        same_day = all(t.get("same_day") for t in u["tasks"])
         # Every late task, not the first one: the advice used to name
         # `tasks[0]` while the sentence above it listed two, so half the
         # finding had no remedy attached to it.
@@ -1543,7 +1587,9 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
             f"{u['id']} ({u['title']}) is {u['status']}"
             + (f", settled {u['date']}" if u["date"] else "")
             + f", but the work meant to inform it "
-            + ("has not reported yet" if running else "reported afterwards")
+            + ("has not reported yet" if running else
+               "reported the same day, unread" if same_day else
+               "reported afterwards")
             + f" ({what}) — read it against the answer, then `dg confirm "
               f"{u['id']} --against {ids}` if it still holds, `dg reopen "
               f"{u['id']}` if it does not, or `dg task unlink {ids} "

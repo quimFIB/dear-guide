@@ -135,7 +135,9 @@ def test_scene4_closes_the_loop_in_both_directions(tmp_path):
 def test_scene5_names_the_agents_and_stops_publishing_their_drafts(tmp_path):
     """Both halves, and the second is only meaningful beside the first."""
     out = run(5, tmp_path)
-    assert "applied 3 op(s)" in out, "the unnamed half no longer takes the others' work"
+    # Four since D105: A's decide also staged a reading for T02, the evidence
+    # already in hand, and C's bare apply took that too.
+    assert "applied 4 op(s)" in out, "the unnamed half no longer takes the others' work"
     assert "nothing staged" in out, "agent A's only signal, and it is the defect"
     assert "by A" in out and "by B" in out
     assert "op(s) left staged, by" in out

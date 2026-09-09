@@ -734,6 +734,16 @@ rather than claiming something about the present, which is why it cannot go
 stale — and is why it is a record this store will keep where it refuses a stored
 `acknowledged` flag.
 
+**The close is a reading too.** Dates in both stores are days, so a result
+finished on the answer's own day cannot be ordered against it by date alone —
+and that is every session that runs a spike and decides on it. So `dg decide`
+records a reading, *read at decide*, for every evidence task already finished
+when the question is closed: what was in hand was read. A finished result
+dated the answer's day with **no** reading is then the other case — it landed
+after the close — and `evidence_after_deciding` names it as *reported the same
+day, unread* until `dg confirm --against` reads it. Stores from before this rule
+ask once for each such pair, and one reading settles it.
+
 One rule keeps all of this from becoming a nuisance: **anything a reopen can cause is a
 warning, never an error.** If work resting on a reopened decision made the store
 invalid, one `dg reopen` would block every commit in the repository until

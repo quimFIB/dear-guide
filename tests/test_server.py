@@ -2162,3 +2162,19 @@ def test_edit_route_revises_an_add_task_with_its_premise_and_edges_whole(
     tray = pending.load(task_pending.path())
     assert [(o["op"], o.get("from")) for o in tray] == [("add_task", None), ("add_dep", "T02")]
     assert len({o.get("group") for o in tray}) == 1 and tray[0].get("group")
+
+
+def test_the_page_close_records_a_reading_for_evidence_in_hand(srv, task_store):
+    """The browser's Compose stages the close through `stage`; the reading
+    the CLI writes at decide has to come from the same place (`D105`)."""
+    from dgraph.tasks import TaskGraph
+    from dgraph import task_pending
+    tg = TaskGraph.load(task_store / "tasks.json")
+    tg.tasks["T01"].evidence_for = "D05"          # DONE 2026-01-05
+    tg.save(task_store / "tasks.json")
+    code, body = jreq(srv, "/api/pending", "POST",
+                      dict(CLOSE, answer="a", source="s", falsifier="f", to=[]))
+    assert code == 200, body
+    ops = pending.load(task_pending.path())
+    assert [(o["op"], o["task"], o["against"], o["note"]) for o in ops] == \
+        [("read_evidence", "T01", "D05", "read at decide")]

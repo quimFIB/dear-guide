@@ -59,5 +59,7 @@ $ dg decide D09 --answer 'No: search runs on Enter. At 340 ms a keystroke would 
 │ type. Over: search on Enter.                                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 staged 1 op(s) — review with `dg pending`, then `dg apply`
+read at decide T12 — a *task* op, so `dg task pending` to review
 $ dg apply
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`

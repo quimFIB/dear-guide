@@ -291,10 +291,14 @@ record.
 **The same verb, for evidence.** `dg confirm D01 --against T01 --note "…"`
 records that a result was read against a standing answer and the answer holds.
 It is what `dg check`'s *"the work meant to inform it reported afterwards"*
-warning wants, in the case where the result agrees — the other two exits,
+(or *"reported the same day, unread"*) warning wants, in the case where the
+result agrees — the other two exits,
 `dg reopen` and `dg task unlink`, both say something that is not true when it
 does. The reading is dated and kept, so a later result post-dates it and the
-warning returns on its own; nothing here is a switch that stays off.
+warning returns on its own; nothing here is a switch that stays off. `dg
+decide` writes the same reading for any result already finished when the
+question is closed — what was in hand was read — so only work landing
+afterwards is ever asked about.
 
 **The way in has one too.** `PROVISIONAL` is derived: `dg reopen` stages it for
 every decided descendant, and nothing else produces it. A merge, a rebase or a

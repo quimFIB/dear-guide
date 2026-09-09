@@ -30,14 +30,16 @@ agile-azimuth ▸ $ DG_DECIDE=evidence dg decide D06 --answer 'Refuse to open it
 │ depends on D04                                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 staged 1 op(s) — review with `dg pending`, then `dg apply`
+read at decide T04 — a *task* op, so `dg task pending` to review
 agile-azimuth ▸ $ dg apply --mine
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
 $ dg-agent list
                            Names held                            
 ┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━┓
 ┃ Name          ┃ Since      ┃ Staged ┃ Holding ┃ Budget ┃ Seen ┃
 ┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━┩
-│ agile-azimuth │ 2026-09-07 │ 0      │ —       │ —      │ 5s   │
+│ agile-azimuth │ 2026-09-09 │ 0      │ —       │ —      │ 5s   │
 └───────────────┴────────────┴────────┴─────────┴────────┴──────┘
 7003 of 7004 names free
 $ dg task
