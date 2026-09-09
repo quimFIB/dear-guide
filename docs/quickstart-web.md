@@ -368,21 +368,21 @@ them apart.
 - **Start it** → `DOING`.
 - **Mark done** needs an outcome — a path, a PR, a measurement. The form
   refuses without one, as `dg task done` does: a `DONE` task with no outcome is
-  a record of nothing. The box takes more than one line.
+  a record of nothing. The box takes more than one line, and **Compose in
+  emacs** beside it opens the buffer `dg task done --edit` opens — the outcome
+  field with what the task unblocks and the decision it was for beside it —
+  and fills the box with what you wrote; **Mark done** is still the door. A
+  field you can compose at the terminal you can compose here: the pair is the
+  unit, so neither surface gets the editor for a field without the other.
 - **Park it** is the one to reach for when nobody is doing this right now but
   nobody has given up. It settles nothing downstream — everything that waited
   on the task goes on waiting.
 - **Drop it** says the work is not happening, and releases what waited on it.
   That is the only difference between the two buttons.
-- One **Compose in emacs** sits above the three boxes and opens one buffer
-  with three fields — Outcome, Why parked, Why dropped — seeded from the boxes
-  and filled back into them. Fill the one you mean, then press the button for
-  that act; the other two boxes are discarded. The CLI composes the same three
-  fields one act at a time, `dg task done`, `park` and `drop` with `--edit`,
-  each in its own buffer: a field you can compose at the terminal you can
-  compose here, and neither surface gets the editor for a field without the
-  other. The verdicts a drop asks about other work are not in the buffer; they
-  are asked after **Drop it**, as they are flags at the terminal.
+- Each reason has its own **Compose in emacs**, as Outcome does: `dg task park
+  --edit` and `dg task drop --edit` from the browser, filling the box for the
+  button to stage. The verdicts a drop asks about other work are not in the
+  buffer; they are asked after **Drop it**, as they are flags at the terminal.
 
 **Reword this record**, folded shut under the buttons, corrects the title, the
 area or the note — `dg amend`'s op, through the same rules. Blank fields are
