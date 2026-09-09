@@ -368,7 +368,12 @@ them apart.
 - **Start it** → `DOING`.
 - **Mark done** needs an outcome — a path, a PR, a measurement. The form
   refuses without one, as `dg task done` does: a `DONE` task with no outcome is
-  a record of nothing.
+  a record of nothing. The box takes more than one line, and **Compose in
+  emacs** beside it opens the buffer `dg task done --edit` opens — the outcome
+  field with what the task unblocks and the decision it was for beside it —
+  and fills the box with what you wrote; **Mark done** is still the door. A
+  field you can compose at the terminal you can compose here: the pair is the
+  unit, so neither surface gets the editor for a field without the other.
 - **Park it** is the one to reach for when nobody is doing this right now but
   nobody has given up. It settles nothing downstream — everything that waited
   on the task goes on waiting.

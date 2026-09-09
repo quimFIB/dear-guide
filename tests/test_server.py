@@ -2115,9 +2115,60 @@ def test_amend_compose_returns_a_tasks_done_when(srv, dual, monkeypatch):
 
 
 def test_task_compose_refuses_an_op_it_cannot_compose(srv, dual):
+    """`set_status` is what a composed `done` becomes, not what the page asks
+    for: the route takes named acts, as the decision route takes `close`."""
     code, body = jreq(srv, "/api/compose", "POST",
                       {"store": "tasks", "op": "set_status"})
     assert code == 400 and "cannot compose" in body["error"]
+
+
+def test_done_compose_returns_a_multiline_outcome_and_stages_nothing(
+        srv, dual, monkeypatch):
+    """T142, on D121: the browser half of `dg task done --edit`. The outcome
+    comes back for the box to hold — two paragraphs, since the record takes
+    them and the box is a textarea now — and nothing is staged (D99). The
+    buffer is org, so the op carries `format` for the page to carry to the
+    stage, as `carryAmend` does for an amend."""
+    monkeypatch.setattr(editor, "launch_gui", _fill_task(
+        Outcome="Bench table in results/bench.md.\n\n2.1x faster warm, no "
+                "change cold."))
+    code, body = jreq(srv, "/api/compose", "POST",
+                      {"store": "tasks", "op": "done", "vertex": "T04"})
+    assert code == 200, body
+    f = body["fields"]
+    assert f["op"] == "set_status" and f["task"] == "T04"
+    assert f["status"] == "DONE"
+    assert f["outcome"] == ("Bench table in results/bench.md.\n\n2.1x faster "
+                            "warm, no change cold.")
+    assert f["format"] == "org"
+    assert pending.load(task_pending.path()) == [], "compose must not stage"
+
+
+def test_done_compose_seeds_the_buffer_with_what_the_box_held(
+        srv, dual, monkeypatch):
+    """What was typed into the box before Compose travels into the buffer, as
+    the CLI's `-o` does with `--edit`: switching to the editor mid-thought
+    costs nothing."""
+    seen = {}
+
+    def launch(path):
+        seen["text"] = path.read_text(encoding="utf-8")
+        return 0
+    monkeypatch.setattr(editor, "launch_gui", launch)
+    code, body = jreq(srv, "/api/compose", "POST",
+                      {"store": "tasks", "op": "done", "vertex": "T04",
+                       "seed": {"outcome": "half an outcome"}})
+    assert code == 200, body
+    assert "half an outcome" in seen["text"]
+    # Left as seeded is left unchanged, and an unchanged buffer is a cancel —
+    # the rule `dg task done -o … --edit` has, and the page's hint says.
+    assert "aborted" in body and "fields" not in body
+
+
+def test_done_compose_refuses_an_unknown_task(srv, dual):
+    code, body = jreq(srv, "/api/compose", "POST",
+                      {"store": "tasks", "op": "done", "vertex": "T99"})
+    assert code == 400 and "unknown task" in body["error"]
 
 
 def test_the_new_task_form_and_reword_form_carry_a_compose_button():
@@ -2132,6 +2183,21 @@ def test_the_new_task_form_and_reword_form_carry_a_compose_button():
     amend = html.split("function amendForm")[1].split("\nfunction amendOp")[0]
     assert 'composeBtn("doComposeAmend")' in amend
     assert "composeAmend" in html and "carryAmend" in html
+
+
+def test_the_task_panels_outcome_is_a_textarea_with_a_compose_button():
+    """T142, on D121: the one prose field the CLI composed and the browser did
+    not. Pinned as the other two are — and the box is a textarea, since an
+    `<input>` cannot hold the two-paragraph outcome `dg task done --edit`
+    stores, and the browser must not stage a narrower record than the CLI
+    for the same field."""
+    html = (server.STATIC / "app.html").read_text(encoding="utf-8")
+    panel = html.split("/* ---- the task panel")[1].split(
+        "/* ---- structure: prerequisites")[0]
+    assert '<textarea id="outcome"' in panel
+    assert '<input id="outcome"' not in panel
+    assert 'composeBtn("doComposeDone")' in panel
+    assert "composeDone" in html and "carryDone" in html
 
 
 def test_edit_route_revises_an_add_task_with_its_premise_and_edges_whole(

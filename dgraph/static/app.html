@@ -374,6 +374,10 @@ let COMPOSED=null;
    be staged onto another, and cleared when its form is rebuilt or staged. */
 let COMPOSED_ADD=null;
 let COMPOSED_AMEND=null;
+/* And for the task panel's Outcome (T142, on D121): the box shows the outcome
+   itself, so only the buffer's `format` needs carrying — an org outcome
+   composed in emacs must not be stored as markdown. Keyed to the task. */
+let COMPOSED_DONE=null;
 const POLL_EVERY = 4000;
 let tab="decisions";
 const TASK_COLOR = {TODO:"var(--warn)", DOING:"var(--accent)",
@@ -2542,9 +2546,15 @@ function taskPanel(){
   }else if(x.status==="TODO" || x.status==="DOING"){
     if(x.status==="TODO")
       h+=`<p style="margin:0 0 10px"><button class="ghost" id="doStart">Start it</button></p>`;
+    /* A textarea, not an input: the record takes a multi-line outcome and the
+       CLI composes one (`dg task done --edit`), so a one-line box here would
+       stage a narrower record than the same field takes at the terminal
+       (D121). The Compose button is the same door the CLI's --edit opens. */
     h+=`<label>Outcome — what this work produced</label>
-      <input id="outcome" placeholder="a path, a PR, a measurement">
-      <p style="margin:10px 0"><button class="primary" id="doDone">Mark done</button></p>
+      <textarea id="outcome" placeholder="a path, a PR, a measurement"></textarea>
+      <p style="margin:10px 0"><button class="primary" id="doDone">Mark done</button>
+      ${composeBtn("doComposeDone")}</p>
+      ${composeKeys()}
       <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
       <label>Or put it down — what stopped it?</label>
       <input id="pwhy" placeholder="what you are stuck on">
@@ -2584,14 +2594,17 @@ function taskPanel(){
               date:`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`});
   });
   $("#doDrop")&&($("#doDrop").onclick=()=>askFallout(tsel));
+  $("#doComposeDone")&&($("#doComposeDone").onclick=()=>composeDone(tsel));
   $("#doDone")&&($("#doDone").onclick=()=>{
     const o=$("#outcome").value.trim();
     /* `dg task done` requires it, so the form does too — a DONE task with no
        outcome is a record of nothing. */
     if(!o){ say("An outcome is required: what did this produce?","bad"); return; }
     const dt=new Date(), pad=n=>String(n).padStart(2,"0");
-    postTask({op:"set_status",task:tsel,status:"DONE",outcome:o,
-              done:`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`});
+    const op={op:"set_status",task:tsel,status:"DONE",outcome:o,
+              done:`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`};
+    carryDone(op, tsel);
+    postTask(op);
   });
   $("#side").addEventListener("input", captureDraft);
   $("#side").addEventListener("change", captureDraft);
@@ -2723,6 +2736,53 @@ async function composeAmend(store, id){
   finally{
     EDITING=null;
     const b2=$("#doComposeAmend"), s2=$("#doAmend");
+    if(b2) b2.disabled=false; if(s2) s2.disabled=false;
+  }
+}
+
+/* Put back the one field the Outcome box has no input for that a composed
+   done carries (`T142`): the buffer's `format`, so an org outcome is stored as
+   org. Keyed to the task it was composed against and consumed once, like
+   `carryAmend`. The outcome itself is the reader's, read straight off the box
+   — they may have edited it after the fill, and the box is the staging door. */
+function carryDone(op, id){
+  if(!(COMPOSED_DONE && COMPOSED_DONE.id===id)) return;
+  if(COMPOSED_DONE.format!==undefined && op.format===undefined) op.format=COMPOSED_DONE.format;
+  COMPOSED_DONE=null;
+}
+
+/* Compose the outcome in an editor, then fill the box (`T142`, on `D121` and
+   `D99`): the browser half of `dg task done --edit`. The buffer is the one the
+   CLI writes — the outcome field with the task's own context beside it, what
+   it unblocks and the decision it was for — seeded with whatever the box
+   already holds, so switching to the editor mid-thought costs nothing. On exit
+   the outcome fills the box and nothing is staged; Mark done is the door. */
+async function composeDone(id){
+  const btn=$("#doComposeDone"), stage=$("#doDone");
+  const seed=$("#outcome")?$("#outcome").value.trim():"";
+  EDITING={vertex:id, kind:"done"};
+  if(btn) btn.disabled=true; if(stage) stage.disabled=true;
+  say(ED.emacs
+      ? "emacs is open. Write the outcome there, then C-c C-c to bring it into the box, or C-c C-k to cancel."
+      : `${ED.name||"The editor"} is open. Save and exit to bring the outcome back into the box, or leave it unchanged to cancel.`,
+      "wait", id);
+  try{
+    const r=await api("/api/compose",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({store:"tasks", op:"done", vertex:id,
+                           seed: seed?{outcome:seed}:null})});
+    if(r.aborted)
+      say(`Cancelled in the editor — ${r.aborted}. What you typed here is still here.`,"",id);
+    else{
+      const f=r.fields||{};
+      if(f.outcome!==undefined && $("#outcome")){ $("#outcome").value=f.outcome; captureDraft(); }
+      COMPOSED_DONE={id, format:f.format};
+      say("Filled the outcome from the editor — review it and press Mark done.","ok",id);
+    }
+  }catch(err){ say(err.message,"bad",id); }
+  finally{
+    EDITING=null;
+    const b2=$("#doComposeDone"), s2=$("#doDone");
     if(b2) b2.disabled=false; if(s2) s2.disabled=false;
   }
 }

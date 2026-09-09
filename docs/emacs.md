@@ -117,9 +117,12 @@ emacs and revised in vim arrives as markdown, and goes back as markdown.
 ## From the browser
 
 Clicking **Compose in emacs** in the panel opens the same org buffer described
-above — the browser writes it, waits, and stages what emacs sends back. Anything
-already typed into the form carries over, so switching editors mid-thought costs
-nothing. [`demo/`](../demo/) is a self-contained walkthrough over a graph
+above — the browser writes it, waits, and fills the form with what emacs sends
+back; the form's own button stages. Anything already typed into the form
+carries over, so switching editors mid-thought costs nothing. Every button
+answers a `--edit` on the CLI side — the decision forms, the new-task and
+Reword forms, and the task panel's Outcome, which is `dg task done --edit` from
+the browser — and a field gets the editor on both surfaces or on neither. [`demo/`](../demo/) is a self-contained walkthrough over a graph
 arranged so that every kind of record here — a reversal, a reopen, a park, a
 drop, evidence that landed late — is in it somewhere, and this button is one of
 the things it shows:

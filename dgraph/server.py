@@ -1948,16 +1948,23 @@ class Handler(BaseHTTPRequestHandler):
     def _compose_task(self, body: dict) -> None:
         """`_compose`'s twin for the task store (`T108`, `T110`).
 
-        Composes an `add_task` (the new-task form's Compose button) or an
-        `amend` (the shared Reword form's) and hands the parsed fields back to
+        Composes an `add_task` (the new-task form's Compose button), an
+        `amend` (the shared Reword form's) or a `done` (the task panel's
+        Compose beside Outcome, `T142`) and hands the parsed fields back to
         the page. It does not stage, for the reason `_compose` gives: the
         form is the guarantee, the buffer is best-effort (`D99`). An
         `add_task` comes back as a group — the task op and its edges — so its
         fields are flattened for the one form that fills from them; an amend
-        is one op.
+        or a done is one op.
+
+        `done` is a named act, as the decision route's `close` and `reopen`
+        are, not the `set_status` it becomes: the CLI composes the outcome
+        with `dg task done --edit`, and `D121` says a prose field gets the
+        editor on both surfaces or on neither. What was already typed into
+        the box travels in as the seed, as the other two do with theirs.
         """
         kind = body.get("op")
-        if kind not in ("add_task", "amend"):
+        if kind not in ("add_task", "amend", "done"):
             return self._json({"error": f"cannot compose {kind!r}"}, 400)
         proj = project.find()
         if not proj.has_tasks:
@@ -1976,9 +1983,18 @@ class Handler(BaseHTTPRequestHandler):
                     launcher=editor.launch_gui,
                     dialect=editor.gui_dialect())
                 fields = self._add_task_fields(ops)
-            else:
+            elif kind == "amend":
                 ops = task_editor.compose_amend(
                     tg, g, body.get("vertex"),
+                    launcher=editor.launch_gui,
+                    dialect=editor.gui_dialect())
+                fields = ops[0] if ops else {}
+            else:
+                tid = body.get("vertex")
+                if tid not in tg.tasks:
+                    return self._json({"error": f"unknown task {tid!r}"}, 400)
+                ops = task_editor.compose_done(
+                    tg, g, tid, seed=body.get("seed") or None,
                     launcher=editor.launch_gui,
                     dialect=editor.gui_dialect())
                 fields = ops[0] if ops else {}
