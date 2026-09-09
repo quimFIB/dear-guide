@@ -451,9 +451,10 @@ want(side.innerHTML, ["nId","nTitle","nArea","nStatus","nAfter",
 if (!side.innerHTML.includes(\`value="\${G.next_id}"\`))
   throw new Error("the id was not prefilled with " + G.next_id);
 G.areas.forEach(a => {
-  if (!side.innerHTML.includes(\`<option value="\${a}">\`))
+  if (!side.innerHTML.includes(\`name="nArea" value="\${a}"\`))
     throw new Error("area missing from the form: " + a);
 });
+if (!side.innerHTML.includes("picker-new")) throw new Error("no row to file a new area");
 tab = "tasks";
 newTaskForm();
 want(side.innerHTML, ["nId","nTitle","nArea","nAfter","nDuring","nBecause",
@@ -528,20 +529,21 @@ relateFallout().then(() => {
   if (!side.innerHTML.includes(\`placeholder="\${rec.title}"\`))
     throw new Error(store + ": the title is not offered as a placeholder");
   areas.forEach(a => {
-    if (!side.innerHTML.includes(\`<option value="\${a}">\`))
+    if (!side.innerHTML.includes(\`name="amArea" value="\${a}"\`))
       throw new Error(store + ": area missing from the form: " + a);
   });
+  $("#amArea").querySelectorAll = () => [];          // nothing picked
   const untouched = amendOp(key, rec.id);
   if (Object.keys(untouched).length !== 2)
     throw new Error(store + ": an untouched form built " +
                     JSON.stringify(untouched));
   held.amTitle.value = "  Reworded  ";
-  held.amArea.value = areas[0];
+  $("#amArea").querySelectorAll = () => [{value: areas[0]}];   // one row picked
   const op = amendOp(key, rec.id);
   if (op.op !== "set_fields" || op[key] !== rec.id || op.title !== "Reworded"
       || op.area !== areas[0] || "note" in op)
     throw new Error(store + ": read back as " + JSON.stringify(op));
-  held.amTitle.value = ""; held.amArea.value = "";
+  held.amTitle.value = ""; $("#amArea").querySelectorAll = () => [];
 });
 console.log("ok");
 `;

@@ -2222,4 +2222,4 @@ def test_a_new_form_starts_with_an_empty_area_box():
     offered nothing; the record's area is a choice, not a default."""
     html = (server.STATIC / "app.html").read_text(encoding="utf-8")
     fn = html.split("function areaField")[1].split("\n}")[0]
-    assert "known[0]" not in fn and 'value="${esc(current||"")}"' in fn
+    assert 'vocabPicker("nArea", known, current' in fn and "known[0]" not in fn

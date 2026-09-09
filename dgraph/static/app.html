@@ -186,6 +186,7 @@
   .picker-list label.off{display:none}
   .picker-list input{width:auto;margin:0 6px 0 0;vertical-align:middle}
   .picker-count{font-size:11px;color:var(--dim);margin:3px 0 6px}
+  .picker-new i{font-style:normal;font-weight:600}
   /* A disclosure for a control that is rarely wanted: the chip is the
      summary, the control is behind it. */
   details.more>summary{list-style:none;display:inline-block;margin:4px 0}
@@ -2066,8 +2067,18 @@ function bindPickers(){
     const say=()=>{ const v=pickerValues(p.id);
       const txt = v.length ? `picked: ${v.join(", ")}` : "none picked";
       if(count.textContent!==txt) count.textContent = txt; };
+    const nr=p.querySelector(".picker-new");
     q.oninput=()=>{ const t=q.value.trim().toLowerCase();
-      labels.forEach(l=>l.classList.toggle("off", !!t && !l.textContent.toLowerCase().includes(t))); };
+      labels.forEach(l=>{ if(l!==nr) l.classList.toggle("off", !!t && !l.textContent.toLowerCase().includes(t)); });
+      if(nr){
+        /* The typed row: hidden while the box is empty or names a value that
+           is already a row, else offered with the text as its value. */
+        const raw=q.value.trim();
+        const known=labels.filter(l=>l!==nr).map(l=>l.querySelector("input").value.toLowerCase());
+        nr.classList.toggle("off", !raw || known.includes(raw.toLowerCase()));
+        nr.querySelector("input").value=raw; nr.querySelector("i").textContent=raw;
+        say();
+      } };
     p.onchange=say; say();
   });
 }
@@ -2077,6 +2088,52 @@ function idOptions(rows, idKey, titleKey){
     esc(r[titleKey])}</option>`).join("");
 }
 
+
+/* A control over a vocabulary (D109): the picker `Rests on` uses — a filter
+   box, one row per known value, radio rows for one value or checkbox rows for
+   several — plus a last row that files the typed text as a new value. The
+   datalist it replaces filtered itself down to nothing when prefilled and
+   offered nothing to click; a select could not name a new area at all. The
+   known values come from both stores (`knownAreas`, `knownTags`), and the
+   similarity override checkbox stays beside the picker: the staging door
+   still refuses a near-miss of a value in use unless it is ticked. */
+function vocabPicker(id, known, current, opts){
+  const o = opts||{}, single = o.single!==false, noun = o.noun||"value";
+  const kind = single ? `type="radio" name="${esc(id)}"` : `type="checkbox"`;
+  const cur = new Set(current ? [].concat(current) : []);
+  const rows = known.map(v=>
+    `<label><input ${kind} value="${esc(v)}"${cur.has(v)?" checked":""}> ${esc(v)}</label>`).join("");
+  return `<div class="picker vocab" id="${esc(id)}">
+    <input class="picker-q" placeholder="filter, or type a new ${esc(noun)}…" autocomplete="off">
+    <div class="picker-list">${single
+      ? `<label><input ${kind} value=""${cur.size?"":" checked"}> <span class="muted">${esc(o.none||"— none —")}</span></label>` : ""
+    }${rows}<label class="picker-new off"><input ${kind} value=""> <span class="muted">add “<i></i>” as a new ${esc(noun)}</span></label></div>
+    <div class="picker-count"></div></div>`;
+}
+/* One value from a single picker, or "" — the Area readers. */
+function vocabValue(id){ return pickerValues(id)[0]||""; }
+/* Every value from a multi picker, the typed row split on commas — Tags. */
+function vocabValues(id){
+  return pickerValues(id).flatMap(v=>v.split(",")).map(s=>s.trim()).filter(Boolean);
+}
+/* Fill a picker from a Compose or a record: known values are ticked, an
+   unknown one goes on the typed row and is ticked there. */
+function setVocab(id, values){
+  const p=$("#"+id); if(!p) return;
+  const want=[].concat(values||[]).filter(Boolean);
+  const known=new Set([...p.querySelectorAll("label:not(.picker-new) input")].map(i=>i.value).filter(Boolean));
+  setPicker(id, want.filter(v=>known.has(v)));
+  const fresh=want.filter(v=>!known.has(v));
+  const q=p.querySelector(".picker-q"), nr=p.querySelector(".picker-new");
+  if(fresh.length && nr){
+    q.value=fresh.join(", "); q.dispatchEvent(new Event("input"));
+    nr.querySelector("input").checked=true;
+    p.dispatchEvent(new Event("change"));
+  }
+}
+function knownTags(){
+  return [...new Set([...(G&&G.tags?G.tags:[]), ...(T&&T.tags?T.tags:[])])];
+}
 
 /* An area control that can name an area nobody has used yet.
    Areas accumulate — the store's `areas` list is a registry, not a whitelist —
@@ -2094,12 +2151,8 @@ function idOptions(rows, idKey, titleKey){
    "scope" until it was deleted, and travelled into the compose buffer as if
    somebody had chosen it (T130, met running T125). */
 function areaField(known, current){
-  const id = "areaOptions";
-  const opts = known.map(a=>`<option value="${esc(a)}"></option>`).join("");
   return `<label>Area</label>
-    <input id="nArea" list="${id}" value="${esc(current||"")}"
-           placeholder="one in use, or a new one">
-    <datalist id="${id}">${opts}</datalist>
+    ${vocabPicker("nArea", known, current, {single:true, noun:"area"})}
     <label style="font-weight:normal;display:flex;gap:6px;align-items:center">
       <input type="checkbox" id="nNewArea">
       <span class="muted">it is a new area, even if it resembles one in
@@ -2119,7 +2172,7 @@ function tagPills(tags){
    `--new-tag`, and it is the same rule the CLI has. */
 function tagsField(){
   return `<label>Tags — words this is filed under beside its area (optional)</label>
-    <input id="nTags" placeholder="e.g. perf, recall">
+    ${vocabPicker("nTags", knownTags(), [], {single:false, noun:"tag"})}
     <label style="font-weight:normal;display:flex;gap:6px;align-items:center">
       <input type="checkbox" id="nNewTag">
       <span class="muted">a new tag is meant, even if it resembles one in
@@ -2174,8 +2227,8 @@ async function stageNewDecision(){
      as `T108` for a task): read once and cleared. */
   const c=COMPOSED_ADD; COMPOSED_ADD=null;
   await postNew("/api/add", {
-    id, title, area:$("#nArea").value.trim(), new_area:$("#nNewArea").checked,
-    tags:$("#nTags").value, new_tag:$("#nNewTag").checked,
+    id, title, area:vocabValue("nArea"), new_area:$("#nNewArea").checked,
+    tags:vocabValues("nTags").join(","), new_tag:$("#nNewTag").checked,
     status,
     after:pickerValues("nAfter"),
     note:$("#nNote").value.trim()||null,
@@ -2192,9 +2245,9 @@ async function stageNewDecision(){
 async function composeNewDecision(){
   const seed={
     id:$("#nId").value.trim(), title:$("#nTitle").value.trim(),
-    area:$("#nArea").value.trim(), note:$("#nNote").value.trim(),
+    area:vocabValue("nArea"), note:$("#nNote").value.trim(),
     status:$("#nStatus").value,
-    tags:$("#nTags").value.split(",").map(s=>s.trim()).filter(Boolean),
+    tags:vocabValues("nTags"),
     after:pickerValues("nAfter"),
   };
   const go=$("#nGo"), cmp=$("#nCompose");
@@ -2215,9 +2268,9 @@ async function composeNewDecision(){
       const f=r.fields||{};
       if(f.id!==undefined) $("#nId").value=f.id;
       if(f.title!==undefined) $("#nTitle").value=f.title;
-      if(f.area!==undefined) $("#nArea").value=f.area;
+      if(f.area!==undefined) setVocab("nArea", [f.area]);
       if(f.note!==undefined) $("#nNote").value=f.note||"";
-      if(f.tags!==undefined) $("#nTags").value=(f.tags||[]).join(", ");
+      if(f.tags!==undefined) setVocab("nTags", f.tags||[]);
       if(f.status!==undefined && $("#nStatus").querySelector(`option[value="${f.status}"]`))
         $("#nStatus").value=f.status;
       setPicker("nAfter", f.after||[]);
@@ -2280,9 +2333,9 @@ async function stageNewTask(){
      of a hand-typed task does not resurrect a composed definition-of-done. */
   const c=COMPOSED_ADD; COMPOSED_ADD=null;
   await postNew("/api/add-task", {
-    id, title, area:$("#nArea").value.trim(),
+    id, title, area:vocabValue("nArea"),
     new_area:$("#nNewArea").checked,
-    tags:$("#nTags").value, new_tag:$("#nNewTag").checked,
+    tags:vocabValues("nTags").join(","), new_tag:$("#nNewTag").checked,
     after:pickerValues("nAfter"),
     discovered_during:pickerValues("nDuring"),
     /* A set, joined the way the CLI's `--because D01,D05` arrives. The server
@@ -2306,8 +2359,8 @@ async function stageNewTask(){
 async function composeNewTask(){
   const seed={
     id:$("#nId").value.trim(), title:$("#nTitle").value.trim(),
-    area:$("#nArea").value.trim(), note:$("#nNote").value.trim(),
-    tags:$("#nTags").value.split(",").map(s=>s.trim()).filter(Boolean),
+    area:vocabValue("nArea"), note:$("#nNote").value.trim(),
+    tags:vocabValues("nTags"),
     after:pickerValues("nAfter"), discovered_during:pickerValues("nDuring"),
     because:$("#nBecause")?pickerValues("nBecause").join(","):"",
     evidence_for:$("#nEvidence")?(pickerValues("nEvidence")[0]||""):"",
@@ -2330,9 +2383,9 @@ async function composeNewTask(){
       const f=r.fields||{};
       if(f.id!==undefined) $("#nId").value=f.id;
       if(f.title!==undefined) $("#nTitle").value=f.title;
-      if(f.area!==undefined) $("#nArea").value=f.area;
+      if(f.area!==undefined) setVocab("nArea", [f.area]);
       if(f.note!==undefined) $("#nNote").value=f.note||"";
-      if(f.tags!==undefined) $("#nTags").value=(f.tags||[]).join(", ");
+      if(f.tags!==undefined) setVocab("nTags", f.tags||[]);
       setPicker("nAfter", f.after||[]);
       setPicker("nDuring", f.discovered_during||[]);
       if($("#nBecause")) setPicker("nBecause", f.because||[]);
@@ -2582,18 +2635,14 @@ let RELATING=null;   /* {store, id, verb} while a structure form is open */
    cost is that a note cannot be emptied from here — `dg amend D07 --note ""`
    can, and clearing prose is rare enough not to earn a second control. */
 function amendForm(areas, rec){
-  /* A datalist rather than a select, for the reason `areaField` gives — areas
-     accumulate, so a correction may name one nobody has used yet. Blank still
-     means unchanged, which is why the field is empty rather than prefilled
-     with the record's current area. */
-  const opts=areas.map(a=>
-    `<option value="${esc(a)}"></option>`).join("");
+  /* The vocabulary picker (`D109`), with nothing picked meaning unchanged —
+     the record's own area is the placeholder, never a picked row, for the
+     reason the title is a placeholder: a picked row would read as a draft. */
   return `<details><summary class="muted">Reword this record</summary>
     <label>Title — blank leaves it as it is</label>
     <input id="amTitle" placeholder="${esc(rec.title)}">
-    <label>Area — blank leaves it as it is</label>
-    <input id="amArea" list="amAreaOptions" placeholder="${esc(rec.area)}">
-    <datalist id="amAreaOptions">${opts}</datalist>
+    <label>Area — none picked leaves it as ${esc(rec.area)}</label>
+    ${vocabPicker("amArea", areas, null, {single:true, noun:"area", none:"— unchanged —"})}
     <label style="font-weight:normal;display:flex;gap:6px;align-items:center">
       <input type="checkbox" id="amNewArea">
       <span class="muted">it is a new area, even if it resembles one in
@@ -2617,7 +2666,7 @@ function amendForm(areas, rec){
    the same reading `dg amend` makes: the caller has usually lost track. */
 function amendOp(key, id){
   const op={op:"set_fields", [key]:id};
-  const title=$("#amTitle").value.trim(), area=$("#amArea").value.trim(),
+  const title=$("#amTitle").value.trim(), area=vocabValue("amArea"),
         note=$("#amNote").value.trim();
   if(title) op.title=title;
   if(area) op.area=area;
@@ -2665,7 +2714,7 @@ async function composeAmend(store, id){
     else{
       const f=r.fields||{};
       if(f.title!==undefined) $("#amTitle").value=f.title;
-      if(f.area!==undefined) $("#amArea").value=f.area;
+      if(f.area!==undefined) setVocab("amArea", [f.area]);
       if(f.note!==undefined && f.note!==null) $("#amNote").value=f.note;
       COMPOSED_AMEND={id, rule:f.rule, done_when:f.done_when, format:f.format};
       say("Filled the correction from the editor — review it and press Stage the correction.","ok",id);

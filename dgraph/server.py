@@ -106,6 +106,15 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 _editing = threading.Lock()
 
 
+def _tag_vocab(tag_lists) -> list[str]:
+    """Every tag any record carries, once, in the order first seen."""
+    seen: dict[str, None] = {}
+    for tags in tag_lists:
+        for t in tags or ():
+            seen.setdefault(t, None)
+    return list(seen)
+
+
 def graph_payload(g: Graph) -> dict:
     d = g.to_dict()
     # The registry, not the declared list. `areas` accumulates and a record may
@@ -114,6 +123,9 @@ def graph_payload(g: Graph) -> dict:
     # used — otherwise a record renders in an unlisted colour the legend has no
     # row for, and the area field cannot offer an area that is plainly in use.
     d["areas"] = areas.registry(g.areas, g.vertices.values())
+    # The tag vocabulary, for the page's picker (`D109`): what is in use,
+    # union of every record's tags, in first-seen order like the areas.
+    d["tags"] = _tag_vocab(v.tags for v in g.vertices.values())
     # Three things this block wants for *every* vertex, each of which was being
     # recomputed from scratch per vertex. At 1,000 vertices the payload took
     # 139.8 s to build, 99.2 of them in `depth` and 42.2 in
@@ -333,6 +345,7 @@ def task_payload(tg: TaskGraph, g: Graph | None) -> dict:
     d = tg.to_dict()
     # `graph_payload`'s twin — the registry, not the declared list. See there.
     d["areas"] = areas.registry(tg.areas, tg.tasks.values())
+    d["tags"] = _tag_vocab(t.tags for t in tg.tasks.values())
     depth = task_depth(tg)
     d["derived"] = {
         tid: {
