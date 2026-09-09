@@ -36,7 +36,7 @@ from pathlib import Path
 
 from dgraph import areas, mdbuffer, orgmd, pending, project, ranges
 from dgraph import tags as _tags
-from dgraph.model import Graph, probe_fault, status_fault
+from dgraph.model import Graph, probe_fault, status_fault, idkey
 
 ELISP = Path(__file__).resolve().parent / "elisp" / "dgraph.el"
 
@@ -239,7 +239,7 @@ def render_close(g: Graph, vid: str, seed: dict | None = None) -> str:
     v = g.vertices[vid]
     linked = set(g.children(vid))
     boxes = []
-    for other in sorted(g.vertices):
+    for other in sorted(g.vertices, key=idkey):
         if other == vid:
             continue
         mark = "X" if other in linked or other in (seed.get("to") or []) else " "
@@ -326,7 +326,8 @@ def amend_seed(g: Graph, vid: str) -> dict:
     `compose` builds it where no seed was given."""
     v = g.vertices[vid]
     return {"title": v.title, "area": v.area, "note": v.note or "",
-            "rule": v.rule or "", "format": v.format}
+            "rule": v.rule or "", "tags": list(v.tags or ()),
+            "format": v.format}
 
 
 def render_amend(g: Graph, vid: str, seed: dict | None = None) -> str:
@@ -349,6 +350,9 @@ def render_amend(g: Graph, vid: str, seed: dict | None = None) -> str:
         + _field("Title", "How the question is referred to — not a claim it "
                           "makes.", s["title"])
         + _field("Area", "One area, or a new one; areas accumulate.", s["area"])
+        + _field("Tags", "Comma-separated words this is filed under beside its "
+                         "area. The whole set: empty drops every tag.",
+                 ", ".join(s.get("tags") or ()))
         + _field("Note", "What is undecided, and why. Prose; may be emptied.",
                  s.get("note") or "")
         + _field("Rule", "What would settle this, in prose. May be emptied.",
@@ -659,7 +663,7 @@ def gui_dialect() -> str:
 ALLOWED = {
     "close": {"answer", "source", "falsifier", "opens", "summary", "probe"},
     "reprobe": {"probe"},
-    "amend": {"title", "area", "note", "rule"},
+    "amend": {"title", "area", "note", "rule", "tags"},
     "reopen": {"why", "summary"},
     "add_vertex": {"id", "title", "area", "status", "after", "note", "probe",
                    "rule", "tags"},
@@ -757,6 +761,13 @@ def _parse_amend(g: Graph, meta: dict, f: dict, tag: str | None = "org") -> list
             current = (current or "").strip()
         if new != current:
             op[field] = new if new or field in ("title", "area") else None
+    # Tags are the whole set, as `dg amend --tag/--untag` stages them: the
+    # buffer shows what the record holds and what comes back replaces it. The
+    # slot was missing from this buffer while the flags and the add buffer
+    # both had it — audit `AD-F3`.
+    tags = _tags.clean(f["tags"]) if f.get("tags", "").strip() else []
+    if tags != list(v.tags or ()):
+        op["tags"] = tags
     if len(op) == 2:
         raise EditorAbort("nothing changed — nothing staged")
     if tag and any(k in op for k in ("note", "rule")):

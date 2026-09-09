@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dgraph import cross, domains
-from dgraph.model import Graph
+from dgraph.model import Graph, idkey
 from dgraph.tasks import TaskGraph
 
 #: Above this many records with a pre-commitment, a bare `dg probe` prints
@@ -179,7 +179,7 @@ def rows(g: Graph | None, tg: TaskGraph | None,
         later = _later_ancestors(g, by_src, into)
         evidence = _evidence(tg)
         staged_d = _staged(d_ops or [], ("vertex", "from", "id"))
-        for vid in sorted(g.vertices):
+        for vid in sorted(g.vertices, key=idkey):
             v = g.vertices[vid]
             e = g.active_edge(vid, by_src)
             if e is not None and e.decided and (e.falsifier or e.probe):
@@ -201,7 +201,7 @@ def rows(g: Graph | None, tg: TaskGraph | None,
                                area=v.area))
     if tg is not None:
         staged_t = _staged(t_ops or [], ("task", "from", "id"))
-        for tid in sorted(tg.tasks):
+        for tid in sorted(tg.tasks, key=idkey):
             t = tg.tasks[tid]
             if t.unfinished and (t.done_when or t.probe):
                 p = t.probe

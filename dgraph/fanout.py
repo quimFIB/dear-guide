@@ -45,6 +45,7 @@ from pathlib import Path
 import json
 
 from dgraph import agents, areas as _env_areas, env as _env, limits, project
+from dgraph.model import idkey
 
 #: Where `dg-agent setup` writes, relative to the project root. Not
 #: `.dgraph-*`: those are scratch the `.gitignore` hides, and a filled prompt is
@@ -736,7 +737,7 @@ def readiness(proj: project.Project | None = None) -> list[Check]:
         from dgraph.model import Graph
         tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
         g = Graph.load(proj.store) if proj.has_decisions else None
-        ready = ([t for t in sorted(tg.tasks) if cross.ready(tg, g, t)]
+        ready = ([t for t in sorted(tg.tasks, key=idkey) if cross.ready(tg, g, t)]
                  if tg is not None and g is not None else [])
     except Exception:
         ready = []
@@ -1039,7 +1040,7 @@ def defaults(proj: project.Project | None = None) -> Plan:
         tg = TaskGraph.load(proj.tasks) if proj.has_tasks else None
         g = Graph.load(proj.store) if proj.has_decisions else None
         if tg is not None and g is not None:
-            ready = [t for t in sorted(tg.tasks) if cross.ready(tg, g, t)]
+            ready = [t for t in sorted(tg.tasks, key=idkey) if cross.ready(tg, g, t)]
             plan = replace(plan, focus=ready[:3])
     except Exception:
         pass

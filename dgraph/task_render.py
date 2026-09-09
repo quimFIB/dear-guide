@@ -24,6 +24,7 @@ from pathlib import Path
 from dgraph import areas as _areas
 from dgraph import orgmd, project
 from dgraph.tasks import TaskGraph, done_label, stop_label
+from dgraph.ids import idkey
 
 NONE = "—"
 
@@ -67,11 +68,11 @@ def _index(tg: TaskGraph, _adj=None) -> str:
         "|---|---|---|---|---|",
     ]
     order = _areas.order(tg.areas)
-    for t in sorted(tg.tasks.values(), key=lambda t: (order(t.area), t.id)):
+    for t in sorted(tg.tasks.values(), key=lambda t: (order(t.area), idkey(t.id))):
         waiting = ", ".join(tg.waiting_on(t.id, _adj)) or NONE
         rows.append(f"| {t.id} | {orgmd.cell(t.title)} | {t.status} | {waiting} "
                     f"| {', '.join(t.because) or NONE} |")
-    ready = ", ".join(t for t in sorted(tg.tasks) if tg.ready(t, _adj))
+    ready = ", ".join(t for t in sorted(tg.tasks, key=idkey) if tg.ready(t, _adj))
     rows.append("")
     # Qualified, because this file is rendered from one store: `tg.ready` means
     # "nothing outstanding in *this* graph", and a task whose premise is still

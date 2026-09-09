@@ -16,12 +16,14 @@ the previous markdown-native format.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dgraph import areas as _areas
 from dgraph import project
+from dgraph.ids import idkey  # noqa: F401 — re-exported
 from dgraph.probe import (Bind, Probe, bind_fault,  # noqa: F401 — re-exported
                           binds_fault, binds_from, binds_to, probe_args_limit,
                           probe_entry_fault, probe_fault, probes_from,
@@ -729,7 +731,8 @@ class Graph:
         vertices are affected — the same reason `waiting_on` has one
         implementation and three callers.
         """
-        decided = [(vid, v) for vid, v in sorted(self.vertices.items())
+        decided = [(vid, v) for vid, v in
+                   sorted(self.vertices.items(), key=lambda kv: idkey(kv[0]))
                    if v.base_status == "DECIDED"]
         if not decided:
             return []                      # as `stale_provisional`, same reason
@@ -743,8 +746,8 @@ class Graph:
 
     def frontier(self) -> list[str]:
         return sorted(
-            v.id for v in self.vertices.values() if v.base_status in UNSETTLED
-        )
+            (v.id for v in self.vertices.values() if v.base_status in UNSETTLED),
+            key=idkey)
 
     def depth(self, vid: str) -> int:
         """Longest path from any root — the rank used for graph layout."""

@@ -85,6 +85,7 @@ from dgraph.probe import (Bind, Probe, binds_fault, binds_from, binds_to,
                           probe_entry_fault, probes_from, probes_to,
                           split_known)
 from dgraph.violation import Violation, cycle_from
+from dgraph.ids import idkey
 
 STATUSES = ("TODO", "DOING", "PARKED", "DONE", "DROPPED")
 
@@ -698,7 +699,7 @@ class TaskGraph:
     def to_dict(self) -> dict:
         # `pending._register`'s twin reading — see `model.Graph.to_dict`.
         order = _areas.order(self.areas)
-        rows = sorted(self.tasks.values(), key=lambda t: (order(t.area), t.id))
+        rows = sorted(self.tasks.values(), key=lambda t: (order(t.area), idkey(t.id)))
         return {
             "areas": self.areas,
             "tasks": [
@@ -875,7 +876,8 @@ class TaskGraph:
 
     def frontier(self) -> list[str]:
         """Everything still outstanding, ready or not."""
-        return sorted(t.id for t in self.tasks.values() if t.unfinished)
+        return sorted((t.id for t in self.tasks.values() if t.unfinished),
+                      key=idkey)
 
     def counts(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -1049,7 +1051,7 @@ class TaskGraph:
         # it afterwards either: nothing in the CLI ever returns a task to TODO
         # (`dg task start` writes DOING), so a parked task can be picked back up
         # with its only prerequisite abandoned and no surface saying so.
-        for tid, t in sorted(self.tasks.items()):
+        for tid, t in sorted(self.tasks.items(), key=lambda kv: idkey(kv[0])):
             if t.status not in ("TODO", "PARKED"):
                 continue
             gone = self.dropped_prerequisites(tid, adj)

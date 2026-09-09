@@ -81,6 +81,10 @@ class Premise:
     #: Present because a premise that opened five questions is a load-bearing
     #: one, and that is invisible from the chain alone.
     also_opened: list[str] = field(default_factory=list)
+    #: Every decision this premise opens — `also_opened` plus the one the
+    #: chain was computed for. What the compact arrow line reads to draw an
+    #: arrow only where an edge is (`AD-F6`).
+    opens: list[str] = field(default_factory=list)
     #: True when this premise is itself unsettled or under review, which is the
     #: single most important thing about a chain: an answer resting on it is
     #: provisional whatever its own status says.
@@ -132,6 +136,7 @@ def _premise(g: Graph, aid: str, of: str, depth: int) -> Premise:
         # Only siblings of the node being explained, not every child: the
         # question is what else this premise is holding up alongside us.
         also_opened=[c for c in g.children(aid) if c != of],
+        opens=list(g.children(aid)),
         shaky=_base(v.status) in SHAKY,
     )
 
@@ -552,15 +557,28 @@ def _task_text(d: dict) -> str:
 # ---- the compact rendering -----------------------------------------------
 
 
-def _chain_arrow(ids: list[str], shaky: set[str], last: str) -> str:
+def _chain_arrow(ids: list[str], shaky: set[str], last: str,
+                 edges: set[tuple[str, str]] | None = None) -> str:
     """`D01 → D02 → D04! → T04` — the whole chain on one line.
 
     The schematic that makes the compact form worth reading: the shape of the
     reasoning, in the order it was built, with `!` on every link that does not
     hold. A reader who only takes one line from this command should take this
     one.
-    """
-    return " → ".join([f"{i}!" if i in shaky else i for i in ids] + [last])
+
+    An arrow is an edge. The chain is every ancestor by depth, and on a graph
+    that is not one path two neighbours in it need not be joined — `dg why`
+    on a vertex with two premises used to draw `D03 → D05` where the store
+    held no such edge. Where `edges` is given, a pair it lacks is joined by
+    `·` instead, and the legend says so. Audit `AD-F6`."""
+    names = [f"{i}!" if i in shaky else i for i in ids] + [last]
+    plain = ids + [last]
+    if edges is None:
+        return " → ".join(names)
+    out = names[0]
+    for a, b, name in zip(plain, plain[1:], names[1:]):
+        out += (" → " if (a, b) in edges else " · ") + name
+    return out
 
 
 def _fold(bits: list[str], prefix: str = "  ", blank: bool = False) -> list[str]:
@@ -580,22 +598,30 @@ def _fold(bits: list[str], prefix: str = "  ", blank: bool = False) -> list[str]
         subsequent_indent=" " * len(prefix))
 
 
-def _chain_lines(ids: list[str], shaky: set[str], last: str) -> list[str]:
+def _chain_lines(ids: list[str], shaky: set[str], last: str,
+                 edges: set[tuple[str, str]] | None = None) -> list[str]:
     """The arrow line, folded to the margin, with its legend where it fits.
 
     Ids are never clipped, so a chain seventeen deep folds rather than running
     — and the legend is what moves, because it explains the marks rather than
     carrying any.
     """
-    lines = textwrap.wrap("CHAIN  " + _chain_arrow(ids, shaky, last),
-                          COMPACT_WIDTH, subsequent_indent=" " * 7,
+    arrow = _chain_arrow(ids, shaky, last, edges)
+    lines = textwrap.wrap("CHAIN  " + arrow, COMPACT_WIDTH,
+                          subsequent_indent=" " * 7,
                           break_long_words=False, break_on_hyphens=False)
-    if not shaky:
+    legend = []
+    if shaky:
+        legend.append("! = not settled")
+    if " · " in arrow:
+        legend.append("· = not adjacent in the store")
+    if not legend:
         return lines
-    if len(lines[-1]) + 19 <= COMPACT_WIDTH:
-        lines[-1] += "    ! = not settled"
+    said = "    " + ", ".join(legend)
+    if len(lines[-1]) + len(said) <= COMPACT_WIDTH:
+        lines[-1] += said
     else:
-        lines.append(" " * 7 + "! = not settled")
+        lines.append(" " * 7 + said.strip())
     return lines
 
 
@@ -655,15 +681,22 @@ def compact(d: dict) -> str:
 
     chain_ids = [p["id"] for p in d["chain"]]
     shaky = set(d["shaky_premises"])
+    # The edges among the chain, read off each premise's `opens` — so the
+    # arrow line can draw an arrow only where the store holds one.
+    edges: set[tuple[str, str]] = set()
+    for p in d["chain"]:
+        for c in p.get("opens", ()):
+            edges.add((p["id"], c))
 
     premises = d["premises"] if d["kind"] == "task" else []
     for prem in premises:
         chain_ids = chain_ids + [prem["id"]]
+        edges.add((prem["id"], d["id"]))
         if _base(prem["status"]) in SHAKY:
             shaky.add(prem["id"])
 
     if chain_ids:
-        out += [""] + _chain_lines(chain_ids, shaky, d["id"])
+        out += [""] + _chain_lines(chain_ids, shaky, d["id"], edges)
         out += _c.listing([_premise_row(p) for p in d["chain"]],
                           width=COMPACT_WIDTH, prose_aside=True)
     elif d["kind"] == "decision":

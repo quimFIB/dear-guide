@@ -30,7 +30,7 @@ from dgraph import domains, probing
 from dgraph import integrate as integrate_mod
 from dgraph import task_pending, task_render
 from dgraph import query as _query
-from dgraph.model import Graph, probe_fault, spell_bind
+from dgraph.model import Graph, probe_fault, spell_bind, idkey
 from dgraph.model import rival_note as model_rival_note
 from dgraph.tasks import done_label
 from dgraph.tasks import ID_RE as TASK_ID_RE
@@ -5268,7 +5268,7 @@ def task_show(
     else:
         _task_listing(tg, waiting_for, staged)
 
-    ready = [tid for tid in sorted(tg.tasks)
+    ready = [tid for tid in sorted(tg.tasks, key=idkey)
              if tg.ready(tid) and not _gated_by(tg, g, tid)]
     con.print(f"[green]ready[/] {', '.join(ready) or '—'}")
     if fell_back:
@@ -5532,7 +5532,7 @@ def task_independent() -> None:
                   f"{project.STORE_NAME}")
         raise typer.Exit(1)
     from dgraph import cross
-    ready = [t for t in sorted(tg.tasks) if cross.ready(tg, g, t)]
+    ready = [t for t in sorted(tg.tasks, key=idkey) if cross.ready(tg, g, t)]
     if not ready:
         con.print("[bold]INDEPENDENT[/]  nothing is ready")
         return
@@ -5610,7 +5610,7 @@ def task_tree(root: str = typer.Argument(None, help="Task to root at")) -> None:
             raise typer.Exit(1)
         add(top, root)
     else:
-        roots = [t for t in sorted(tg.tasks)
+        roots = [t for t in sorted(tg.tasks, key=idkey)
                  if not tg.prerequisites(t) and not tg.discovered_during(t)]
         # A cycle with no root outside it leaves nothing to draw from; one
         # beside other work leaves the rest of the graph drawable and the cycle
@@ -5619,7 +5619,7 @@ def task_tree(root: str = typer.Argument(None, help="Task to root at")) -> None:
         if tg.tasks and not roots:
             con.print("[yellow]every task has something before it — the graph "
                       "has a cycle; `dg check` names it[/]")
-            roots = sorted(tg.tasks)
+            roots = sorted(tg.tasks, key=idkey)
         for r in roots:
             add(top, r)
         stranded = sorted(set(tg.tasks) - seen)
@@ -5723,7 +5723,7 @@ def task_edit_cmd(
     a derived or structural op is not edited here."""
     ops = pending.load(task_pending.path())
     try:
-        i = pending.resolve(ops, ref)
+        i = pending.resolve(ops, ref, listing="dg task pending")
     except LookupError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None

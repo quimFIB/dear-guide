@@ -31,6 +31,7 @@ from dgraph import areas, cross, editor, orgmd, pending, project, ranges
 from dgraph import tags as _tags
 from dgraph.editor import EditorAbort, EditorError
 from dgraph.model import Graph
+from dgraph.ids import idkey
 #: The prose a task's `format` covers. Imported rather than restated, and read
 #: by `_org` below: the list that decides when an op *claims* org and the list
 #: that decides what the store honours it for have to be one list, and the way
@@ -176,7 +177,7 @@ def render_add(tg: TaskGraph, g: Graph | None, seed: dict | None = None) -> str:
     """
     seed = seed or {}
     nxt = next_id(tg)
-    ready = [t for t in sorted(tg.tasks) if tg.ready(t)]
+    ready = [t for t in sorted(tg.tasks, key=idkey) if tg.ready(t)]
     return (
         _header("dg task add — a new task", op="add_task",
                 decisions=g is not None,
@@ -279,7 +280,7 @@ ALLOWED = {
     "add_task": {"id", "title", "area", "after", "discovered during",
                  "because", "evidence for", "note", "probe", "done when",
                  "tags"},
-    "amend": {"title", "area", "note", "done when"},
+    "amend": {"title", "area", "note", "done when", "tags"},
     "set_status": {"outcome"},
 }
 
@@ -290,7 +291,8 @@ def amend_seed(tg: TaskGraph, tid: str) -> dict:
     buffer's. `editor.amend_seed`'s twin."""
     t = tg.tasks[tid]
     return {"title": t.title, "area": t.area, "note": t.note or "",
-            "done_when": t.done_when or "", "format": t.format}
+            "done_when": t.done_when or "", "tags": list(t.tags or ()),
+            "format": t.format}
 
 
 def render_amend(tg: TaskGraph, g: Graph | None, tid: str,
@@ -313,6 +315,9 @@ def render_amend(tg: TaskGraph, g: Graph | None, tid: str,
         + editor._field("Title", "One line: the work to be done.", s["title"])
         + editor._field("Area", "One area, or a new one; areas accumulate.",
                         s["area"])
+        + editor._field("Tags", "Comma-separated words this is filed under "
+                                "beside its area. The whole set: empty drops "
+                                "every tag.", ", ".join(s.get("tags") or ()))
         + editor._field("Note", "Optional prose: what this involves. May be "
                                 "emptied.", s.get("note") or "")
         + editor._field("Done when", "What finished looks like, in prose. May "
@@ -353,6 +358,10 @@ def _parse_amend(tg: TaskGraph, meta: dict, f: dict,
             current = (current or "").strip()
         if new != current:
             op[key] = new if new or key in ("title", "area") else None
+    # The whole tag set, as the flags stage it (`AD-F3`).
+    tags = _tags.clean(f["tags"]) if f.get("tags", "").strip() else []
+    if tags != list(t.tags or ()):
+        op["tags"] = tags
     if len(op) == 2:
         raise EditorAbort("nothing changed — nothing staged")
     return [_tag(op, tag)]

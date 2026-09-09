@@ -284,10 +284,13 @@ def staged(proj: _project.Project | None = None,
 
 def _tray_applies(review: str, drop: str, exc: Exception,
                   origin: str) -> Violation:
+    # The three doors named follow the tray: `dg task edit`, not `dg edit`,
+    # for the task tray — the fix door was hard-coded (`AD-F1`).
+    edit = "dg task edit <id>" if review.startswith("dg task") else "dg edit <id>"
     return Violation(
         "tray_applies",
         f"the staged ops no longer apply cleanly, so `dg apply` would refuse "
-        f"them: {exc} — `{review}` to review, `{drop}` or `dg edit <id>` to fix",
+        f"them: {exc} — `{review}` to review, `{drop}` or `{edit}` to fix",
         origin=origin,
     )
 

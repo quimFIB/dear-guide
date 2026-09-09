@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from dgraph import env
-from dgraph.model import Graph
+from dgraph.model import Graph, idkey
 from dgraph.tasks import TaskGraph
 from dgraph.violation import Violation, cycle_from
 
@@ -353,8 +353,8 @@ def independent(tg: TaskGraph, g: Graph) -> Independent:
     which is the ordinary state of a store at a relaunch or when agents are
     added to a run. `PARKED` is not in flight and holds nothing out.
     """
-    cands = [t for t in sorted(tg.tasks) if ready(tg, g, t)]
-    doing = [t for t in sorted(tg.tasks) if tg.tasks[t].status == "DOING"]
+    cands = [t for t in sorted(tg.tasks, key=idkey) if ready(tg, g, t)]
+    doing = [t for t in sorted(tg.tasks, key=idkey) if tg.tasks[t].status == "DOING"]
     return maximal_independent(cands, lambda a, b: collision(tg, g, a, b),
                                fixed=doing)
 
@@ -526,7 +526,7 @@ def unharvested(tg: TaskGraph, g: Graph) -> list[dict]:
     the join produces.
     """
     out = []
-    for tid in sorted(tg.tasks):
+    for tid in sorted(tg.tasks, key=idkey):
         t = tg.tasks[tid]
         if t.status != "DONE" or not t.evidence_for:
             continue
@@ -554,7 +554,7 @@ def dropped_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
     """
     out = []
     rev = reverse(tg)
-    for did in sorted(g.vertices):
+    for did in sorted(g.vertices, key=idkey):
         if g.vertices[did].settled:
             continue
         ev = evidence(tg, did, rev)
@@ -584,7 +584,7 @@ def settled_on_dropped_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
     """
     out = []
     rev = reverse(tg)
-    for did in sorted(g.vertices):
+    for did in sorted(g.vertices, key=idkey):
         if not g.vertices[did].settled:
             continue
         ev = evidence(tg, did, rev)
@@ -616,7 +616,7 @@ def _stalled_evidence(tg: TaskGraph, g: Graph, *, settled: bool) -> list[dict]:
     """
     out = []
     rev = reverse(tg)
-    for did in sorted(g.vertices):
+    for did in sorted(g.vertices, key=idkey):
         if g.vertices[did].settled is not settled:
             continue
         ev = evidence(tg, did, rev)
@@ -729,7 +729,7 @@ def evidence_after_deciding(tg: TaskGraph, g: Graph) -> list[dict]:
     out = []
     rev = reverse(tg)
     by_src = g.by_src()
-    for did in sorted(g.vertices):
+    for did in sorted(g.vertices, key=idkey):
         v = g.vertices[did]
         if not v.settled or did in covered:
             continue
@@ -1432,7 +1432,7 @@ def validate(tg: TaskGraph, g: Graph) -> list[Violation]:
     """
     v: list[Violation] = []
 
-    for tid in sorted(tg.tasks):
+    for tid in sorted(tg.tasks, key=idkey):
         t = tg.tasks[tid]
         for did in t.because:
             if did not in g.vertices:

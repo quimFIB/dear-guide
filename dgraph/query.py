@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import dataclasses
 import re
+
+from dgraph.model import idkey
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
@@ -860,7 +862,7 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
     struct.update(structural or {})
 
     return Lens(
-        kind="decisions", ids=sorted(g.vertices), values=values, fields=names,
+        kind="decisions", ids=sorted(g.vertices, key=idkey), values=values, fields=names,
         predicates=preds, structural=struct,
         row=lambda vid: (g.vertices[vid].base_status, g.vertices[vid].title,
                          g.vertices[vid].area),
@@ -967,7 +969,7 @@ def task_lens(tg, *, predicates=None, structural=None, arg_kind=None,
     struct.update(structural or {})
 
     return Lens(
-        kind="tasks", ids=sorted(tg.tasks), values=values, fields=names,
+        kind="tasks", ids=sorted(tg.tasks, key=idkey), values=values, fields=names,
         predicates=preds, structural=struct,
         row=lambda tid: (tg.tasks[tid].status, tg.tasks[tid].title,
                          tg.tasks[tid].area),

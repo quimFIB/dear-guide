@@ -699,8 +699,20 @@ def _with_refs(ops: list[dict], current: list[dict]) -> list[dict]:
     return out
 
 
-def resolve(ops: list[dict], ref: str | int) -> int:
-    """Where `ref` sits in `ops` — by op id, else by index.
+def listing(path: Path | None) -> str:
+    """The command that lists the tray at `path` — what a refusal sends the
+    person to. Two trays, one resolver, and the hint has to follow the tray:
+    `dg task edit zzzz` used to say *`dg pending` lists the id of each*, which
+    lists the other one. Audit `AD-F1`."""
+    if path is not None and path.name == project.TASK_PENDING_NAME:
+        return "dg task pending"
+    return "dg pending"
+
+
+def resolve(ops: list[dict], ref: str | int, *,
+            listing: str = "dg pending") -> int:
+    """Where `ref` sits in `ops` — by op id, else by index. `listing` is the
+    command the refusal names — `listing(path)` for the tray in hand.
 
     **Call it under the lock, on the tray you are about to write.** That is the
     whole point: resolving an id against the current tray lands on the op the
@@ -726,7 +738,7 @@ def resolve(ops: list[dict], ref: str | int) -> int:
         i = int(text)
     except ValueError:
         raise LookupError(
-            f"no staged op {text!r} — `dg pending` lists the id of each"
+            f"no staged op {text!r} — `{listing}` lists the id of each"
         ) from None
     if not 0 <= i < len(ops):
         raise IndexError(f"no staged op {i}")
@@ -1161,7 +1173,7 @@ def drop(ref: str | int, path: Path | None = None) -> dict:
     """
     with held(path):
         ops = load(path)
-        i = resolve(ops, ref)
+        i = resolve(ops, ref, listing=listing(path))
         # Under the lock, against the tray as it is: another writer may have
         # applied or cleared since this call started, and a group judged
         # against a stale reading is the check answering about ops that are no
@@ -1182,7 +1194,8 @@ def drop_group(ref: str | int, path: Path | None = None) -> list[dict]:
     """
     with held(path):
         ops = load(path)
-        going = {o.get("ref") for o in group_of(ops, ops[resolve(ops, ref)])}
+        going = {o.get("ref") for o in
+                 group_of(ops, ops[resolve(ops, ref, listing=listing(path))])}
         gone = [o for o in ops if o.get("ref") in going]
         save([o for o in ops if o.get("ref") not in going], path)
         return gone

@@ -18,7 +18,7 @@ import json
 
 from dgraph import areas as _areas
 from dgraph import orgmd, project
-from dgraph.model import Edge, Graph, rival_note
+from dgraph.model import Edge, Graph, rival_note, idkey
 
 NONE = "—"
 
@@ -62,7 +62,7 @@ def _index(g: Graph, _by=None) -> str:
         "|---|---|---|---|",
     ]
     order = _areas.order(g.areas)
-    for v in sorted(g.vertices.values(), key=lambda v: (order(v.area), v.id)):
+    for v in sorted(g.vertices.values(), key=lambda v: (order(v.area), idkey(v.id))):
         rows.append(f"| {v.id} | {_cell(v.title)} | {v.status} | {_resolves_cell(g, v.id, _by)} |")
     frontier = ", ".join(g.frontier())
     rows.append("")

@@ -24,7 +24,8 @@ from dataclasses import dataclass
 
 from dgraph import pending, project
 from dgraph.check import run as _check_run
-from dgraph.model import Graph
+from dgraph.check import staged as _check_staged
+from dgraph.model import Graph, idkey
 
 LIMIT = 12          # frontier entries before the brief starts summarising
 NOTE_WIDTH = 72     # a note is prose; only its first line, only this much
@@ -77,7 +78,7 @@ def attention(g: Graph) -> list[dict]:
     return [
         {"id": vid, "title": g.vertices[vid].title, "area": g.vertices[vid].area,
          "because": because[vid]}
-        for vid in sorted(g.vertices)
+        for vid in sorted(g.vertices, key=idkey)
         if g.vertices[vid].base_status == "PROVISIONAL"
     ]
 
@@ -196,7 +197,8 @@ def data(proj: project.Project | None = None) -> dict:
     proj = proj or project.find()
     if not proj.exists:
         return {"project": None, "counts": {}, "frontier": [], "attention": [],
-                "staged": 0, "staged_tasks": 0, "violations": [],
+                "staged": 0, "staged_tasks": 0, "staged_refused": 0,
+                "violations": [],
                 "tasks": dict(NO_TASKS)}
     # `str(Violation)` verbatim, so an adapter quoting a refusal quotes the
     # same words `dg check` would have printed.
@@ -220,6 +222,19 @@ def data(proj: project.Project | None = None) -> dict:
     staged = count(proj.pending)
     # Both trays, because both hold work a commit would drop with no trace.
     staged_tasks = count(proj.task_pending) if proj.has_tasks else 0
+    # And whether `dg apply` would take them. The store's own reading stays on
+    # the CHECK line (`D70`); this is the tray's, and it goes on the STAGED
+    # line, because a brief that said *22 task ops staged* beside *CHECK:
+    # clean* sent the next session to an apply that refused. Audit `AD-F4`.
+    staged_refused = 0
+    if staged or staged_tasks:
+        try:
+            before, after = _check_staged(proj)
+            was = {str(v) for v in before if v.blocking}
+            staged_refused = len({str(v) for v in after
+                                  if v.blocking and str(v) not in was})
+        except Exception:
+            staged_refused = 0
     try:
         g = Graph.load(proj.store)
     except Exception:
@@ -229,6 +244,7 @@ def data(proj: project.Project | None = None) -> dict:
         # the one moment the graph most needs attention.
         return {"project": str(proj.root), "counts": {}, "frontier": [],
                 "attention": [], "staged": staged, "staged_tasks": staged_tasks,
+                "staged_refused": staged_refused,
                 "violations": violations, "tasks": tasks(proj)}
     ev = evidence_map(proj)
     return {
@@ -243,6 +259,7 @@ def data(proj: project.Project | None = None) -> dict:
         "attention": attention(g),
         "staged": staged,
         "staged_tasks": staged_tasks,
+        "staged_refused": staged_refused,
         "violations": violations,
         "tasks": tasks(proj),
     }
@@ -343,6 +360,9 @@ def _tail(proj: project.Project, d: dict, limit: int) -> list[str]:
     else:
         count = str(d["staged"])
         todo = " -- `dg pending`, then `dg apply`"
+    if d.get("staged_refused"):
+        todo = (f" -- as staged, `dg apply` would refuse "
+                f"({d['staged_refused']} error(s)) -- `dg check --staged`")
     out += ["", f"STAGED BUT NOT APPLIED: {count}"
                 + (todo if d["staged"] or d["staged_tasks"] else "")]
 

@@ -47,7 +47,7 @@ from dgraph import areas
 from dgraph import tags as _tags
 from dgraph import (applying, check, cross, editor, pending, previewing,
                     project, ranges, render, task_editor, task_pending)
-from dgraph.model import Graph, rival_note
+from dgraph.model import Graph, rival_note, idkey
 from dgraph import tasks as tasks_mod
 from dgraph.tasks import TaskGraph, stop_label
 
@@ -267,7 +267,7 @@ def task_depth(tg: TaskGraph) -> dict[str, int]:
     looped on, so a broken store still renders something to look at.
     """
     depth: dict[str, int] = {}
-    for tid in sorted(tg.tasks):
+    for tid in sorted(tg.tasks, key=idkey):
         stack, seen = [(tid, False)], set()
         while stack:
             cur, done = stack.pop()
@@ -1558,7 +1558,7 @@ class Handler(BaseHTTPRequestHandler):
         ref = body.get("ref")
         tops = pending.load(task_pending.path())
         try:
-            i = pending.resolve(tops, ref)
+            i = pending.resolve(tops, ref, listing="dg task pending")
         except LookupError as exc:
             return self._json({"error": str(exc)}, 400)
         op = tops[i]
