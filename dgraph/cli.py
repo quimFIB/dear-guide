@@ -2449,6 +2449,22 @@ def reopen(
         con.print(f"[red]{vid} has no decision to reopen[/]")
         raise typer.Exit(1)
 
+    # What the reopen drags, computed before anything is composed: the
+    # confirmation is about the propagation, so where nothing propagates there
+    # is nothing to confirm, and where something does and nobody is at a
+    # terminal, the refusal comes before the editor opens rather than after a
+    # why has been written and thrown away. T123.
+    drags = [o["vertex"] for o in pending.expand(
+        eff, {"op": "reopen", "vertex": vid, "why": "?"})
+        if o["op"] == "set_status"]
+    if drags and not yes and not _interactive():
+        con.print(f"[red]missing --yes[/]\n"
+                  f"[dim]not a terminal, and {len(drags)} decided "
+                  f"descendant(s) would become PROVISIONAL: "
+                  f"{', '.join(drags)} — the propagation cannot be confirmed "
+                  f"interactively[/]")
+        raise typer.Exit(2)
+
     if _wants_editor(edit):
         seed = {k: v for k, v in (("why", why), ("summary", summary)) if v}
         op = _compose(eff, "reopen", vertex=vid, seed=seed)[0]
@@ -2474,14 +2490,8 @@ def reopen(
            f"under review:\n  {', '.join(stalled)}" if stalled else ""),
         title=f"reopen {vid}", border_style="magenta",
     ))
-    if not yes:
-        if not _interactive():
-            # The panel above has already been printed, so the propagation is
-            # reported either way — what is missing is somebody to accept it.
-            con.print("[red]missing --yes[/]\n"
-                      "[dim]not a terminal, so the propagation above cannot be "
-                      "confirmed interactively[/]")
-            raise typer.Exit(2)
+    # Nothing to propagate, nothing to confirm; the panel is the report.
+    if affected and not yes and _interactive():
         if not typer.confirm("Stage this?", default=True):
             raise typer.Exit()
     _stage_all(ops, against=eff)
@@ -3050,11 +3060,34 @@ def rm(
     for vid_, before, after in pending.retargets(eff, op):
         lines.append(f"{vid_} opens  {', '.join(before) or 'TERMINAL'} → "
                      f"{', '.join(after) or 'TERMINAL'}")
+    # The archival mentions (`D108`): a reading names the decision it was
+    # read against and is kept when the link moves, so it survives the
+    # removal naming a record the store no longer has. Said, not refused —
+    # the refusal above is for the live links.
+    kept = _readings_naming(vid)
+    if kept:
+        lines.append(f"[yellow]keeps[/] {len(kept)} reading(s) naming {vid}: "
+                     + ", ".join(f"{tid} ({date})" for tid, date in kept)
+                     + " — the record stands; git has what it was read against")
     _sanction(f"remove {vid} ({mode})", lines, yes)
     _stage_all([op], against=eff)
     con.print(f"[green]staged[/] remove {vid}")
     _say_retargets(eff, [op])
     _warn_stuck()
+
+
+def _readings_naming(did: str) -> list[tuple[str, str]]:
+    """`(task, date)` for every reading against `did` — the archival field of
+    the id table (`dgraph.ids`), which `dg rm` names rather than refuses on."""
+    proj = project.find()
+    if not proj.has_tasks:
+        return []
+    try:
+        tg = TaskGraph.load(proj.tasks)
+    except Exception:
+        return []
+    return [(tid, r.date) for tid in sorted(tg.tasks, key=idkey)
+            for r in tg.tasks[tid].readings if r.against == did]
 
 
 def _tasks_naming(did: str) -> list[str]:
@@ -3086,9 +3119,10 @@ def _not_blank(param: typer.CallbackParam, value: str | None) -> str | None:
     A bad parameter rather than a scope: the value never reaches the code that
     narrows, so no door below can read it as the absent flag. `O-F1`, `D82`.
     """
-    why = pending.refuse_blank(value)
-    if why is not None:
-        raise typer.BadParameter(why)     # typer names the option in front
+    for one in (value if isinstance(value, (list, tuple)) else [value]):
+        why = pending.refuse_blank(one)
+        if why is not None:
+            raise typer.BadParameter(why)     # typer names the option in front
     return value
 
 
@@ -6675,3 +6709,59 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ---- every string option refuses a blank (D106, T126) ---------------------
+
+#: Where `""` is a value and not a failed extraction, keyed by `(command,
+#: option)`, each with its reason. Empty by default; an entry here is the
+#: only way a flag accepts a blank.
+BLANK_ALLOWED: dict[tuple[str, str], str] = {
+    ("amend", "note"): "a blank clears the note — the flag form of the "
+                       "buffer's *may be emptied*",
+    ("amend", "rule"): "a blank clears the rule, as above",
+    ("task amend", "note"): "a blank clears the note, as above",
+    ("task amend", "done-when"): "a blank clears the definition of done, "
+                                 "as above",
+    ("decide", "opens"): "a blank says the answer opens nothing, where an "
+                         "absent flag asks",
+}
+
+
+def _string_options(root: typer.Typer, prefix: str = ""):
+    """`(command, option name, OptionInfo)` for every `str` / `list[str]`
+    option under `root`, groups included."""
+    import inspect
+    import typing
+    from typer.models import OptionInfo
+    for info in root.registered_commands:
+        fn = info.callback
+        name = info.name or fn.__name__.replace("_", "-")
+        hints = typing.get_type_hints(fn)
+        for p in inspect.signature(fn).parameters.values():
+            d = p.default
+            if not isinstance(d, OptionInfo):
+                continue
+            ann = hints.get(p.name, p.annotation)
+            if ann not in (str, list[str], typing.Optional[str]):
+                continue
+            flag = next((n for n in d.param_decls if n.startswith("--")),
+                        "--" + p.name.replace("_", "-"))
+            yield (prefix + name, flag.lstrip("-"), d)
+    for grp in root.registered_groups:
+        yield from _string_options(grp.typer_instance, prefix + grp.name + " ")
+
+
+def _refuse_blanks_everywhere(root: typer.Typer) -> None:
+    """Install `_not_blank` on every string option that has no callback and is
+    not on `BLANK_ALLOWED`. Run once at import, so the default is refusal and
+    the exception is written down; a flag added tomorrow gets the refusal
+    without its author knowing this exists (`D106`). Not a factory — a door
+    can build an option without one; not a test alone — it finds the gap
+    after the fact."""
+    for cmd, opt, d in _string_options(root):
+        if d.callback is None and (cmd, opt) not in BLANK_ALLOWED:
+            d.callback = _not_blank
+
+
+_refuse_blanks_everywhere(app)

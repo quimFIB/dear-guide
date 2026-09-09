@@ -50,6 +50,7 @@ import dataclasses
 import json
 from dataclasses import dataclass, field
 
+from dgraph import ids as _idtable
 from dgraph.model import CLAIM, PAYLOAD, Graph
 from dgraph.tasks import TaskGraph, transition_fault
 
@@ -1574,16 +1575,21 @@ def rename_collisions(d_ops: list[dict], t_ops: list[dict], ours_g, ours_tg,
 #: **other** store's file — which is where a decision-id collision crosses
 #: over and quietly rewrites what a task's premise points at. (A `BLOCKED:<id>`
 #: status was the other one, until `D68` stopped storing it.)
-_ID_KEYS = ("id", "vertex", "task", "from", "against", "because",
-            "evidence_for", "into")
+#: Read from the one table (`D108`), not kept here: `derived_from` was
+#: missing from the list this used to be, so a merged reopen could name a
+#: premise renumbered out from under it.
+_ID_KEYS = _idtable.RENUMBERED
 
 
 def _rewrite(op: dict, mapping: dict[str, str]) -> None:
     for key in _ID_KEYS:
-        if op.get(key) in mapping:
-            op[key] = mapping[op[key]]
-    if isinstance(op.get("to"), list):
-        op["to"] = [mapping.get(t, t) for t in op["to"]]
+        val = op.get(key)
+        if isinstance(val, list):
+            # `to` and a task's `because` are lists of ids; the scalar test
+            # below would raise on them.
+            op[key] = [mapping.get(x, x) for x in val]
+        elif isinstance(val, str) and val in mapping:
+            op[key] = mapping[val]
 
 
 def split_one(raw: dict, ref: str, new_id: str, *, title: str,

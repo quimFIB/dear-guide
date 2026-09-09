@@ -43,7 +43,7 @@ D10  OPEN  Is the prefix index the default?
     rule for settling the laptop under 100 ms, and the search tests passing
     probe             core.all_of {"probes": [{"args": {"file": "bench/laptop.md", "pattern": 
 "^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"node": 
-"tests/test_search.py::test_default"}, "kind": "pytest.passes"}]}  (2026-09-04)
+"tests/test_search.py::test_default"}, "kind": "pytest.passes"}]}  (2026-09-09)
     verdict           unjudged  no line of bench/laptop.md matches /^p95: [0-9][0-9]? ms/; no 
 installed domain claims `pytest.` — nothing registered under `dgraph.domains`
 
@@ -64,7 +64,7 @@ D10  OPEN  Is the prefix index the default?
     rule for settling the laptop under 100 ms, and the search tests passing
     probe             core.all_of {"probes": [{"args": {"file": "bench/laptop.md", "pattern": 
 "^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"node": 
-"tests/test_search.py::test_default"}, "kind": "pytest.passes"}]}  (2026-09-04)
+"tests/test_search.py::test_default"}, "kind": "pytest.passes"}]}  (2026-09-09)
     verdict           unjudged  no line of bench/laptop.md matches /^p95: [0-9][0-9]? ms/; no 
 installed domain claims `pytest.` — nothing registered under `dgraph.domains`
 
@@ -76,7 +76,7 @@ D10  OPEN  Is the prefix index the default?
     rule for settling the laptop under 100 ms, and the search tests passing
     probe             core.all_of {"probes": [{"args": {"file": "bench/laptop.md", "pattern": 
 "^p95: [0-9][0-9]? ms"}, "kind": "grep.matches"}, {"args": {"node": 
-"tests/test_search.py::test_default"}, "kind": "pytest.passes"}]}  (2026-09-04)
+"tests/test_search.py::test_default"}, "kind": "pytest.passes"}]}  (2026-09-09)
     verdict           unjudged  no line of bench/laptop.md matches /^p95: [0-9][0-9]? ms/; no 
 installed domain claims `pytest.` — nothing registered under `dgraph.domains`
 
@@ -99,6 +99,10 @@ $ dg probe --domain rocq
 no pre-commitment is under `rocq.`; prefixes here: grep, prose, pytest
 [exit 2]
 $ dg probe --domain ''
---domain is empty — a blank name or ref is a selection that matched nothing, not the whole tray,
-and is refused rather than widened
+Usage: dg probe [OPTIONS] [ID...]
+Try 'dg probe --help' for help.
+╭─ Error ──────────────────────────────────────────────────────────────────────────────────────╮
+│ Invalid value for '--domain': a blank name or ref is a selection that matched nothing, not   │
+│ the whole tray, and is refused rather than widened                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 [exit 2]

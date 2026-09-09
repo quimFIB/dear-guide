@@ -125,13 +125,15 @@ def tasks(proj: project.Project) -> dict:
         except Exception:
             g = None
 
-    # **Ready is asked of the store plus the tray, and the counts are not.**
-    # `dg task` shows the same reading, and the two must agree or the session
-    # brief sends the next agent at work somebody has already claimed — a claim
-    # is staged long before anybody applies it, and under a confinement floor
-    # an agent cannot apply at all (`cli._sealed`). The counts stay on the
-    # record because that is what they are: a proposal is reported one line
-    # above, as `STAGED BUT NOT APPLIED`.
+    # **The whole TASKS line reads the store plus the tray** — counts, ready
+    # and blocked from one corpus, the one `dg task` lists (`D107`). Ready was
+    # read that way first, so the brief would not send the next agent at work
+    # somebody had already claimed — a claim is staged long before anybody
+    # applies it, and under a confinement floor an agent cannot apply at all
+    # (`cli._sealed`). Blocked and the tally were left on the record, which
+    # let the line say *1 task, 2 ready, 0 blocked* over a tray holding the
+    # other two and the edge between them. The STAGED line above says how
+    # much of the corpus is proposal; `dg check` is the record-only reading.
     #
     # Defensive: a tray that will not preview leaves the store's own answer,
     # which is what this said before there was a tray to consult.
@@ -151,12 +153,12 @@ def tasks(proj: project.Project) -> dict:
         reviewed = cross.under_review(tg, g)
         loose = cross.unharvested(tg, g)
     return {
-        "counts": tg.counts(),
+        "counts": ready_tg.counts(),
         "ready": len(ready),
-        # From `tg.blocked_ids`, not frontier-minus-ready: a DOING or PARKED
+        # From `blocked_ids`, not frontier-minus-ready: a DOING or PARKED
         # task with no prerequisite is neither ready nor blocked, and the
         # subtraction called it blocked. See `TaskGraph.blocked_ids`.
-        "blocked": len(tg.blocked_ids()),
+        "blocked": len(ready_tg.blocked_ids()),
         "under_review": reviewed,
         "unharvested": loose,
     }

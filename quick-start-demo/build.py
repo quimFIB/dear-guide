@@ -407,7 +407,7 @@ RECIPES: dict[str, dict] = {
                  (r"^1 presented · fired 0 · holds 0 · unjudged 1", "...and --domain pytest the one whose other half it claims"),
                  (r"did not answer within 0\.001s", "the door outranks the distribution"),
                  (r"^no pre-commitment is under `rocq\.`; prefixes here", "refused, naming what the store does hold"),
-                 (r"^--domain is empty", "a blank selects nothing, and never everything")],
+                 (r"Invalid value for .--domain.: a blank name", "a blank selects nothing, and never everything")],
     ),
 }
 

@@ -1273,13 +1273,24 @@ class Relay:
         why = _too_long(path)
         if why is not None:
             raise OSError(why)
-        with contextlib.suppress(FileNotFoundError):
-            path.unlink()
+        # Bound at a temporary name and renamed onto the final one only after
+        # `listen`: the file is what every reader takes for "the relay is up"
+        # (shape 24, `Y-F4`), and a client that connected in the gap between
+        # bind and listen was refused by a relay that was, a moment later,
+        # there. Renaming a bound unix socket keeps it connectable. T122.
+        staging = path.with_name(path.name + ".bind")
+        why = _too_long(staging)
+        if why is not None:
+            raise OSError(why)
+        for stale in (path, staging):
+            with contextlib.suppress(FileNotFoundError):
+                stale.unlink()
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            srv.bind(str(path))
-            path.chmod(0o600)
+            srv.bind(str(staging))
+            staging.chmod(0o600)
             srv.listen(8)
+            os.replace(staging, path)
             srv.settimeout(0.2)
             while stop is None or not stop.is_set():
                 try:
@@ -1291,8 +1302,9 @@ class Relay:
                         self._handle(conn)
         finally:
             srv.close()
-            with contextlib.suppress(FileNotFoundError):
-                path.unlink()
+            for gone in (path, staging):
+                with contextlib.suppress(FileNotFoundError):
+                    gone.unlink()
 
     def _handle(self, conn: socket.socket) -> None:
         raw = _read_line(conn)

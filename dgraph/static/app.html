@@ -4027,10 +4027,17 @@ $("#refreshBtn").onclick=refresh;
    too — a timer can fire between the event and the clear. */
 addEventListener("visibilitychange",()=>{ if(!document.hidden) pollStat(); });
 
-boot().then(()=>{
-  fit(); draw(); refreshBadge();
-  POLL = setInterval(pollStat, POLL_EVERY);
-});
+/* The first load, with the catch `refresh()` always had (T121, the other
+   half of D98): a store that does not load is said in D94's line above the
+   trays, with the header drawn and the findings chip never reached — not a
+   blank page. The poll still starts, so a store repaired behind the page
+   shows up on the badge rather than needing a reload to be noticed. */
+async function firstLoad(){
+  try{ await boot(); fit(); draw(); }
+  catch(err){ said(esc(err.message), "bad"); }
+  finally{ refreshBadge(); POLL = setInterval(pollStat, POLL_EVERY); }
+}
+firstLoad();
 </script>
 </body>
 </html>

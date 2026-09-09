@@ -341,9 +341,13 @@ dg drop <id>                             # unstage one op
 dg export                                # the graph as JSON; `dg import` reads it back -- the record alone, never the tray
 ```
 
-**A narrowing flag never widens.** `--agent` and `--group` are refused when
-**empty** on every door that takes them — `dg pending`, `dg apply`,
-`dg clear`, the two task twins, and the web app's apply and clear routes.
+**A blank value is refused, on every flag.** Every option that takes text —
+`--agent`, `--group`, `--after`, `--against`, `--domain`, `--keep`, all of
+them — refuses `""` by default, and the web app's apply and clear routes do
+the same. The exceptions are written down with their reason, and there are
+five: `dg amend --note ""` and `--rule ""`, `dg task amend --note ""` and
+`--done-when ""`, which clear the field, and `dg decide --opens ""`, which
+says the answer opens nothing where an absent flag would ask (`D106`).
 `""` is not the absent flag: it is what a script's extraction produces when
 it matched nothing, and `dg apply --group "$REF"` with an unset `$REF` used
 to apply every writer's half-composed batch and exit 0 saying the narrowing

@@ -18,7 +18,8 @@ primitives below are the markdown readings of `editor._meta`, `_sections` and
 What the conversion does, line by line:
 
     :PROPERTIES: … :END:      ->  ---  key: value  ---   (front matter)
-    # comment lines           ->  <!-- … --> blocks
+    # comment lines           ->  > hint lines (D100: a quote, not an HTML
+                                  comment, so a conceal-on editor shows it)
     * Heading / ** Field      ->  # Heading / ## Field
     #+TODO: …, the mode line  ->  dropped (org's)
     ,*escaped line            ->  *line   (org's comma-escape undone)

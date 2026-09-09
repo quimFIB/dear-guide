@@ -19,6 +19,7 @@ from datetime import date as _date
 from pathlib import Path
 
 from dgraph import areas as _areas
+from dgraph import ids as _idtable
 from dgraph import orgmd
 from dgraph import env, limits, project, ranges
 from dgraph import tags as _tags
@@ -935,8 +936,9 @@ def group_of(ops: list[dict], op: dict) -> list[dict]:
 #: trays at once, because a task act may rest on a decision act (`because`
 #: naming a vertex that `add_vertex` is about to add).
 INTRODUCES = ("add_vertex", "add_task")
-REFERENCES = ("vertex", "task", "from", "to", "into", "because",
-              "evidence_for", "derived_from")
+#: The live fields of the one id table (`D108`, `dgraph.ids`): what an op
+#: names and must find. `id` introduces; `against` is an archive.
+REFERENCES = _idtable.LIVE
 
 
 def introduces(op: dict) -> str | None:
