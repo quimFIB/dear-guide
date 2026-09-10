@@ -76,8 +76,8 @@ LAYOUT = (
     (RECORD, ("add", "decide", "reopen", "confirm", "repair", "amend",
               "reprobe", "bind", "unbind", "dep", "undep", "rm")),
     (STAGE, ("pending", "edit", "drop", "clear", "apply")),
-    (STORE, ("init", "range", "import", "import-md", "export", "integrate",
-             "incoming")),
+    (STORE, ("init", "procedure", "range", "import", "import-md", "export",
+             "integrate", "incoming")),
     (WORK, ("task",)),
     (WEB, ("serve",)),
 )
@@ -5974,6 +5974,47 @@ def init() -> None:
     con.print(f"[green]✓[/] created {proj.store}; run `dg render` for "
               f"{proj.view.name}")
     _report_ignored(proj)
+
+
+@app.command(rich_help_panel=STORE)
+def procedure(
+    template: bool = typer.Option(
+        False, "--template",
+        help="The skeleton a project's PROCEDURE.md starts from. Needs no "
+             "project."),
+) -> None:
+    """How this project decides: the `PROCEDURE.md` beside its store.
+
+    The skill ships the model and a set of working defaults — an agent applies
+    its own work, among them. A project that decides differently writes that
+    down once, and `dg brief` names the file, so every host's session starts
+    knowing it. It governs a session with a person in it; under `$DG_AGENT`
+    the launcher's policy governs instead, and this says so.
+
+    Plain print throughout, the `dg brief` rule: a slash command reads it
+    through a pipe. And no file is not an error — the `dg find` rule — since a
+    project with no procedure is the ordinary case, and a command that runs
+    this must not come back failed.
+    """
+    if template:
+        print(project.procedure_template().read_text(encoding="utf-8"), end="")
+        return
+    proj = project.find()
+    if not proj.exists:
+        con.print(f"[red]no {project.STORE_NAME} under {proj.root}[/]\n"
+                  f"[dim]run `dg init` there, or pass --project PATH[/]")
+        raise typer.Exit(2)
+    path = proj.procedure
+    if not path.is_file():
+        print(f"no {project.PROCEDURE_NAME} under {proj.root} -- the dear-guide "
+              f"skill's defaults are this project's procedure.\n"
+              f"The procedure slash command asks the owner for one, section by "
+              f"section; `dg procedure --template` prints the skeleton.")
+        return
+    if pending.owner() is not None:
+        print(f"not in force: $DG_AGENT is set, so the launcher's policy "
+              f"governs this session -- `dg-agent env`\n")
+    print(path.read_text(encoding="utf-8"), end="")
 
 
 def _report_ignored(proj: project.Project) -> None:

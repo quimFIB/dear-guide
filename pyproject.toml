@@ -77,4 +77,4 @@ pythonpath = ["."]
 packages = ["dgraph"]
 
 [tool.setuptools.package-data]
-dgraph = ["static/*.html", "elisp/*.el", "prompts/*.md"]
+dgraph = ["static/*.html", "elisp/*.el", "prompts/*.md", "templates/*.md"]

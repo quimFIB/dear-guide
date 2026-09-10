@@ -23,6 +23,26 @@ If there is no `decisions.json` at or above the working directory, this project
 does not track decisions this way. Nothing here applies, and you should not
 create a graph uninvited.
 
+## This project's own procedure
+
+A project may write down how *it* decides in `PROCEDURE.md` beside its store:
+what counts as a record here, who closes a question, and how one is settled.
+When the file exists, `dg brief` names it and `dg procedure` prints it.
+
+**Read it before recording anything. Where it differs from this skill, the
+procedure wins.** What this skill says about working practice, such as who
+applies and when to stage, is the procedure a project gets if it has none of
+its own. The model and the rules below are not procedure, and a project file
+does not change them.
+
+**It applies when a person is in the session.** Under a launch (`$DG_AGENT`
+set), the launcher's policy applies instead, and the brief does not name the
+file.
+
+Never write or change one on your own: it is the owner's account of how they
+decide. The `procedure` slash command asks them about it one section at a time,
+and `dg procedure --template` prints the skeleton it fills in.
+
 ## The model
 
 Vertices and edges, nothing else.
@@ -319,7 +339,9 @@ dg apply
 `--opens` lists the decisions this one now makes answerable; leave it off for a
 terminal decision. Nothing is written until `dg apply`, which validates a copy
 first and refuses to write a graph that would be invalid. Apply your own work —
-leaving it staged means it exists only in a gitignored file.
+leaving it staged means it exists only in a gitignored file — unless this
+project's procedure says the owner applies. In that case, stage the work, say
+what is staged, and stop.
 
 ### The store holds the synopsis; the file holds the development
 

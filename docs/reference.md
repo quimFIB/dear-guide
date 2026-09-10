@@ -236,6 +236,7 @@ a spike and forget to record what it showed, and `dg check` says so.
 | `decisions.json` | the store — source of truth |
 | `decision-graph.md` | generated view; **never hand-edit** |
 | `tasks.json` · `tasks.md` | the task graph and its view — its own store, and usable on its own |
+| `PROCEDURE.md` | optional, written by the owner: how this project decides — what gets recorded, who closes a question, how one is settled. `dg brief` names it in a session with a person in it, and not under `$DG_AGENT`, where the launcher's policy governs |
 | `.dgraph-pending.json` · `.dgraph-task-pending.json` | the staging trays |
 | `.dgraph-edit.org` · `.dgraph-edit.md` | editor buffer, like `COMMIT_EDITMSG` — org for emacs, markdown for any other editor |
 | `.dgraph-capture/` | a fan-out's recording, if one is running — scratch, and gitignored with the rest |
@@ -270,6 +271,8 @@ Every command, with the flag that expands its output where it has one.
 ```sh
 dg init                                  # start a graph — areas accumulate, none is declared
 dg import prepared.json                  # or adopt one prepared elsewhere
+dg procedure                             # how this project decides: its PROCEDURE.md, if it has one
+dg procedure --template                  # ...the skeleton one starts from; needs no project
 dg                                       # the frontier: what is still open
 dg show --full                           # ...as a table, with nothing clipped
 dg brief                                 # ...plus provisional work, staging, validity

@@ -187,6 +187,8 @@ def test_every_staging_command_is_covered():
         ("brief",), ("gate",), ("check",), ("probe",), ("pending",), ("export",),
         ("apply",), ("render",), ("init",), ("import",), ("import-md",),
         ("serve",),
+        # Prints `PROCEDURE.md` or the shipped skeleton; writes nothing.
+        ("procedure",),
         # Writes `.dgraph-range.json`, which is not a tray: it holds no ops,
         # nothing applies it, and the watermark inside it is raised by
         # `pending.stage_all` under that tray's own lock.

@@ -200,7 +200,7 @@ def data(proj: project.Project | None = None) -> dict:
     if not proj.exists:
         return {"project": None, "counts": {}, "frontier": [], "attention": [],
                 "staged": 0, "staged_tasks": 0, "staged_refused": 0,
-                "violations": [],
+                "violations": [], "procedure": None,
                 "tasks": dict(NO_TASKS)}
     # `str(Violation)` verbatim, so an adapter quoting a refusal quotes the
     # same words `dg check` would have printed.
@@ -247,7 +247,8 @@ def data(proj: project.Project | None = None) -> dict:
         return {"project": str(proj.root), "counts": {}, "frontier": [],
                 "attention": [], "staged": staged, "staged_tasks": staged_tasks,
                 "staged_refused": staged_refused,
-                "violations": violations, "tasks": tasks(proj)}
+                "violations": violations, "procedure": procedure(proj),
+                "tasks": tasks(proj)}
     ev = evidence_map(proj)
     return {
         "project": str(proj.root),
@@ -263,8 +264,26 @@ def data(proj: project.Project | None = None) -> dict:
         "staged_tasks": staged_tasks,
         "staged_refused": staged_refused,
         "violations": violations,
+        "procedure": procedure(proj),
         "tasks": tasks(proj),
     }
+
+
+def procedure(proj: project.Project) -> str | None:
+    """The project's own procedure, when it is in force: the path of a
+    `PROCEDURE.md` beside the store, in a session with no `$DG_AGENT`.
+
+    Under a launch the launcher's policy governs — `$DG_DECIDE`, `$DG_APPLY`
+    and the rest — and a procedure written for a person working with a model
+    would be a second rule set that can disagree with it. So the brief does
+    not name the file there, and the scope is a property of the channel both
+    hosts inject rather than a sentence an agent has to remember. The other
+    way round the gap is real: with no `$DG_AGENT` every policy is silent,
+    because an unnamed caller is the supervisor.
+    """
+    if pending.owner() is not None:
+        return None
+    return str(proj.procedure) if proj.procedure.is_file() else None
 
 
 def _note_line(note: str | None) -> str | None:
@@ -301,6 +320,13 @@ def text(proj: project.Project | None = None, limit: int = LIMIT) -> str:
         out = [f"TASK GRAPH  {proj.root}  (no {project.STORE_NAME} here)",
                "`dg init` starts a decision graph beside it, and `dg task add "
                "--because` links work to what justifies it."]
+
+    # Under the header and above everything else: it governs how whatever the
+    # brief goes on to list gets recorded, and a brief is clipped from the end.
+    if d["procedure"]:
+        out[2:2] = [f"PROCEDURE  {d['procedure']} -- how this project decides; "
+                    f"read it before recording, and where it differs from the "
+                    f"dear-guide skill it wins"]
 
     return "\n".join(out + _tail(proj, d, limit))
 

@@ -51,6 +51,17 @@ RANGE_NAME = ".dgraph-range.json"
 #: composes against a title nobody accepted.
 INCOMING_NAME = ".dgraph-incoming.json"
 
+#: How this project decides, written by its owner — see `dg procedure`. Beside
+#: the stores and committed with them, and read by no invariant: it is prose a
+#: model follows in a session with a person in it, which `dg brief` names.
+PROCEDURE_NAME = "PROCEDURE.md"
+
+
+def procedure_template() -> Path:
+    """The skeleton a project's `PROCEDURE.md` starts from. Package data, so an
+    installed `dg` has it, as it has the fan-out prompts."""
+    return Path(__file__).resolve().parent / "templates" / PROCEDURE_NAME
+
 #: Every path pattern the tool writes that must not be committed. Not a
 #: courtesy: three modules argue their own correctness from the assumption that
 #: these are ignored. `write_atomic` leaves a `.dg-tmp` sibling behind when a
@@ -133,6 +144,10 @@ class Project:
         is the case `dgraph/ranges.py` treats as "behave as this tool always
         has" rather than as a fault."""
         return self.root / RANGE_NAME
+
+    @property
+    def procedure(self) -> Path:
+        return self.root / PROCEDURE_NAME
 
     @property
     def incoming(self) -> Path:

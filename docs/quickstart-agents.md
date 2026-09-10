@@ -159,7 +159,7 @@ different repository is allowed, since it records nothing about this graph.
 
 ## The commands
 
-Seven files in `commands/` at the repo root, loaded by Claude Code from the
+Nine files in `commands/` at the repo root, loaded by Claude Code from the
 plugin and by opencode from a symlink. Each is a `description`, a `dg`
 invocation, and a sentence saying how to read the output — no policy, for the
 same reason the adapters have none.
@@ -177,6 +177,7 @@ from the prefix the install put on the link.
 | `/dg:serve` `[stop\|status]` | `/dg-serve` | the graphs in a browser; `stop` closes it |
 | `/dg:fanout` | `/dg-fanout` | who holds a name, what each is holding, and what is staged — before running several agents against one graph |
 | `/dg:version` | `/dg-version` | the commit the installed `dg` is from — beta has no release number to print |
+| `/dg:procedure` | `/dg-procedure` | write down how this project decides: asks the owner one section at a time and saves `PROCEDURE.md`, which `dg brief` then names in every session with a person in it |
 
 Four of them are worth a note.
 
