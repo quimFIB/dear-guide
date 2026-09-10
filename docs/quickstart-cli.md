@@ -280,11 +280,13 @@ things:
 ```sh
 dg decide D01 --answer … --source … --falsifier …   # settle the premise
 dg apply
-dg confirm D02      # re-read it; it still holds
+dg confirm D02 --note "cosine never depended on the corpus size"   # re-read it; say why it holds
 # or: dg reopen D02 && dg decide D02 …              # it does not
 ```
 
-`dg confirm` exists so that `PROVISIONAL` has an honest exit. Do not reach for
+`dg confirm` exists so that `PROVISIONAL` has an honest exit, and the note it
+requires is kept on the answer, dated, so the record says why it survived. Do
+not reach for
 `reopen` to escape a status — a reversal that never happened is a lie in the
 record.
 

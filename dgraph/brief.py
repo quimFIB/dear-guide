@@ -341,7 +341,7 @@ def _decisions_text(proj: project.Project, g: Graph, d: dict,
                 + (" -- PROVISIONAL, so not in the frontier" if att else "")]
     for a in att[:limit]:
         why = (f"rests on {', '.join(a['because'])}" if a["because"]
-               else f"premises settled again -- `dg confirm {a['id']}`")
+               else f"premises settled again -- `dg confirm {a['id']} --note ...`")
         out.append(f"  {a['id']}  {a['title']}  [{a['area']}]  {why}")
     if len(att) > limit:
         out.append(f"  +{len(att) - limit} more")

@@ -826,7 +826,7 @@ def test_confirm_refuses_while_a_premise_is_unsettled(run, store, g):
     gg.vertices["D01"] = replace(gg.vertices["D01"], status="REOPENED")
     gg.vertices["D02"] = replace(gg.vertices["D02"], status="PROVISIONAL")
     gg.save(store / "decisions.json")
-    res = run("confirm", "D02")
+    res = run("confirm", "D02", "--note", "still holds")
     assert res.exit_code == 1
     assert "D01" in res.output
     assert not pending.load(store / ".dgraph-pending.json")
@@ -835,7 +835,7 @@ def test_confirm_refuses_while_a_premise_is_unsettled(run, store, g):
 def test_confirm_returns_it_to_decided(run, store, g):
     write(g)
     _make_provisional(store)
-    assert run("confirm", "D02").exit_code == 0
+    assert run("confirm", "D02", "--note", "still holds").exit_code == 0
     assert run("apply").exit_code == 0
     assert Graph.load(store / "decisions.json").vertices["D02"].status == "DECIDED"
 
@@ -847,7 +847,7 @@ def test_confirm_releases_what_was_blocked_on_it(run, store, g):
     gg = Graph.load(store / "decisions.json")
     gg.vertices["D05"] = replace(gg.vertices["D05"], status="PROVISIONAL")
     gg.save(store / "decisions.json")
-    res = run("confirm", "D05")
+    res = run("confirm", "D05", "--note", "still holds")
     assert res.exit_code == 0
     ops = pending.load(store / ".dgraph-pending.json")
     assert {(o["vertex"], o["status"]) for o in ops} == {("D05", "DECIDED")}
@@ -864,7 +864,7 @@ def test_reopen_then_confirm_round_trips(run, store, g):
     assert run("decide", "D01", "-a", "same answer", "-s", "discussion",
                "-f", "the corpus changes again", "-o", "D02,D03").exit_code == 0
     assert run("apply").exit_code == 0
-    assert run("confirm", "D02").exit_code == 0
+    assert run("confirm", "D02", "--note", "still holds").exit_code == 0
     assert run("apply").exit_code == 0
 
     after = Graph.load(store / "decisions.json")
@@ -2334,3 +2334,24 @@ def test_edit_still_re_parents_onto_what_precedes_it(run, store, g, stub_editor)
     assert run("edit", after[2]["ref"]).exit_code == 0     # D95 onto D90, staged earlier
     assert pending.load()[3]["from"] == "D90"
     assert run("apply").exit_code == 0
+
+
+def test_confirm_needs_why_the_answer_still_holds(run, store, g):
+    """`D123`: the note used to be taken and dropped. Asked for at a terminal,
+    refused without one elsewhere, and nothing staged."""
+    write(g)
+    _make_provisional(store)
+    res = run("confirm", "D02")
+    assert res.exit_code == 1 and "--note" in res.output
+    assert not pending.load(store / ".dgraph-pending.json")
+
+
+def test_confirm_keeps_why_on_the_answer_and_both_readers_show_it(run, store, g):
+    write(g)
+    _make_provisional(store)
+    assert run("confirm", "D02", "--note", "argued from the encoder").exit_code == 0
+    assert run("apply").exit_code == 0
+    e = Graph.load(store / "decisions.json").active_edge("D02")
+    assert [r["note"] for r in e.reaffirmed] == ["argued from the encoder"]
+    assert "argued from the encoder" in run("node", "D02").output
+    assert "argued from the encoder" in run("context", "D02", "--full").output

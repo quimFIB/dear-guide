@@ -21,11 +21,12 @@ from dgraph.json_import import SCHEMA, read
 from dgraph.model import CLAIM, EDGE_FIELDS, PAYLOAD, Graph
 from tests.conftest import FIXTURE
 
-#: One recognisable value per field. `date`, `format` and `probe` have to be
-#: legal; `probe` is the one that is not a string.
+#: One recognisable value per field. `date`, `format`, `probe` and `reaffirmed`
+#: have to be legal; `probe` and `reaffirmed` are the two that are not strings.
 VALUES = {"answer": "A-value", "falsifier": "F-value", "source": "S-value",
           "date": "2026-02-02", "format": "org",
-          "probe": {"kind": "prose.rule", "args": {"n": 1}}}
+          "probe": {"kind": "prose.rule", "args": {"n": 1}},
+          "reaffirmed": [{"date": "2026-02-03", "note": "R-value"}]}
 
 
 def test_the_tuples_nest():
@@ -113,9 +114,9 @@ def test_no_site_names_a_payload_field_by_hand():
     allowed to stay: `payload["date"]` defaulting to today, and the
     contribution's own `raw.get("source")`."""
     import re
-    copied = re.compile(r'op(\.get\(|\[)"(falsifier|source|date|probe)"'
-                        r'|(?<![\w_])(falsifier|source|date|probe)=(?!=)'
-                        r'|getattr\([^,]+, "(falsifier|source|date|probe)"')
+    copied = re.compile(r'op(\.get\(|\[)"(falsifier|source|date|probe|reaffirmed)"'
+                        r'|(?<![\w_])(falsifier|source|date|probe|reaffirmed)=(?!=)'
+                        r'|getattr\([^,]+, "(falsifier|source|date|probe|reaffirmed)"')
     sites = [pending._apply_one, integrate._edges, integrate._keepsake,
              integrate._same_answer]
     for fn in sites:
@@ -123,3 +124,15 @@ def test_no_site_names_a_payload_field_by_hand():
             assert not copied.search(line), (
                 f"{fn.__name__} copies a payload field by hand — read "
                 f"PAYLOAD instead: {line.strip()}")
+
+
+def test_the_markdown_view_round_trips_the_re_affirmations(tmp_path):
+    """`D123`: the view writes one `Re-affirmed` line per entry and
+    `dg import-md` reads them back onto the answer."""
+    from dgraph.md_import import import_markdown
+    from dgraph.render import write
+    g = pending.apply_all(Graph.from_dict(FIXTURE), [_close()])
+    path = tmp_path / "decision-graph.md"
+    write(g, path)
+    assert "- **Re-affirmed:** 2026-02-03 — R-value" in path.read_text()
+    assert import_markdown(path).active_edge("D05").reaffirmed == VALUES["reaffirmed"]

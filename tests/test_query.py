@@ -1109,7 +1109,8 @@ def test_waits_reads_forwards_and_finds_the_same_vertices(g):
 DEC80 = {"areas": ["Alpha"], "edges": [
     {"from": "D01", "to": [], "active": True, "answer": "HNSW it is",
      "falsifier": "recall drops", "source": "discussion", "date": "2026-01-01",
-     "probe": {"kind": "prose.rule", "args": {"needle": "recall"}}}],
+     "probe": {"kind": "prose.rule", "args": {"needle": "recall"}},
+     "reaffirmed": [{"date": "2026-01-04", "note": "it still held"}]}],
     "vertices": [
         {"id": "D01", "title": "Pick an index", "area": "Alpha",
          "status": "DECIDED", "rule": "settle by measurement",
@@ -1142,6 +1143,7 @@ NEEDLE = {
                   "source": "discussion", "date": "2026-01-01",
                   "probe": "prose.rule", "probes": "prose.rule",
                   "binds": "rocq.constant", "tags": "perf",
+                  "reaffirmed": "still held",
                   # No fixture value: a store this tool writes has no rival
                   # answer and no reversal, so `summary`, `why` and
                   # `from_source` have nothing to carry.

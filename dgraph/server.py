@@ -1724,9 +1724,13 @@ class Handler(BaseHTTPRequestHandler):
         """
         g = Graph.load()
         eff = pending.preview(g)
+        body = self._body()
         try:
+            # The note is required, as at the CLI (`D123`): the entry is what
+            # records that this was re-read, and why it holds.
             ops = pending.compose_confirm(
-                eff, vid=(self._body().get("vertex") or "").strip())
+                eff, vid=(body.get("vertex") or "").strip(),
+                note=body.get("note"), date=_today())
         except pending.ApplyError as exc:
             return self._json({"error": str(exc)}, 400)
         pending.stage_all(ops, against=eff)

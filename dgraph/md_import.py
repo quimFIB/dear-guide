@@ -28,6 +28,7 @@ RE_FALSIFIER = re.compile(r"^- \*\*Falsifier:\*\* (.+)$", re.M)
 RE_RESOLVES = re.compile(r"^\*\*Resolves to → (.+)\*\*$", re.M)
 RE_SOURCE = re.compile(r"^\*Source:\* (.+)$", re.M)
 RE_TAGS = re.compile(r"^- \*\*Tags:\*\* (.+)$", re.M)
+RE_REAFFIRMED = re.compile(r"^- \*\*Re-affirmed:\*\* (\S+) — (.+)$", re.M)
 RE_SUP_ROW = re.compile(r"^\| (D\d+) \| (.+?) \| (.+?) \| (.+?) \|$", re.M)
 
 NONE = "—"
@@ -77,6 +78,8 @@ def parse(text: str) -> tuple[list[str], list[dict], list[dict]]:
         res, fal = RE_RESOLVES.search(body), RE_FALSIFIER.search(body)
         src, dep = RE_SOURCE.search(body), RE_DEPENDS.search(body)
         tags = RE_TAGS.search(body)
+        reaffirmed = [{"date": d, "note": n.strip()}
+                      for d, n in RE_REAFFIRMED.findall(body)]
 
         targets = []
         if res and res.group(1).strip() != "TERMINAL":
@@ -100,6 +103,7 @@ def parse(text: str) -> tuple[list[str], list[dict], list[dict]]:
             source=src.group(1).strip() if src else None,
             tags=[t.strip() for t in tags.group(1).split(",") if t.strip()]
             if tags else [],
+            reaffirmed=reaffirmed,
         ))
 
     sup = []
@@ -144,6 +148,7 @@ def import_markdown(path: Path) -> Graph:
                 src=vid, to=sorted(targets[vid]), active=True,
                 answer=n["answer"], falsifier=n["falsifier"],
                 source=n["source"], date=n["date"],
+                reaffirmed=n["reaffirmed"] or None,
             ))
         else:
             # Undecided: dependants become a payload-less edge, which is what a

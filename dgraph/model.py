@@ -73,7 +73,13 @@ CLAIM = ("answer", "falsifier", "source", "probe")
 #: gone from the archive the day somebody adds one. A field added here is
 #: carried by all of them, and `tests/test_payload.py` pushes one value per
 #: field through every site to prove it.
-PAYLOAD = ("answer", "falsifier", "source", "date", "format", "probe")
+#:
+#: `reaffirmed` is the one field a close writes empty and a later act fills:
+#: `dg confirm` appends to it (`D123`). It is here for the archive, not for the
+#: close — a reopen must take the re-affirmations with the answer they were
+#: about, and a new answer must start with none.
+PAYLOAD = ("answer", "falsifier", "source", "date", "format", "probe",
+           "reaffirmed")
 
 #: The bound on a probe's serialised `args`, in characters. The synopsis rule
 #: (`limits.TERSE_DEFAULT`) applied to the one payload field that is not
@@ -88,7 +94,8 @@ PAYLOAD = ("answer", "falsifier", "source", "date", "format", "probe")
 #: exactly these; `json_import.SCHEMA` accepts exactly these. Anything else on
 #: a stored edge is `Edge.extra`.
 EDGE_FIELDS = ("answer", "falsifier", "source", "date", "summary",
-               "replaced_by", "why", "format", "from_source", "probe")
+               "replaced_by", "why", "format", "from_source", "probe",
+               "reaffirmed")
 
 #: Every field a vertex record holds. `id`, `title`, `area` and `status` are
 #: required; the rest optional. Anything else is `Vertex.extra`.
@@ -255,6 +262,12 @@ class Edge:
     #: nobody holds. Shape-checked by `probe_fault` and read no further here:
     #: evaluating one is a domain's job (`dgraph.domains`, when it lands).
     probe: dict | None = None
+    #: Every time this answer was re-affirmed after a premise under it moved,
+    #: as `{"date", "note"}`: appended by `dg confirm`, never edited (`D123`).
+    #: Without it a re-affirmation left no trace — not its reason, and not that
+    #: the decision had ever been under review. In `PAYLOAD`, so a reopen
+    #: archives the list with its answer and a new close starts with none.
+    reaffirmed: list | None = None
     #: As `Vertex.extra`: what the store holds and this version cannot read,
     #: carried verbatim and warned about. Stays on the live edge across a
     #: reopen and is not copied to the archive, because what an unknown field
@@ -986,7 +999,7 @@ class Graph:
             add(
                 "stale_provisional",
                 f"{vid} is PROVISIONAL but every premise it rests on is "
-                f"settled again — re-examine it, then `dg confirm {vid}`",
+                f"settled again — re-examine it, then `dg confirm {vid} --note …`",
                 "warning",
             )
 

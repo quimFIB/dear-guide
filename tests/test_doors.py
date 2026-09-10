@@ -837,18 +837,20 @@ def test_a_provisional_decision_can_be_re_affirmed_from_the_browser(srv,
     """The exit the browser did not have. It is the interface that *creates*
     PROVISIONAL — it has reopen — so being unable to clear it made this the one
     status the tool could reach and not leave."""
-    code, res = post(srv, "/api/confirm", {"vertex": "D02"})
+    from datetime import date
+    code, res = post(srv, "/api/confirm", {"vertex": "D02", "note": "holds"})
     assert code == 200, res
     assert bare(res["staged"]) == [
-        {"op": "set_status", "vertex": "D02", "status": "DECIDED"}]
+        {"op": "set_status", "vertex": "D02", "status": "DECIDED",
+         "note": "holds", "date": date.today().isoformat()}]
 
 
 def test_confirm_stages_the_same_ops_through_both_doors(srv, reviewed, store):
-    code, res = post(srv, "/api/confirm", {"vertex": "D02"})
+    code, res = post(srv, "/api/confirm", {"vertex": "D02", "note": "holds"})
     assert code == 200, res
     from_web = tray()
     pending.clear()
-    cli(store, "confirm", "D02")
+    cli(store, "confirm", "D02", "--note", "holds")
     assert tray() == from_web
     assert res["staged"] == from_web
 
@@ -866,6 +868,19 @@ def test_confirm_refuses_the_same_thing_through_both_doors(srv, reviewed,
     out = runner.invoke(app, ["--project", str(store), "confirm", vid])
     assert out.exit_code == 1, out.output
     assert fragment in out.output
+    assert tray() == []
+
+
+def test_a_re_affirmation_without_a_reason_is_refused_at_both_doors(srv,
+                                                                  reviewed,
+                                                                  store):
+    """`D123`: the reason is the record. Both doors refuse the same way, and
+    nothing reaches the tray."""
+    code, res = post(srv, "/api/confirm", {"vertex": "D02"})
+    assert code == 400, res
+    assert "--note" in res["error"]
+    out = runner.invoke(app, ["--project", str(store), "confirm", "D02"])
+    assert out.exit_code == 1 and "--note" in out.output
     assert tray() == []
 
 
@@ -924,7 +939,7 @@ def test_settling_a_premise_releases_what_was_blocked_on_it(srv, reviewed):
     """Expanded, not bare: settling a vertex releases everything BLOCKED on it,
     and leaving that to the caller is how a block goes stale and `apply`
     refuses the whole batch."""
-    code, res = post(srv, "/api/confirm", {"vertex": "D02"})
+    code, res = post(srv, "/api/confirm", {"vertex": "D02", "note": "holds"})
     assert code == 200, res
     # D06 is BLOCKED:D05, not on D02 — so nothing is released here, and the
     # op list is exactly the one act. The releasing case is `expand`'s, pinned

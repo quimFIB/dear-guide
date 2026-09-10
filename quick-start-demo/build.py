@@ -324,8 +324,8 @@ RECIPES: dict[str, dict] = {
         solved="D02 now carries the split-table answer and a new falsifier, and both earlier answers "
                "stay in its history with the reason each was replaced. <code>dg check</code> pointed "
                "at D04, the index location, as needing a second look. The team decided it still "
-               "holds, and <code>dg confirm</code> recorded that without pretending the answer "
-               "changed.",
+               "holds, and <code>dg confirm</code> recorded that, with the reason kept on the "
+               "answer, without pretending the answer changed.",
         read_full="The June answer about where the index lives meets users who sync their notes folder, "
                   "which is exactly what its falsifier named. A falsifier that comes true is the case "
                   "the record was built for. Reopen with the fact as the reason, answer again with a "

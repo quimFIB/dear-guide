@@ -96,11 +96,11 @@ $ dg apply
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
 $ dg check
 ! [stale_provisional] (warning) D04 is PROVISIONAL but every premise it rests on is settled 
-again — re-examine it, then `dg confirm D04`
+again — re-examine it, then `dg confirm D04 --note …`
 ! [stale_provisional] (warning) D02 is PROVISIONAL but every premise it rests on is settled 
-again — re-examine it, then `dg confirm D02`
+again — re-examine it, then `dg confirm D02 --note …`
 ! [stale_provisional] (warning) D05 is PROVISIONAL but every premise it rests on is settled 
-again — re-examine it, then `dg confirm D05`
+again — re-examine it, then `dg confirm D05 --note …`
 ! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
 `dg render` rather than editing it.
 ! [link_premise_under_review] (warning) T07 is TODO and exists because of D05, which is 
@@ -109,11 +109,11 @@ PROVISIONAL — the reason for this work is under review; re-check it before car
 PROVISIONAL — the reason for this work is under review; re-check it before carrying on
 ✓ 8 vertices, 7 edges; 11 tasks, all invariants hold, 6 warning(s)
 # Re-examined, each one still holds. Confirm says so without inventing a reversal that never happened.
-$ dg confirm D02
+$ dg confirm D02 --note 'full-text search never depended on how notes are stored, only that they are files'
 staged 1 op(s) — D02 back to DECIDED, review with `dg pending`, then `dg apply`
-$ dg confirm D04
+$ dg confirm D04 --note 'the index still lives beside the notes; a journal changes nothing about where'
 staged 1 op(s) — D04 back to DECIDED, review with `dg pending`, then `dg apply`
-$ dg confirm D05
+$ dg confirm D05 --note 'one command per question fits a per-machine journal as well as it fit plain files'
 staged 1 op(s) — D05 back to DECIDED, review with `dg pending`, then `dg apply`
 $ dg apply
 ✓ applied 3 op(s) → decisions.json; the view is regenerated on demand with `dg render`

@@ -26,11 +26,11 @@ $ dg apply
 ✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
 $ dg check
 ! [stale_provisional] (warning) D04 is PROVISIONAL but every premise it rests on is settled 
-again — re-examine it, then `dg confirm D04`
+again — re-examine it, then `dg confirm D04 --note …`
 ! [stale_view] (warning) decision-graph.md does not match decisions.json. It is generated — run 
 `dg render` rather than editing it.
 ✓ 8 vertices, 7 edges; 11 tasks, all invariants hold, 2 warning(s)
-$ dg confirm D04
+$ dg confirm D04 --note 'the index still lives beside the notes; sharding changes nothing about where'
 staged 1 op(s) — D04 back to DECIDED, review with `dg pending`, then `dg apply`
 $ dg apply
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`

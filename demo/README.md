@@ -164,7 +164,7 @@ It takes two steps, in this order:
 dg decide D03 --answer "Cosine, normalised in the writer." \
               --source "PR #218" --falsifier "the writer stops being the only path in" \
               --opens D07
-dg confirm D07                      # the premise settled and this answer still holds
+dg confirm D07 --note "the writer is still the only path in"   # the premise settled; say why this still holds
 ```
 
 Try `dg confirm D07` first and it refuses: *settle the premise first — until

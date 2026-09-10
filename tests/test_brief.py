@@ -71,7 +71,7 @@ def test_brief_flags_a_provisional_vertex_whose_premises_are_settled_again(
     """The state with no exit until `dg confirm` — so the brief names the verb."""
     write(g)
     _provisional(store, "D02")
-    assert "`dg confirm D02`" in run("brief").output
+    assert "`dg confirm D02 --note" in run("brief").output
 
 
 def test_brief_prints_an_empty_section_with_a_zero(run, store, g):

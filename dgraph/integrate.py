@@ -315,6 +315,15 @@ def _edges(base: Graph, theirs: Graph, vid: str, out: Derived) -> None:
                            if getattr(now, k) is not None}})
     elif gained:
         out.ops.append({"op": "add_edge", "from": vid, "to": gained})
+    if now.decided and _same_answer(was, now):
+        # Re-affirmations written since the base, on an answer both sides still
+        # hold (`D123`). Appended the way readings are: a list that grew is that
+        # many acts, each with the note it was given. A *new* answer brings its
+        # own in the close above, by `PAYLOAD`.
+        old = len(was.reaffirmed or [])
+        for r in (now.reaffirmed or [])[old:]:
+            out.ops.append({"op": "reaffirm", "vertex": vid,
+                            "note": r.get("note"), "date": r.get("date")})
     if lost:
         out.ops.append({"op": "remove_edge", "from": vid, "to": lost})
 
@@ -529,6 +538,13 @@ class Finding:
     #: refusal is the consequence of the disagreement, and reporting them as
     #: separate lines makes a reader count two conflicts where there is one.
     refusal: str | None = None
+    #: The other records this one finding covers. A reopen that drags two
+    #: decisions decided here under review is one act and one finding, on the
+    #: first; the second was only ever named in `message`, so nothing that
+    #: reads a finding as data could tell it had been reported. Found by
+    #: `tests/test_contest_property.py` once its generator grew an op kind and
+    #: its seeds reached two such decisions under one reopen.
+    also: list[str] = field(default_factory=list)
 
 
 #: What a contested op means, by op. **Contested is a provenance property, not
@@ -587,6 +603,10 @@ CANNOT_CONFLICT = {
     # asserts anything a second writer could assert differently.
     "reject": "an offered-and-declined answer is a record of provenance",
     "read_evidence": "a reading is a fact about what was looked at",
+    # `D123`: the decision-store twin of a reading. It changes no status, and
+    # two clones re-reading one answer is two facts; the same sentence on the
+    # same day converges at apply.
+    "reaffirm": "a re-affirmation is a fact about who re-read a standing answer",
     # `set_link` sat here arguing that *a cross-store link is a fact, not a
     # verdict* — `add_dep`'s argument again. It was false for both fields the
     # op writes: `evidence_for` is one slot and `because` is assigned whole,
@@ -986,6 +1006,8 @@ def _walk(g, base, ops: list[dict], store: str,
                 findings.append(contested)
             else:
                 contested.message += f"; and {why}"
+                if rid not in (contested.record, *contested.also):
+                    contested.also.append(rid)
         try:
             for one in group:
                 _apply(probe, one, store)

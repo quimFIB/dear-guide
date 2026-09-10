@@ -308,7 +308,7 @@ dg probe --provisional                   # ...every PROVISIONAL decision beside 
 dg probe --all                           # ...everything; bare, past a screenful, it asks for a scope
 dg probe --domain rocq                   # ...only what one domain judges; --timeout overrides its deadline
 dg reopen D06                            # stage a reopen + its propagation
-dg confirm D12                           # a provisional decision, re-examined and standing
+dg confirm D12 --note "…"                # a provisional decision, re-examined and standing — and why, kept on the answer
 dg confirm D12 --against T14 --note "…"  # ...or a late result read against it, and it holds
 dg repair                                # a store a merge broke: stage the missing propagation
 dg-agent presets                         # the three curated remits, and what each one sets

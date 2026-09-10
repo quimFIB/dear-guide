@@ -3415,7 +3415,8 @@ function panel(){
         ? `<p class="wait">Still resting on ${esc(waiting.join(", "))}, which
              ${waiting.length===1?"is":"are"} under review. Until that settles,
              PROVISIONAL is the accurate status.</p>`
-        : `<p style="margin:0 0 10px"><button class="primary" id="doConfirm">Re-affirm — the answer still holds</button></p>
+        : `<p style="margin:0 0 6px"><input id="confirmNote" placeholder="it still holds, because…" style="width:100%"></p>
+           <p style="margin:0 0 10px"><button class="primary" id="doConfirm">Re-affirm — the answer still holds</button></p>
            <p class="muted" style="margin:0 0 10px">Its premise moved and settled.
              Nothing about this answer changed, so nothing is superseded.</p>`;
       h+=`<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">`;
@@ -3591,10 +3592,14 @@ function carryComposed(op){
    rules. This posts an act: *the premise moved and the answer holds*. */
 async function stageConfirm(){
   const vid=sel;
+  /* The reason is required, as at the CLI (D123): without it the record says
+     somebody pressed a button, not what they found. */
+  const note=(($("#confirmNote")||{}).value||"").trim();
+  if(!note){ say("Say why the answer still holds.", "bad", vid); return; }
   try{
     const res=await api("/api/confirm",{method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({vertex:vid})});
+      body:JSON.stringify({vertex:vid,note})});
     PEND=await api("/api/pending"); tray();
     const notes=(res.notes||[]);
     say(`Staged ${vid} back to DECIDED.`+(notes.length?" "+notes.join(" "):""),
@@ -3719,6 +3724,10 @@ function opRow(o, i, kind, act){
         + (o.outcome?` <span class="muted">${esc(o.outcome.slice(0,50))}</span>`:"")
         + (o.why?` <span class="muted">${esc(o.why.slice(0,50))}</span>`:"")
         + (o.derived_from?` <span class="muted">(from ${esc(o.derived_from)})</span>`:"")
+        + (o.note?` <span class="muted">${esc(o.note.slice(0,50))}</span>`:"")
+    /* D123: a clone's re-affirmation of an answer both sides hold, as the CLI
+       prints it — the note it was given. */
+    : o.op==="reaffirm"?`+ <span class="muted">${esc((o.note||"").slice(0,60))}</span>`
     : o.op==="add_dep"||o.op==="remove_dep"?esc((o.after||[]).join(", "))
     /* The decision-side edge ops. Worded as `_PENDING_DETAIL` in the CLI
        words them — subject is the premise, detail the vertex it now (or no

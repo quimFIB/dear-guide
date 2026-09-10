@@ -112,6 +112,11 @@ def _section(g: Graph, vid: str, _by=None, _into=None) -> str:
         p = v.probe
         out.append(f"- **Rule for settling:** {_probe_md(p.criterion)} "
                    f"({p.date})")
+    if e is not None and e.decided:
+        # One line per re-affirmation, and none where there are none, so a
+        # store without them renders byte-identically (`D123`).
+        for r in e.reaffirmed or []:
+            out.append(f"- **Re-affirmed:** {r.get('date')} — {r.get('note')}")
     out.append("")
 
     if e is not None and e.decided:

@@ -157,6 +157,36 @@ def test_every_conflict_is_collected_before_anything_is_asked(g):
     assert {f.record for f in rep.contested} == {"D02", "D03"}
 
 
+def test_re_affirmations_arrive_as_facts_and_the_same_one_converges(g):
+    """`D123`. A clone's re-affirmation of an answer both sides hold arrives as
+    its own op, two clones' entries are both kept, the same entry twice is one,
+    and none of it is contested: re-reading an answer is a fact."""
+    def reaffirmed(*notes):
+        out = copy.deepcopy(g)
+        for n in notes:
+            pending._reaffirm(out, "D02", {"note": n, "date": "2026-09-10"})
+        return out
+
+    theirs = reaffirmed("theirs re-read it")
+    ops = [o for o in integrate.decisions(g, theirs).ops if o["op"] == "reaffirm"]
+    assert ops == [{"op": "reaffirm", "vertex": "D02",
+                    "note": "theirs re-read it", "date": "2026-09-10"}]
+
+    ours = reaffirmed("ours re-read it")
+    for o in ops:
+        pending._apply_one(ours, o)
+    assert [r["note"] for r in ours.active_edge("D02").reaffirmed] == [
+        "ours re-read it", "theirs re-read it"]
+
+    same = reaffirmed("theirs re-read it")
+    for o in ops:
+        pending._apply_one(same, o)
+    assert len(same.active_edge("D02").reaffirmed) == 1
+
+    rep = integrate.plan(reaffirmed("ours re-read it"), None, g, None, theirs, None)
+    assert rep.contested == []
+
+
 def test_a_change_nobody_else_touched_is_not_contested(g):
     """Contested is measured against the **base**, not against the op. An op
     says *make it this*, so comparing what it writes with what is here reports

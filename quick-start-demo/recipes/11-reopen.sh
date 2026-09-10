@@ -29,9 +29,9 @@ full() {
   run dg apply
   run dg check
   note "Re-examined, each one still holds. Confirm says so without inventing a reversal that never happened."
-  run dg confirm D02
-  run dg confirm D04
-  run dg confirm D05
+  run dg confirm D02 --note "full-text search never depended on how notes are stored, only that they are files"
+  run dg confirm D04 --note "the index still lives beside the notes; a journal changes nothing about where"
+  run dg confirm D05 --note "one command per question fits a per-machine journal as well as it fit plain files"
   run dg apply
   run dg check
   run dg node D01

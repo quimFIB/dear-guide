@@ -214,10 +214,10 @@ computing.
 **The metric still stands.** Cosine was chosen because the encoder L2-normalises
 its output, and HNSW builds a cosine graph as happily as a scan reads one. The
 argument never mentioned corpus size. You re-read it, agree, and record that you
-did:
+did, and why:
 
 ```sh
-dg confirm D02
+dg confirm D02 --note "cosine was argued from the encoder, not from the corpus size"
 ```
 
 **The core-parallel scan does not.** Its answer said, in as many words, that one
@@ -237,7 +237,9 @@ wrong — it was a sensible decision, written down clearly, measured, and it had
 quietly stopped being true. Without the graph, you find out in eighteen months
 when somebody asks why p99 is pinned to one core.
 
-`dg confirm` exists so that `PROVISIONAL` has an honest way out. The temptation
+`dg confirm` exists so that `PROVISIONAL` has an honest way out, and the note it
+requires stays on the answer, dated — the reason it survived is in the record
+rather than in somebody's memory. The temptation
 is to reopen-and-redecide everything just to clear the warning — but that files
 a reversal that never happened, and a fake reversal in the record is worse than
 an unresolved one.

@@ -30,7 +30,7 @@ from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
        "remove_vertex", "set_status", "set_fields", "reject", "reprobe",
-       "bind", "unbind"}
+       "bind", "unbind", "reaffirm"}
 
 #: What `set_fields` may write, in **both** stores. One tuple, imported by
 #: `task_pending`, because a decision and a task differ in everything except
@@ -1523,7 +1523,8 @@ def vet(g: Graph, op: dict, *, new_area: bool = False,
                 f"reopen or from settling a premise, and the only status a "
                 f"caller may write is DECIDED, to re-affirm a PROVISIONAL "
                 f"decision")
-        compose_confirm(g, vid=op.get("vertex"))
+        compose_confirm(g, vid=op.get("vertex"), note=op.get("note"),
+                        date=op.get("date"))
 
 
 def _register(store, area: str | None) -> None:
@@ -2071,7 +2072,28 @@ def compose_undep(g: Graph, *, vid: str,
     return [{"op": "remove_edge", "from": p, "to": [vid]} for p in after]
 
 
-def compose_confirm(g: Graph, *, vid: str) -> list[dict]:
+def confirm_guards(g: Graph, vid: str) -> None:
+    """Raise unless `vid` is a PROVISIONAL decision whose premises are settled.
+
+    `compose_confirm`'s two guards on their own, so a door can ask them
+    *before* it asks a person why the answer holds: a prompt for a reason
+    that is then refused for a different one wastes the reason.
+    """
+    v = g.vertices.get(vid)
+    if v is None:
+        raise ApplyError(f"unknown vertex {vid}")
+    if v.base_status != "PROVISIONAL":
+        raise ApplyError(f"{vid} is {v.status}, not PROVISIONAL — there is "
+                         f"nothing to re-affirm")
+    unsettled = g.provisional_because(vid)
+    if unsettled:
+        raise ApplyError(f"{vid} still rests on {', '.join(unsettled)}\n"
+                         f"settle the premise first — until then PROVISIONAL "
+                         f"is the accurate status")
+
+
+def compose_confirm(g: Graph, *, vid: str, note: str | None = None,
+                    date: str | None = None) -> list[dict]:
     """The op list that re-affirms a PROVISIONAL decision. `dg confirm`'s.
 
     PROVISIONAL is the one status this tool can create and could not clear.
@@ -2095,19 +2117,24 @@ def compose_confirm(g: Graph, *, vid: str) -> list[dict]:
 
     Expanded, not bare, for the PROVISIONAL marks a reopen derives; nothing
     is released by settling any more, since waiting is read off the edges.
+
+    **And it says why** (`D123`). The note is required and travels on the op:
+    applying it appends `{date, note}` to the answer, so the store records the
+    re-affirmation, its reason, and that the decision was ever under review. It
+    is checked *after* the two guards, so a refusal for an unsettled premise
+    reads exactly as it did before the note existed.
     """
-    v = g.vertices.get(vid)
-    if v is None:
-        raise ApplyError(f"unknown vertex {vid}")
-    if v.base_status != "PROVISIONAL":
-        raise ApplyError(f"{vid} is {v.status}, not PROVISIONAL — there is "
-                         f"nothing to re-affirm")
-    unsettled = g.provisional_because(vid)
-    if unsettled:
-        raise ApplyError(f"{vid} still rests on {', '.join(unsettled)}\n"
-                         f"settle the premise first — until then PROVISIONAL "
-                         f"is the accurate status")
-    return expand(g, {"op": "set_status", "vertex": vid, "status": "DECIDED"})
+    confirm_guards(g, vid)
+    note = (note or "").strip()
+    if not note:
+        raise ApplyError(f"re-affirming {vid} needs why its answer still holds: "
+                         f"--note. Without it the record says somebody ran a "
+                         f"command, not what they found")
+    if "\n" in note:
+        raise ApplyError(f"why {vid} still holds is one line — the view writes "
+                         f"it on one; put a longer argument in a file and cite it")
+    return expand(g, {"op": "set_status", "vertex": vid, "status": "DECIDED",
+                      "note": note, "date": date or _date.today().isoformat()})
 
 
 def introduced(g: Graph, ops: list[dict]) -> list[Violation]:
@@ -2301,6 +2328,22 @@ def _payload(op: dict) -> dict:
     return out
 
 
+def _reaffirm(g: Graph, vid: str, op: dict) -> None:
+    """Append one `{date, note}` to `vid`'s standing answer (`D123`).
+
+    The same entry twice is one: two clones re-reading an answer and writing
+    the same sentence on the same day converge, the way two identical edges
+    do, rather than recording one act as two.
+    """
+    e = g.active_edge(vid)
+    entry = {"date": op.get("date") or _date.today().isoformat(),
+             "note": op["note"].strip()}
+    held = list(e.reaffirmed or [])
+    if entry not in held:
+        held.append(entry)
+    e.reaffirmed = held
+
+
 def _apply_one(g: Graph, op: dict) -> None:
     kind = op.get("op")
     if kind not in OPS:
@@ -2381,6 +2424,21 @@ def _apply_one(g: Graph, op: dict) -> None:
 
     if kind == "set_status":
         g.vertices[vid] = _dc_replace(g.vertices[vid], status=op["status"])
+        if op.get("note") and op["status"] == "DECIDED":
+            _reaffirm(g, vid, op)
+        return
+
+    if kind == "reaffirm":
+        # Only integration derives this one (`D123`): a clone's re-affirmation
+        # of an answer both sides hold. It changes no status — whether this
+        # store's copy is still under review is this store's walk to say.
+        e = g.active_edge(vid)
+        if e is None or not e.decided:
+            raise ApplyError(f"{vid} has no standing answer to re-affirm")
+        if not (op.get("note") or "").strip():
+            raise ApplyError(f"re-affirming {vid} needs why its answer still "
+                             f"holds: --note")
+        _reaffirm(g, vid, op)
         return
 
     if kind == "set_fields":

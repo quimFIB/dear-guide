@@ -1351,7 +1351,7 @@ def test_a_provisional_decision_still_confirms_its_status(run_cli, both):
     # `dg confirm` exists for, without dragging D01 through a reversal.
     g.vertices["D02"] = replace(g.vertices["D02"], status="PROVISIONAL")
     g.save(both / "decisions.json")
-    res = run_cli("confirm", "D02")
+    res = run_cli("confirm", "D02", "--note", "still holds")
     assert res.exit_code == 0 and "back to DECIDED" in res.output
     staged = json.loads((both / ".dgraph-pending.json").read_text())
     assert staged and all(o["op"] == "set_status" for o in staged)

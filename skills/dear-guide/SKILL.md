@@ -359,8 +359,8 @@ The output lists every decided descendant that just became `PROVISIONAL`. **That
 list is the point of the command.** Each one now rests on a premise under review,
 and each needs one of two things once the premise is settled again:
 
-- it still holds → `dg confirm D12`, which records that you re-read it under the
-  new premise
+- it still holds → `dg confirm D12 --note "why"`, which records, dated on the
+  answer, that you re-read it under the new premise and why it still holds
 - it does not → `dg reopen D12`, then decide it again
 
 Do not reach for reopen to escape a status. A reversal that never happened is a

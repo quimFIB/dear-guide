@@ -77,6 +77,9 @@ class Premise:
     #: The answer's dialect: "org", else markdown. Carried rather than resolved
     #: here so `data()` stays faithful to the store and only `text()` converts.
     format: str | None = None
+    #: Every time the answer was re-affirmed, `{"date", "note"}` (`D123`): the
+    #: reason a premise that was under review still stands.
+    reaffirmed: list = field(default_factory=list)
     #: What else this premise opened — the siblings of the node we came from.
     #: Present because a premise that opened five questions is a load-bearing
     #: one, and that is invisible from the chain alone.
@@ -133,6 +136,7 @@ def _premise(g: Graph, aid: str, of: str, depth: int) -> Premise:
         source=e.source if decided else None,
         date=e.date if decided else None,
         format=e.format if decided else None,
+        reaffirmed=list(e.reaffirmed or []) if decided else [],
         # Only siblings of the node being explained, not every child: the
         # question is what else this premise is holding up alongside us.
         also_opened=[c for c in g.children(aid) if c != of],
@@ -157,6 +161,7 @@ def decision(g: Graph, vid: str, tg: TaskGraph | None = None) -> dict:
         "source": e.source if decided else None,
         "date": e.date if decided else None,
         "answer_format": e.format if decided else None,
+        "reaffirmed": list(e.reaffirmed or []) if decided else [],
         "chain": [p.__dict__ for p in premises],
         "superseded": [
             Superseded(h.summary, h.replaced_by, h.why).__dict__
@@ -406,6 +411,8 @@ def _premise_lines(p: dict) -> list[str]:
     if p["source"]:
         out.append(f"       source: {p['source']}"
                    + (f"  ·  {p['date']}" if p["date"] else ""))
+    for r in p.get("reaffirmed") or []:
+        out.append(f"       re-affirmed {r.get('date')}: {r.get('note')}")
     if p["also_opened"]:
         out.append(f"       also opened: {', '.join(p['also_opened'])}")
     return out
@@ -438,6 +445,8 @@ def _decision_text(d: dict) -> str:
         out += _wrap(d["answer"], "  ", d.get("answer_format"))
         if d["falsifier"]:
             out.append("  falsifier: " + " ".join(d["falsifier"].split()))
+        for r in d.get("reaffirmed") or []:
+            out.append(f"  re-affirmed {r.get('date')}: {r.get('note')}")
         if d["source"]:
             out.append(f"  source: {d['source']}"
                        + (f"  ·  {d['date']}" if d["date"] else ""))

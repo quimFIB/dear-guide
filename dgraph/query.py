@@ -805,6 +805,15 @@ def decision_lens(g, *, predicates=None, structural=None, arg_kind=None,
             out += _texts((o.probe or {}).get("kind")
                           for o in rivals_of(vid) if o.probe)
             return out
+        if name == "reaffirmed":
+            # `D123`: a re-affirmation is indexed on what it says and when —
+            # the standing answer's entries, and a reversal's where history is
+            # searched. The record is `{date, note}`, so both are text.
+            held = list((e.reaffirmed if e else None) or [])
+            if archived:
+                held += [r for h in hist_of(vid) for r in (h.reaffirmed or [])]
+            return _texts([r.get("note") for r in held]
+                          + [r.get("date") for r in held])
         if e is not None:
             out += _texts([getattr(e, name, None)])
         # And every *rival* answer, in the store `one_active_edge` refuses.

@@ -136,6 +136,10 @@ def _decision_op(rng, g):
     if kind == "reprobe":
         return {"op": kind, "vertex": vid, "probe": _probe(rng),
                 "date": rng.choice(DATES)}
+    if kind == "reaffirm":
+        # `D123`: the decision-store twin of `read_evidence` below.
+        return {"op": kind, "vertex": vid, "note": _text(rng),
+                "date": rng.choice(DATES)}
     if kind in ("bind", "unbind"):
         return {"op": kind, "vertex": vid,
                 "binds": [_held_or_fresh(rng, g.vertices[vid], kind)]}
@@ -319,6 +323,7 @@ def _check(seed, store, base, ours, theirs):
     for f in findings:
         if f.kind == "contested":
             reported.add(f.record)
+            reported |= set(f.also)
             reported |= integrate._subjects(f.op or {})
     arrived = {}
     for op in ops:

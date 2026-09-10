@@ -626,7 +626,7 @@ def _show_listing(g: Graph, att: list[dict],
               _x(a["title"]),
               "[dim]" + _x(", ".join(a["because"]) if a["because"]
                            else f"premises settled again — "
-                                f"`dg confirm {a['id']}`") + "[/]")
+                                f"`dg confirm {a['id']} --note …`") + "[/]")
              for a in att],
             width=_width(), markup=True,
             tails=[f"[dim]{_x(a['area'])}[/]" for a in att]))
@@ -1151,6 +1151,9 @@ def node(
             # store with no probes reads exactly as it did.
             *([f"probe       {_x(_probe_line(e.probe))}"] if e.probe else []),
             f"source      {_x(e.source)}   ({e.date})",
+            # Every re-affirmation, dated, and only when there is one (`D123`).
+            *[f"reaffirmed  {_x(r.get('date') or '')}  {_x(r.get('note') or '')}"
+              for r in (e.reaffirmed or [])],
             "", "[bold]Answer[/]", _x(e.answer),
         ]
         for other in rivals:
@@ -1220,6 +1223,9 @@ def node(
                 lines.append(f"    falsifier   {_x(h.falsifier)}")
             if h.source:
                 lines.append(f"    source      {_x(h.source)}")
+            for r in h.reaffirmed or []:
+                lines.append(f"    reaffirmed  {_x(r.get('date') or '')}  "
+                             f"{_x(r.get('note') or '')}")
             # `summary` is a label clipped from the answer, so when the two are
             # the same string the answer is already on the line above it.
             if h.answer and h.answer != h.summary:
@@ -2321,10 +2327,17 @@ def confirm(
                                       help="comma-separated evidence tasks read "
                                            "against this answer"),
     note: str = typer.Option(None, "--note", "-n",
-                             help="what the evidence showed"),
+                             help="why the answer still holds — or, with "
+                                  "--against, what the evidence showed"),
 ) -> None:
     """Re-affirm a decision: its premise moved or its evidence landed, and the
     answer holds.
+
+    **Either way it says why** (`D123`). Re-affirming a PROVISIONAL status used
+    to take `--note` and drop it, so the store kept no trace of the act, its
+    reason, or that the decision had been under review. The note is required
+    now and appended, dated, to the answer; a reopen archives it with that
+    answer.
 
     Two acts under one verb, told apart by what is standing in the way, and
     never both in one command — each stages into one tray, and a command that
@@ -2415,7 +2428,12 @@ def confirm(
     # `POST /api/confirm` — a re-affirmation that skipped either would stage an
     # op `apply` refuses, in a tray every other writer shares.
     try:
-        ops = pending.compose_confirm(eff, vid=vid)
+        pending.confirm_guards(eff, vid)
+        if not (note or "").strip() and _interactive():
+            note = _ask(f"{vid} — {v.title}\n  why does the answer still hold?",
+                        "--note/-n")
+        ops = pending.compose_confirm(eff, vid=vid, note=note,
+                                      date=_date.today().isoformat())
     except pending.ApplyError as exc:
         con.print(f"[red]{_x(exc)}[/]")
         raise typer.Exit(1) from None
@@ -3631,7 +3649,9 @@ _PENDING_DETAIL = {
     "unbind": lambda o: "✗ " + _x(_binds_line(o)),
     "reopen": lambda o: _x(o.get("why", "")),
     "set_status": lambda o: f"→ {_x(o.get('status', '?'))}"
-    + (f"  [dim](from {_x(o['derived_from'])})[/]" if o.get("derived_from") else ""),
+    + (f"  [dim](from {_x(o['derived_from'])})[/]" if o.get("derived_from") else "")
+    + (f"  {_x(o['note'][:60])}" if o.get("note") else ""),
+    "reaffirm": lambda o: "+ " + _x((o.get("note") or "")[:70]),
     "add_vertex": lambda o: _x(o.get("title", "")),
     "add_edge": lambda o: "→ " + ", ".join(o.get("to", [])),
     "remove_edge": lambda o: "✗ " + ", ".join(o.get("to", [])),

@@ -234,7 +234,7 @@ from the encoder, not from the corpus size, and HNSW builds a cosine graph as
 happily as a scan reads one. It survives the new premise untouched:
 
 ```sh
-dg confirm D02
+dg confirm D02 --note "cosine on vectors the encoder normalised does not depend on the index"
 ```
 
 ```

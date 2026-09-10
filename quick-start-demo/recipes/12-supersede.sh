@@ -15,7 +15,7 @@ quick() {
     --opens D03,D04
   run dg apply
   run dg check
-  run dg confirm D04
+  run dg confirm D04 --note "the index still lives beside the notes; sharding changes nothing about where"
   run dg apply
   run dg node D02
 }
