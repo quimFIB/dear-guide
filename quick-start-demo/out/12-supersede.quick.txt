@@ -40,17 +40,19 @@ $ dg node D02
 │                                                                                              │
 │ status      DECIDED                                                                          │
 │ area        search                                                                           │
+│ tags        perf                                                                             │
 │ depends on  D01                                                                              │
 │ opens       D03, D04                                                                         │
 │                                                                                              │
 │ falsifier   p95 over 200 ms at 500k notes                                                    │
-│ source      bench/fts5-shards.md   (2026-09-09)                                              │
+│ source      bench/fts5-shards.md   (2026-09-10)                                              │
 │                                                                                              │
 │ Answer                                                                                       │
 │ SQLite FTS5 with a trigram tokenizer, sharded into one table per 20k notes.                  │
 │ implemented by T10 (PARKED)                                                                  │
 │ evidence from T02 (DONE) — bench/fts5.md — p95 41 ms at 50k notes, one table per notebook    │
-│                 read 2026-09-09 — read at decide                                             │
+│                 read 2026-06-03 — read at decide                                             │
+│                 read 2026-09-10 — read at decide                                             │
 │                                                                                              │
 │ Superseded                                                                                   │
 │                                                                                              │

@@ -28,7 +28,10 @@
    "id": "D02",
    "title": "How are notes indexed for search?",
    "area": "search",
-   "status": "DECIDED"
+   "status": "DECIDED",
+   "tags": [
+    "perf"
+   ]
   },
   {
    "id": "D03",

@@ -5,11 +5,11 @@ $ dg add --id D10 --area sync --title 'Is the index file one of them?' --after D
 staged add D10
 $ dg pending
 STAGED  5 op(s) in 2 act(s)
-  ┌ 0  zbsx  add_vertex  D09  Which files does sync ignore? [sync]
-  └ 1  ztnf  add_edge    D08  → D09
-  ┌ 2  rqtj  add_vertex  D10  Is the index file one of them? [sync]
-  │ 3  dgyn  add_edge    D09  → D10
-  └ 4  dgab  add_edge    D04  → D10
+  ┌ 0  gyka  add_vertex  D09  Which files does sync ignore? [sync]
+  └ 1  hfkz  add_edge    D08  → D09
+  ┌ 2  eyts  add_vertex  D10  Is the index file one of them? [sync]
+  │ 3  cwmt  add_edge    D09  → D10
+  └ 4  rewm  add_edge    D04  → D10
 `dg apply` to write, `dg drop <id>` to unstage
 `dg apply --group <id>` takes one act, `dg drop <id> --group` drops one
   `dg pending --full` for the table, nothing clipped
@@ -18,31 +18,31 @@ $ dg pending --full
 ┏━━━━━┳━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ #   ┃ id   ┃ Op         ┃ Vertex ┃ Area ┃ Detail                         ┃
 ┡━━━━━╇━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ ┌ 0 │ zbsx │ add_vertex │ D09    │ sync │ Which files does sync ignore?  │
-│ └ 1 │ ztnf │ add_edge   │ D08    │      │ → D09                          │
+│ ┌ 0 │ gyka │ add_vertex │ D09    │ sync │ Which files does sync ignore?  │
+│ └ 1 │ hfkz │ add_edge   │ D08    │      │ → D09                          │
 ├─────┼──────┼────────────┼────────┼──────┼────────────────────────────────┤
-│ ┌ 2 │ rqtj │ add_vertex │ D10    │ sync │ Is the index file one of them? │
-│ │ 3 │ dgyn │ add_edge   │ D09    │      │ → D10                          │
-│ └ 4 │ dgab │ add_edge   │ D04    │      │ → D10                          │
+│ ┌ 2 │ eyts │ add_vertex │ D10    │ sync │ Is the index file one of them? │
+│ │ 3 │ cwmt │ add_edge   │ D09    │      │ → D10                          │
+│ └ 4 │ rewm │ add_edge   │ D04    │      │ → D10                          │
 └─────┴──────┴────────────┴────────┴──────┴────────────────────────────────┘
 `dg apply` to write, `dg drop <id>` to unstage
 `dg apply --group <id>` takes one act, `dg drop <id> --group` drops one
 # Position or short id both address a staged op. Drop the second question.
 $ dg drop 2
 ✗ nothing dropped
-rqtj was staged together with 2 other op(s), as one act: dgyn add_edge, dgab add_edge
+eyts was staged together with 2 other op(s), as one act: cwmt add_edge, rewm add_edge
 Removing it alone would leave the rest to be applied as though they meant something they do not.
 Drop the whole act, or leave it whole and turn it down with `clear`.
 `dg drop 2 --group` removes the whole act
 [exit 1]
 $ dg drop 2 --group
-dropped rqtj: add_vertex D10  Is the index file one of them?
-dropped dgyn: add_edge D09  → D10
-dropped dgab: add_edge D04  → D10
+dropped eyts: add_vertex D10  Is the index file one of them?
+dropped cwmt: add_edge D09  → D10
+dropped rewm: add_edge D04  → D10
 $ dg pending
 STAGED  2 op(s) in 1 act(s)
-  ┌ 0  zbsx  add_vertex  D09  Which files does sync ignore? [sync]
-  └ 1  ztnf  add_edge    D08  → D09
+  ┌ 0  gyka  add_vertex  D09  Which files does sync ignore? [sync]
+  └ 1  hfkz  add_edge    D08  → D09
 `dg apply` to write, `dg drop <id>` to unstage
 `dg apply --group <id>` takes one act, `dg drop <id> --group` drops one
   `dg pending --full` for the table, nothing clipped
@@ -90,3 +90,24 @@ $ dg areas
 │ ux      │     0 │    0 │       0 │      0 │    2 │     2 │
 │ sync    │     0 │    0 │       0 │      0 │    1 │     1 │
 └─────────┴───────┴──────┴─────────┴────────┴──────┴───────┘
+# Tags are free words beside the area, in either store, and the same guard stands at the door: a near-miss of one in use is refused naming it, and --new-tag is the override.
+$ dg add --id D11 --area search --title 'Should search rank by recency?' --after D02 --tag perfs
+✗ nothing staged
+tag 'perfs' is new, and close to tags already in use:
+    perf  (3 filed)
+If it is genuinely a different tag, restage with --new-tag. Tags accumulate: nothing has to be 
+declared first.
+[exit 1]
+$ dg add --id D11 --area search --title 'Should search rank by recency?' --after D02 --tag perf,ranking
+staged add D11
+$ dg apply
+✓ applied 2 op(s) → decisions.json; the view is regenerated on demand with `dg render`
+$ dg tags
+                 Tags                  
+┏━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━┳━━━━━━━┓
+┃ Tag     ┃ Decisions ┃ Tasks ┃ Total ┃
+┡━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━╇━━━━━━━┩
+│ perf    │         2 │     2 │     4 │
+│ ranking │         1 │     0 │     1 │
+│ ci      │         0 │     1 │     1 │
+└─────────┴───────────┴───────┴───────┘

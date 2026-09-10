@@ -33,6 +33,11 @@ full() {
   run dg apply
   run dg check
   run dg areas
+  note "Tags are free words beside the area, in either store, and the same guard stands at the door: a near-miss of one in use is refused naming it, and --new-tag is the override."
+  run dg add --id D11 --area search --title "Should search rank by recency?" --after D02 --tag perfs
+  run dg add --id D11 --area search --title "Should search rank by recency?" --after D02 --tag perf,ranking
+  run dg apply
+  run dg tags
 }
 
 layer "$@"

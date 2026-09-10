@@ -61,7 +61,17 @@
    "status": "DONE",
    "done": "2026-06-02",
    "outcome": "bench/fts5.md \u2014 p95 41 ms at 50k notes, one table per notebook",
-   "evidence_for": "D02"
+   "evidence_for": "D02",
+   "readings": [
+    {
+     "date": "2026-06-03",
+     "note": "read at decide",
+     "against": "D02"
+    }
+   ],
+   "tags": [
+    "perf"
+   ]
   },
   {
    "id": "T06",
@@ -83,6 +93,10 @@
    ],
    "because": [
     "D02"
+   ],
+   "tags": [
+    "perf",
+    "ci"
    ]
   },
   {

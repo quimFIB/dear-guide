@@ -46,6 +46,16 @@ $ dg find 'falsifier:"200 ms"'
 DECISIONS  1 match of 8
   D02  DECIDED  How are notes indexed for sea…  ·  falsifier: p95 over 200 ms at 100k notes · s…
   `dg find … --full` for the table, nothing clipped
+# A tag is matched exactly, and across both stores at once.
+$ dg find tags:perf
+
+DECISIONS  1 match of 8
+  D02  DECIDED  How are notes indexed for sea…  ·  tags: perf · search
+
+TASKS  2 match of 11
+  T02  DONE    Benchmark FTS5 on 50k synthet…  ·  tags: perf · search
+  T10  PARKED  Run the benchmark in CI on ev…  ·  tags: perf · search
+  `dg find … --full` for the table, nothing clipped
 # Ids alone, for a pipe.
 $ dg find is:decidable --ids
 D08

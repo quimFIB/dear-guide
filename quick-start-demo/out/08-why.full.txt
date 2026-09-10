@@ -36,6 +36,7 @@ $ dg node D02
 │                                                                                              │
 │ status      DECIDED                                                                          │
 │ area        search                                                                           │
+│ tags        perf                                                                             │
 │ depends on  D01                                                                              │
 │ opens       D03, D04                                                                         │
 │                                                                                              │
@@ -46,6 +47,7 @@ $ dg node D02
 │ SQLite FTS5 with a trigram tokenizer, one table for every notebook.                          │
 │ implemented by T10 (PARKED)                                                                  │
 │ evidence from T02 (DONE) — bench/fts5.md — p95 41 ms at 50k notes, one table per notebook    │
+│                 read 2026-06-03 — read at decide                                             │
 │                                                                                              │
 │ Superseded                                                                                   │
 │                                                                                              │

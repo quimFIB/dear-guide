@@ -17,7 +17,7 @@ d task init
 # ---- storage ---------------------------------------------------------------
 d add --id D01 --area storage --title "What is the note store format?" \
   --note "Plain files, or a database the CLI owns. Everything else rests on this."
-d add --id D02 --area search  --title "How are notes indexed for search?" --after D01
+d add --id D02 --area search  --title "How are notes indexed for search?" --after D01 --tag perf
 d add --id D05 --area ux      --title "Does the CLI ship a TUI?" --after D01
 d add --id D08 --area sync    --title "How do two machines share one notes folder?" --after D01 \
   --note "D01's falsifier already names this case."
@@ -35,7 +35,7 @@ d add --id D04 --area storage --title "Where does the index live?" --after D02
 d apply
 d task add --id T01 --area storage --title "Write the file-store loader" --because D01
 d task add --id T02 --area search  --title "Benchmark FTS5 on 50k synthetic notes" \
-  --evidence-for D02 --after T01
+  --evidence-for D02 --after T01 --tag perf
 d task add --id T05 --area storage --title "Fix path escaping noticed while writing the loader" \
   --discovered-during T01
 d apply
@@ -89,7 +89,8 @@ d task add --id T08 --area sync    --title "Write the sync section of the README
   --because D08
 d task add --id T09 --area storage --title "Rebuild the index automatically when it is corrupt" \
   --because D06 --after T04
-d task add --id T10 --area search  --title "Run the benchmark in CI on every merge" --because D02
+d task add --id T10 --area search  --title "Run the benchmark in CI on every merge" --because D02 \
+  --tag perf,ci
 d task add --id T11 --area ux      --title "Resolve wikilinks in search output"
 d apply
 d task start T03; d apply
@@ -118,6 +119,9 @@ for x in t["tasks"]:
         x["done"] = dates[x["id"]]
     for entry in x.get("stops", []):
         entry["date"] = dates[x["id"]]
+    # T02 was read when D02 was first decided: the reading is dated to that answer.
+    for entry in x.get("readings", []):
+        entry["date"] = dates.get(entry["against"] + ":old", dates[entry["against"]])
 json.dump(t, open("tasks.json", "w"), indent=1); open("tasks.json", "a").write("\n")
 PY
 d check

@@ -56,13 +56,18 @@ RECIPES: dict[str, dict] = {
         read_full="An act is staged whole and dropped whole, so half a question can never land. "
                   "Areas are not declared up front; they accumulate, and the only guard is against "
                   "a near-miss of one already in use. A question resting on nothing is allowed and "
-                  "flagged: an unconnected decision is a smell, an unconnected task is ordinary.",
+                  "flagged: an unconnected decision is a smell, an unconnected task is ordinary. "
+                  "Tags are free words beside the area, in either store, and stand under the same "
+                  "guard; <code>dg tags</code> counts them, since a tag is held by the records that "
+                  "carry it and registered nowhere.",
         hl_quick=[(r"add_edge\s+D08\s+→ D09", "the dependency, as an edge"),
                   (r"└── D09", None)],
         hl_full=[(r"was staged together with 2 other op", "an act is dropped whole"),
                  (r"^\$ dg drop 2 --group", None),
                  (r"close to areas already in use", "the typo guard"),
-                 (r"\[no_orphans\]", "allowed, and said")],
+                 (r"\[no_orphans\]", "allowed, and said"),
+                 (r"close to tags already in use", "the same guard, for tags"),
+                 (r"^│ perf\s+│\s+2 │\s+2 │\s+4 │", "held by the records, both stores")],
     ),
     "03-decide": dict(
         read_quick="Three fields carry the weight: the answer, where the evidence lives, and what "
@@ -173,6 +178,7 @@ RECIPES: dict[str, dict] = {
         read_full="Superseded answers are searched too, since a reversal is often the only place a "
                   "rejected approach is written down. Exit 1 means nothing in the store says that, "
                   "a fact worth trusting; exit 2 means the question could not be answered as asked. "
+                  "<code>tags:</code> matches a tag exactly, in both stores at once. "
                   "<code>--subgraph</code> turns the matches into a seed and prints the slice they "
                   "induce as two stores: <code>boundary</code> names what the slice still mentions "
                   "and no longer holds, per record, and <code>--derived</code> adds what the whole "
@@ -182,6 +188,7 @@ RECIPES: dict[str, dict] = {
                   (r"^TASKS\s+3 match", None)],
         hl_full=[(r"superseded answer:", "the rejected approach, still findable"),
                  (r"^\[exit 1\]", "nothing matched"),
+                 (r"tags: perf · search", "one word, both stores"),
                  (r"^no predicate `is:nonsense`", None),
                  (r"^\[exit 2\]", "could not be asked that way"),
                  (r'"boundary"', "what the slice names and does not hold, and from where"),

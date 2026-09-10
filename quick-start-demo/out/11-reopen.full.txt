@@ -131,7 +131,7 @@ $ dg node D01
 │ opens       D02, D05, D08                                                                    │
 │                                                                                              │
 │ falsifier   the journal needs a schema migration, or a note needs more than one file         │
-│ source      issues/41, 44, 45   (2026-09-04)                                                 │
+│ source      issues/41, 44, 45   (2026-09-10)                                                 │
 │                                                                                              │
 │ Answer                                                                                       │
 │ Still plain markdown files, one per note — plus a per-machine journal beside them for        │

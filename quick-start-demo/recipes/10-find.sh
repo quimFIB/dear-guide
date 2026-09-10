@@ -20,6 +20,8 @@ full() {
   run dg find 'status:PARKED or status:DROPPED'
   run dg find 'area:storage -status:DONE' --tasks
   run dg find 'falsifier:"200 ms"'
+  note "A tag is matched exactly, and across both stores at once."
+  run dg find tags:perf
   note "Ids alone, for a pipe."
   run dg find 'is:decidable' --ids
   note "Exit 1 is a fact worth trusting: nothing in the store says that. Exit 2 is a question the tool could not answer as asked."

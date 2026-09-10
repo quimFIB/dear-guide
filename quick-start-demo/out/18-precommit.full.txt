@@ -95,15 +95,15 @@ $ dg node D09
 │ Enter.                                                                                       │
 │                                                                                              │
 │ Rule for settling (probe)                                                                    │
-│   2026-09-09  prose.rule {"text": "p95 under 100 ms: as you type; else on Enter"}            │
-│   2026-09-09  prose.rule {"text": "p95 under 100 ms on the slowest team laptop: as you type; │
+│   2026-09-10  prose.rule {"text": "p95 under 100 ms: as you type; else on Enter"}            │
+│   2026-09-10  prose.rule {"text": "p95 under 100 ms on the slowest team laptop: as you type; │
 │ else on Enter"}  (live)                                                                      │
 │ evidence from T12 (DONE) — p95 340 ms on 50k notes                                           │
-│                 read 2026-09-09 — read at decide                                             │
+│                 read 2026-09-10 — read at decide                                             │
 │                                                                                              │
 │ Superseded                                                                                   │
 │                                                                                              │
-│   “No: search runs on Enter. At 340 ms a keystroke would stutt…” → (undecided)   2026-09-09  │
+│   “No: search runs on Enter. At 340 ms a keystroke would stutt…” → (undecided)   2026-09-10  │
 │     why         bench/search.md: p95 60 ms with the prefix index, which is the falsifier     │
 │     falsifier   p95 under 100 ms on the 50k-note set                                         │
 │     source      T12                                                                          │
@@ -125,7 +125,7 @@ D09  REOPENED  Does search run on every keystroke?
     rule for settling Time a search over the 50k-note set. p95 under 100 ms: search as you type.
 Over: search on Enter.
     probe             pytest.passes {"node": "tests/test_search.py::test_p95_under_100ms"}  
-(2026-09-09)
+(2026-09-10)
     verdict           unjudged
     T12 DONE — p95 340 ms on 50k notes
 
