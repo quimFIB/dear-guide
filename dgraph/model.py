@@ -81,6 +81,14 @@ CLAIM = ("answer", "falsifier", "source", "probe")
 PAYLOAD = ("answer", "falsifier", "source", "date", "format", "probe",
            "reaffirmed")
 
+#: The `PAYLOAD` fields a later act appends to and an answer never arrives
+#: with. `dg confirm` appends a re-affirmation to a standing answer; integration
+#: replays a clone's as ops of their own, each carrying the claim it re-read.
+#: So a `close` or a `reject` carrying one is refused, and the seam's derived
+#: close leaves them out — they are still `PAYLOAD`, for the archive a reopen
+#: writes. Audit `AE-F3`.
+APPENDED = ("reaffirmed",)
+
 
 def reaffirmed_fault(value) -> str | None:
     """Why a stored `reaffirmed` list is malformed — or `None` (`D123`).

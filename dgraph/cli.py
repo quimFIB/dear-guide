@@ -2377,8 +2377,8 @@ def confirm(
     late = _late_evidence(eff, vid) if v.settled else []
     if against or (v.base_status != "PROVISIONAL" and late):
         if not v.settled:
-            con.print(f"[red]{vid} is {v.status} — an answer has to be "
-                      f"standing before evidence can be read against it[/]")
+            # The one sentence every door onto a reading gives (audit `AE-F5`).
+            con.print(f"[red]{_x(cross.reading_refusal(eff, vid))}[/]")
             raise typer.Exit(1)
         named = _ids(against, "--against")
         if not named:
@@ -6235,6 +6235,13 @@ def _integration_report(rep, ref: str, base_ref: str) -> None:
                   "edge still knows which vertex it meant.[/]")
         for line in rep.renamed:
             con.print(f"  {line}")
+    if rep.filed:
+        con.print("\n[cyan]filed with the answer it re-read[/] [dim]— a "
+                  "clone re-affirmed an answer that no longer stands here, and "
+                  "the entry is kept with that answer (`D124`). Never a "
+                  "question.[/]")
+        for line in rep.filed:
+            con.print(f"  {_x(line)}")
     if rep.contested:
         con.print("\n[yellow]contested[/] [dim]— it applies, but this graph "
                   "says otherwise. Only a person can say which is right.[/]")
@@ -6466,7 +6473,10 @@ def _incoming(proj, take, keep, split, as_id, title, area, new_area, adopt,
         try:
             with pending.new_area_allowed(new_area):
                 if d_ops:
-                    pending.vet_all(_eff(_g()), d_ops, new_area=new_area)
+                    # The one door a `reaffirm` is staged through: what
+                    # integration derived from a clone (audit `AE-F4`).
+                    pending.vet_all(_eff(_g()), d_ops, new_area=new_area,
+                                    integrated=True)
                     pending.stage_all(d_ops)
                 if t_ops:
                     task_pending.vet_all(_teff(_tg()), t_ops,

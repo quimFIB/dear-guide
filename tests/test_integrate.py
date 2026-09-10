@@ -169,8 +169,12 @@ def test_re_affirmations_arrive_as_facts_and_the_same_one_converges(g):
 
     theirs = reaffirmed("theirs re-read it")
     ops = [o for o in integrate.decisions(g, theirs).ops if o["op"] == "reaffirm"]
+    e = g.active_edge("D02")
     assert ops == [{"op": "reaffirm", "vertex": "D02",
-                    "note": "theirs re-read it", "date": "2026-09-10"}]
+                    "note": "theirs re-read it", "date": "2026-09-10",
+                    "claim": {k: getattr(e, k) for k in ("answer", "falsifier",
+                                                         "source", "probe")
+                              if getattr(e, k) is not None}}]
 
     ours = reaffirmed("ours re-read it")
     for o in ops:

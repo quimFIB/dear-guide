@@ -29,6 +29,10 @@ RE_RESOLVES = re.compile(r"^\*\*Resolves to → (.+)\*\*$", re.M)
 RE_SOURCE = re.compile(r"^\*Source:\* (.+)$", re.M)
 RE_TAGS = re.compile(r"^- \*\*Tags:\*\* (.+)$", re.M)
 RE_REAFFIRMED = re.compile(r"^- \*\*Re-affirmed:\*\* (\S+) — (.+)$", re.M)
+#: An archived answer's, named by that answer's summary as the Superseded
+#: table writes it (audit `AE-F6`).
+RE_REAFFIRMED_OLD = re.compile(
+    r"^- \*\*Re-affirmed, superseded \u201c(.+)\u201d:\*\* (\S+) — (.+)$", re.M)
 RE_SUP_ROW = re.compile(r"^\| (D\d+) \| (.+?) \| (.+?) \| (.+?) \|$", re.M)
 
 NONE = "—"
@@ -80,6 +84,8 @@ def parse(text: str) -> tuple[list[str], list[dict], list[dict]]:
         tags = RE_TAGS.search(body)
         reaffirmed = [{"date": d, "note": n.strip()}
                       for d, n in RE_REAFFIRMED.findall(body)]
+        archived = [(old, {"date": d, "note": n.strip()})
+                    for old, d, n in RE_REAFFIRMED_OLD.findall(body)]
 
         targets = []
         if res and res.group(1).strip() != "TERMINAL":
@@ -103,7 +109,7 @@ def parse(text: str) -> tuple[list[str], list[dict], list[dict]]:
             source=src.group(1).strip() if src else None,
             tags=[t.strip() for t in tags.group(1).split(",") if t.strip()]
             if tags else [],
-            reaffirmed=reaffirmed,
+            reaffirmed=reaffirmed, archived_reaffirmed=archived,
         ))
 
     sup = []
@@ -157,10 +163,15 @@ def import_markdown(path: Path) -> Graph:
             if dependants:
                 g.edges.append(Edge(src=vid, to=dependants, active=True))
 
+    held: dict[tuple[str, str], list[dict]] = {}
+    for n in nodes:
+        for old, entry in n["archived_reaffirmed"]:
+            held.setdefault((n["id"], old), []).append(entry)
     for s in sup:
         g.edges.append(Edge(
             src=s["node"], to=[], active=False, answer=s["old"],
             summary=s["old"], replaced_by=s["new"], why=s["why"],
             date=by_id.get(s["node"], {}).get("date"),
+            reaffirmed=held.get((s["node"], s["old"])) or None,
         ))
     return g

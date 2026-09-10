@@ -639,6 +639,22 @@ def settled_on_stalled_evidence(tg: TaskGraph, g: Graph) -> list[dict]:
     return _stalled_evidence(tg, g, settled=True)
 
 
+def reading_refusal(g: Graph, did: str | None) -> str | None:
+    """Why evidence cannot be read against `did` in `g` — or `None`.
+
+    A reading is judged against an answer (`D105`), so it needs one standing:
+    the rule `dg confirm --against` always gave, now asked of every
+    `read_evidence` wherever it is staged or applied. A close dropped from the
+    tray used to leave its *read at decide* reading to land on its own against
+    an open question, where the composing door refused exactly that. Audit
+    `AE-F5`. An id `g` lacks is `link_resolves`'s to say, not this."""
+    v = g.vertices.get(did or "")
+    if v is None or v.settled:
+        return None
+    return (f"{did} is {v.status} — an answer has to be standing before "
+            f"evidence can be read against it")
+
+
 def readings_at_close(tg: TaskGraph | None, did: str, date: str) -> list[dict]:
     """The `read_evidence` ops a close stages beside itself: one per evidence
     task already DONE, dated the close, noted *read at decide* (`D105`).

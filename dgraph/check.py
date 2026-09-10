@@ -48,6 +48,8 @@ CHECKS: tuple[str, ...] = (
     "reaffirmed_wellformed",
     # both stores; stamped where it is emitted, like `store_loads`
     "verbose_field",
+    # both stores: a one-line field holding a second line (AE-F7). A warning.
+    "one_line_field",
     # both stores: a field the store holds and this version cannot read,
     # carried verbatim and named. A warning, for the reason `model.unknown_field`
     # gives.
@@ -102,6 +104,8 @@ ORIGIN: dict[str, str] = {
     "verbose_field": "",
     # As `verbose_field`: emitted by both validators, stamped by the caller.
     "unknown_field": "",
+    # As `verbose_field`.
+    "one_line_field": "",
     # Either tray; stamped where it is emitted, like `store_loads`.
     "tray_applies": "",
     "ids_wellformed": DECISION,
@@ -277,6 +281,11 @@ def staged(proj: _project.Project | None = None,
                         "dg task pending", "dg task drop-op <id>", exc, TASK))
                 else:
                     after += _tasks(proj, etg, views=False)
+                    unread = _unread(proj, eg if eg is not None else g)
+                    if unread is not None:
+                        after.append(_tray_applies(
+                            "dg task pending", "dg task drop-op <id>",
+                            unread, TASK))
         if g is not None and tg is not None:
             before += _link(proj, g, tg)
             # A side whose tray would not preview is judged as it sits.
@@ -313,6 +322,43 @@ def diff(before: list[Violation], after: list[Violation],
     introduced = [v for v in after if key(v) not in was]
     kept = [v for v in after if key(v) in was]
     return fixed, introduced, kept
+
+
+def _unread(proj, g: Graph | None) -> Exception | None:
+    """The refusal `dg apply` would give a staged reading with no standing
+    answer to read against (`cross.reading_refusal`), or `None` — so `check
+    --staged`, and the brief that runs it, say so before the apply does.
+    Audit `AE-F5`."""
+    from dgraph import cross, pending
+    if g is None:
+        return None
+    for op in pending.load(proj.task_pending):
+        if op.get("op") == "read_evidence":
+            why = cross.reading_refusal(g, op.get("against"))
+            if why:
+                return pending.ApplyError(f"{op.get('task')}: {why}")
+    return None
+
+
+def _one_line(rows: list[tuple[str, dict]], origin: str) -> list[Violation]:
+    """`one_line_field`: a field written into a heading, a table cell or a
+    listing row that holds a second line. **A warning**, for `_verbose`'s
+    reason: every door refuses one now (`pending.one_line_fault`), so a stored
+    one predates the rule, and a store that was valid yesterday must not become
+    uncommittable. What it costs is the view — the heading splits and
+    `import-md` keeps the first line. Audit `AE-F7`."""
+    out = []
+    for rid, fields in rows:
+        for name, value in fields.items():
+            values = value if isinstance(value, list) else [value]
+            if any(isinstance(x, str) and ("\n" in x.strip() or "\r" in x)
+                   for x in values):
+                out.append(Violation(
+                    "one_line_field",
+                    f"{rid}'s {name} runs over more than one line — the view "
+                    f"writes it on one, and import-md keeps only the first",
+                    "warning", origin))
+    return out
 
 
 def _verbose(rows: list[tuple[str, dict]], origin: str) -> list[Violation]:
@@ -467,6 +513,10 @@ def _tasks(proj: _project.Project, tg: TaskGraph | None = None, *,
                  "why": t.stops[-1].why if t.stops else None})
          for t in tg.tasks.values()],
         TASK)
+    problems += _one_line(
+        [(t.id, {"title": t.title, "area": t.area, "tags": list(t.tags or ())})
+         for t in tg.tasks.values()],
+        TASK)
     problems += _unknown(
         [(t.id, t.extra) for t in tg.tasks.values()]
         + [(f"the {e.kind} edge from {e.src}", e.extra) for e in tg.edges]
@@ -547,6 +597,11 @@ def _decisions(proj: _project.Project, g: Graph | None = None, *,
         + [(e.src, {"answer": e.answer, "falsifier": e.falsifier,
                     "summary": e.summary, "why": e.why})
            for e in g.edges if e.active],
+        DECISION)
+    problems += _one_line(
+        [(v.id, {"title": v.title, "area": v.area, "tags": list(v.tags or ())})
+         for v in g.vertices.values()]
+        + [(e.src, {"source": e.source}) for e in g.edges if e.active],
         DECISION)
     problems += _unknown(
         [(v.id, v.extra) for v in g.vertices.values()]

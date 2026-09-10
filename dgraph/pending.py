@@ -23,9 +23,9 @@ from dgraph import ids as _idtable
 from dgraph import orgmd
 from dgraph import env, limits, project, ranges
 from dgraph import tags as _tags
-from dgraph.model import (CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED, Bind,
-                          Edge, Graph, Probe, Vertex, bind_fault, probe_fault,
-                          status_fault)
+from dgraph.model import (APPENDED, CLAIM, PAYLOAD, SIMPLE_STATUSES, UNSETTLED,
+                          Bind, Edge, Graph, Probe, Vertex, bind_fault,
+                          probe_fault, reaffirmed_fault, status_fault)
 from dgraph.violation import Violation
 
 OPS = {"close", "reopen", "add_vertex", "add_edge", "remove_edge",
@@ -874,7 +874,11 @@ def stage_all(ops: list[dict], path: Path | None = None, *,
     # that has never heard of this, so the ordinary path adds one dict lookup.
     me = owner()
     for op in ops:
-        why = limits.refuse_verbose(op, me)
+        # One line where the value is written on one, judged here for the
+        # reason `$DG_TERSE` is: the compose buffer refused it (`T132`) and
+        # the flags and the page did not, so a title of two lines split the
+        # view's heading and came back from `import-md` cut. Audit `AE-F7`.
+        why = one_line_fault(op) or limits.refuse_verbose(op, me)
         if why is not None:
             raise ApplyError(why)
     if against is not None:
@@ -1435,7 +1439,7 @@ def retargets_all(g: Graph, ops: list[dict]) -> list[tuple[str, list[str], list[
 
 
 def vet(g: Graph, op: dict, *, new_area: bool = False,
-        stored: Graph | None = None) -> None:
+        stored: Graph | None = None, integrated: bool = False) -> None:
     """Raise ApplyError if `op` could not be staged against `g`.
 
     The stage-time guard for callers that receive ops as data — the web API,
@@ -1452,7 +1456,19 @@ def vet(g: Graph, op: dict, *, new_area: bool = False,
     door `g` is the store plus the tray, and a record that is only staged
     read as one somebody had landed. `compose_add` makes the same split for
     the CLI. Audit `AA-F4`.
+
+    `integrated` is the one door a `reaffirm` may arrive through: `dg incoming
+    --adopt`, staging what integration derived from a clone. No other door
+    composes one — `dg confirm` writes its entry on a `set_status`, guarded
+    below — so from anywhere else it is a re-affirmation of a decision that
+    was never under review, and every surface that shows entries would repeat
+    it. Audit `AE-F4`.
     """
+    if op.get("op") == "reaffirm" and not integrated:
+        raise ApplyError(
+            f"a re-affirmation is not staged as data — `dg confirm "
+            f"{op.get('vertex') or '<id>'} --note …` re-affirms a PROVISIONAL "
+            f"decision, and a clone's arrive through `dg incoming --adopt`")
     if op.get("op") == "add_vertex" and op.get("id") in g.vertices:
         vid = op["id"]
         where = (" in the staging area — review the tray"
@@ -1666,7 +1682,8 @@ def vet_fields(op: dict, *, own: dict, other: dict, current: dict,
 
 
 def vet_all(g: Graph, ops: list[dict], *,
-            new_area: bool = False, stored: Graph | None = None) -> None:
+            new_area: bool = False, stored: Graph | None = None,
+            integrated: bool = False) -> None:
     """Raise if these ops could not be staged **as a group**.
 
     The plural of `vet`, and the twin of `task_pending.vet_all`. Each op is
@@ -1682,7 +1699,7 @@ def vet_all(g: Graph, ops: list[dict], *,
     """
     probe = copy.deepcopy(g)
     for op in ops:
-        vet(probe, op, new_area=new_area, stored=stored)
+        vet(probe, op, new_area=new_area, stored=stored, integrated=integrated)
         _apply_one(probe, op)
 
 
@@ -2341,14 +2358,95 @@ def _one_line_note(vid: str, note: str) -> None:
                          f"it on one; put a longer argument in a file and cite it")
 
 
-def _reaffirm(g: Graph, vid: str, op: dict) -> None:
+#: The op fields that hold one line — a name, a label, a citation — and are
+#: written into a heading, a table cell or a listing row. The prose fields keep
+#: their bytes (`editor.PROSE_FIELDS`); a tag is one line as well. Audit `AE-F7`.
+ONE_LINE = ("id", "title", "area", "source", "from_source")
+
+
+def one_line_fault(op: dict) -> str | None:
+    """Why `op` writes a second line into a one-line field — or `None`.
+
+    Both stores, every door: `stage_all` asks it. The sentence is the buffer's
+    (`editor._val`, `T132`) without the buffer — there is no heading to name
+    at a flag or in a posted body."""
+    for name in ONE_LINE:
+        value = op.get(name)
+        if isinstance(value, str) and ("\n" in value.strip() or "\r" in value):
+            n = len(value.strip().splitlines())
+            return (f"{name} holds {n} lines — a {name} is one line: it is "
+                    f"written into a heading and a listing row, and import-md "
+                    f"keeps only the first")
+    for t in op.get("tags") or ():
+        if isinstance(t, str) and ("\n" in t or "\r" in t):
+            return f"tag {t.splitlines()[0]!r} runs on — a tag is one line"
+    return None
+
+
+def _entry(vid: str, op: dict) -> dict:
+    """The `{date, note}` an op appends to an answer, judged by the rule
+    `dg check` reads (`reaffirmed_fault`) — one check for every op that writes
+    one, where the one-line rule used to be asked of the note alone. Audit
+    `AE-F3`."""
+    note = (op.get("note") or "").strip()
+    if not note:
+        raise ApplyError(f"re-affirming {vid} needs why its answer still "
+                         f"holds: --note")
+    _one_line_note(vid, note)
+    entry = {"date": op.get("date") or _date.today().isoformat(), "note": note}
+    fault = reaffirmed_fault([entry])
+    if fault:
+        raise ApplyError(f"{vid}: " + fault.replace("re-affirmation 0",
+                                                    "the re-affirmation"))
+    return entry
+
+
+def _refuse_entries(vid: str, op: dict) -> None:
+    """An answer arrives with no re-affirmations (`APPENDED`).
+
+    A close carrying them wrote a new answer already re-read — dated before it
+    existed, if the entry said so — and `dg check` called the store clean; one
+    of two lines was staged by the door and refused by `apply` as the whole
+    batch. Integration replays a clone's entries as `reaffirm` ops after the
+    close, so nothing composed or derived carries them. Audit `AE-F3`."""
+    if any(op.get(k) for k in APPENDED):
+        raise ApplyError(
+            f"an answer starts with no re-affirmations — {vid}'s are appended "
+            f"afterwards by `dg confirm`, and a clone's arrive as ops of their "
+            f"own")
+
+
+def reaffirm_target(g: Graph, vid: str, claim: dict | None):
+    """The answer a re-affirmation re-read (`D124`), or `None` where this store
+    holds it nowhere.
+
+    The standing answer where its claim is that answer's; else the archived
+    answer holding that claim, newest first — a clone that re-read an answer
+    this store has since replaced or reopened re-read *that* answer, and
+    appending to the replacement said the new answer was re-read for a reason
+    about the old one (audit `AE-F1`). No claim — an op staged before the seam
+    carried one — means the standing answer, as it always did."""
+    e = g.active_edge(vid)
+    if claim is None:
+        return e if e is not None and e.decided else None
+    want = tuple(claim.get(k) for k in CLAIM)
+
+    def holds(edge) -> bool:
+        return tuple(getattr(edge, k) for k in CLAIM) == want
+
+    if e is not None and e.decided and holds(e):
+        return e
+    return next((h for h in reversed(g.history(vid)) if holds(h)), None)
+
+
+def _reaffirm(g: Graph, vid: str, op: dict, edge=None) -> None:
     """Append one `{date, note}` to `vid`'s standing answer (`D123`).
 
     The same entry twice is one: two clones re-reading an answer and writing
     the same sentence on the same day converge, the way two identical edges
     do, rather than recording one act as two.
     """
-    e = g.active_edge(vid)
+    e = edge if edge is not None else g.active_edge(vid)
     entry = {"date": op.get("date") or _date.today().isoformat(),
              "note": op["note"].strip()}
     held = list(e.reaffirmed or [])
@@ -2441,24 +2539,26 @@ def _apply_one(g: Graph, op: dict) -> None:
         # refusal on the same probe.
         reaffirms = bool(op.get("note")) and op["status"] == "DECIDED"
         if reaffirms:
-            _one_line_note(vid, op["note"])
+            _entry(vid, op)
         g.vertices[vid] = _dc_replace(g.vertices[vid], status=op["status"])
         if reaffirms:
             _reaffirm(g, vid, op)
         return
 
     if kind == "reaffirm":
-        # Only integration derives this one (`D123`): a clone's re-affirmation
-        # of an answer both sides hold. It changes no status — whether this
-        # store's copy is still under review is this store's walk to say.
-        e = g.active_edge(vid)
-        if e is None or not e.decided:
-            raise ApplyError(f"{vid} has no standing answer to re-affirm")
-        if not (op.get("note") or "").strip():
-            raise ApplyError(f"re-affirming {vid} needs why its answer still "
-                             f"holds: --note")
-        _one_line_note(vid, op["note"])
-        _reaffirm(g, vid, op)
+        # Integration derives this one (`D123`) and `vet` refuses it from any
+        # other door (audit `AE-F4`): a clone's re-affirmation, carrying the
+        # claim of the answer it re-read. It lands on that answer wherever it
+        # stands here — the standing one, or the one this store archived —
+        # and changes no status: whether this store's copy is under review is
+        # this store's walk to say. `D124`, audit `AE-F1`.
+        _entry(vid, op)
+        e = reaffirm_target(g, vid, op.get("claim"))
+        if e is None:
+            raise ApplyError(
+                f"{vid} holds no answer this re-affirmation re-read — left "
+                f"out: the clone re-read an answer this store never held")
+        _reaffirm(g, vid, op, e)
         return
 
     if kind == "set_fields":
@@ -2545,6 +2645,7 @@ def _apply_one(g: Graph, op: dict) -> None:
         return
 
     if kind == "close":
+        _refuse_entries(vid, op)
         e = g.active_edge(vid)
         targets = sorted(set(op.get("to", [])) | set(e.to if e else []))
         payload = _payload(op)
@@ -2589,6 +2690,7 @@ def _apply_one(g: Graph, op: dict) -> None:
         # active edges only, so this is invisible to every traversal and shows
         # up in exactly two places — `Graph.rejected`, and the renderers that
         # call it.
+        _refuse_entries(vid, op)
         e = g.active_edge(vid)
         if e is None or not e.decided:
             raise ApplyError(

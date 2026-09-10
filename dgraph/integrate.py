@@ -51,7 +51,7 @@ import json
 from dataclasses import dataclass, field
 
 from dgraph import ids as _idtable
-from dgraph.model import CLAIM, PAYLOAD, Graph
+from dgraph.model import APPENDED, CLAIM, PAYLOAD, Graph
 from dgraph.tasks import TaskGraph, transition_fault
 
 #: The fields `set_fields` carries, in the order a report reads best. Imported
@@ -310,20 +310,30 @@ def _edges(base: Graph, theirs: Graph, vid: str, out: Derived) -> None:
     if now.decided and not _same_answer(was, now):
         # Every `PAYLOAD` field the edge carries, and none it does not: a
         # field named here by hand is one this seam drops the day it is added.
+        # Except what a later act appends (`APPENDED`): an answer arrives with
+        # no re-affirmations, and a new answer's follow as ops of their own, so
+        # a malformed one is one op refused rather than the answer with it.
+        # Audit `AE-F3`.
         out.ops.append({"op": "close", "vertex": vid, "to": gained,
                         **{k: getattr(now, k) for k in PAYLOAD
-                           if getattr(now, k) is not None}})
+                           if k not in APPENDED
+                           and getattr(now, k) is not None}})
     elif gained:
         out.ops.append({"op": "add_edge", "from": vid, "to": gained})
-    if now.decided and _same_answer(was, now):
-        # Re-affirmations written since the base, on an answer both sides still
-        # hold (`D123`). Appended the way readings are: a list that grew is that
-        # many acts, each with the note it was given. A *new* answer brings its
-        # own in the close above, by `PAYLOAD`.
-        old = len(was.reaffirmed or [])
+    if now.decided:
+        # Re-affirmations written since the base (`D123`): the ones past the
+        # base's count on an answer both sides still hold, every one on a new
+        # answer. Appended the way readings are — a list that grew is that many
+        # acts — and each carries the claim of the answer it re-read, so it
+        # lands on that answer wherever it stands here. The vertex alone put a
+        # re-reading of an answer replaced here onto its replacement (`D124`,
+        # audit `AE-F1`).
+        old = len(was.reaffirmed or []) if _same_answer(was, now) else 0
+        claim = {k: getattr(now, k) for k in CLAIM if getattr(now, k) is not None}
         for r in (now.reaffirmed or [])[old:]:
             out.ops.append({"op": "reaffirm", "vertex": vid,
-                            "note": r.get("note"), "date": r.get("date")})
+                            "note": r.get("note"), "date": r.get("date"),
+                            "claim": claim})
     if lost:
         out.ops.append({"op": "remove_edge", "from": vid, "to": lost})
 
@@ -799,6 +809,17 @@ def _contest_decision(g: Graph, base: Graph, op: dict):
         return vid, (f"{vid} was given a rule for settling here too — "
                      f"{mine.probes[-1].kind} against "
                      f"{(op.get('probe') or {}).get('kind')}")
+    if (kind == "set_status" and op.get("derived_from")
+            and op.get("status") == "PROVISIONAL"):
+        # A reopen elsewhere setting aside an answer given here since the base
+        # — the case the walk's comment names. The row reads DECIDED at both
+        # ends of a re-decision, so the status rule above is silent; what moved
+        # is the answer. Audit `AE-F2`.
+        e, e_was = g.active_edge(vid), base.active_edge(vid)
+        if e is not None and e.decided and not _same_answer(e_was, e):
+            return vid, (f"{vid} was answered here since the base — "
+                         f"{_clip(e.answer)!r} — and would be set aside as "
+                         f"PROVISIONAL")
     if kind == "close":
         e, e_was = g.active_edge(vid), base.active_edge(vid)
         mine_answer = e.answer if e is not None and e.decided else None
@@ -1041,6 +1062,23 @@ def _walk(g, base, ops: list[dict], store: str,
     return findings, probe, kept
 
 
+def _filed(probe: Graph, ops: list[dict]) -> list[str]:
+    """One line per arriving re-affirmation that lands on an answer no longer
+    standing here — `D124`'s *said in a line*."""
+    from dgraph import pending
+    out = []
+    for op in ops:
+        if op.get("op") != "reaffirm":
+            continue
+        e = pending.reaffirm_target(probe, op["vertex"], op.get("claim"))
+        if e is not None and not e.active:
+            out.append(f"{op['vertex']}: re-affirmed elsewhere on "
+                       f"{op.get('date')} — filed with the answer it re-read, "
+                       f"\u201c{_clip(e.summary or e.answer)}\u201d, which no "
+                       f"longer stands here")
+    return out
+
+
 def _apply(probe, op: dict, store: str) -> None:
     from dgraph import pending, task_pending
     (pending if store == "decisions" else task_pending)._apply_one(probe, op)
@@ -1088,6 +1126,10 @@ class Report:
     #: false reasons behind `D50` each hid under that line.
     examined: list[str] = field(default_factory=list)
     argued: list[str] = field(default_factory=list)
+    #: Re-affirmations of an answer that no longer stands here, carried and
+    #: filed with that answer (`D124`). Said in a line, never asked about:
+    #: `D115` keeps a person for two answers, two finishes and two wordings.
+    filed: list[str] = field(default_factory=list)
 
     @property
     def contested(self) -> list[Finding]:
@@ -1170,6 +1212,7 @@ def plan(ours_g, ours_tg, base_g, base_tg, theirs_g, theirs_tg,
                                      pending.expand)
         rep.findings += found
         rep.d_ops = kept
+        rep.filed = _filed(probe_g, kept)
     if theirs_tg is not None:
         found, probe_tg, kept = _walk(ours_tg, base_tg, t.ops, "tasks", None)
         rep.findings += found

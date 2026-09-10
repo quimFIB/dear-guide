@@ -517,8 +517,10 @@ orphan, and a vertex left `PROVISIONAL` once its premises are settled again.
 (There is no rule about a *waiting* vertex: what it waits on is read off its
 edges, so nothing stored can disagree with it.)
 
-**Both stores**, two more warnings and never errors: a prose field that
-outgrew the synopsis limit (`verbose_field`), and a field this version of
+**Both stores**, three more warnings and never errors: a one-line field — a
+title, an area, a tag, a source — holding a second line, which every door now
+refuses and a store written before that may still hold (`one_line_field`); a
+prose field that outgrew the synopsis limit (`verbose_field`); and a field this version of
 `dg` does not read (`unknown_field`) — carried exactly as written and saved
 back, never dropped, so a store written by a newer install is safe in an
 older one; the warning names the field and the remedy is to run the install

@@ -57,7 +57,7 @@ $ env CI=1 pytest -q --tb=no --decision-graph-probe -k probe
 ...F...                                                                                  [100%]
 =================================== short test summary info ====================================
 FAILED tests/test_graph.py::test_decision_graph_probe[probe_fired] - AssertionError: [probe_fired] D09: grep.matches fired — bench/search.md: p95: 60 ms  prefix
-1 failed, 6 passed, 44 deselected in 0.09s
+1 failed, 6 passed, 45 deselected in 0.08s
 [exit 1]
 $ dg reopen D09 --why 'bench/search.md: p95 60 ms with the prefix index, which is the falsifier' -y
 ╭───────────────────────────────────────── reopen D09 ─────────────────────────────────────────╮

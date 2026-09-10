@@ -284,12 +284,28 @@ def _record_holdings(ops, tg, proj) -> None:
         pass
 
 
+def _refuse_unread(ops: list[dict], proj) -> None:
+    """`cross.reading_refusal` over a task batch, against the decision store as
+    it stands. Decisions are written first, so a close in this apply has landed
+    and a close dropped from the tray has not — which is the case a staged
+    *read at decide* reading used to land alone in. Audit `AE-F5`."""
+    readings = [op for op in ops if op.get("op") == "read_evidence"]
+    if not readings or not proj.has_decisions:
+        return
+    g = Graph.load(proj.store)
+    for op in readings:
+        why = cross.reading_refusal(g, op.get("against"))
+        if why:
+            raise pending.ApplyError(f"{op.get('task')}: {why}")
+
+
 def apply_tasks(ops: list[dict], dry_run: bool = False,
                 tg: TaskGraph | None = None) -> Result:
     """The same for a task batch. Independent of the decision one on purpose:
     a task batch that will not apply must never stop one that would."""
     proj = project.find()
     if dry_run:
+        _refuse_unread(ops, proj)
         tg = TaskGraph.load(proj.tasks) if tg is None else tg
         return Result(len(ops), True, proj.tasks.name,
                       graph=task_pending.apply_all(tg, ops, cross.guard_tasks()))
@@ -308,6 +324,7 @@ def apply_tasks(ops: list[dict], dry_run: bool = False,
             pending.load(proj.pending) + tray, ops)
         if dependent:
             raise pending.ApplyError(dependent)
+        _refuse_unread(ops, proj)
         out = task_pending.apply_all(tg, ops, cross.guard_tasks())
         out.save(proj.tasks)
         _record_holdings(ops, out, proj)

@@ -858,6 +858,23 @@ def vet(tg: TaskGraph, op: dict, *, new_area: bool = False,
     unknown = [t for t in (op.get("to") or []) if t not in tg.tasks]
     if unknown:
         raise ApplyError(f"unknown task(s): {', '.join(unknown)}")
+    if op.get("op") == "read_evidence":
+        # A reading needs a standing answer (`cross.reading_refusal`), judged
+        # against the decisions as they will stand — the store and its tray,
+        # where the close that stages this reading sits. One judgement for the
+        # three doors that stage task ops, since all three come through here.
+        # Audit `AE-F5`.
+        from dgraph import cross, pending
+        proj = project.find()
+        if proj.has_decisions:
+            g = Graph.load(proj.store)
+            try:
+                g = pending.preview(g)
+            except ApplyError:
+                pass
+            why = cross.reading_refusal(g, op.get("against"))
+            if why:
+                raise ApplyError(why)
     # `pending.vet`'s twin — see there. The `D` grant and the `T` grant are one
     # grant, so a clone that refuses an out-of-range decision refuses an
     # out-of-range task by the same rule and the same function.

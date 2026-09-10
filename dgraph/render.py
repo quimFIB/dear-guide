@@ -160,6 +160,18 @@ def _section(g: Graph, vid: str, _by=None, _into=None) -> str:
             f"{orgmd.to_markdown(h.replaced_by) or '*(undecided)*'}"
             for h in hist
         ))
+        # An archived answer's re-affirmations, a line each and named by the
+        # answer they re-read — its summary as the Superseded table writes it —
+        # so `import-md` puts each back on that answer. None where there are
+        # none, so a store without them renders byte-identically. Audit
+        # `AE-F6`.
+        kept = [(h, r) for h in hist for r in h.reaffirmed or []]
+        if kept:
+            out.append("")
+        for h, r in kept:
+            out.append(f"- **Re-affirmed, superseded \u201c"
+                       f"{_cell(orgmd.to_markdown(h.summary, fmt=h.format))}"
+                       f"\u201d:** {r.get('date')} — {r.get('note')}")
     return "\n".join(out) + "\n"
 
 

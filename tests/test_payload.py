@@ -18,7 +18,7 @@ import json
 
 from dgraph import integrate, pending
 from dgraph.json_import import SCHEMA, read
-from dgraph.model import CLAIM, EDGE_FIELDS, PAYLOAD, Graph
+from dgraph.model import APPENDED, CLAIM, EDGE_FIELDS, PAYLOAD, Graph
 from tests.conftest import FIXTURE
 
 #: One recognisable value per field. `date`, `format`, `probe` and `reaffirmed`
@@ -34,19 +34,35 @@ def test_the_tuples_nest():
     assert set(VALUES) == set(PAYLOAD), "give the new field a value here"
 
 
+#: What an answer arrives with: every field but the ones a later act appends
+#: (`APPENDED`) — a close carrying a re-affirmation is refused (audit `AE-F3`).
+ARRIVES = {k: v for k, v in VALUES.items() if k not in APPENDED}
+
+
 def _close(vid="D05", to=("D06",)):
-    return {"op": "close", "vertex": vid, "to": list(to), **VALUES}
+    return {"op": "close", "vertex": vid, "to": list(to), **ARRIVES}
 
 
-def test_a_close_writes_every_field():
+def _answered():
+    """D05 closed with every arriving field, then re-affirmed the way `dg
+    confirm` appends — so every `PAYLOAD` field holds its value."""
+    g = pending.apply_all(Graph.from_dict(FIXTURE), [_close()])
+    for r in VALUES["reaffirmed"]:
+        pending._reaffirm(g, "D05", r)
+    return g
+
+
+def test_a_close_writes_every_field_it_arrives_with():
     g = Graph.from_dict(FIXTURE)
     out = pending.apply_all(g, [_close()])
     e = out.active_edge("D05")
-    assert {k: getattr(e, k) for k in PAYLOAD} == VALUES
+    assert {k: getattr(e, k) for k in ARRIVES} == ARRIVES
+    assert all(not getattr(e, k) for k in APPENDED)
+    assert {k: getattr(_answered().active_edge("D05"), k) for k in PAYLOAD} == VALUES
 
 
 def test_a_reopen_archives_every_field_and_clears_every_field():
-    g = pending.apply_all(Graph.from_dict(FIXTURE), [_close()])
+    g = _answered()
     out = pending.apply_all(g, pending.expand(
         g, {"op": "reopen", "vertex": "D05", "why": "moved", "format": "md"}))
     live = out.active_edge("D05")
@@ -62,7 +78,7 @@ def test_a_reject_files_every_field():
     out = pending.apply_all(g, [{
         "op": "reject", "vertex": "D05", "to": ["D06"],
         **{k: v + "-theirs" if k in CLAIM and isinstance(v, str) else v
-           for k, v in VALUES.items()},
+           for k, v in ARRIVES.items()},
         "from_source": "elsewhere"}])
     r = out.rejected("D05")[0]
     assert r.answer == "A-value-theirs" and r.falsifier == "F-value-theirs"
@@ -71,16 +87,23 @@ def test_a_reject_files_every_field():
 
 
 def test_the_seam_derives_a_close_carrying_every_field():
+    """Every field an answer arrives with rides on the close; what a later act
+    appended follows as ops of its own, each naming the answer it re-read
+    (`D124`, audit `AE-F3`)."""
     base = Graph.from_dict(FIXTURE)
-    theirs = pending.apply_all(base, [_close()])
+    theirs = _answered()
     ops = integrate.decisions(base, theirs).ops
     close = next(o for o in ops if o["op"] == "close")
-    assert {k: close[k] for k in PAYLOAD} == VALUES
+    assert {k: close[k] for k in ARRIVES} == ARRIVES
+    assert not any(k in close for k in APPENDED)
+    entries = [{"date": o["date"], "note": o["note"]} for o in ops
+               if o["op"] == "reaffirm"]
+    assert entries == VALUES["reaffirmed"]
 
 
 def test_the_keepsake_carries_every_field():
     kept = integrate._keepsake(_close(), {"source": "them"})
-    assert {k: kept[k] for k in PAYLOAD} == VALUES
+    assert {k: kept[k] for k in ARRIVES} == ARRIVES
     assert kept["from_source"] == "them"
 
 
@@ -97,7 +120,7 @@ def test_a_same_answer_is_judged_on_the_claim():
 
 
 def test_export_and_import_round_trip_every_field(tmp_path):
-    g = pending.apply_all(Graph.from_dict(FIXTURE), [_close()])
+    g = _answered()
     path = tmp_path / "decisions.json"
     path.write_text(json.dumps(g.to_dict()))
     back = read(path, "decisions").graph
@@ -131,7 +154,7 @@ def test_the_markdown_view_round_trips_the_re_affirmations(tmp_path):
     `dg import-md` reads them back onto the answer."""
     from dgraph.md_import import import_markdown
     from dgraph.render import write
-    g = pending.apply_all(Graph.from_dict(FIXTURE), [_close()])
+    g = _answered()
     path = tmp_path / "decision-graph.md"
     write(g, path)
     assert "- **Re-affirmed:** 2026-02-03 — R-value" in path.read_text()

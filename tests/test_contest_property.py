@@ -247,7 +247,12 @@ def _vertex_aspects(g, vid):
                                    for p in v.probes)),
         "binds": ("set", frozenset((b.kind, b.ref) for b in v.binds)),
         "opens": ("set", frozenset(g.children(vid))),
-        "answer": ("scalar", tuple(getattr(e, k) for k in CLAIM)
+        # The standing answer *with the status it stands at*: a reopen
+        # arriving from elsewhere sets an answer given here aside without
+        # overwriting a word of it, and an aspect of the words alone called
+        # that nothing lost (`D50` says *touches*; audit `AE-F2`).
+        "answer": ("scalar", (tuple(_frozen(getattr(e, k)) for k in CLAIM),
+                              v.status)
                    if e is not None and e.decided else None),
         "history": ("append", tuple(_frozen((h.answer, h.why, h.date))
                                     for h in g.history(vid))),
@@ -312,6 +317,32 @@ def _aspects(graph, rid, store):
         graph, rid)
 
 
+def _entries(graph):
+    """Every re-affirmation, keyed by the vertex and the claim of the answer
+    it sits on — active, archived or declined alike."""
+    out: dict = {}
+    for e in graph.edges:
+        if e.answer is None:
+            continue
+        key = (e.src, _frozen([getattr(e, k) for k in CLAIM]))
+        out.setdefault(key, set()).update(_frozen(r) for r in e.reaffirmed or ())
+    return out
+
+
+def _entries_land_where_written(seed, ours, theirs, probe):
+    """A re-affirmation is a fact about one answer (`D124`): after the walk,
+    every entry sits on an answer one of the two sides held it on. The
+    aspects above cannot say this — an entry appended to the wrong answer
+    overwrites nothing (audit `AE-F1`)."""
+    here, there = _entries(ours), _entries(theirs)
+    for key, got in _entries(probe).items():
+        for r in got:
+            if r not in here.get(key, ()) and r not in there.get(key, ()):
+                pytest.fail(
+                    f"seed {seed}: a re-affirmation {r} landed on {key[0]}'s "
+                    f"answer {key[1]}, which neither side held it on")
+
+
 def _check(seed, store, base, ours, theirs):
     derive = integrate.decisions if store == "decisions" else integrate.tasks
     ops = derive(base, theirs).ops
@@ -360,6 +391,9 @@ def _check(seed, store, base, ours, theirs):
                     f"{arrived.get(rid, [])}"
                     + ("" if after is not None else f"\n  ({rid} is gone)"))
 
+    if store == "decisions":
+        _entries_land_where_written(seed, ours, theirs, probe)
+
     for f in findings:
         if f.kind != "contested":
             continue
@@ -404,3 +438,34 @@ def test_the_generator_reaches_every_op_kind(g, tg):
                 seen.add(op["op"])
     missing = (pending.OPS | task_pending.OPS) - seen
     assert not missing, f"never applied by the generator: {sorted(missing)}"
+
+
+# ---- the two cases the generator does not reach (audit `AE-F1`, `AE-F2`) ----
+#
+# Run through the same `_check` as every seed, so it is the net that is shown to
+# see them — not a second, hand-written expectation beside it. Three hundred
+# seeds of seven random steps never reopen and re-decide a record on one side
+# while the other re-reads it, which is how both walked past.
+
+def _replay(g, ops):
+    out = copy.deepcopy(g)
+    for op in ops:
+        for one in pending.expand(out, op):
+            pending._apply_one(out, one)
+    return out
+
+
+_REDECIDE_D02 = [{"op": "reopen", "vertex": "D02", "why": "measured again"},
+                 {"op": "close", "vertex": "D02", "answer": "A new answer.",
+                  "falsifier": "p95", "source": "bench", "date": "2026-02-03"}]
+
+
+def test_the_net_sees_a_re_affirmation_landing_on_an_answer_replaced_here(g):
+    theirs = copy.deepcopy(g)
+    pending._reaffirm(theirs, "D02", {"note": "re-read", "date": "2026-02-02"})
+    _check("AE-F1", "decisions", g, _replay(g, _REDECIDE_D02), theirs)
+
+
+def test_the_net_sees_a_reopen_setting_aside_an_answer_given_here(g):
+    theirs = _replay(g, [{"op": "reopen", "vertex": "D01", "why": "moved"}])
+    _check("AE-F2", "decisions", g, _replay(g, _REDECIDE_D02), theirs)
