@@ -1,76 +1,67 @@
 #!/usr/bin/env bash
-# q: How do I judge one criterion against two things, and run only the domains I want?
+# q: An answer rests on two measurements. How do we notice when either one slips?
 # part: annex
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
-# Two measurements, one script. As in recipe 18 notelit is imaginary, so the
-# benchmark stands in for timing it: the trigram index, then the prefix index
-# that lands halfway through the story. What matters is that each number goes
-# to its own file, and that the graph names the files and never the script.
-bench_script() {
+# notelit is imaginary, so nothing here times a search: `nightly` writes the
+# two numbers the story needs, one file per machine, as the nightly benchmark
+# would. What matters is that each result is a file, and that the graph names
+# the files and never a command.
+nightly() {
   mkdir -p bench
-  cat > bench/run.sh <<'SH'
-#!/usr/bin/env bash
-# Time a search over the 50k-note set, and on the slowest team laptop.
-# Append each p95 to its own file. (340 ms and 512 ms with the trigram index;
-# 60 ms and 240 ms with the prefix index.)
-index=${NOTELIT_INDEX:-trigram}
-case $index in trigram) fast=340; slow=512 ;; *) fast=60; slow=240 ;; esac
-printf 'p95: %s ms  %s\n' "$fast" "$index" >> bench/search.md
-printf 'p95: %s ms  %s\n' "$slow" "$index" >> bench/laptop.md
-SH
+  printf 'p95: %s ms\n' "$1" > bench/server.md
+  printf 'p95: %s ms\n' "$2" > bench/laptop.md
 }
 
-answer="No: search runs on Enter. Neither machine is under 100 ms."
-falsifier="p95 under 100 ms on the 50k-note set, or on the slowest team laptop"
-# One criterion, two halves, as one probe. Written on one line because that is
-# how it would be typed, and the transcript shows what was typed.
-member() { printf '{"kind": "grep.matches", "args": {"file": "bench/%s.md", "pattern": "^p95: [0-9][0-9]? ms"}}' "$1"; }
-both="{\"kind\": \"core.all_of\", \"args\": {\"probes\": [$(member search), $(member laptop)]}}"
+answer="Yes: every keystroke runs a search. Both machines answer in under 100 ms."
+falsifier="a search p95 of 100 ms or more on the build server, or on the slowest team laptop"
+# One half per file: it fires on a p95 of three digits or more, which is the
+# falsifier.
+slow() { printf '{"kind": "grep.matches", "args": {"file": "bench/%s.md", "pattern": "^p95: [0-9]{3,} ms"}}' "$1"; }
+either="{\"kind\": \"core.all_of\", \"args\": {\"probes\": [$(slow server), $(slow laptop)]}}"
+
+add_d09() {
+  run dg add --id D09 --area search --title "Does search run as you type?" --after D02
+  run dg decide D09 --answer "$answer" \
+    --source "bench/server.md, bench/laptop.md" \
+    --falsifier "$falsifier" --probe "$either"
+}
 
 quick() {
   fresh
-  bench_script
-  note "The answer rests on two measurements, each in its own file."
-  run cat bench/run.sh
-  run bash bench/run.sh
-  run head -n 3 bench/search.md bench/laptop.md
-  note "One criterion, two halves: the answer stands while both numbers stay above 100 ms. So the probe is one too — core.all_of, the one kind the core evaluates itself, holding only if every member holds."
-  run dg add --id D09 --area search --title "Does search run on every keystroke?" --after D02
-  run dg decide D09 --answer "$answer" \
-    --source "bench/search.md, bench/laptop.md" \
-    --falsifier "$falsifier" --probe "$both"
+  quietly nightly 60 85
+  note "Last night's benchmarks, one file per machine. p95 is the time within which 95 searches in 100 finished."
+  run head bench/server.md bench/laptop.md
+  note "The decision, with its falsifier in words and beside it a probe: the same condition as a check. Each half asks one file whether it shows 100 ms or more, and core.all_of joins the halves, so the answer holds only while both hold."
+  add_d09
   run dg apply
-  note "Judged, and the sentence is both halves': a composite that holds is every member holding."
+  note "Run after the benchmarks. Both machines are fast, so the answer holds."
   run dg probe D09
-  note "The prefix index lands. The 50k set comes under 100 ms; the laptop does not."
-  run env NOTELIT_INDEX=prefix bash bench/run.sh
-  run head -n 3 bench/search.md bench/laptop.md
-  note "One half is enough — and the verdict says which half it was."
+  note "Three weeks later notelit starts ranking results by how recently each note changed, and the benchmarks run again."
+  quietly nightly 70 140
+  run head bench/server.md bench/laptop.md
+  note "The server is still fast. The laptop is not, and one machine is enough: the probe names it and exits non-zero, which fails the nightly job. Reopening D09 is still a person's call."
   run dg probe D09
 }
 
 full() {
   fresh
-  bench_script
-  quietly bash bench/run.sh
-  run dg add --id D09 --area search --title "Does search run on every keystroke?" --after D02
-  run dg decide D09 --answer "$answer" \
-    --source "bench/search.md, bench/laptop.md" \
-    --falsifier "$falsifier" --probe "$both"
-  note "A second question, whose rule needs a domain this machine does not have — half of it, at least."
-  run dg add --id D10 --area search --title "Is the prefix index the default?" --after D09 \
-    --rule "the laptop under 100 ms, and the search tests passing" \
-    --probe "{\"kind\": \"core.all_of\", \"args\": {\"probes\": [$(member laptop), {\"kind\": \"pytest.passes\", \"args\": {\"node\": \"tests/test_search.py::test_default\"}}]}}"
+  quietly nightly 60 85
+  add_d09
+  note "A second answer resting on two things, and only one of them is a file. Ranking by recency stands while the laptop stays under 100 ms and the ranking test keeps passing, and that test needs a pytest domain this machine does not have."
+  run dg add --id D10 --area search --title "Are results ranked by how recently a note changed?" --after D09
+  run dg decide D10 --answer "Yes: recently changed notes first." \
+    --source "bench/laptop.md, tests/test_rank.py" \
+    --falsifier "a search p95 of 100 ms or more on the slowest team laptop, or the recency ranking test failing" \
+    --probe "{\"kind\": \"core.all_of\", \"args\": {\"probes\": [$(slow laptop), {\"kind\": \"pytest.fails\", \"args\": {\"node\": \"tests/test_rank.py::test_recent_first\"}}]}}"
   run dg apply
-  note "Both records, and one footer line: a prefix nothing installed claims is said once, not once per record. A member nobody can judge leaves the composite unjudged — never an error, and never a holds it did not earn."
-  run dg probe --all
-  note "--domain runs only what one domain judges: how to run the cheap ones, or reach a slow one by name. A composite is one criterion, so it is reached under every member's prefix — grep finds both records, pytest the one whose other half it would judge."
+  note "On every commit, only the cheap checks: the ones the grep domain runs. D10 comes up too, because half of it is a grep and a probe is one condition. Its other half nobody here can check, so D10 is unjudged, never passed, and the missing domain is named once at the bottom."
   run dg probe --domain grep
+  note "In the nightly job, where the test plugin would be installed, only the checks that need it. Here it is not, so D10 stays unjudged."
   run dg probe --domain pytest
-  note "Each domain gets a child process of its own and its own deadline — grep declares five seconds, the default is sixty — and --timeout at the door overrides whatever a distribution declared. A domain that has not answered by then is unjudged for everything it was asked."
+  note "A domain that hangs must not hang the job. Each one runs in its own process under a deadline: grep declares five seconds, the default is sixty, and --timeout overrides both."
   run dg probe D09 --timeout 0.001
-  note "A scope that names nothing the store holds is refused, saying what it does hold — and a blank is a selection that matched nothing, never everything."
+  note "A script that names a domain nothing uses, or passes an empty name because a variable was unset, is refused rather than run as check-nothing or check-everything."
   run dg probe --domain rocq
   run dg probe --domain ''
 }

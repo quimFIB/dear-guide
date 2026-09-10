@@ -60,33 +60,33 @@ full() {
   run bash bench/search.sh
   run dg task done T12 --outcome "p95 340 ms on 50k notes"
   run dg apply
-  note "The falsifier, and beside it a typed twin: a pattern over the bench file, for a domain called grep to judge. The graph carries the file and the pattern; that grep runs was the domain author's choice."
+  note "The falsifier in words, and beside it a probe: the same condition as a pattern over the benchmark file, for the grep domain to check. The graph stores the file and the pattern, never a command to run."
   run dg decide D09 \
     --answer "No: search runs on Enter. At 340 ms a keystroke would stutter." \
     --source T12 \
     --falsifier "p95 under 100 ms on the 50k-note set" \
     --probe '{"kind": "grep.matches", "args": {"file": "bench/search.md", "pattern": "^p95: [0-9][0-9]? ms"}}'
   run dg apply
-  note "Judged, this time: no line of the file has a p95 of one or two digits, so the falsifier holds."
+  note "Checked this time: no line of the file shows a search under 100 ms, so the answer still holds."
   run dg probe D09
-  note "The world moves. A prefix index lands, and the same script runs again."
+  note "Months later a faster prefix index lands, and the benchmark runs again."
   run env NOTELIT_INDEX=prefix bash bench/search.sh
   run cat bench/search.md
-  note "The falsifier came true, and the door says so — and does nothing else. The act it calls for is yours."
+  note "The falsifier came true. dg probe says so and exits non-zero, and does nothing else: reopening is a person's call."
   run dg probe D09
-  note "The same verdict where a benchmark job would meet it: one test file, one line, and the run fails naming the decision. This much runs without you; the reopen still does not."
+  note "The same verdict inside a benchmark job: one test file, one line, and the run fails naming the decision. The check runs unattended; the reopen still does not."
   run cat tests/test_graph.py
   run env CI=1 pytest -q --tb=no --decision-graph-probe -k probe
   run dg reopen D09 --why "bench/search.md: p95 60 ms with the prefix index, which is the falsifier" -y
   run dg apply
-  note "Open again, the question can carry a typed rule too; and a probe is appended, never edited, so a criterion rewritten to fit the evidence stays visible as one."
+  note "Open again, the question can carry its rule as a probe too. A probe is appended, never edited, so a rule rewritten to fit the evidence stays visible."
   run dg reprobe D09 --probe '{"kind": "prose.rule", "args": {"text": "p95 under 100 ms: as you type; else on Enter"}}'
   run dg reprobe D09 --probe '{"kind": "prose.rule", "args": {"text": "p95 under 100 ms on the slowest team laptop: as you type; else on Enter"}}'
   run dg apply
   run dg node D09
-  note "The shape is checked at the door, before any domain is asked."
+  note "A malformed probe is refused before any domain sees it."
   run dg reprobe D09 --probe '{"kind": "nodot", "args": {}}'
-  note "A kind no installed domain claims is presented, not evaluated, and never an error: a plain install must still read a graph a richer one wrote."
+  note "A kind no installed domain handles is shown, not checked, and is never an error: a machine without that plugin must still read the graph."
   run dg reprobe D09 --probe '{"kind": "pytest.passes", "args": {"node": "tests/test_search.py::test_p95_under_100ms"}}'
   run dg apply
   run dg probe D09

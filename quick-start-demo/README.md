@@ -2,15 +2,16 @@
 
 A reference of worked examples, as one self-contained page:
 [`index.html`](index.html). It answers *how do I do that with dear-guide?*
-twenty times, each answer a real transcript against one small synthetic
-project with a picture of the graph beside it.
+twenty times. Each answer opens on a situation the team behind one small,
+imaginary project runs into, then shows a real transcript of what `dg` does
+about it, with a picture of the graph beside it.
 
 ```sh
 xdg-open quick-start-demo/index.html      # no server, no build
 ```
 
-The quick path — the short example of each recipe — reads in about twenty
-minutes. Under every one is a fold, *the fuller example*, that walks further
+The quick path — the short example of each recipe — reads in about half
+an hour. Under every one is a fold, *the fuller example*, that walks further
 into the same project; open it only where you want more.
 
 | part | recipes |
@@ -19,7 +20,7 @@ into the same project; open it only where you want more.
 | **Ask** | the frontier · why a decision is where it is · the backlog and moving work · find by what it says · a fact arrives · changing an answer · keeping it honest |
 | **Agents** | one agent works the frontier · which tasks can run at once, and several agents in one tray · what a session gets from the plugin |
 | **Beyond** | bringing a colleague's clone in |
-| **Annex** | what would settle it, written down before it is settled · what a reader shows while something is staged · one criterion judged by two domains, and running only the ones you want |
+| **Annex** | what would settle it, written down before it is settled · what a reader shows while something is staged · an answer that rests on two measurements, and running only some checks at a time |
 
 ## Everything on the page ran
 
@@ -60,11 +61,11 @@ Two things the page shows but does not execute, and says so: the launcher
 `dg-agent setup` writes is printed rather than run, because running it needs
 a coding-agent host; and `dg serve`, the web app, is not shown.
 
-Two more are stand-ins, and say so where they appear. `bench/search.sh`,
-the benchmark recipe 18 runs, writes the figure the story needs rather than
-timing an imaginary tool — what the recipe shows is that a script in the
-project leaves a file, and that the graph names neither. And the `grep`
-domain that judges that file is not part of dear-guide: it is forty lines
+Two more are stand-ins. The benchmark results in recipes 18 and 20 are
+written by the recipe scripts rather than timed, since notelit is imaginary:
+what matters is that a benchmark leaves a file, and that the graph names the
+file and never a command. And the `grep`
+domain that checks those files is not part of dear-guide: it is forty lines
 under `grep-domain/`, which `lib.sh` puts on `PYTHONPATH` so `dg probe`
 finds it through the `dgraph.domains` entry-point group as if it were
 installed. Only `prose` ships, and it never judges; `grep` is here so the

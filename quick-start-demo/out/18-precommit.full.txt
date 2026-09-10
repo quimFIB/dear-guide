@@ -11,7 +11,7 @@ done when: the p95 over 50k notes, written to bench/search.md
 staged T12 → DONE
 $ dg apply
 ✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
-# The falsifier, and beside it a typed twin: a pattern over the bench file, for a domain called grep to judge. The graph carries the file and the pattern; that grep runs was the domain author's choice.
+# The falsifier in words, and beside it a probe: the same condition as a pattern over the benchmark file, for the grep domain to check. The graph stores the file and the pattern, never a command to run.
 $ dg decide D09 --answer 'No: search runs on Enter. At 340 ms a keystroke would stutter.' --source T12 --falsifier 'p95 under 100 ms on the 50k-note set' --probe '{"kind": "grep.matches", "args": {"file": "bench/search.md", "pattern": "^p95: [0-9][0-9]? ms"}}'
 ╭──────────────────────────────────────────── D09 ─────────────────────────────────────────────╮
 │ Does search run on every keystroke?                                                          │
@@ -26,7 +26,7 @@ read at decide T12 — a *task* op, so `dg task pending` to review
 $ dg apply
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
 ✓ applied 1 op(s) → tasks.json; the view is regenerated on demand with `dg task render`
-# Judged, this time: no line of the file has a p95 of one or two digits, so the falsifier holds.
+# Checked this time: no line of the file shows a search under 100 ms, so the answer still holds.
 $ dg probe D09
 D09  DECIDED  Does search run on every keystroke?
     falsifier         p95 under 100 ms on the 50k-note set
@@ -35,12 +35,12 @@ ms"}
     verdict           holds  no line of bench/search.md matches /^p95: [0-9][0-9]? ms/
 
 1 presented · fired 0 · holds 1 · unjudged 0
-# The world moves. A prefix index lands, and the same script runs again.
+# Months later a faster prefix index lands, and the benchmark runs again.
 $ env NOTELIT_INDEX=prefix bash bench/search.sh
 $ cat bench/search.md
 p95: 340 ms  trigram
 p95: 60 ms  prefix
-# The falsifier came true, and the door says so — and does nothing else. The act it calls for is yours.
+# The falsifier came true. dg probe says so and exits non-zero, and does nothing else: reopening is a person's call.
 $ dg probe D09
 D09  DECIDED  Does search run on every keystroke?
     falsifier         p95 under 100 ms on the 50k-note set
@@ -50,7 +50,7 @@ ms"}
 
 1 presented · fired 1 · holds 0 · unjudged 0
 [exit 1]
-# The same verdict where a benchmark job would meet it: one test file, one line, and the run fails naming the decision. This much runs without you; the reopen still does not.
+# The same verdict inside a benchmark job: one test file, one line, and the run fails naming the decision. The check runs unattended; the reopen still does not.
 $ cat tests/test_graph.py
 from dgraph.testing import *  # noqa: F401,F403
 $ env CI=1 pytest -q --tb=no --decision-graph-probe -k probe
@@ -71,7 +71,7 @@ $ dg reopen D09 --why 'bench/search.md: p95 60 ms with the prefix index, which i
 staged 1 op(s)
 $ dg apply
 ✓ applied 1 op(s) → decisions.json; the view is regenerated on demand with `dg render`
-# Open again, the question can carry a typed rule too; and a probe is appended, never edited, so a criterion rewritten to fit the evidence stays visible as one.
+# Open again, the question can carry its rule as a probe too. A probe is appended, never edited, so a rule rewritten to fit the evidence stays visible.
 $ dg reprobe D09 --probe '{"kind": "prose.rule", "args": {"text": "p95 under 100 ms: as you type; else on Enter"}}'
 staged reprobe D09
 $ dg reprobe D09 --probe '{"kind": "prose.rule", "args": {"text": "p95 under 100 ms on the slowest team laptop: as you type; else on Enter"}}'
@@ -111,11 +111,11 @@ $ dg node D09
 │     archived answer                                                                          │
 │     No: search runs on Enter. At 340 ms a keystroke would stutter.                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-# The shape is checked at the door, before any domain is asked.
+# A malformed probe is refused before any domain sees it.
 $ dg reprobe D09 --probe '{"kind": "nodot", "args": {}}'
 --probe: a probe's kind is <domain>.<name> — 'nodot' does not name a domain
 [exit 1]
-# A kind no installed domain claims is presented, not evaluated, and never an error: a plain install must still read a graph a richer one wrote.
+# A kind no installed domain handles is shown, not checked, and is never an error: a machine without that plugin must still read the graph.
 $ dg reprobe D09 --probe '{"kind": "pytest.passes", "args": {"node": "tests/test_search.py::test_p95_under_100ms"}}'
 staged reprobe D09 — entry 3; the earlier 2 stay
 $ dg apply

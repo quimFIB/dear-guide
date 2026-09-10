@@ -32,17 +32,27 @@ PARTS = {
     "ask": ("Ask", "Frontiers, reasoning, and the backlog"),
     "agents": ("Agents", "Letting agents develop a task from the graph"),
     "extra": ("Beyond", "Two more things people ask for"),
-    "annex": ("Annex", "What would settle it, written down first; what a reader shows of the tray; and one criterion judged by more than one domain"),
+    "annex": ("Annex", "What would settle it, written down first; what a reader shows of the tray; and an answer checked against two measurements"),
 }
 
 RECIPES: dict[str, dict] = {
     "01-start": dict(
-        read_quick="Two stores, each optional. Nothing reaches a store until <code>dg apply</code>; "
-                   "before that it sits in a tray you can read.",
-        read_full="A store you wrote elsewhere is adopted, not converted, and adoption refuses a "
-                  "file that would break an invariant rather than letting <code>dg check</code> "
-                  "find out later. The export carries the derived blocks too, so a graph copied "
-                  "between machines comes back byte-identical.",
+        problem="It is May, and notelit is not much more than a README. The first real argument is "
+                "about storage: should notes be plain markdown files that any editor can open, or "
+                "rows in a database that notelit manages? Almost everything later depends on that "
+                "choice, from how search works to what a backup is. Before anyone answers it, the "
+                "team wants the question written down somewhere that will still be accurate in a "
+                "month, with a note saying why it matters.",
+        solved="notelit now has its two record files, one for decisions and one for work, and the "
+               "storage question is the first record, D01. Nothing was written the moment the "
+               "question was added: it waited in a staging tray until <code>dg apply</code>, so a "
+               "change can be read before it lands. <code>dg</code> on its own lists what can be "
+               "decided, and D01, resting on nothing, is decidable now.",
+        read_full="Some teams already have their questions in a file before they hear of "
+                  "<code>dg</code>. A store you wrote elsewhere is adopted, not converted, and adoption "
+                  "refuses a file that would break an invariant rather than letting <code>dg "
+                  "check</code> find out later. The export carries the derived blocks too, so a graph "
+                  "copied between machines comes back byte-identical.",
         hl_quick=[(r"^staged add D01", "into the tray, not the store"),
                   (r"^✓ applied 1 op", "now it is written"),
                   (r"decidable now", "nothing above it, so it can be answered")],
@@ -51,15 +61,26 @@ RECIPES: dict[str, dict] = {
                  (r'"derived"', "recomputed on import, never trusted")],
     ),
     "02-add": dict(
-        read_quick="<code>--after</code> is the whole of dependency: an edge, never a field. "
-                   "The tray shows the vertex and the edge as two ops staged together.",
-        read_full="An act is staged whole and dropped whole, so half a question can never land. "
-                  "Areas are not declared up front; they accumulate, and the only guard is against "
-                  "a near-miss of one already in use. A question resting on nothing is allowed and "
-                  "flagged: an unconnected decision is a smell, an unconnected task is ordinary. "
-                  "Tags are free words beside the area, in either store, and stand under the same "
-                  "guard; <code>dg tags</code> counts them, since a tag is held by the records that "
-                  "carry it and registered nowhere.",
+        problem="One of notelit's open questions is how two machines share one notes folder: someone "
+                "keeps notes on a laptop and on a desktop, and both copies have to stay in step. That "
+                "question is D08. While discussing it, someone raises a narrower one: when the folder "
+                "is synced, which files should be left out? The narrower question only makes sense "
+                "once D08 is answered. If notelit ends up leaving sync to Dropbox or git, the list "
+                "belongs to those tools. Filed as a loose to-do, it would look answerable today.",
+        solved="The new question, D09, sits under D08 in the tree, and cannot be decided until D08 "
+               "is. <code>--after D08</code> recorded that as a link between the two questions, and "
+               "before anything was written the tray showed both parts, the question and the link, "
+               "as one change.",
+        read_full="Further in: changing your mind before anything is written, a mistyped area, a "
+                  "question that rests on nothing, and labels. <code>--after</code> is the whole of "
+                  "dependency: an edge, never a field. The tray shows the vertex and the edge as two "
+                  "ops staged together. An act is staged whole and dropped whole, so half a question "
+                  "can never land. Areas are not declared up front; they accumulate, and the only guard "
+                  "is against a near-miss of one already in use. A question resting on nothing is "
+                  "allowed and flagged: an unconnected decision is a smell, an unconnected task is "
+                  "ordinary. Tags are free words beside the area, in either store, and stand under the "
+                  "same guard; <code>dg tags</code> counts them, since a tag is held by the records "
+                  "that carry it and registered nowhere.",
         hl_quick=[(r"add_edge\s+D08\s+→ D09", "the dependency, as an edge"),
                   (r"└── D09", None)],
         hl_full=[(r"was staged together with 2 other op", "an act is dropped whole"),
@@ -70,13 +91,23 @@ RECIPES: dict[str, dict] = {
                  (r"^│ perf\s+│\s+2 │\s+2 │\s+4 │", "held by the records, both stores")],
     ),
     "03-decide": dict(
-        read_quick="Three fields carry the weight: the answer, where the evidence lives, and what "
-                   "would overturn it, written before that evidence arrives. A terminal answer "
-                   "opens nothing.",
-        read_full="An answer that opens further questions must name them and must carry a falsifier. "
-                  "Deciding while the evidence task is still outstanding is allowed and noted; when "
-                  "the result lands later, the check asks for it to be read against the answer, and "
-                  "<code>dg confirm --against</code> is how you say it held.",
+        problem="The sync question, D08, has been open since May. After a long discussion the team "
+                "settles it: notelit will not sync anything itself, because people already use "
+                "Dropbox, Syncthing or git for that. What usually gets lost is not an answer like "
+                "this but its conditions. Everyone in the room knows the answer would be wrong if "
+                "users started asking notelit to fix conflicts it never caused. Nobody writes that "
+                "down, and a year later the answer looks unconditional.",
+        solved="D08 is decided, and carries three things: the answer, where the reasoning lives, and "
+               "a falsifier, the observation that would prove the answer wrong. The falsifier was "
+               "written now, before any such user exists, so nobody can move the goalposts later. "
+               "The answer raises no further questions, so it is marked terminal.",
+        read_full="Two harder cases. The corruption question, D06, gets an answer that raises a new "
+                  "question. And the index location, D04, was answered in June before anyone measured "
+                  "anything; the measurement arrives now. An answer that opens further questions must "
+                  "name them and must carry a falsifier. Deciding while the evidence task is still "
+                  "outstanding is allowed and noted; when the result lands later, the check asks for it "
+                  "to be read against the answer, and <code>dg confirm --against</code> is how you say "
+                  "it held.",
         hl_quick=[(r"^staged 1 op\(s\) — review", None),
                   (r"opens\s+TERMINAL", "nothing follows from it"),
                   (r"falsifier\s+a user asks", "written before the evidence")],
@@ -87,12 +118,23 @@ RECIPES: dict[str, dict] = {
                  (r"read 2026-\d\d-\d\d — Under a tenth", None)],
     ),
     "04-add-task": dict(
-        read_quick="<code>--because</code> is the seam between the two graphs: this work exists "
-                   "because of that answer. Since the answer is still open, the task waits on it, "
-                   "and that is derived, never stored.",
-        read_full="Three links make three different claims. <em>because</em> makes the work wait on "
-                  "the answer; <em>evidence-for</em> makes the answer wait on the work; "
-                  "<em>discovered-during</em> is provenance and makes nothing wait at all.",
+        problem="Whenever two machines edit the same note, a sync leaves a conflict copy behind, and "
+                "someone wants to write the rule notelit uses to recognise those copies. That is "
+                "work, not a question. But the rule depends on how the still-open sync question, D08, "
+                "is answered: whether notelit syncs by itself or leaves it to other tools. It should "
+                "also wait until the README's sync section, task T08, is written. On an ordinary "
+                "to-do list it would look ready to start today.",
+        solved="The recognition rule is task T12, filed because of D08 and after T08, and <code>dg "
+               "task</code> lists it as waiting on both. Nobody marked it blocked: <code>dg</code> "
+               "works that out from the links, and T12 becomes ready by itself once D08 is decided "
+               "and T08 is done.",
+        read_full="Three tasks, each linked to a question in a different way, because each link means "
+                  "something different. <code>--because</code> is the seam between the two graphs: this "
+                  "work exists because of that answer. Since the answer is still open, the task waits "
+                  "on it, and that is derived, never stored. Three links make three different claims. "
+                  "<em>because</em> makes the work wait on the answer; <em>evidence-for</em> makes the "
+                  "answer wait on the work; <em>discovered-during</em> is provenance and makes nothing "
+                  "wait at all.",
         hl_quick=[(r"^staged T12 after T08", "a prerequisite, as an edge"),
                   (r"T12\s+TODO.*waits T08, D08 \(undecided\)", "blocked by a question and by work")],
         hl_full=[(r"^staged T14 discovered during T06", "provenance"),
@@ -102,10 +144,21 @@ RECIPES: dict[str, dict] = {
                  (r"starting it now\s*$", "the premise is a bet")],
     ),
     "05-link": dict(
-        read_quick="Edges between records that already exist: a premise for a decision, a premise "
-                   "for a piece of work. Both after the fact, which is how most of them arrive.",
-        read_full="Adding a premise to an answered question is additive, so it is allowed; the "
-                  "answer, its source and its falsifier all still stand. On the task side, every "
+        problem="Connections between records are usually noticed late, after both records exist. Two "
+                "turn up in the same week. First, someone realises that the sync question, D08, "
+                "depends on where the index file lives, D04: the index sits inside the notes folder, "
+                "so any sync tool will copy it between machines as well. Second, someone working on "
+                "T11, which makes <code>[[wikilinks]]</code> in search results show the notes they "
+                "point to, realises the work assumes notelit prints plain text. That was decided in "
+                "D05, when the team ruled out an interactive screen. Neither connection is recorded "
+                "anywhere.",
+        solved="D08 now rests on D04 as well as on the storage decision, and T11 is linked to D05. "
+               "<code>dg why T11</code> shows the chain behind the wikilinks work, from the storage "
+               "decision through D05. If D05 is ever reversed, T11 is among the work <code>dg</code> "
+               "flags.",
+        read_full="Links added after the fact come off the same way, and on the work side there are "
+                  "three kinds. Adding a premise to an answered question is additive, so it is allowed; "
+                  "the answer, its source and its falsifier all still stand. On the task side, every "
                   "relation names its kind, because both kinds can hold between the same pair.",
         hl_quick=[(r"^staged D08 rests on D04", None),
                   (r"^staged T11 linked", None),
@@ -117,13 +170,21 @@ RECIPES: dict[str, dict] = {
                  (r"T09\s+TODO.*waits D06 \(undecided\)", "released from T04; still waits on the question")],
     ),
     "06-remove": dict(
-        read_quick="Removal is for a record that should never have been written. It keeps nothing, "
-                   "so it insists git has the record instead, and a duplicate folds into the one it "
-                   "duplicates.",
-        read_full="Three shapes: sever drops the edges, splice joins what the vertex sat between, "
-                  "into moves its edges onto another. A decision that work still names cannot go "
-                  "until the work points elsewhere. Anything else, a wrong answer or work that will "
-                  "not be done, is a reopen or a drop, which keep the history.",
+        problem="A new contributor files a task: check the index for corruption when opening it. That "
+                "task already exists as T04, <em>Detect a corrupted index on open</em>. Keeping both "
+                "means two people may do the same work, and any links would be split across two "
+                "records. This is the rare case where deleting is right, because the record should "
+                "never have been written. Most corrections are not like this: a wrong answer, or work "
+                "that will not be done, belongs on the record.",
+        solved="The duplicate, T12, is gone, and its link was folded into T04. <code>dg</code> "
+               "agreed to remove it only once the record was committed to git: removal keeps no "
+               "history of its own, so it insists git has a copy.",
+        read_full="Questions can be removed too: one filed by mistake, one sitting between two others, "
+                  "and one that work still depends on. Three shapes: sever drops the edges, splice "
+                  "joins what the vertex sat between, into moves its edges onto another. A decision "
+                  "that work still names cannot go until the work points elsewhere. Anything else, a "
+                  "wrong answer or work that will not be done, is a reopen or a drop, which keep the "
+                  "history.",
         hl_quick=[(r"^\$ git commit", "git is the record of what removal takes away"),
                   (r"^remove T12 \(into\)", None),
                   (r"after\s+T01\s+→ —", "its edge moved onto T04")],
@@ -133,8 +194,15 @@ RECIPES: dict[str, dict] = {
                  (r"2 task\(s\) name D06: T04, T09", "work still rests on it")],
     ),
     "07-frontier": dict(
-        read_quick="The frontier is every question not yet settled, each saying what it waits on: "
-                   "nothing, a premise, or evidence still being produced.",
+        problem="It is Monday and someone has an afternoon to settle one of notelit's open questions. "
+                "Four are open, but not all of them can be answered yet. One waits on an evaluation "
+                "that is still running, another on a detector nobody has written, another on a "
+                "different open question. A plain list of open issues does not say which is which, so "
+                "people pick one up and discover halfway through that it cannot be finished.",
+        solved="<code>dg</code> with no arguments lists the four open questions and what each is "
+               "waiting on. Only D08, the sync question, is decidable now. D03, the embedding model, "
+               "waits on evidence from T06; D06, the corruption question, waits on T04; and D07, "
+               "ranking, waits on D03.",
         read_full="The same set as a table, as bare ids for a pipe, and as the tree it sits in. "
                   "<code>dg brief</code> is what a coding agent is handed at the start of a session: "
                   "the frontier, anything resting on a premise under review, and what is staged.",
@@ -146,11 +214,21 @@ RECIPES: dict[str, dict] = {
                  (r"^TASKS\s+11:.*\(3 ready, 2 blocked\)", "readiness, computed")],
     ),
     "08-why": dict(
-        read_quick="One command, two questions: why a decision is where it is, and where a piece "
-                   "of work comes from. The chain is the graph, read upward.",
-        read_full="<code>--full</code> prints every premise's answer, evidence and falsifier, which is "
-                  "the form to paste into a prompt. <code>dg node</code> shows one decision with its "
-                  "reversals; <code>dg path</code> the chain of evidence between two.",
+        problem="A new contributor is asked to settle D06: what should notelit do when its index file "
+                "is corrupted? Before proposing an answer they need to know what the question already "
+                "takes for granted: that notes are plain files, how the index is built, where it "
+                "lives, and whether any of that could still change. They also notice T09, <em>Rebuild "
+                "the index automatically when it is corrupt</em>, and wonder why nobody has started "
+                "it.",
+        solved="<code>dg why D06</code> shows the answers the question rests on, from the storage "
+               "decision through search to the index location, all settled. <code>dg why T09</code> "
+               "shows that the work waits on D06 itself, so starting it now would be betting on an "
+               "answer nobody has given.",
+        read_full="One command, two questions: why a decision is where it is, and where a piece of work "
+                  "comes from. The chain is the graph, read upward. <code>--full</code> prints every "
+                  "premise's answer, evidence and falsifier, which is the form to paste into a prompt. "
+                  "<code>dg node</code> shows one decision with its reversals; <code>dg path</code> the "
+                  "chain of evidence between two.",
         hl_quick=[(r"^CHAIN\s+D01 → D02 → D04 → D06", "the premises, nearest last"),
                   (r"^→ this work waits on D06", "the premise is not settled")],
         hl_full=[(r"^\s+falsifier:", "what would overturn it"),
@@ -158,11 +236,19 @@ RECIPES: dict[str, dict] = {
                  (r"why\s+p95 hit 340 ms", "the reason for the reversal")],
     ),
     "09-tasks": dict(
-        read_quick="Ready is computed from prerequisites and premises, so there is no status to "
-                   "keep up to date. Finishing T04 did not release T09: it still waits on a question.",
-        read_full="Two ways to stop, differing only downstream. Parking holds what waited; dropping "
-                  "releases it, and asks for a verdict on each released piece now, while the reason "
-                  "is in mind. Every stop and every completion is appended, never cleared.",
+        problem="Someone has a day for notelit and asks what they can work on. There are eleven "
+                "tasks, and several look available but are not. The automatic index rebuild, T09, "
+                "needs the corruption detector, T04, to exist first, and it also depends on a "
+                "question nobody has answered. On a board where people mark tasks blocked by hand, "
+                "those labels drift out of date within a week.",
+        solved="<code>dg task</code> says T04, T05 and T11 are ready. They start T04, finish it with "
+               "a note of what they did, and the list is recomputed. T09 is still not ready: its "
+               "prerequisite is done, but the question it rests on, D06, is still open.",
+        read_full="Not all work gets finished. Ready is computed from prerequisites and premises, so "
+                  "there is no status to keep up to date, and stopping work is where that matters most. "
+                  "Two ways to stop, differing only downstream. Parking holds what waited; dropping "
+                  "releases it, and asks for a verdict on each released piece now, while the reason is "
+                  "in mind. Every stop and every completion is appended, never cleared.",
         hl_quick=[(r"^ready T04, T05, T11", "computed, not stored"),
                   (r"T09\s+TODO.*waits D06 \(undecided\)", "T04 is done; D06 is not"),
                   (r"^ready T05, T11$", "T09 still waits on D06")],
@@ -173,17 +259,24 @@ RECIPES: dict[str, dict] = {
                  (r"^│ Stopped", "history, never cleared")],
     ),
     "10-find": dict(
-        read_quick="A bare word searches prose; <code>is:</code> asks a derived question and gets "
-                   "the same answer the frontier commands give. Nothing is ranked, nothing fuzzy.",
-        read_full="Superseded answers are searched too, since a reversal is often the only place a "
-                  "rejected approach is written down. Exit 1 means nothing in the store says that, "
-                  "a fact worth trusting; exit 2 means the question could not be answered as asked. "
+        problem="Someone remembers the team talking about index corruption but not where, and "
+                "searching the chat history returns fifty messages. They want every question and task "
+                "that mentions corruption. Separately, they want to see just the tasks they could "
+                "start today.",
+        solved="A word search found the corruption question, D06, and the two tasks about it. "
+               "<code>is:ready</code> returned T04, T05 and T11, the same set <code>dg task</code> "
+               "reports, because search and the listings share one definition of ready.",
+        read_full="A bare word searches prose; <code>is:</code> asks a derived question and gets the "
+                  "same answer the frontier commands give. Nothing is ranked, nothing fuzzy. Superseded "
+                  "answers are searched too, since a reversal is often the only place a rejected "
+                  "approach is written down. Exit 1 means nothing in the store says that, a fact worth "
+                  "trusting; exit 2 means the question could not be answered as asked. "
                   "<code>tags:</code> matches a tag exactly, in both stores at once. "
                   "<code>--subgraph</code> turns the matches into a seed and prints the slice they "
-                  "induce as two stores: <code>boundary</code> names what the slice still mentions "
-                  "and no longer holds, per record, and <code>--derived</code> adds what the whole "
-                  "graph says of each record &mdash; beside the stores, never inside them, so a "
-                  "loaded slice cannot mistake a whole-graph fact for one of its own fields.",
+                  "induce as two stores: <code>boundary</code> names what the slice still mentions and "
+                  "no longer holds, per record, and <code>--derived</code> adds what the whole graph "
+                  "says of each record &mdash; beside the stores, never inside them, so a loaded slice "
+                  "cannot mistake a whole-graph fact for one of its own fields.",
         hl_quick=[(r"D06\s+OPEN\s+What happens when the index is corrupted", "matched on its title"),
                   (r"^TASKS\s+3 match", None)],
         hl_full=[(r"superseded answer:", "the rejected approach, still findable"),
@@ -195,12 +288,22 @@ RECIPES: dict[str, dict] = {
                  (r'"outside"', "the whole graph's fact, beside the store")],
     ),
     "11-reopen": dict(
-        read_quick="Reopening supersedes the answer and keeps it. Every decided descendant now "
-                   "rests on a premise under review, and the tool computes that set rather than "
-                   "trusting anyone to.",
-        read_full="Reopen the root and three answers are provisional at once, along with the work "
-                  "standing on them. <code>dg confirm</code> is the honest exit: re-examined, it holds. "
-                  "Reaching for reopen and decide instead would file a reversal that never happened.",
+        problem="In July the team settled how search works, D02: one SQLite full-text table for all "
+                "notebooks. They also wrote down what would prove it wrong: search getting slow at "
+                "100,000 notes, which they defined as at least one search in twenty taking longer "
+                "than 200 ms. In September a user imports exactly that many notes and measures 260 "
+                "ms. The answer is now in doubt, and that is not the worst of it. Other answers were "
+                "decided on top of it, such as where the index file lives, and work was planned "
+                "around it. Nobody has a list of what depended on D02.",
+        solved="Reopening D02 keeps its answer as history and marks everything decided on top of it "
+               "as provisional. Here that is D04, the index location, and <code>dg</code> found it, "
+               "not a person. D02 is back among the open questions, and the listing now also shows "
+               "what rests on a premise under review.",
+        read_full="A bigger shock: the storage decision underneath everything is challenged, by three "
+                  "users editing one note on two machines in a day. Reopen the root and three answers "
+                  "are provisional at once, along with the work standing on them. <code>dg "
+                  "confirm</code> is the honest exit: re-examined, it holds. Reaching for reopen and "
+                  "decide instead would file a reversal that never happened.",
         hl_quick=[(r"become PROVISIONAL", "computed by the reopen"),
                   (r"^RESTING ON A PREMISE UNDER REVIEW", None),
                   (r"D04\s+PROVISIONAL", None)],
@@ -212,13 +315,22 @@ RECIPES: dict[str, dict] = {
                  (r"settled again since this was decided \(by the dates, a heuristic\)", "what moved under it, labelled as the heuristic it is")],
     ),
     "12-supersede": dict(
-        read_quick="Changing an answer is a reopen and a second decide. The first answer is superseded, "
-                   "never deleted; whatever was decided on top of it is provisional until re-examined, "
-                   "and <code>dg confirm</code> is how you say it still holds.",
-        read_full="A falsifier that comes true is the case the record was built for. Reopen with the "
-                  "fact as the reason, answer again with a new falsifier, and everything downstream "
-                  "reads the new answer from then on, while the old one stays findable with the "
-                  "reason it was overturned.",
+        problem="Same starting point as the previous example: a user with 100,000 notes measures "
+                "searches at 260 ms, exactly what the search decision, D02, said would prove it "
+                "wrong. This time the team already has a fix, and has measured it: split the index "
+                "into several tables of 20,000 notes each. They need to replace the answer without "
+                "losing the reasons behind the old ones, and without leaving what was built on D02 "
+                "silently resting on an answer that no longer stands.",
+        solved="D02 now carries the split-table answer and a new falsifier, and both earlier answers "
+               "stay in its history with the reason each was replaced. <code>dg check</code> pointed "
+               "at D04, the index location, as needing a second look. The team decided it still "
+               "holds, and <code>dg confirm</code> recorded that without pretending the answer "
+               "changed.",
+        read_full="The June answer about where the index lives meets users who sync their notes folder, "
+                  "which is exactly what its falsifier named. A falsifier that comes true is the case "
+                  "the record was built for. Reopen with the fact as the reason, answer again with a "
+                  "new falsifier, and everything downstream reads the new answer from then on, while "
+                  "the old one stays findable with the reason it was overturned.",
         hl_quick=[(r"1 decided descendant\(s\) rest on it and become PROVISIONAL", "D04 was decided on top of it"),
                   (r"\[stale_provisional\].*D04", "premise settled again; re-examine D04"),
                   (r"D04 back to DECIDED", "it holds; no reversal invented"),
@@ -232,11 +344,19 @@ RECIPES: dict[str, dict] = {
                  (r"^\s+D04\s+DECIDED\s+Where does the index live\?", "D06's chain now carries the new answer")],
     ),
     "13-check": dict(
-        read_quick="The check is what turns drift into a failure. Here evidence landed and nobody "
-                   "wrote down what it showed, so the graph says so until somebody does.",
-        read_full="Settling the question clears the finding. A store a merge broke, reopened with "
-                  "nothing propagated, is caught by the same check, and <code>dg repair</code> stages "
-                  "exactly the propagation the reopen would have.",
+        problem="The corruption detector, T04, was written to answer one question, D06: what should "
+                "notelit do when its index is corrupted? The code gets merged and the task is closed. "
+                "What usually happens next is nothing. The result sits in a pull request, and the "
+                "question stays open for months because nobody went back to it.",
+        solved="Before the task was closed, <code>dg check</code> was clean. Afterwards it warns "
+               "that T04 was evidence for D06 and D06 is still unsettled, and it keeps warning until "
+               "someone decides D06 or removes the link. It is the same check the commit hook and "
+               "every coding-agent session run.",
+        read_full="The check is what turns drift into a failure. The fuller example settles D06 to "
+                  "clear the warning, then breaks the graph by hand the way a bad merge might. Settling "
+                  "the question clears the finding. A store a merge broke, reopened with nothing "
+                  "propagated, is caught by the same check, and <code>dg repair</code> stages exactly "
+                  "the propagation the reopen would have.",
         hl_quick=[(r"^✓ 8 vertices, 6 edges; 11 tasks, all invariants hold$", "clean"),
                   (r"\[evidence_unharvested\]", "the work reported; the answer was never recorded")],
         hl_full=[(r"^\$ dg decide D06", "harvest it"),
@@ -245,11 +365,21 @@ RECIPES: dict[str, dict] = {
                  (r"DECIDED → PROVISIONAL, resting on D02", "repair stages what the reopen would have")],
     ),
     "14-agent-loop": dict(
-        read_quick="Nobody hands out the work. The agent reads the frontier, claims, publishes the "
-                   "claim, finishes, and may settle only what its finished evidence backs.",
-        read_full="Every policy is an environment variable and every one is a refusal, not a habit. "
-                  "A budget is real when the launcher is the agent's parent: the child is stopped and "
-                  "what it held is parked under its own name, for a person to land.",
+        problem="The team wants a coding agent to take on some of notelit's backlog: pick a ready "
+                "task, do it, and record what it did. Two things worry them. The agent might pick "
+                "work that is not ready, or work someone else already holds. And it might settle open "
+                "questions on a hunch, which is exactly where the team wants a person, or finished "
+                "evidence, behind the answer.",
+        solved="The agent got a name of its own, read the ready list, and took T04 under that name. "
+               "It finished T04 and then settled D06, which it was allowed to do only because its "
+               "own finished task was the evidence for that question: with "
+               "<code>DG_DECIDE=evidence</code>, an answer without finished evidence behind it is "
+               "refused. <code>dg-agent list</code> shows who holds what.",
+        read_full="The limits, tested: an answer with no evidence behind it, a write outside the "
+                  "project, and an agent that runs out of time. Every policy is an environment variable "
+                  "and every one is a refusal, not a habit. A budget is real when the launcher is the "
+                  "agent's parent: the child is stopped and what it held is parked under its own name, "
+                  "for a person to land.",
         hl_quick=[(r"^\$ name=\$\(dg-agent claim\)", "a name from the tool, never invented"),
                   (r"▸ \$ dg apply --mine", "publish the claim so others see it"),
                   (r"DG_DECIDE=evidence dg decide D06", "allowed: T04 finished and backs it"),
@@ -262,12 +392,17 @@ RECIPES: dict[str, dict] = {
                  (r"T05\s+PARKED.*budget spent", None)],
     ),
     "15-fanout": dict(
-        read_quick="Two ready tasks never block each other, but they can collide at the seam: both are "
-                   "evidence for one decision, or one would move a decision the other rests on. "
-                   "<code>dg task independent</code> is the ready tasks with no such pair, and "
-                   "<code>dg-agent setup</code> assigns one per agent from it. Then one tray, several "
-                   "writers, each op stamped with its name: a bare apply refuses while the tray holds "
-                   "somebody else's work, and that refusal is the review step.",
+        problem="Now the team wants several agents working on notelit at once. Two ready tasks can "
+                "still clash. The corruption detector, T04, and a new measurement of how often an "
+                "index really corrupts, T13, are both evidence for the same question, D06, so two "
+                "agents working on them would each try to answer D06 their own way. And with several "
+                "agents writing to one graph, a person needs to review each agent's changes on their "
+                "own rather than all at once.",
+        solved="<code>dg task independent</code> held T13 back because it shares D06 with T04, and "
+               "setup would launch three agents for the four asked. Both agents' changes went to one "
+               "tray, each marked with its name. A plain <code>dg apply</code> refused while another "
+               "writer's changes were in it, and <code>dg apply --agent</code> took one agent's "
+               "changes after review.",
         read_full="<code>dg-agent setup</code> writes the prompt, the launcher and the remit they were "
                   "both generated from. Each agent is assigned a first task, chosen so that no two "
                   "agents' tasks collide at the seam. Most of the prompt is the graph: the chain behind "
@@ -294,10 +429,18 @@ RECIPES: dict[str, dict] = {
                  (r"^cleared 2 op\(s\) staged by", "turned down; nothing else touched")],
     ),
     "16-session": dict(
-        read_quick="The plugin turns habits into mechanisms: the brief is injected at the start of "
-                   "every session, and a commit that would record a contradiction is refused.",
-        read_full="A slash command is three lines around a <code>dg</code> call, the same file on both "
-                  "hosts. The gate is host-neutral too: one verdict, relayed by every adapter.",
+        problem="A coding agent starts every session knowing nothing about notelit's history. Pasting "
+                "the context in by hand gets forgotten half the time, and an agent that does not know "
+                "where the index lives was settled in June will happily argue it again. Agents also "
+                "commit, and a commit can record the graph in a state that contradicts itself.",
+        solved="With the plugin installed, <code>dg brief</code> is added to the start of every "
+               "Claude Code or opencode session: the open questions, what each waits on, the work, "
+               "and whether the check is clean. Before a commit the plugin asks <code>dg "
+               "gate</code>. Here the graph is consistent, so the answer is allow.",
+        read_full="The plugin turns habits into mechanisms. The fuller example breaks the graph and "
+                  "tries to commit. A slash command is three lines around a <code>dg</code> call, the "
+                  "same file on both hosts. The gate is host-neutral too: one verdict, relayed by every "
+                  "adapter.",
         hl_quick=[(r"^FRONTIER \(4\)", "what the session reads first"),
                   (r"^CHECK: clean", None),
                   (r"^allow$", "a clean graph may be committed")],
@@ -307,11 +450,18 @@ RECIPES: dict[str, dict] = {
                  (r"^commit$", "the words a host watches for")],
     ),
     "17-integrate": dict(
-        read_quick="Not a merge. A colleague's contribution arrives as ops you can read, quarantined "
-                   "until adopted, and then reviewed and applied like your own.",
-        read_full="When both clones answered the same question, the op is contested and nothing "
-                  "lands until somebody picks: theirs, ours, or split into two questions that were "
-                  "worded as one.",
+        problem="A colleague cloned notelit's repository to work offline for a week, and in their "
+                "copy they added a question under the sync question: which files should sync ignore? "
+                "Now their branch has to come back. Letting git merge the decisions file as text "
+                "would work this time, but a text merge can silently combine two different answers to "
+                "one question, or produce a file that breaks the graph's rules, and nobody would "
+                "notice for months.",
+        solved="<code>dg integrate</code> read the colleague's branch as a list of changes, checked "
+               "each against this graph, and held them in quarantine without writing anything. After "
+               "a look they were adopted into the tray and applied like local changes.",
+        read_full="The harder case: both copies answered the sync question, differently. When both "
+                  "clones answered the same question, the op is contested and nothing lands until "
+                  "somebody picks: theirs, ours, or split into two questions that were worded as one.",
         hl_quick=[(r"^2 op\(s\) from colleague/main", None),
                   (r"^quarantined in .dgraph-incoming.json", "read before anything is yours"),
                   (r"^adopted 2 op\(s\)", None)],
@@ -319,30 +469,38 @@ RECIPES: dict[str, dict] = {
                  (r"--take <ref>.*--keep <ref>", "the three ways out")],
     ),
     "18-precommit": dict(
-        read_quick="Three kinds of record, and each can carry what it will be judged against, "
-                   "written before the evidence exists: an open question a <em>rule for "
-                   "settling</em> (which result picks which answer), a task a <em>definition of "
-                   "done</em>, a decided answer the <em>falsifier</em> you already know from "
-                   "recipe 03. The tool's whole use of them is to read each back at the moment "
-                   "you would be tempted to bend it: the done-when before <code>dg task done</code> "
-                   "takes an outcome, the rule above the answer in <code>dg decide</code>, and "
-                   "every one beside its evidence in <code>dg probe</code>. Nothing judges; you do.",
-        read_full="Beside any of the three a <em>probe</em> can sit: <code>{kind, args}</code>, a "
-                  "typed twin that installed code could judge. The prefix of <code>kind</code> "
-                  "names a <em>domain</em>, a package registered under <code>dgraph.domains</code> "
-                  "that claims it. Only <code>prose</code> ships, and it presents without judging; "
-                  "<code>grep</code> is forty lines the cookbook carries for this page, and the "
-                  "shape a domain author copies. The graph names a file and a pattern, never a "
-                  "command — that grep runs was the domain author's choice, on a machine where "
-                  "somebody had the authority to install it — and the door only ever reads: a "
-                  "firing is a verdict and a non-zero exit, and the reopen is yours. A probe on an "
-                  "open record is appended and dated, never edited; a kind nobody installed claims "
-                  "is presented rather than refused; and <code>dg check</code> evaluates none of "
-                  "this, so a commit hook's verdict does not depend on what its machine has. "
-                  "What <em>can</em> run without you is the judging: the pytest plugin, under "
-                  "<code>--decision-graph-probe</code>, turns a fired probe into a failing test, so "
-                  "the job that rewrites the bench file fails on the decision it overturned. Turning "
-                  "that verdict into a staged reopen is the step no domain takes yet.",
+        problem="notelit runs a search when you press Enter. Someone asks whether it could search as "
+                "you type instead, updating the results on every keystroke. That depends on speed: if "
+                "a search takes a third of a second, typing stutters. So the team agrees to measure "
+                "first. The risk is a familiar one. Once the number arrives, it is tempting to "
+                "reinterpret what fast enough meant, so that the result supports what people wanted "
+                "all along.",
+        solved="The rule for deciding went into the question before anyone measured: under 100 ms "
+               "means search as you type, over means wait for Enter. The benchmark task carried its "
+               "own definition of done. When the result came in at 340 ms, <code>dg</code> showed "
+               "each commitment back at the moment it could be bent: the definition of done as the "
+               "task was closed, the rule beside the result, and the rule again above the answer "
+               "being written. The team answered <em>wait for Enter</em>, with a falsifier saying "
+               "when that should change. Nothing here judged; a person did.",
+        read_full="<b>Months later a faster index lands, and the benchmark drops to 60 ms.</b> The "
+                  "falsifier said that would overturn <em>wait for Enter</em>, but a falsifier is a "
+                  "sentence, and a sentence only works if somebody rereads it. A <em>probe</em> is the "
+                  "same condition written so a program can check it: here, a pattern that matches a "
+                  "result under 100 ms in <code>bench/search.md</code>. The program that checks a kind "
+                  "of probe is called a <em>domain</em>, a small plugin found by the kind's prefix, "
+                  "<code>grep</code> in <code>grep.matches</code>. <code>dg</code> ships only "
+                  "<code>prose</code>, which shows a condition without judging it; the "
+                  "<code>grep</code> domain is forty lines kept with this page, and a model for writing "
+                  "your own. The graph stores a file and a pattern, never a command to run. <code>dg "
+                  "probe</code> reports the verdict and exits non-zero when a falsifier has come true, "
+                  "and does nothing else: reopening stays a person's call. What can run unattended is "
+                  "the check itself. The pytest plugin, under <code>--decision-graph-probe</code>, "
+                  "turns a fired probe into a failing test, so the benchmark job fails and names the "
+                  "decision. Three guards come with it. A probe on an open question is appended and "
+                  "dated, never edited, so a rule rewritten to fit the evidence stays visible. A kind "
+                  "no installed domain handles is shown rather than refused. And <code>dg check</code> "
+                  "never runs a probe, so a commit hook's verdict does not depend on what that machine "
+                  "has installed.",
         hl_quick=[(r"^│ Time a search over the 50k-note set\. p95 under 100 ms", "the fork, before any evidence"),
                   (r"^done when: the p95 over 50k notes", "read back before the outcome is asked for"),
                   (r"^\s+T12 DONE — p95 340 ms", "the evidence, beside the rule"),
@@ -360,14 +518,23 @@ RECIPES: dict[str, dict] = {
                  (r"no installed domain claims `pytest\.`", "presented, not evaluated, never an error")],
     ),
     "19-staged-readers": dict(
-        read_quick="Nothing reaches a store until <code>dg apply</code>. Until then every reader — "
-                   "the frontier, the tree, one node, a path, a search — shows the store <em>plus</em> "
-                   "the tray and marks what came from it, because a proposal has to be visible as one.",
-        read_full="Two things read the store alone, on purpose. <code>dg export</code> is what "
-                  "<code>dg import</code> reads back, so a proposal must never arrive in another "
-                  "project as a stored fact. <code>dg check</code> is what the commit gate runs, so a "
-                  "staged fix can never make a broken store pass; <code>--staged</code> is how you ask "
-                  "what the tray would leave, as a diff.",
+        problem="Someone proposes a new question under the sync question: when two machines change "
+                "the same note, whose edit wins? They stage it without applying it, because they want "
+                "the team to look first. If a proposal were invisible until applied, nobody could "
+                "review it where it belongs in the graph. If it looked exactly like a settled record, "
+                "people would treat it as decided.",
+        solved="The tree, the single-record view and the list of open questions all show the "
+               "proposed question, D09, in place, and each marks it as staged. Nothing is in the "
+               "stored graph yet: <code>dg apply</code> would write it, and dropping it would leave "
+               "no trace.",
+        read_full="Nothing reaches a store until <code>dg apply</code>. Until then every reader — the "
+                  "frontier, the tree, one node, a path, a search — shows the store <em>plus</em> the "
+                  "tray and marks what came from it, because a proposal has to be visible as one. Two "
+                  "things read the store alone, on purpose. <code>dg export</code> is what <code>dg "
+                  "import</code> reads back, so a proposal must never arrive in another project as a "
+                  "stored fact. <code>dg check</code> is what the commit gate runs, so a staged fix can "
+                  "never make a broken store pass; <code>--staged</code> is how you ask what the tray "
+                  "would leave, as a diff.",
         hl_quick=[(r"D09 .*\(staged\)", "in the tree, marked"),
                   (r"staged — proposed in the tray, not applied", "and on the node itself"),
                   (r"D09\s+OPEN.*staged", "and in the frontier")],
@@ -378,46 +545,60 @@ RECIPES: dict[str, dict] = {
                  (r"^✓ applied", None)],
     ),
     "20-domains": dict(
-        read_quick="A criterion is often two things at once, and it is still <em>one</em> "
-                   "criterion: this answer stands while <em>both</em> machines stay above "
-                   "100 ms. <code>core.all_of</code> is how that is written — the one kind the "
-                   "core evaluates itself, taking its members in <code>args.probes</code> and "
-                   "handing each to whichever domain claims it. It <b>holds only if every "
-                   "member holds, and fires as soon as any one of them does</b>, with the "
-                   "sentence saying which: here the 50k-note set came under 100 ms and the "
-                   "laptop did not, and one half is enough to overturn the answer. Written as "
-                   "two records instead, the graph would carry two questions where the project "
-                   "has one, and neither would be the thing that was decided.",
-        read_full="Which domains run is yours to choose. <code>--domain</code> scopes a probe "
-                  "run to the records one domain judges — how you run the cheap ones on every "
-                  "commit and reach a slow one by name — and because a composite is one "
-                  "criterion, it is reached under <em>every</em> member's prefix: the same "
-                  "record answers to <code>grep</code> and to <code>pytest</code>. A member no "
-                  "installed domain claims leaves the composite <code>unjudged</code>, never "
-                  "an error and never a <code>holds</code> it did not earn, and the missing "
-                  "prefix is one footer line however many records name it. Each domain then "
-                  "runs in a child process of its own, under the deadline it declares "
-                  "(<code>grep</code> says five seconds; sixty where a domain says nothing) "
-                  "and is ended at it — a domain that has not answered is unjudged for "
-                  "everything it was asked. <code>--timeout</code> overrides whatever the "
-                  "distribution declared, because a person at the door outranks it. And a "
-                  "scope that names nothing the store holds is refused, saying what it does "
-                  "hold: a blank is what a script's failed extraction produces, and the one "
-                  "thing a narrowing must never do is widen.",
-        hl_quick=[(r'core\.all_of \{"probes"', "one criterion, two members"),
-                  (r"verdict\s+holds\s+no line of bench/search\.md", "both halves clean, so the composite holds"),
-                  (r"^p95: 60 ms  prefix", "one of the two numbers moved"),
-                  (r"verdict\s+fired\s+bench/search\.md: p95: 60 ms", "one half is enough — and it says which"),
-                  (r"^1 presented · fired 1", "a non-zero exit; the reopen is still yours")],
-        hl_full=[(r"^`pytest\.` not judged here — 1 record\(s\)", "one line per prefix, not per record"),
-                 (r"^2 presented · fired 0 · holds 1 · unjudged 1", "--domain grep reaches both records"),
-                 (r"^1 presented · fired 0 · holds 0 · unjudged 1", "...and --domain pytest the one whose other half it claims"),
-                 (r"did not answer within 0\.001s", "the door outranks the distribution"),
-                 (r"^no pre-commitment is under `rocq\.`; prefixes here", "refused, naming what the store does hold"),
-                 (r"Invalid value for .--domain.: a blank name", "a blank selects nothing, and never everything")],
+        problem="notelit runs a search when you press Enter. Suppose the team has since made search "
+                "much faster and switched to searching as you type, so results update on every "
+                "keystroke. They wrote down what would make them switch back: a search taking 100 ms "
+                "or more, because then typing stutters. <b>That has to stay true in two places.</b> A "
+                "nightly benchmark on the build server searches a test collection of 50,000 notes, "
+                "and a second one runs on the slowest laptop anyone on the team uses, because that is "
+                "where a slow search is felt first. Each writes last night's result to a file. If "
+                "either number reaches 100 ms, someone's typing stutters and the decision should be "
+                "revisited. In practice nobody reads those files against a decision made months ago, "
+                "so a slowdown can go unnoticed for weeks. <code>dg</code> can attach the condition "
+                "to the decision in a form a program checks, so it is checked every night along with "
+                "the benchmarks.",
+        solved="The decision carried a <em>probe</em>: its falsifier written as a check a program "
+               "can run. A probe names its kind, such as <code>grep.matches</code>, and the plugin "
+               "that runs that kind is called a <em>domain</em>; the <code>grep</code> domain here "
+               "is forty lines kept with this page. This probe has two halves, one per benchmark "
+               "file, each asking whether the file shows a search of 100 ms or more, and "
+               "<code>core.all_of</code>, the one kind <code>dg</code> understands by itself, joins "
+               "them: the answer holds only while both halves hold. The first night both machines "
+               "were fast. Three weeks later the laptop crossed the line while the server stayed "
+               "fast, and <code>dg probe</code> reported that the answer no longer holds, named the "
+               "laptop's file, and exited with an error, which is what fails the nightly job. "
+               "Reopening the decision is still a person's call.",
+        read_full="<b>Not every check is as cheap as reading a file.</b> A second answer, that results "
+                  "are ranked by how recently each note changed, rests on the laptop staying fast and "
+                  "on a ranking test that keeps passing. Reading a file takes milliseconds, so those "
+                  "checks can run on every commit. Running the test suite takes minutes and belongs in "
+                  "the nightly job, and the plugin that runs tests is not installed on every machine. "
+                  "So the team needs to run only some kinds of check at a time, and to know what "
+                  "happens to a check a machine cannot perform. <code>--domain</code> runs only the "
+                  "probes one domain handles. A probe made of two halves is still one condition, so it "
+                  "is included whenever either half's domain is asked for. A half that no installed "
+                  "domain can check leaves the whole probe <em>unjudged</em>, never passed, and the "
+                  "missing plugin is named once at the bottom. Each domain runs in its own process "
+                  "under a deadline, so a plugin that hangs cannot hang the job: <code>grep</code> "
+                  "declares five seconds, the default is sixty, and <code>--timeout</code> overrides "
+                  "both. And a script that names a domain nothing uses, or passes an empty name because "
+                  "a variable was unset, is refused rather than quietly checking nothing or everything.",
+        hl_quick=[(r"^p95: 85 ms", "the slower machine, still under 100 ms"),
+                  (r"verdict\s+holds\s+no line of bench/server\.md", "both halves clean, so the answer holds"),
+                  (r"^p95: 140 ms", "the laptop slipped"),
+                  (r"^bench/laptop\.md: p95: 140 ms", "one half is enough, and it is named"),
+                  (r"^1 presented · fired 1", "a non-zero exit fails the nightly job")],
+        hl_full=[(r"^2 presented · fired 0 · holds 1 · unjudged 1", "--domain grep reaches both decisions"),
+                 (r"verdict\s+unjudged\s+no line of bench/laptop\.md", "one half checked, one not: unjudged, never holds"),
+                 (r"^`pytest\.` not judged here — 1 record\(s\)", "the missing domain, named once"),
+                 (r"did not answer within 0\.001s", "the deadline at the door wins"),
+                 (r"^no pre-commitment is under `rocq\.`; prefixes here", "refused, naming what the graph does use"),
+                 (r"Invalid value for .--domain.: a blank name", "an empty name checks nothing, never everything")],
     ),
 }
 
+
+PROJECT_INTRO = "<div class=\"intro\" id=\"project\">\n<p class=\"read\"><b>Every example happens in one imaginary project, notelit.</b> notelit is a small command-line tool for searching your notes: you point it at a folder of markdown files, it builds a search index, and you ask it questions from the terminal. A few people have been building it since May.</p>\n<p class=\"read\">By September they have answered four questions. Notes stay plain markdown files, one file per note, so the folder is the database. Search uses SQLite's built-in full-text engine, FTS5, an answer they already had to change once, when the first design got slow with many notebooks. The index file sits next to the notes, is rebuilt on demand, and is never synced. And notelit has no interactive screen: every command prints plain text. Four questions are still open: how two machines share one notes folder, what notelit should do when its index file is corrupted, which embedding model should power a smarter <em>semantic</em> search, and how results are ranked once it exists. Eleven pieces of work hang off those answers: two done, one in progress, one parked, one abandoned, and six still to do.</p>\n<p class=\"read\"><b>Their problem is the one every long-lived project has.</b> The answers live in chat threads, pull requests and people's memory. Nobody can say which answer another one depends on, what evidence would make the team change its mind, or which work is quietly waiting on a question nobody has answered. When an answer changes, what was built on it does not change with it. <code>dg</code> keeps the questions, the answers, what each rests on and the work that follows as two small files beside the code, where a tool can check them.</p>\n<p class=\"read\">Each example below starts from this same notelit, describes one situation the team runs into, and shows what <code>dg</code> does about it. Every record is listed under <a href=\"#seed\">the seed project</a> at the end.</p>\n</div>\n"
 
 PART_INTRO = {
     "agents": """
@@ -1110,6 +1291,9 @@ section.recipe{margin:0 0 44px;padding-top:8px;border-top:1px solid var(--line)}
 section.recipe .eyebrow{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:14px 0 2px}
 section.recipe h2{font-size:22px;margin:0 0 10px;letter-spacing:-.01em}
 .read{max-width:78ch;margin:0 0 14px;color:#2b3138}
+.situation,.solved{max-width:78ch;margin:4px 0 14px;padding:10px 14px 10px 16px;border-radius:0 10px 10px 0;color:#2b3138}
+.situation{border-left:3px solid #d8b86a;background:#fcf8ee}.solved{border-left:3px solid #6cbf8a;background:#f2faf5;margin-top:14px}
+.situation p,.solved p{margin:0}.lab{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:0 0 4px}
 .layer{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
 .pane{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .pic{position:sticky;top:8px;z-index:2;box-shadow:0 6px 18px -12px rgba(0,0,0,.35)}
@@ -1278,7 +1462,8 @@ def page() -> str:
         by_part.setdefault(part, []).append(slug)
 
     nav.append('<h1>dear-guide, by example</h1><div class="tag">worked examples · every line was run</div>')
-    nav.append('<div class="rail"><i></i></div><div class="eta">the quick path: about 20 minutes</div>')
+    nav.append('<div class="rail"><i></i></div><div class="eta">the quick path: about 30 minutes</div>')
+    nav.append('<ol><li data-for="project" class="overview"><a href="#project"><span class="n">—</span>The project, and its problem</a></li></ol>')
     for part, (title, sub) in PARTS.items():
         if part not in by_part:
             continue
@@ -1313,8 +1498,9 @@ def page() -> str:
             src = (RECIPE_DIR / f"{slug}.sh").read_text()
             body.append(f'<section class="recipe" id="{slug}">')
             body.append(f'<div class="eyebrow">{title} · {slug[:2]}</div><h2>{esc(q)}</h2>')
-            body.append(f'<p class="read">{spec["read_quick"]}</p>')
+            body.append(f'<div class="situation"><div class="lab">The situation</div><p>{spec["problem"]}</p></div>')
             body.append(quick_html)
+            body.append(f'<div class="solved"><div class="lab">What changed</div><p>{spec["solved"]}</p></div>')
             body.append(f'<details class="fold"><summary>The fuller example<small>same project, further in</small></summary>')
             body.append(f'<p class="read">{spec["read_full"]}</p>')
             body.append(full_html)
@@ -1385,8 +1571,8 @@ def page() -> str:
                'so if <code>dg</code> rewords a message the page points at, the test fails rather than the page going quietly wrong.</p>'
                '<p class="read">Two things the page shows but does not run: the launcher written by <code>dg-agent setup</code> is printed, not executed, '
                'because running it needs a coding-agent host; and <code>dg serve</code>, the web app, is not shown at all. '
-               'Two more are stand-ins, and say so where they appear: <code>bench/search.sh</code> in the annex writes the figure the story needs rather than timing an imaginary tool, '
-               'and the <code>grep</code> domain it is judged by is forty lines under <code>quick-start-demo/grep-domain/</code>, on the path for the recipes and installed nowhere. '
+               'Two more are stand-ins. The benchmark results in the annex are written by the recipe scripts rather than timed, since notelit is imaginary, '
+               'and the <code>grep</code> domain that checks them is forty lines under <code>quick-start-demo/grep-domain/</code>, on the path for the recipes and installed nowhere. '
                'Everything else on this page ran.</p>')
     app.append('</div>')
 
@@ -1396,12 +1582,13 @@ def page() -> str:
 <body>{arrow_defs()}<div class="wrap"><nav>{''.join(nav)}</nav><main>
 <header class="top"><h1>dear-guide, by example</h1>
 <p><code>dg</code> keeps a project's development as two linked graphs: the decisions it has settled, with what each rests on and what would overturn it, and the work that follows from them. This page is a reference of worked examples for the question <em>how do I do that with dear-guide?</em></p>
-<p>Each example is a real transcript against one small synthetic project, with a picture of the graph beside it. Read the short example of each; open <em>the fuller example</em> only where you want more. Click a command to see the graph after it.</p>
+<p>Each example opens on a situation the team behind one small, imaginary project runs into. Then it shows what <code>dg</code> does about it, as a real transcript with a picture of the graph beside it, and says what changed. Read the short example of each; open <em>the fuller example</em> only where you want more. Click a command to see the graph after it.</p>
 <div class="legend">
 <span><i class="sw dec"></i>decided</span><span><i class="sw open"></i>open</span><span><i class="sw prov"></i>provisional</span><span><i class="sw reo"></i>reopened</span>
 <span style="margin-left:10px"><i class="sw todo"></i>todo, ready</span><span><i class="sw blocked"></i>todo, blocked</span><span><i class="sw doing"></i>doing</span><span><i class="sw done"></i>done</span><span><i class="sw park"></i>parked</span><span><i class="sw drop"></i>dropped</span>
 <span style="margin-left:10px"><i class="sw new"></i>added</span><span><i class="sw chg"></i>changed</span><span><i class="sw gone"></i>removed</span>
 </div></header>
+{PROJECT_INTRO}
 {''.join(body)}
 {''.join(app)}
 </main></div><script>{JS}</script></body></html>
