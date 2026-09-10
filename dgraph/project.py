@@ -241,10 +241,11 @@ class Sealed(OSError):
     """
 
 
-#: What a read-only bind raises for a write, per backend. `EBUSY` is what
-#: bwrap's ro-bind answers to the rename `write_atomic` finishes with; `EROFS`
-#: is what a read-only mount answers to the open. Nothing else is a floor, and
-#: a full disk under a confined run is still a full disk.
+#: What a floor raises for a write, per backend. `EBUSY` is what a bubblewrap
+#: ro-bind answers to the rename `write_atomic` finishes with; `EROFS` is what a
+#: read-only mount answers to the open; `EPERM` and `EACCES` are what Seatbelt,
+#: the host floor on macOS, answers to either. Nothing else is a floor, and a
+#: full disk under a confined run is still a full disk.
 _SEALED_ERRNOS = (errno.EBUSY, errno.EROFS, errno.EPERM, errno.EACCES)
 
 

@@ -1266,7 +1266,8 @@ def _confine_prose(mode: str, floor: str) -> str:
     """Whether a kernel-level floor sits under all of the above.
 
     Worth a paragraph because of what a refusal *looks like* when it comes from
-    there: `Device or resource busy` or `Read-only file system`, from the tool
+    there: `Device or resource busy` or `Read-only file system` from bubblewrap,
+    `Operation not permitted` from Seatbelt on macOS, from the tool
     the agent happened to be using, with no rule named. An agent that has been
     told the floor exists reads that as a boundary; one that has not reads it
     as a broken machine and retries.
@@ -1277,8 +1278,9 @@ def _confine_prose(mode: str, floor: str) -> str:
     return (f"A confinement floor (`{floor}`) sits under all of the above, so "
             f"the boundaries are enforced by the kernel and not only by the "
             f"tooling. A refusal from it does **not** name a rule — you will "
-            f"see `Read-only file system` or `Device or resource busy` from "
-            f"whatever tool you were using. That is this policy, not a broken "
+            f"see `Read-only file system`, `Device or resource busy` or "
+            f"`Operation not permitted` from whatever tool you were using. "
+            f"That is this policy, not a broken "
             f"machine and not something to retry: check the scope above, and "
             f"if the write was legitimate, say what you need and why.")
 
