@@ -510,7 +510,9 @@ references · at most one active edge per vertex · every `DECIDED` vertex has a
 date, source, falsifier and decision edge · `OPEN` vertices carry no answer · no
 `DECIDED` vertex resting on an unsettled premise · acyclic · every probe is
 `{kind, args}` with a dotted kind and bounded args, every bind a `{kind,
-ref}` pair, and no record is bound to one pair twice. Two warnings: an
+ref}` pair, and no record is bound to one pair twice · every re-affirmation an
+answer carries is a dated `{date, note}` whose note is one line
+(`reaffirmed_wellformed`). Two warnings: an
 orphan, and a vertex left `PROVISIONAL` once its premises are settled again.
 (There is no rule about a *waiting* vertex: what it waits on is read off its
 edges, so nothing stored can disagree with it.)

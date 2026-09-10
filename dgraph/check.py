@@ -44,6 +44,8 @@ CHECKS: tuple[str, ...] = (
     # judged here — that is `dg probe`, and `domains.PROBES` is its list.
     "probe_wellformed",
     "binding_wellformed",
+    # a re-affirmation's `{date, note}`, one line (D123)
+    "reaffirmed_wellformed",
     # both stores; stamped where it is emitted, like `store_loads`
     "verbose_field",
     # both stores: a field the store holds and this version cannot read,
@@ -116,6 +118,7 @@ ORIGIN: dict[str, str] = {
     "stale_view": DECISION,
     "probe_wellformed": DECISION,
     "binding_wellformed": DECISION,
+    "reaffirmed_wellformed": DECISION,
     "task_ids_wellformed": TASK,
     "task_status_legal": TASK,
     "task_no_dangling_refs": TASK,

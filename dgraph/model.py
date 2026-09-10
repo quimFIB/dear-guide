@@ -81,6 +81,36 @@ CLAIM = ("answer", "falsifier", "source", "probe")
 PAYLOAD = ("answer", "falsifier", "source", "date", "format", "probe",
            "reaffirmed")
 
+
+def reaffirmed_fault(value) -> str | None:
+    """Why a stored `reaffirmed` list is malformed — or `None` (`D123`).
+
+    Every entry is `{date, note}`: an ISO date, and a note that is not blank
+    and is one line. The doors refuse anything else before it is written, so a
+    fault here arrived by hand-edit or from a build that did not check — and a
+    note of two lines is not cosmetic, since the view writes one line per entry
+    and `import-md` would cut the rest.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return "reaffirmed is not a list of {date, note} entries"
+    import datetime as _dt
+    for i, r in enumerate(value):
+        if not isinstance(r, dict) or set(r) != {"date", "note"}:
+            return f"re-affirmation {i} is not a {{date, note}} entry"
+        try:
+            _dt.date.fromisoformat(r["date"])
+        except (TypeError, ValueError):
+            return f"re-affirmation {i} has date {r['date']!r}, not YYYY-MM-DD"
+        note = r["note"]
+        if not isinstance(note, str) or not note.strip():
+            return f"re-affirmation {i} has no note"
+        if "\n" in note or "\r" in note:
+            return (f"re-affirmation {i} runs over more than one line — the view "
+                    f"writes one line per entry and import-md would cut the rest")
+    return None
+
 #: The bound on a probe's serialised `args`, in characters. The synopsis rule
 #: (`limits.TERSE_DEFAULT`) applied to the one payload field that is not
 #: prose: a probe's arguments are a fingerprint of an artefact — a hash, a
@@ -939,6 +969,11 @@ class Graph:
                 fault = probe_fault(e.probe)
                 if fault:
                     add("probe_wellformed", f"{e.src}: {fault}")
+            # Every edge, archived ones included, for the reason the probe above
+            # is: a reversal's re-affirmations are the record of that answer.
+            fault = reaffirmed_fault(e.reaffirmed)
+            if fault:
+                add("reaffirmed_wellformed", f"{e.src}: {fault}")
             if e.from_source is not None:
                 # A record of an answer this project did **not** take. It has
                 # to say whose it was and what it said, or it is an empty

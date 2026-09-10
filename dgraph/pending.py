@@ -2130,9 +2130,7 @@ def compose_confirm(g: Graph, *, vid: str, note: str | None = None,
         raise ApplyError(f"re-affirming {vid} needs why its answer still holds: "
                          f"--note. Without it the record says somebody ran a "
                          f"command, not what they found")
-    if "\n" in note:
-        raise ApplyError(f"why {vid} still holds is one line — the view writes "
-                         f"it on one; put a longer argument in a file and cite it")
+    _one_line_note(vid, note)
     return expand(g, {"op": "set_status", "vertex": vid, "status": "DECIDED",
                       "note": note, "date": date or _date.today().isoformat()})
 
@@ -2328,6 +2326,21 @@ def _payload(op: dict) -> dict:
     return out
 
 
+def _one_line_note(vid: str, note: str) -> None:
+    """Refuse a re-affirmation note of more than one line (`D123`).
+
+    One line because the view writes one `Re-affirmed` line per entry and
+    `import-md` reads one back; a second line would fall into the section and
+    be cut from the note on the way back. Asked at every door that writes one —
+    `compose_confirm`, and `_apply_one` for both ops that carry a note, which
+    is what `dg integrate` replays a clone's entries through — and by `dg check`
+    for a store edited by hand (`reaffirmed_wellformed`).
+    """
+    if "\n" in note or "\r" in note:
+        raise ApplyError(f"why {vid} still holds is one line — the view writes "
+                         f"it on one; put a longer argument in a file and cite it")
+
+
 def _reaffirm(g: Graph, vid: str, op: dict) -> None:
     """Append one `{date, note}` to `vid`'s standing answer (`D123`).
 
@@ -2423,8 +2436,14 @@ def _apply_one(g: Graph, op: dict) -> None:
         return
 
     if kind == "set_status":
+        # The note is judged before anything moves: a refused op must leave
+        # the graph as it found it, and `integrate._walk` carries on past a
+        # refusal on the same probe.
+        reaffirms = bool(op.get("note")) and op["status"] == "DECIDED"
+        if reaffirms:
+            _one_line_note(vid, op["note"])
         g.vertices[vid] = _dc_replace(g.vertices[vid], status=op["status"])
-        if op.get("note") and op["status"] == "DECIDED":
+        if reaffirms:
             _reaffirm(g, vid, op)
         return
 
@@ -2438,6 +2457,7 @@ def _apply_one(g: Graph, op: dict) -> None:
         if not (op.get("note") or "").strip():
             raise ApplyError(f"re-affirming {vid} needs why its answer still "
                              f"holds: --note")
+        _one_line_note(vid, op["note"])
         _reaffirm(g, vid, op)
         return
 

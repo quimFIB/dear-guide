@@ -187,6 +187,34 @@ def test_re_affirmations_arrive_as_facts_and_the_same_one_converges(g):
     assert rep.contested == []
 
 
+def test_a_re_affirmation_of_two_lines_is_refused_before_anything_moves(g):
+    """`D123`: the note is judged before the status, so a refused op leaves
+    the graph as it found it — the walk carries on past a refusal on the same
+    probe."""
+    from dataclasses import replace as dc_replace
+    from dgraph.pending import ApplyError
+    work = copy.deepcopy(g)
+    work.vertices["D02"] = dc_replace(work.vertices["D02"], status="PROVISIONAL")
+    with pytest.raises(ApplyError, match="one line"):
+        pending._apply_one(work, {"op": "set_status", "vertex": "D02",
+                                  "status": "DECIDED", "note": "a\nb",
+                                  "date": "2026-09-10"})
+    assert work.vertices["D02"].status == "PROVISIONAL"
+    assert not work.active_edge("D02").reaffirmed
+
+
+def test_a_clones_re_affirmation_of_two_lines_arrives_inapplicable(g):
+    """`dg integrate` replays a clone's entries through the same apply, so a
+    note of two lines — from a store edited by hand — is reported, never
+    stored and never cut."""
+    theirs = copy.deepcopy(g)
+    theirs.active_edge("D02").reaffirmed = [
+        {"date": "2026-09-10", "note": "first line\nsecond line"}]
+    rep = integrate.plan(copy.deepcopy(g), None, g, None, theirs, None)
+    (f,) = [x for x in rep.inapplicable if x.record == "D02"]
+    assert "one line" in f.message
+
+
 def test_a_change_nobody_else_touched_is_not_contested(g):
     """Contested is measured against the **base**, not against the op. An op
     says *make it this*, so comparing what it writes with what is here reports

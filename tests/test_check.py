@@ -410,3 +410,15 @@ def test_the_plugin_refuses_a_domain_scope_that_selects_nothing(store, g):
             testing.probe_rows.__wrapped__(_Config(bad), proj)
     rows = testing.probe_rows.__wrapped__(_Config(["prose"]), proj)
     assert rows and all(r.prefixes == {"prose"} for r in rows)
+
+
+def test_a_hand_edited_re_affirmation_of_two_lines_is_refused(store, g):
+    """`D123`: the doors refuse a note of more than one line; a store edited
+    by hand is caught here, blocking, because the view writes one line per
+    entry and `import-md` would cut the rest."""
+    e = g.active_edge("D02")
+    e.reaffirmed = [{"date": "2026-09-10", "note": "first line\nsecond line"}]
+    g.save()
+    write(g)
+    hits = [v for v in run() if v.check == "reaffirmed_wellformed"]
+    assert hits and hits[0].blocking and "one line" in str(hits[0])
