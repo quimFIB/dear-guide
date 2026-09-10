@@ -150,3 +150,15 @@ def test_the_slash_command_interviews_rather_than_fills_in():
     text = (ROOT / "commands" / "procedure.md").read_text(encoding="utf-8")
     assert "!`dg procedure --template`" in text
     assert "one at a time" in text
+
+
+def test_the_owners_answer_is_not_cross_examined():
+    """Choosing is the owner's whole part: neither the interview nor the
+    skeleton demands a reason for a rule."""
+    text = (ROOT / "commands" / "procedure.md").read_text(encoding="utf-8")
+    assert "Never ask them to justify it" in text
+    assert "ask for one" not in text
+    template = (ROOT / "dgraph" / "templates" / project.PROCEDURE_NAME
+                ).read_text(encoding="utf-8")
+    assert "Why:" not in template
+    assert "<reason>" not in template

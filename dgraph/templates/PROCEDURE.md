@@ -2,9 +2,9 @@
 
 <!-- Written once by the project's owner, and read by every model that works
 here: `dg brief` names this file at the start of each session. Replace each
-<…> with this project's answer and the reason for it, and delete any section
-you have no answer for — where this file says nothing, the dear-guide skill's
-defaults apply. The `procedure` slash command (`/dg:procedure`, or
+<…> with this project's answer, and delete any section you have no answer
+for — where this file says nothing, the dear-guide skill's defaults apply. A
+reason is welcome beside a rule but never required. The `procedure` slash command (`/dg:procedure`, or
 `/dg-procedure` on opencode) asks these one at a time. -->
 
 In force when a person is working with a model. Under a launch — `$DG_AGENT`
@@ -15,8 +15,6 @@ set — the launcher's policy governs and this file does not apply.
 - A judgement between defensible alternatives → an OPEN decision, filed before
   it is argued. A definition of done → a task. Neither → prose, not the graph.
 - In this project that means: <two or three examples only the owner can give>
-
-Why: <…>
 
 ## Where the argument lives
 
@@ -31,8 +29,6 @@ source; the page names its record, so each leads to the other.
 - the model drafts; the owner's verdict is the review, and staging and
   applying are then one step;
 - the model stages and stops; the owner reads `dg pending` and applies.
-
-Why: <…>
 
 ## How a question is settled
 
@@ -53,4 +49,4 @@ Message style: <…>
 
 ## Not to do
 
-- <rule> — because <reason>
+- <rule>

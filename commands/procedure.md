@@ -21,8 +21,9 @@ ones.
 
 - offer the choices the skeleton lists, with the dear-guide skill's default
   among them and marked as the default;
-- if an answer comes without a reason, ask for one. A rule with no reason is the
-  first to be dropped under pressure, and nobody can later tell when to reopen it;
+- take the owner's answer as given. Never ask them to justify it: it is their
+  procedure, and choosing is the whole of their part. If they offer a reason
+  unprompted, write it down with the rule;
 - if the owner has no answer, leave the section out. The skill's default then
   applies, which is better than a rule invented to fill a heading.
 
