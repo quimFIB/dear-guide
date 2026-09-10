@@ -25,6 +25,88 @@ decided, which is what the graph is for.
 
 ---
 
+## What an agent runs on
+
+**An agent here is a coding agent: a language model working through Claude Code
+or opencode.** That is what `dg-agent setup` expects today. The prompt it writes
+is prose only a model reads, `--host` takes `claude` or `opencode`, and the
+launcher it writes starts one of the two under `dg-agent run`. `dg` holds no API
+key and calls no model: the model, and the login it runs on, come from the host
+you launch.
+
+### What confines it, host by host
+
+Every limit on an agent sits at one of three layers, and they are not equally
+strong.
+
+1. **`dg`'s own rules** — `$DG_DECIDE`, `$DG_APPLY`, `$DG_TERSE`, `$DG_AREA`,
+   and another writer's work. Checked inside `dg` whenever anything stages or
+   applies, so they bind every process on every host.
+2. **The gate** — the write scope (`$DG_WRITE`), the commands an agent may run
+   unasked (`$DG_EXEC_ALLOW`), and the commit gate. A write or a shell command
+   never passes through `dg`, so these are judged by `dg gate`, which runs only
+   when the host's hook asks it before a tool call.
+3. **The floor** — an operating-system sandbox under the tools, so that a shell
+   redirection or a `patch` no hook sees is still refused by the kernel. It makes
+   both stores read-only and everything outside the write roots unwritable.
+   `$DG_CONFINE` is `off` unless a launcher sets it, and `dg-agent setup` sets
+   `require`.
+
+There are two floors, and what separates them is who applies them:
+
+- **`host`** is the runner's own sandbox, handed to it as settings on the launch
+  line. Only Claude Code has one a launcher can configure: `setup` writes
+  `--settings '{"sandbox":…}'` into each spawn, and Claude Code runs its shell
+  commands inside that sandbox.
+- **`bwrap`** is bubblewrap around the whole agent process, prepended by
+  `dg-agent run`. It works under any runner, or under none, and only on Linux.
+
+**opencode's permission system is not a floor.** It allows, asks or denies each
+tool call by tool, path pattern and command pattern, which is the gate's layer —
+the one the opencode plugin already relays `dg gate` through. A command it allows
+can still write anywhere, and opencode has no operating-system sandbox of its own
+for a launcher to configure
+([opencode#21733](https://github.com/anomalyco/opencode/issues/21733) asked for
+one and was closed as not planned). So `dg-agent setup --host opencode` refuses
+the `host` floor, saying no line it writes could apply it, and asks for
+`--floor bwrap`.
+
+| | Claude Code | opencode | a script of your own | `--mode session`, either host |
+|---|---|---|---|---|
+| `dg`'s own rules | ✓ | ✓ | ✓ | ✓ |
+| the budget | `dg-agent run` | `dg-agent run` | `dg-agent run` | advisory |
+| the gate | every tool call | every tool call except `task` subagents ([opencode#5894](https://github.com/sst/opencode/issues/5894)) and `patch` targets | only if the script calls `dg gate` itself | advisory, and absent on opencode |
+| the floor | `host` on Linux, WSL2 or macOS, or `bwrap` | `bwrap`, Linux only | `bwrap`, Linux only | none |
+
+**Where a floor exists.** Claude Code's sandbox runs on macOS, where it is the
+built-in Seatbelt framework, and on Linux and WSL2, where it is bubblewrap plus
+socat. Before trusting the `host` floor, `dg` checks for what that platform
+needs, and on Linux it also probes that bubblewrap can create a namespace:
+Claude Code's sandbox runs unconfined, with a warning nobody reads, when it
+cannot, which is the default on Ubuntu 24.04 and later. Native Windows has
+neither floor, so `setup` writes `$DG_CONFINE=off` there and says so.
+
+### A script of your own
+
+**`setup` does not launch one, and may if a real need appears** — a job that
+should propose into the graph with no model behind it, say. The reason it does
+not now is that everything `setup` writes is model-shaped, and a script needs
+none of it. The counter is that the mechanism is already process-neutral:
+`dg-agent run -- ./your-script` starts any command under a name, a remit and a
+budget, as recipe 14 of the cookbook does.
+
+**What it cannot do is make the script respect the remit.** `dg` refuses what the
+remit forbids with a non-zero exit the script has to handle, and under a `bwrap`
+floor a forbidden write fails as a bare permission error, so nothing guarantees
+the script keeps running when it asks for something forbidden. Without a floor,
+the write scope and the allowed commands bind it only if it asks `dg gate`. The
+`host` floor cannot apply to it at all, so under `$DG_CONFINE=require`
+`dg-agent run` refuses to start it — unless `--floor-applied` is passed, which
+the command takes on the launcher's word, unchecked, and then the script runs
+unconfined.
+
+---
+
 ## The rule the whole thing rests on
 
 > **Agents may `dg add` and `dg task add`. By default, only the supervisor runs

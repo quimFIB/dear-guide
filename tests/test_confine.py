@@ -154,6 +154,62 @@ def test_availability_is_probed_rather_than_looked_up():
     assert not ok and "not one of" in why
 
 
+class _Ran:
+    def __init__(self, code):
+        self.returncode = code
+
+
+def _machine(monkeypatch, *, have, probe=0):
+    """A platform whose PATH holds `have`, and whose probes exit `probe`."""
+    monkeypatch.setattr(confine.shutil, "which",
+                        lambda name: f"/usr/bin/{name}" if name in have else None)
+    monkeypatch.setattr(confine.subprocess, "run", lambda *a, **k: _Ran(probe))
+
+
+def test_the_host_sandbox_on_macos_is_seatbelt_and_needs_no_linux_packages(monkeypatch):
+    """The check used to ask every platform for bubblewrap and socat, so macOS
+    found neither and `setup` turned the floor off exactly where the `host`
+    backend was chosen to reach."""
+    _machine(monkeypatch, have={"sandbox-exec"})
+    assert confine._host_usable("darwin") == (True, "")
+    _machine(monkeypatch, have=set())
+    ok, why = confine._host_usable("darwin")
+    assert not ok and "sandbox-exec" in why
+    _machine(monkeypatch, have={"sandbox-exec"}, probe=1)
+    ok, why = confine._host_usable("darwin")
+    assert not ok and "Seatbelt" in why
+
+
+def test_the_host_sandbox_on_linux_needs_a_namespace_as_well_as_the_binaries(monkeypatch):
+    """Installed is not usable: the runner's sandbox is bubblewrap underneath,
+    and it runs unconfined when bubblewrap cannot create a namespace."""
+    _machine(monkeypatch, have={"bwrap", "socat"}, probe=1)
+    ok, why = confine._host_usable("linux")
+    assert not ok and "namespace" in why and "unconfined" in why
+    _machine(monkeypatch, have={"bwrap"})
+    ok, why = confine._host_usable("linux")
+    assert not ok and "socat" in why
+    _machine(monkeypatch, have=set())
+    ok, why = confine._host_usable("linux")
+    assert not ok and "not installed" in why
+    _machine(monkeypatch, have={"bwrap", "socat"})
+    assert confine._host_usable("linux") == (True, "")
+
+
+def test_native_windows_has_no_host_sandbox_and_says_where_one_is(monkeypatch):
+    _machine(monkeypatch, have={"bwrap", "socat", "sandbox-exec"})
+    ok, why = confine._host_usable("win32")
+    assert not ok and "WSL2" in why
+
+
+def test_available_asks_the_running_platform(monkeypatch):
+    seen = []
+    monkeypatch.setattr(confine, "_host_usable", lambda plat: seen.append(plat) or (True, ""))
+    monkeypatch.setattr(confine.sys, "platform", "darwin")
+    assert confine.available("host") == (True, "")
+    assert seen == ["darwin"]
+
+
 def test_the_two_policy_values_are_refused_rather_than_widened():
     """The exception `$DG_BUDGET` already is. A misread policy here is not a
     rule weakened by a notch — it is a run that believes it is confined and is

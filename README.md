@@ -111,7 +111,7 @@ contradicting itself.
 
 Then, as you need them: [composing in an editor](docs/emacs.md), [the design
 behind `dg find`](docs/query-framework.md), [running a fan-out of several
-agents](agentic/README.md) (three copy-paste recipes in
+coding agents](agentic/README.md) (three copy-paste recipes in
 [`agentic/QUICKSTART.md`](agentic/QUICKSTART.md)), and the questions this design
 has [not settled](docs/open-questions.md).
 

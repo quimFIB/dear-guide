@@ -35,7 +35,7 @@ full() {
   note "Writes outside the launch scope stop and ask; inside it they pass; reads are never judged."
   as "$name" DG_WRITE=launch dg gate --write ./notes/todo.md
   as "$name" DG_WRITE=launch dg gate --write /etc/hosts
-  note "A budget is real when the launcher is the agent's parent. This agent takes T05 and never finishes."
+  note "A budget is real when the launcher is the agent's parent. The agent here is a shell script standing in for a coding agent: it takes T05 and never finishes."
   cat > agent.sh <<'SH'
 #!/usr/bin/env bash
 echo "I am $DG_AGENT"

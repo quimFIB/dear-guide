@@ -31,7 +31,7 @@ agile-azimuth ▸ $ DG_WRITE=launch dg gate --write ./notes/todo.md
 allow
 agile-azimuth ▸ $ DG_WRITE=launch dg gate --write /etc/hosts
 ask: $DG_WRITE=launch: agile-azimuth may write under /tmp, /tmp/dg-quick-start/notelit, and this is outside all of them (/etc/hosts). Reading anywhere is fine; writing here is the person's call. Approve it, or point the write somewhere in scope
-# A budget is real when the launcher is the agent's parent. This agent takes T05 and never finishes.
+# A budget is real when the launcher is the agent's parent. The agent here is a shell script standing in for a coding agent: it takes T05 and never finishes.
 $ cat agent.sh
 #!/usr/bin/env bash
 echo "I am $DG_AGENT"
@@ -52,7 +52,7 @@ $ dg-agent list
 ┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━┓
 ┃ Name          ┃ Since      ┃ Staged ┃ Holding ┃ Budget         ┃ Seen ┃
 ┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━┩
-│ agile-azimuth │ 2026-09-10 │ 0      │ —       │ 30m (29m left) │ 5s   │
+│ agile-azimuth │ 2026-09-10 │ 0      │ —       │ 30m (29m left) │ 6s   │
 │ agile-bearing │ 2026-09-10 │ 1      │ —       │ SPENT +2s      │ 3s   │
 └───────────────┴────────────┴────────┴─────────┴────────────────┴──────┘
 `dg-agent expire` hands back what the spent ones hold

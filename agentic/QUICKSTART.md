@@ -21,6 +21,19 @@ dg init          # decisions.json
 dg task init     # tasks.json — the frontier agents pick their own work off
 ```
 
+## What the agents run on
+
+A coding agent: Claude Code or opencode, whichever `--host` names, each agent on
+that host's model and login. `dg` supplies no model.
+
+**The confinement floor depends on the host.** Claude Code runs its agents under
+its own sandbox, the `host` floor. opencode has no sandbox a launcher can
+configure, and its permission system is not one, so with `--host opencode` add
+`--floor bwrap` to the recipes below; `setup` refuses without it, and that floor
+is Linux only. A script of your own is not one of these recipes.
+[What confines it, host by host](README.md#what-confines-it-host-by-host) has the
+table.
+
 ## The shape of every run
 
 Four moves, whichever recipe you pick.

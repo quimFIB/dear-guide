@@ -31,6 +31,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,8 +53,9 @@ from pathlib import Path
 
 #: The backends, and what each costs.
 #:
-#: `host` reaches Linux, macOS and Windows because the runner already
-#: implements all three, and it is the reason cross-platform reach outweighed
+#: `host` reaches Linux, WSL2 and macOS because the runner already implements
+#: its sandbox on each (not native Windows, which it does not support), and that
+#: reach is the reason cross-platform reach outweighed
 #: host neutrality here: rolling one arena would mean bubblewrap *and* seatbelt
 #: *and* Windows ACLs, three sandboxes to keep true, for a tool whose boundary
 #: is that it runs anywhere Python does.
@@ -218,28 +220,72 @@ def available(backend: str) -> tuple[bool, str]:
     That is what this exists for, and it is why the answer carries a reason.
     """
     if backend == "bwrap":
-        if shutil.which("bwrap") is None:
-            return False, "bubblewrap is not installed"
-        try:
-            r = subprocess.run(["bwrap", "--ro-bind", "/", "/", "--dev", "/dev",
-                                "--unshare-user", "true"],
-                               capture_output=True, timeout=10)
-        except (OSError, subprocess.SubprocessError) as exc:
-            return False, f"bubblewrap could not be run ({exc})"
-        if r.returncode != 0:
-            return False, ("bubblewrap is installed but cannot create a "
-                           "namespace here — user namespaces are often off in "
-                           "a container or on a hardened kernel")
-        return True, ""
+        return _bwrap_usable()
     if backend == "host":
-        missing = [tool for tool in ("bwrap", "socat") if shutil.which(tool) is None]
-        if missing:
-            return False, (f"the host sandbox needs {' and '.join(missing)}, "
-                           f"which {'is' if len(missing) == 1 else 'are'} not "
-                           f"installed — without it the runner warns on the "
-                           f"child's stderr and runs unconfined")
-        return True, ""
+        return _host_usable(sys.platform)
     return False, f"{backend!r} is not one of {', '.join(BACKENDS)}"
+
+
+def _bwrap_usable() -> tuple[bool, str]:
+    """Whether bubblewrap is installed *and* can create a user namespace here."""
+    if shutil.which("bwrap") is None:
+        return False, "bubblewrap is not installed"
+    try:
+        r = subprocess.run(["bwrap", "--ro-bind", "/", "/", "--dev", "/dev",
+                            "--unshare-user", "true"],
+                           capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"bubblewrap could not be run ({exc})"
+    if r.returncode != 0:
+        return False, ("bubblewrap is installed but cannot create a "
+                       "namespace here — user namespaces are often off in "
+                       "a container or on a hardened kernel")
+    return True, ""
+
+
+def _host_usable(platform: str) -> tuple[bool, str]:
+    """Whether the runner's own sandbox would start on `platform`.
+
+    **What the runner documents its sandbox needing, per platform, and nothing
+    more.** macOS uses the built-in Seatbelt framework, so `sandbox-exec` is the
+    whole dependency. Linux and WSL2 use bubblewrap, which has to be able to
+    create a user namespace, plus socat, the relay its network proxy runs
+    through. Native Windows has no sandbox at all.
+
+    **Per platform, where it used to be Linux's list everywhere.** Asking for
+    bubblewrap and socat on macOS found neither, so `dg-agent setup` wrote
+    `$DG_CONFINE=off` on the very platform this backend was chosen to reach
+    (`D19`). And on Linux the namespace is probed exactly as the `bwrap` backend
+    probes it: the runner's sandbox *is* bubblewrap underneath, and it fails
+    open when bubblewrap is installed but cannot create a namespace, which is
+    the default on Ubuntu 24.04 and later. Probing only for the binaries called
+    that case usable.
+    """
+    unconfined = ("without it the runner warns on the child's stderr and runs "
+                  "unconfined")
+    if platform == "darwin":
+        if shutil.which("sandbox-exec") is None:
+            return False, (f"the host sandbox on macOS is Seatbelt, and "
+                           f"`sandbox-exec` is not on PATH — {unconfined}")
+        try:
+            r = subprocess.run(["sandbox-exec", "-p", "(version 1)(allow default)",
+                                "true"], capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, f"Seatbelt could not be run ({exc})"
+        if r.returncode != 0:
+            return False, ("Seatbelt is present but refused even a permissive "
+                           f"profile here — {unconfined}")
+        return True, ""
+    if platform.startswith("linux"):
+        ok, why = _bwrap_usable()
+        if not ok:
+            return False, f"the host sandbox is bubblewrap underneath, and {why} — {unconfined}"
+        if shutil.which("socat") is None:
+            return False, f"the host sandbox needs socat, which is not installed — {unconfined}"
+        return True, ""
+    return False, (f"the host runner has no sandbox on {platform}: native "
+                   f"Windows is not supported, so run it inside WSL2, where "
+                   f"this is Linux")
 
 
 def mode(value: str | None = None) -> str:

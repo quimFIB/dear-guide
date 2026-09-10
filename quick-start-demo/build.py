@@ -376,10 +376,12 @@ RECIPES: dict[str, dict] = {
                "<code>DG_DECIDE=evidence</code>, an answer without finished evidence behind it is "
                "refused. <code>dg-agent list</code> shows who holds what.",
         read_full="The limits, tested: an answer with no evidence behind it, a write outside the "
-                  "project, and an agent that runs out of time. Every policy is an environment variable "
-                  "and every one is a refusal, not a habit. A budget is real when the launcher is the "
-                  "agent's parent: the child is stopped and what it held is parked under its own name, "
-                  "for a person to land.",
+                  "project, and an agent that runs out of time. That last agent is a four-line shell "
+                  "script standing in for a coding agent, which <code>dg-agent run</code> starts like "
+                  "any other command. Every policy is an environment variable and every one is a "
+                  "refusal, not a habit. A budget is real when the launcher is the agent's parent: the "
+                  "child is stopped and what it held is parked under its own name, for a person to "
+                  "land.",
         hl_quick=[(r"^\$ name=\$\(dg-agent claim\)", "a name from the tool, never invented"),
                   (r"▸ \$ dg apply --mine", "publish the claim so others see it"),
                   (r"DG_DECIDE=evidence dg decide D06", "allowed: T04 finished and backs it"),
@@ -407,7 +409,10 @@ RECIPES: dict[str, dict] = {
                   "both generated from. Each agent is assigned a first task, chosen so that no two "
                   "agents' tasks collide at the seam. Most of the prompt is the graph: the chain behind "
                   "each focus id, pasted verbatim, which a fresh context could not reconstruct. Only "
-                  "three answers are yours.",
+                  "three answers are yours. The <code>--settings</code> on each launch line is Claude "
+                  "Code's own sandbox, the <code>host</code> floor. Asked for <code>--host "
+                  "opencode</code>, setup refuses that floor, because opencode has no sandbox to hand "
+                  "it to, and asks for <code>--floor bwrap</code> instead.",
         hl_quick=[(r"^INDEPENDENT  3 of 4 ready can run side by side", "the set a fan-out hands out"),
                   (r"^  T13 cannot join: shares D06 with T04", "the pair, and the decision they meet on"),
                   (r"^· assigned T04, T05, T11 — one agent each", "one task per agent"),
@@ -604,13 +609,21 @@ PART_INTRO = {
     "agents": """
 <div class="intro" id="agents-overview">
 <p class="read">An agent is a process running <code>dg</code> with <code>DG_AGENT</code> set to a name the tool handed out. Everything it stages is stamped with that name and lands in the shared tray; nothing reaches a store until somebody applies it. Around that one fact sit four roles and two ways of running, and the recipes below assume you can tell them apart.</p>
+<p class="read"><b>Which of the team's agents is actually held in?</b> Most of notelit's agents run in Claude Code, one teammate prefers opencode, and someone wants a plain script to stage benchmark results. <code>dg-agent setup</code> expects a coding agent, a language model working through Claude Code or opencode: it writes a prompt only a model reads and a launcher that starts one of the two, and the model and its login come from the host, never from <code>dg</code>. What holds an agent in comes in three layers. <code>dg</code>'s own rules bind every process, because every stage and every apply goes through <code>dg</code>. The gate, meaning the write scope, the allowed commands and the commit check, runs only when a host's hook asks <code>dg gate</code> before a tool call. The floor is an operating-system sandbox under the tools, and only Claude Code has one a launcher can configure. opencode's permission system approves or refuses tool calls, which is the gate's layer rather than a floor, so an opencode agent is confined only by bubblewrap around its process, on Linux.</p>
+<table class="tbl"><tr><th></th><th>Claude Code</th><th>opencode</th><th>a script of your own</th></tr>
+<tr><td><code>dg</code>'s own rules</td><td>yes</td><td>yes</td><td>yes</td></tr>
+<tr><td>the budget</td><td>yes</td><td>yes</td><td>yes</td></tr>
+<tr><td>the gate</td><td>every tool call</td><td>every tool call, except <code>task</code> subagents and <code>patch</code> targets</td><td>only if the script calls <code>dg gate</code></td></tr>
+<tr><td>the floor</td><td><code>host</code> or <code>bwrap</code></td><td><code>bwrap</code>, Linux only</td><td><code>bwrap</code>, Linux only</td></tr>
+</table>
+<p class="read">A script runs under <code>dg-agent run -- ./script</code>, as the stand-in in <a href="#14-agent-loop">14</a> does, but <code>setup</code> does not generate that, and the script has to keep to its remit by itself: a request the remit forbids fails, and the script should expect it to. An agent spawned in <code>--mode session</code> has no floor on either host. And native Windows has no floor at all: Claude Code's sandbox runs on macOS, Linux and WSL2, and bubblewrap only on Linux.</p>
 <table class="tbl roles">
 <tr><th>role</th><th>what it is</th><th>governs</th><th>if absent</th></tr>
 <tr><td><b>agent</b></td><td>a process with <code>DG_AGENT=&lt;name&gt;</code>, the name from <code>dg-agent claim</code> or given by <code>dg-agent run</code>. Every policy below is a refusal for it</td><td>its own proposal</td><td>—</td></tr>
 <tr><td><b>supervisor</b></td><td>whoever has <em>no</em> <code>DG_AGENT</code>: you at a terminal, or the session that launched the run. Not started; simply is</td><td>the <em>record</em>: reads the tray afterwards, <code>dg apply --agent &lt;name&gt;</code> one proposal at a time</td><td>ops wait in the tray; nothing is lost</td></tr>
 <tr><td><b>gate</b></td><td><code>dg gate</code>: one verdict per shell command or write, <em>allow · warn · ask · deny</em>, relayed by the Claude Code and opencode adapters with no policy of their own</td><td>the <em>machine</em>, one action at a time</td><td>—</td></tr>
 <tr><td><b>broker</b></td><td>a process you start beside the run, <code>dg-agent broker</code>. During the run it answers the <em>ask</em> verdicts an agent blocks on, at a terminal or relayed into a session</td><td>the <em>machine</em>: consent, never the tray</td><td>every <em>ask</em> becomes a refusal nobody chose</td></tr>
-<tr><td><b>floor</b></td><td>a confinement below the tool layer (the host's sandbox, or bwrap) that mounts both stores read-only for the agent. The one boundary that is not cooperative</td><td>what the agent can touch at all</td><td>the gate is all that judges, and a relayed verdict is logged <code>relayed</code>, not <code>person</code></td></tr>
+<tr><td><b>floor</b></td><td>an operating-system sandbox under the tools that makes both stores read-only for the agent: Claude Code's own sandbox (<code>host</code>), or bubblewrap around the whole process, on Linux (<code>bwrap</code>). The one boundary that is not cooperative</td><td>what the agent can touch at all</td><td>the gate is all that judges, and a relayed verdict is logged <code>relayed</code>, not <code>person</code></td></tr>
 </table>
 <figure class="flows">
 <svg viewBox="0 0 980 300" width="980" height="300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="process mode and session mode">

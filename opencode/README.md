@@ -69,15 +69,15 @@ directory. The two mechanisms do not depend on them.
 | `/dg-context <id>` | every premise a decision or a task rests on — what to read before dispatching work |
 | `/dg-serve` | the graphs in a browser, started detached so the session keeps its prompt |
 | `/dg-fanout` | who holds a name, what each of them is holding, and what is staged — before running several agents against one graph |
-| the agent write scope | when `$DG_AGENT` is set, `dg gate --write` judges every `write` and `edit` call. Out of scope throws, carrying the reason and saying whose call it is; in scope and unowned sessions cost nothing. Reads are never judged — `read` carries a `filePath` too and is deliberately absent. The policy is `$DG_WRITE`, shared with Claude Code; see `agentic/README.md`, and the fourth limit below for `patch` |
-| the commit gate | `dg gate` judges every `bash` call carrying one of `dg gate --triggers`' words — `commit` and `rm` today. It answers four ways: `deny` and `ask` both stop the call and arrive as the tool's error, carrying the reason and the fix, with `ask` saying whose call it is; `warn` stops nothing and is the third limit below; `allow` says nothing |
+| the agent write scope | when `$DG_AGENT` is set, `dg gate --write` judges every `write` and `edit` call. Out of scope throws, carrying the reason and saying whose call it is; in scope and unowned sessions cost nothing. Reads are never judged — `read` carries a `filePath` too and is deliberately absent. The policy is `$DG_WRITE`, shared with Claude Code; see `agentic/README.md`, and the second limit below for `patch` |
+| the commit gate | `dg gate` judges every `bash` call carrying one of `dg gate --triggers`' words — `commit` and `rm` today. It answers four ways: `deny` and `ask` both stop the call and arrive as the tool's error, carrying the reason and the fix, with `ask` saying whose call it is; `warn` stops nothing and is the fifth limit below; `allow` says nothing |
 | the `dear-guide` skill | loaded by opencode's own `skill` tool when a decision or a piece of work is in play |
 
 `DG_HOOK_OFF=1` in the environment switches off both the brief and the gate. It
 has to be in opencode's own environment, not in front of the command being run —
 the plugin's environment is the host's.
 
-## Five limits worth knowing
+## Six limits worth knowing
 
 - **The gate does not see subagent tool calls.** `tool.execute.before` is not
   invoked for tools run by agents spawned through the `task` tool
@@ -147,3 +147,15 @@ the plugin's environment is the host's.
   two advisories that ride this channel. If the answer turns out to be the log,
   `client.tui.showToast` is the supported one — `PluginInput` hands the plugin
   an `OpencodeClient` for exactly this.
+- **No `host` floor: opencode's permissions are not a sandbox.** Claude Code runs
+  its shell commands inside an operating-system sandbox a launcher configures,
+  and that is what the `host` confinement floor is. opencode's `permission`
+  settings allow, ask or deny a tool call by tool, path and command pattern,
+  which is the layer this plugin already relays `dg gate` through; a command
+  they allow can still write anywhere. opencode has no sandbox of its own to
+  configure ([opencode#21733](https://github.com/anomalyco/opencode/issues/21733)
+  was closed as not planned), so `dg-agent setup --host opencode` refuses the
+  `host` floor and asks for `--floor bwrap`, which wraps the whole `opencode run`
+  process in bubblewrap, on Linux only. Elsewhere an opencode fan-out has no
+  floor, and the gate is all that judges. `agentic/README.md` § *What confines
+  it, host by host* has the table.

@@ -229,6 +229,18 @@ the child at the budget and parks what that child was holding. Launch some other
 way and nothing stops anything — `dg` is not in the agent's process tree and
 never was.
 
+**The agents themselves are coding agents.** `dg-agent setup` writes a prompt
+for a language model and a launcher that starts Claude Code or opencode; `dg`
+supplies no model of its own. `dg-agent run -- ./your-script` will start a
+script of your own under a name and a budget, but `setup` does not generate
+that, and the script has to keep to its remit by itself. Confinement below the
+tools differs by host too: Claude Code runs its agents under its own sandbox,
+while opencode has none a launcher can configure — its permission system judges
+tool calls, which is the gate's layer — so an opencode fan-out is confined only by
+`--floor bwrap`, on Linux.
+[What confines it, host by host](../agentic/README.md#what-confines-it-host-by-host)
+has the table.
+
 **And run `dg-agent env` before you trust any of them.** Four fail *open*: a
 mistyped `$DG_DECIDE=nevr` is read as `open`, the widest policy, and looks
 exactly like a policy somebody chose. `dg-agent env` names a fallback as a

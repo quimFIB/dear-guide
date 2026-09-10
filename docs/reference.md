@@ -314,7 +314,9 @@ dg repair                                # a store a merge broke: stage the miss
 dg-agent presets                         # the three curated remits, and what each one sets
 dg-agent setup                           # a fan-out's prompt, launcher and remit — asks, or takes flags, or --json
 dg-agent setup --preset scout            # ...with the whole policy block filled from one word
+dg-agent setup --host opencode --floor bwrap  # ...opencode has no sandbox a launcher can configure, so bubblewrap wraps it; Linux only
 dg-agent run -- claude -p "…"            # claim a name, compose the environment, run one agent under it
+dg-agent run -- ./your-script            # ...any command; `setup` only launches claude or opencode, and a script keeps to its remit itself
 dg-agent env                             # what every $DG_* actually says — and which one was mistyped
 dg-agent env --check                     # ...exit non-zero if anything set was not understood
 dg-agent broker                          # answer the consent requests agents block on, at a terminal

@@ -119,6 +119,13 @@ dg-agent setup --preset contributor --roster T04,T07,T11 --budget 30m \
   --brief "settle the Search frontier"
 ```
 
+**`--host` decides which floor is possible.** `claude` carries the `host` floor:
+Claude Code's own sandbox, written onto each launch line as `--settings`.
+`opencode` has no sandbox a launcher can configure, so `setup --host opencode`
+refuses that floor and asks for `--floor bwrap`, bubblewrap around the whole
+process, on Linux only. `README.md` § *What confines it, host by host* has the
+table, including what opencode's own permissions do and do not cover.
+
 **`--mode` says where the agents live**, and `process` — one `dg-agent run` per
 agent — is the default and the only one where anything is enforced. `--mode
 session` has the launching session spawn them with its own subagent tool, which
