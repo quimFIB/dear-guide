@@ -4,6 +4,9 @@ Same tool, same skill, same policy — a different host. opencode gets the two
 mechanisms Claude Code gets: the brief arrives at the start of a session, and a
 commit that would leave the graph contradicting itself is refused.
 
+The adapter targets **OpenCode V2** (`Plugin.define`). The V1 implementation is
+in git history; the same file previously returned V1 hooks.
+
 ## Install
 
 `dg` itself first:
@@ -48,8 +51,8 @@ Two things about those paths:
 Check it took:
 
 ```sh
-opencode debug skill   | grep dear-guide   # the skill was found
-opencode debug config  | grep dear-guide  # the plugin and the command loaded
+opencode2 plugin list   | grep dear-guide   # the plugin loaded
+opencode2 debug config  | grep dear-guide   # the plugin and the command loaded
 ```
 
 Project-scoped instead of user-scoped works for two of the three:
@@ -97,8 +100,8 @@ the plugin's environment is the host's.
   go away. `dg-agent setup --mode session --host opencode` names it among the
   rest, and `agentic/QUICKSTART.md` Recipe 4 says when the mode is worth it at
   all.
-- **The write scope does not cover the `patch` tool.** `write` and `edit` name
-  their target in `filePath`, which is what `dg gate --write` judges. `patch`
+- **The write scope does not cover the `patch` tool.** In V2 `write` and `edit`
+  name their target in `path`; the adapter also accepts V1's `filePath`. `patch`
   takes `patchText` — one diff that may touch several files — so there is no
   single path to hand the gate, and covering it would mean parsing a diff for
   its targets inside an adapter whose whole rule is that it holds no policy. A
@@ -106,12 +109,13 @@ the plugin's environment is the host's.
   stated. Claude Code has the same shape of hole for a shell redirection, which
   `hooks/prewrite.py` records for the same reason.
 
-  The tool names and their argument were **read out of opencode 1.18.25**
-  rather than assumed, and `tests/test_opencode.py` pins the pair: a rename in
-  a future opencode would otherwise stop the scope applying while looking
-  exactly like it still did.
+  The tool names and their arguments were **read out of OpenCode 1.18.25** and
+  checked against V2: V2 uses `path` and the `shell` tool, and the adapter
+  accepts both `path`/`filePath` and `bash`/`shell`. `tests/test_opencode.py`
+  pins the V1 pair; a rename in a future OpenCode would otherwise stop the
+  scope applying while looking exactly like it still did.
 
-  The rest of the scope was **run end to end against opencode 1.18.25**, not
+  The rest of the scope was **run end to end against OpenCode 1.18.25**, not
   only typechecked. An out-of-scope `write` is refused with the gate's reason
   reaching the model, which asked the person rather than retrying — which is
   what `ask` degrading to a throw is supposed to buy. An in-scope `write`
@@ -126,11 +130,10 @@ the plugin's environment is the host's.
   has its own equivalent. Worth knowing when a scout is told to read something
   outside its project and reports that it cannot.
 
-- **Injecting the brief is the one part not guaranteed by the API.** opencode has
-  no session-start hook; the plugin edits the first user message instead. If a
-  future version stops honouring that, `/dg-brief` still works, and
-  `experimental.chat.system.transform` is the other candidate — the payload is
-  the same string either way.
+- **Injecting the brief is the one part not guaranteed by the API.** V2 has no
+  session-start hook either; the adapter uses `ctx.session.hook("prompt")` and
+  `ctx.session.hook("compaction")`. If a future version stops honouring those,
+  `/dg-brief` still works.
 - **The `warn` verdict may not reach you, and this has not been checked.** A
   generated view that has fallen behind its store is worth *mentioning* at the
   moment a commit records it and is not worth refusing over — so the adapter

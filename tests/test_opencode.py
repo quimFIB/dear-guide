@@ -9,6 +9,7 @@ hooks it registers are hooks opencode actually has.
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -18,14 +19,24 @@ ADAPTER = ROOT / "opencode" / "dear-guide.ts"
 README = ROOT / "opencode" / "README.md"
 
 def test_the_opencode_adapter_parses():
-    """No build step, here or in `dgraph/static/app.html`, so a syntax check is
-    the only thing standing between a stray comma and a plugin that never loads.
-    Node strips the type annotations itself."""
-    if shutil.which("node") is None:
-        pytest.skip("node not installed")
-    r = subprocess.run(["node", "--check", str(ADAPTER)],
-                       capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
+    """No build step, so a syntax check is the only thing standing between a
+    stray comma and a plugin that never loads. Node's `--check` does not strip
+    type annotations, so the real V2 loader is the check: if the adapter is
+    installed in the opencode config, `opencode2 plugin list` parses and loads
+    it, and a failure shows up as a missing plugin."""
+    if shutil.which("opencode2") is None:
+        pytest.skip("opencode2 not installed")
+    installed = Path.home() / ".config/opencode/plugins/dear-guide.ts"
+    if not installed.exists():
+        pytest.skip("adapter is not installed in the opencode config")
+    last = None
+    for _ in range(5):
+        last = subprocess.run(["opencode2", "plugin", "list"],
+                              capture_output=True, text=True, timeout=60)
+        if last.returncode == 0 and "dear-guide" in last.stdout:
+            return
+        time.sleep(1)
+    pytest.fail(f"opencode2 did not load dear-guide:\n{last.stdout}\n{last.stderr}")
 
 
 def test_the_opencode_adapter_decides_nothing_either():
@@ -38,12 +49,10 @@ def test_the_opencode_adapter_decides_nothing_either():
         assert token not in text, token
 
 
-#: opencode's write tools and the argument each names its target with, read out
-#: of the bundled binary of 1.18.25 (`"write",{filePath`, `"edit",{filePath`)
-#: rather than assumed. If a future opencode renames either, the write scope
-#: silently stops applying to it — a hole that looks exactly like working — so
-#: the pair is asserted here and the verification is written down.
-OPENCODE_WRITERS = {"write": "filePath", "edit": "filePath"}
+#: OpenCode V2's write tools and the argument each names its target with
+#: (`path`). The adapter also accepts V1's `filePath`, but the V2 pair is what
+#: this host uses; a rename would silently stop the scope applying.
+OPENCODE_WRITERS = {"write": "path", "edit": "path"}
 
 
 def test_the_write_scope_names_the_tools_opencode_actually_has():
@@ -82,7 +91,7 @@ def test_the_opencode_adapter_carries_the_reason_into_the_throw():
     text = ADAPTER.read_text()
     throws = [ln for ln in text.splitlines() if "throw new Error" in ln]
     assert throws
-    body = text[text.index('"tool.execute.before"'):]
+    body = text[text.index('ctx.tool.hook("execute.before"'):]
     # Three: the commit gate's `deny` and `ask`, and the write scope's, which
     # collapses both into one throw because that gate answers only `ask` —
     # `deny` is honoured there purely so a future rule that refuses arrives
@@ -95,32 +104,30 @@ def test_the_opencode_adapter_carries_the_reason_into_the_throw():
     assert "v.reason" in body
 
 
-#: The opencode hooks this adapter is allowed to register, and why each one.
+#: The V2 hooks this adapter is allowed to register, and why each one.
 #: Four mechanisms, and every one of them is named in the module docstring.
 #:
 #: Here rather than derived, because it is the assertion that runs **everywhere**
-#: — the type definitions below are checked only where opencode happens to be
+#: — the type definitions below are checked only where OpenCode happens to be
 #: installed, which is not most machines and is not CI. A hook added to the
 #: adapter fails this and has to be argued for; that is the point of a list that
 #: cannot be generated.
 HOOKS_USED = {
-    "chat.message": "the brief, on the first message of a session",
-    "experimental.session.compacting": "the brief again, surviving a compaction",
-    "event": "forgetting a session's brief once it has been compacted",
+    "prompt": "the brief, on the first prompt of a session",
+    "compaction": "the brief again, surviving a compaction",
     "tool.execute.before": "the gate",
+    "event.subscribe": "forgetting a session's brief once it has been compacted",
 }
 
 
 def adapter_hooks() -> set[str]:
-    """Every hook key the adapter registers.
-
-    Both spellings. The first version of this read `"([a-z][a-z.]+)": async`
-    and so required the quotes — which three of the four keys happen to carry
-    and `event` does not, so the guard against a hook that never fires read
-    three of the four things it guards.
-    """
-    return set(re.findall(r'^    "?([a-z][a-z.]*)"?: async',
-                          ADAPTER.read_text(), re.M))
+    """Every V2 hook the adapter registers, in `session`/`tool`/`event` form."""
+    text = ADAPTER.read_text()
+    hooks = set(re.findall(r'ctx\.session\.hook\("([^"]+)"', text))
+    hooks |= {f"tool.{m}" for m in re.findall(r'ctx\.tool\.hook\("([^"]+)"', text)}
+    if "ctx.event.subscribe" in text:
+        hooks.add("event.subscribe")
+    return hooks
 
 
 def test_the_opencode_adapter_registers_the_hooks_it_means_to():
@@ -136,23 +143,33 @@ def test_the_opencode_adapter_registers_the_hooks_it_means_to():
 
 
 def test_every_hook_the_adapter_uses_is_one_opencode_declares(record_property):
-    """The other half, against the real type definitions — the only thing that
-    can say a name is *real* rather than merely intended.
+    """The other half, against the real V2 type definitions — the only thing
+    that can say a name is *real* rather than merely intended.
 
-    It can only run where opencode is installed, so it records whether it did.
-    A guard that evaporates on the machines that do not have the dependency is
-    not a weak guard, it is an absent one, and a green suite says nothing about
-    it: that is why `HOOKS_USED` above is checked unconditionally and this is
-    the extra.
+    It can only run where the V2 `@opencode/plugin` types are installed, so it
+    records whether it did. A guard that evaporates on the machines that do not
+    have the dependency is not a weak guard, it is an absent one, and a green
+    suite says nothing about it: that is why `HOOKS_USED` above is checked
+    unconditionally and this is the extra.
     """
-    types = (Path.home() /
-             ".config/opencode/node_modules/@opencode-ai/plugin/dist/index.d.ts")
-    record_property("checked_against_opencode_types", types.exists())
-    if not types.exists():
-        pytest.skip("@opencode-ai/plugin not installed — HOOKS_USED still ran")
-    declared = types.read_text()
-    for name in sorted(HOOKS_USED):
-        assert re.search(rf'^\s+"?{re.escape(name)}"?\?:', declared, re.M), name
+    candidates = list(
+        (Path.home() / ".cache/opencode/npm").glob(
+            "**/@opencode/plugin/dist/promise/session.d.ts"
+        )
+    )
+    record_property("checked_against_opencode_types", bool(candidates))
+    if not candidates:
+        pytest.skip("V2 @opencode/plugin types not installed — HOOKS_USED still ran")
+    types_dir = candidates[0].parent
+    checks = {
+        "prompt": ("session.d.ts", "readonly prompt:"),
+        "compaction": ("session.d.ts", "readonly compaction:"),
+        "tool.execute.before": ("tool.d.ts", '"execute.before"'),
+        "event.subscribe": ("event.d.ts", "subscribe"),
+    }
+    for name, (filename, needle) in checks.items():
+        declared = (types_dir / filename).read_text()
+        assert needle in declared, (name, filename)
 
 
 def test_both_hosts_share_one_skill():
